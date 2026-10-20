@@ -21,6 +21,7 @@ import {
 import {
   createMockEnv,
   createMockContext,
+  createMockD1,
   createMockDurableObjectNamespace,
   createMockKV,
   createTestJWT,
@@ -235,19 +236,24 @@ vi.mock('@authrim/ar-lib-core/services/oidc-attribute-release-consent', async ()
   return { ...actual, enforceOIDCAttributeReleaseConsent: identityRelease.enforce };
 });
 
-// The database boundary of a real identity mapping (the app's binding, and the Destination Profile
-// consent filter). Unset, each is the real implementation; the mapping itself runs for real.
+// The database boundary of a real identity mapping (the Mapping Set the app is bound to, and the
+// Destination Profile consent filter). Unset, each is the real implementation; the mapping itself
+// runs for real. The selection and the reading of the set are tested in ar-lib-core: a binding
+// here stands for "the Mapping Set the app names".
 const mappingFixture = vi.hoisted(() => ({ binding: null as unknown }));
-vi.mock('@authrim/ar-lib-core/services/identity-mapping-runtime-resolver', async () => {
+vi.mock('@authrim/ar-lib-core/services/identity-mapping-resolution', async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
-    '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver'
+    '@authrim/ar-lib-core/services/identity-mapping-resolution'
   );
   return {
     ...actual,
-    resolveRuntimeIdentityMappingBinding: (...args: unknown[]) =>
+    resolveOidcIdentityMappingBinding: (...args: unknown[]) =>
       mappingFixture.binding
-        ? Promise.resolve(mappingFixture.binding)
-        : (actual.resolveRuntimeIdentityMappingBinding as (...a: unknown[]) => unknown)(...args),
+        ? Promise.resolve({
+            selection: { kind: 'bound', tier: 'client', setId: 'set-1', chain: [] },
+            binding: mappingFixture.binding,
+          })
+        : (actual.resolveOidcIdentityMappingBinding as (...a: unknown[]) => unknown)(...args),
   };
 });
 vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () => {
@@ -1251,6 +1257,66 @@ describe('Security-Critical Tests', () => {
       ['refresh_token', refreshForUser],
     ] as const;
 
+    // The real selection and release run (identityRelease.apply is the real one here): the Mapping
+    // Set an app is bound to is the app's own, else the tenant's default, else the platform's.
+    describe('with no Mapping Set on the app, and the ID token released through the real selection', () => {
+      const KEY = 'identity_mapping.oidc_default_set_id';
+      const withDefault = (value: unknown) => {
+        (mockEnv as unknown as Record<string, unknown>).SETTINGS = createMockKV({
+          'settings:tenant:default:identity-mapping': JSON.stringify({ [KEY]: value }),
+        });
+      };
+
+      beforeEach(() => {
+        // The Admin database holds no Mapping Set (an empty answer to every lookup).
+        (mockEnv as unknown as { DB_ADMIN: unknown }).DB_ADMIN = createMockD1();
+      });
+
+      describe.each(flows)('on the %s grant', (_grant, exchange) => {
+        it('issues the ID token as it is when nothing is named, with or without the Admin database', async () => {
+          for (const adminBound of [true, false]) {
+            if (!adminBound) delete (mockEnv as unknown as { DB_ADMIN?: unknown }).DB_ADMIN;
+
+            const response = await exchange();
+
+            expect(response.status).toBe(200);
+            const idClaims = mocks.mockCreateIDToken.mock.calls.at(-1)?.[0] as Record<
+              string,
+              unknown
+            >;
+            expect(idClaims.sub).toBe(USER_ID);
+          }
+        });
+
+        it.each([
+          ['a tenant default naming a Mapping Set that does not exist', 'set-gone'],
+          ['a tenant default that is not a Mapping Set ID', 'not a set id'],
+        ])('refuses to issue an ID token for %s', async (_name, value) => {
+          withDefault(value);
+          mocks.mockCreateIDToken.mockClear();
+
+          const response = await exchange();
+
+          expect(response.status).toBe(400);
+          expect(await parseJsonResponse<{ error: string }>(response)).toMatchObject({
+            error: 'invalid_client',
+          });
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
+
+        it('refuses to issue an ID token when the Mapping Set the tenant names cannot be read for lack of the Admin database', async () => {
+          withDefault('set-1');
+          delete (mockEnv as unknown as { DB_ADMIN?: unknown }).DB_ADMIN;
+          mocks.mockCreateIDToken.mockClear();
+
+          const response = await exchange();
+
+          expect(response.status).toBe(500);
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        });
+      });
+    });
+
     describe.each(Object.entries(MAPPED_SUBS))('with a %s sub', (_kind, mappedSub) => {
       describe.each(flows)('on the %s grant', (_grant, exchange) => {
         it("finds the user's consent and issues the ID token with the mapped sub", async () => {
@@ -1321,6 +1387,8 @@ describe('Security-Critical Tests', () => {
       });
 
       beforeEach(() => {
+        // The Admin database: the Mapping Set the app is bound to is read from it.
+        (mockEnv as unknown as { DB_ADMIN: unknown }).DB_ADMIN = createMockD1();
         mocks.mockFindCanonicalRuntimeUserProjection.mockImplementation(async (userId: string) => ({
           id: userId,
           tenant_id: 'default',

@@ -11,6 +11,7 @@ import {
   mappingReferenceProfileId,
   normalizePlatformActivationScope,
   OIDC_STANDARD_CLAIM_SCOPE,
+  catalogReferenceResolver,
   PLATFORM_MAPPING_TENANT_ID,
   platformDestinationProfileRefs,
   EDUPERSON_ASSURANCE_CLAIM,
@@ -6921,8 +6922,16 @@ export class IdentityMappingControlPlaneRepository {
         );
       }
     }
+    // A platform set is resolved against its catalog as the compile check and the runtime do (a
+    // source that names only its catalog entry reads the entry's place); a tenant's is judged as
+    // it is written.
+    const resolveReference = catalogReferenceResolver(classifyingEntries);
+    const sourceReference = (sourceRef: Record<string, unknown>) =>
+      tenantId === PLATFORM_MAPPING_TENANT_ID
+        ? resolveReference(toMappingSourceReference(sourceRef), { completePlace: true })
+        : toMappingSourceReference(sourceRef);
     const conflictingSourceId = findConflictingSourceIds(
-      releaseEdges.map(({ sourceRef }) => toMappingSourceReference(sourceRef))
+      releaseEdges.map(({ sourceRef }) => sourceReference(sourceRef))
     )[0];
     if (conflictingSourceId) {
       throw badRequest(
@@ -6933,7 +6942,7 @@ export class IdentityMappingControlPlaneRepository {
     for (const { sourceRef, targetRef } of releaseEdges) {
       const sourceClassification = resolveSourceClassification(
         classifyingEntries,
-        toMappingSourceReference(sourceRef)
+        sourceReference(sourceRef)
       );
       const sourceNamespace = readStringValue(sourceRef.namespace);
       if (sourceClassification === null) {

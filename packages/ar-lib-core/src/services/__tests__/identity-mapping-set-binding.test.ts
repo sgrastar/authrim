@@ -9,7 +9,21 @@ import {
   type IdentityMappingTier,
   type LoadMappingBindingBySetIdInput,
 } from '../identity-mapping-set-binding';
-import { openAdminDatabase, seedMapping, sqliteAdapter } from './identity-mapping-sqlite-fixture';
+import {
+  openAdminDatabase,
+  seedMapping as seedMappingRows,
+  sqliteAdapter,
+  seedDestinationProfile,
+  type SeedMappingInput,
+} from './identity-mapping-sqlite-fixture';
+
+/** The Mapping Set, and the active OIDC Destination Profile(s) its edges release into. */
+function seedMapping(db: Parameters<typeof seedMappingRows>[0], input: SeedMappingInput): void {
+  seedMappingRows(db, input);
+  for (const profileId of input.profiles ?? [`profile-${input.id}`]) {
+    seedDestinationProfile(db, { owner: input.owner, id: profileId });
+  }
+}
 
 function input(
   adapter: DatabaseAdapter | null | undefined,
@@ -149,10 +163,58 @@ describe('loadMappingBindingBySetId', () => {
     expect(binding.edges[0].sourceRef.path).toBe('email');
     expect(binding.edges[0].targetRef).toMatchObject({
       path: 'email',
-      catalogEntryId: 'entry-plat',
+      // The row ID the reference names is brought to the stable ID the runtime catalog carries.
+      catalogEntryId: 'field.profile.email.plat',
     });
     expect(binding.destinationProfileIds).toEqual(['profile-plat']);
     expect(binding.destinationProfileId).toBe('profile-plat');
+  });
+
+  describe('the Destination Profile it releases into', () => {
+    const cases: Array<[string, (db: ReturnType<typeof openAdminDatabase>) => void]> = [
+      [
+        'set back to draft',
+        (db) => db.prepare("UPDATE destination_profiles SET lifecycle_state = 'draft'").run(),
+      ],
+      [
+        'whose active version is not active',
+        (db) =>
+          db.prepare("UPDATE destination_profile_versions SET lifecycle_state = 'draft'").run(),
+      ],
+      ['that is missing', (db) => db.prepare('DELETE FROM destination_profiles').run()],
+      [
+        'of another kind (SAML)',
+        (db) => db.prepare("UPDATE destination_profiles SET destination_type = 'saml'").run(),
+      ],
+    ];
+
+    it.each(cases)(
+      'is refused as destination_profile_invalid when it is %s',
+      async (_n, break_) => {
+        for (const owner of [PLATFORM_MAPPING_TENANT_ID, 'tenant-a']) {
+          const db = openAdminDatabase();
+          seedMapping(db, { owner, id: 'x' });
+          break_(db);
+
+          const error = await failure(
+            loadMappingBindingBySetId(input(sqliteAdapter(db), { setId: 'set-x' }))
+          );
+
+          expect(error).toMatchObject({ code: 'destination_profile_invalid', setId: 'set-x' });
+        }
+      }
+    );
+
+    it('is not taken from a tenant when the platform owns the set', async () => {
+      const db = openAdminDatabase();
+      // The edges name profile-plat, which only a tenant owns.
+      seedMappingRows(db, { owner: PLATFORM_MAPPING_TENANT_ID, id: 'plat' });
+      seedDestinationProfile(db, { owner: 'tenant-b', id: 'profile-plat' });
+
+      const error = await failure(loadMappingBindingBySetId(input(sqliteAdapter(db))));
+
+      expect(error.code).toBe('destination_profile_invalid');
+    });
   });
 
   it('reports a set that is not active as set_inactive', async () => {

@@ -234,11 +234,7 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 
 	'set.k.identity_mapping.oidc_default_set_id': 'Standard-Mapping-Set (OIDC)',
 	'set.k.identity_mapping.oidc_default_set_id.desc':
-		'Die ID des Mapping-Sets für Apps dieses Bereichs, die kein eigenes gewählt haben. Nicht gesetzt bedeutet: kein Standard, es wird kein Mapping angewendet. Ein Tenant kann none eintragen, um auch den Standard der Plattform nicht zu verwenden. Es kann nur ein aktives Mapping-Set angegeben werden. Der Wert wird derzeit nur gespeichert und geprüft; die Anmeldung nutzt ihn noch nicht.',
-
-	'set.k.identity_mapping.shadow_compare_enabled': 'Mapping-Set-Auswahl vergleichen (Shadow)',
-	'set.k.identity_mapping.shadow_compare_enabled.desc':
-		'Wenn aktiviert, wird jede OIDC-Identity-Mapping-Auflösung zusätzlich mit der neuen Auswahl durchgeführt (eigene Wahl der App, dann Standard des Tenants, dann Standard der Plattform). Weicht das Ergebnis von dem der Anfrage ab, wird eine Warnung ins Log geschrieben. Die Antworten ändern sich nicht. Jede Auflösung benötigt dafür ein zusätzliches Lesen der Einstellungen und, wenn ein Mapping-Set gewählt wird, einen Datenbankzugriff; aktivieren Sie es daher nur dort, wo der Vergleich gewünscht ist. Plattformeinstellung; standardmäßig aus.',
+		'Die ID des Mapping-Sets für Apps dieses Bereichs, die kein eigenes gewählt haben. Nicht gesetzt bedeutet: kein Standard, es wird kein Mapping angewendet. Ein Tenant kann none eintragen, um auch den Standard der Plattform nicht zu verwenden. Es kann nur ein aktives Mapping-Set angegeben werden. Apps ohne eigenes Mapping-Set verwenden ihn für ID-Token, UserInfo und Zustimmungsbildschirm; eine App kann mit ihrem eigenen none aussteigen. Ist das genannte Mapping-Set nicht nutzbar (gelöscht, inaktiv, ungültig), können sich diese Apps nicht anmelden, bis es korrigiert oder der Wert gelöscht wird.',
 
 	'set.k.bulk_apply.max_tenants_per_request': 'Sammelanwendung: Tenants pro Anfrage',
 	'set.k.bulk_apply.max_tenants_per_request.desc':

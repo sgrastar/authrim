@@ -256,6 +256,8 @@ export interface OAuthErrorResponse {
 }
 
 export interface OIDCIdentityMappingFieldMappingSelector {
+  /** `none`: the app takes no mapping, whatever the tenant's and the platform's defaults say. */
+  mode?: 'none';
   fieldMappingSetId?: string;
   fieldMappingVersionId?: string;
   destinationNamespace?: string;

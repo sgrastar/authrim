@@ -968,8 +968,6 @@ function idTokenReleaseContext(
       return Object.fromEntries(claimNames.map((name) => [name, claims[name]]));
     },
     log: getLogger(c).module('TOKEN'),
-    // For the shadow comparison of the Mapping Set selection; it does nothing to the response.
-    waitUntil: (promise) => c.executionCtx.waitUntil(promise),
   };
 }
 

@@ -9,27 +9,22 @@ import {
 } from './custom-claims/resolver';
 import { resolveCustomClaimRuntimeSourcesFromEnv } from './custom-claims/runtime-sources';
 import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
-import {
-  PLATFORM_MAPPING_TENANT_ID,
-  RuntimeIdentityMappingOwnerError,
-} from './identity-mapping-owner';
+import { PLATFORM_MAPPING_TENANT_ID } from './identity-mapping-owner';
 import { isNonAccountSubject } from '../utils/id';
-import { logSwallowedIdentityMappingFailure } from './identity-mapping-swallowed-failure';
 import {
   filterOidcClaimsByDestinationConsent,
   filterOidcClaimsWithoutDestinationProfile,
   isProtectedIdentityMappingDestinationClaim,
   loadDestinationProfileConsentDescriptor,
 } from './destination-profile-consent';
+import {
+  resolveOidcIdentityMappingBinding,
+  type OidcIdentityMappingResolution,
+} from './identity-mapping-resolution';
 import { IdentityMappingSelectionError } from './identity-mapping-selection';
 import { IdentityMappingResolutionError } from './identity-mapping-set-binding';
 import {
-  scheduleOidcIdentityMappingShadowCompare,
-  type ShadowCurrentResolution,
-} from './identity-mapping-shadow-compare';
-import {
   assertRuntimeIdentityMappingReleaseSafety,
-  resolveRuntimeIdentityMappingBinding,
   type RuntimeIdentityMappingBinding,
 } from './identity-mapping-runtime-resolver';
 import {
@@ -40,18 +35,23 @@ import {
 } from './persistent-identifiers';
 
 export interface ApplyOIDCIdentityMappingInput {
+  /** The tenant Core database: the user's consent and attributes. Never read for a mapping. */
   adapter: DatabaseAdapter;
-  env?: Partial<Env>;
+  /**
+   * SETTINGS decides which Mapping Set applies (the tenant's and the platform's default); DB_ADMIN
+   * holds the set. A selection of none reads neither database, so it needs no DB_ADMIN; one that
+   * names a set fails without it (there is no fallback to `adapter`).
+   */
+  env: Partial<Env>;
   /** The tenant the request is for. Consent, custom fields and identifiers stay with it. */
   tenantId: string;
-  /**
-   * The tenant ID that owns the Mapping Set the selector names, when it is the platform's rather
-   * than the calling tenant's (see RuntimeIdentityMappingResolutionContext.ownerTenantId). Only
-   * the lookup of the mapping's own rows follows it. Unset: the calling tenant owns them.
-   */
-  ownerTenantId?: string;
   clientId: string;
   sectorIdentifier?: string | null;
+  /**
+   * The app's `identity_mapping`: its own Mapping Set, `{ mode: 'none' }`, or nothing (the tenant's
+   * default, else the platform's, else no mapping). What it does not name is never looked up by
+   * an activation's scope.
+   */
   selector?: OIDCIdentityMappingFieldMappingSelector | null;
   destinationSurface?: 'id_token' | 'userinfo';
   grantedScopes?: string[];
@@ -96,11 +96,6 @@ export interface ApplyOIDCIdentityMappingInput {
   sourceAttributes?:
     | Record<string, unknown>
     | ((names: string[]) => Promise<Record<string, unknown> | null>);
-  /**
-   * Hands a promise to the Worker to keep alive past the response (`executionCtx.waitUntil`). Only
-   * the shadow comparison of the Mapping Set selection uses it, so it never delays the response.
-   */
-  waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 export interface ApplyOIDCIdentityMappingResult {
@@ -124,71 +119,24 @@ export async function deriveOIDCSubject(input: ApplyOIDCIdentityMappingInput): P
 export async function applyOIDCIdentityMapping(
   input: ApplyOIDCIdentityMappingInput & { subjectOnly?: boolean }
 ): Promise<ApplyOIDCIdentityMappingResult> {
-  let binding: RuntimeIdentityMappingBinding | null;
+  // Which Mapping Set applies is decided by what is named, never by an activation's scope: the
+  // app's own choice, else the tenant's default, else the platform's, else none. A level that is
+  // set and cannot be used fails here (the request is not answered without the mapping); a
+  // selection of none reads no database.
+  let resolution: OidcIdentityMappingResolution;
   try {
-    // Identity mapping catalogs, activations, and compiled snapshots are control-plane data in
-    // DB_ADMIN. Keep the supplied adapter only as a single-database compatibility fallback.
-    const mappingAdapter = input.env?.DB_ADMIN
-      ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-identity-mapping')
-      : input.adapter;
-    binding = await resolveRuntimeIdentityMappingBinding(mappingAdapter, {
+    resolution = await resolveOidcIdentityMappingBinding({
+      env: input.env,
       tenantId: input.tenantId,
-      ownerTenantId: input.ownerTenantId,
-      protocol: 'oidc',
-      role: 'op',
-      fieldMappingSetId: input.selector?.fieldMappingSetId,
-      fieldMappingVersionId: input.selector?.fieldMappingVersionId,
-      partnerEntityId: input.clientId,
       clientId: input.clientId,
+      clientSelector: input.selector,
     });
   } catch (error) {
-    // A wrong owner is a bug of the caller, not a mapping that cannot be read: it must not turn
-    // into a request that goes on without the mapping.
-    if (error instanceof RuntimeIdentityMappingOwnerError) throw error;
-    if (!input.selector?.fieldMappingSetId) {
-      // The app names no Mapping Set, so the request goes on without a mapping. That hides a
-      // tenant-wide mapping that exists and cannot be read, so it is recorded as an error.
-      logSwallowedIdentityMappingFailure({
-        component: 'OIDC-IDENTITY-MAPPING',
-        tenantId: input.tenantId,
-        clientId: input.clientId,
-        adminDatabaseBound: Boolean(input.env?.DB_ADMIN),
-        error,
-      });
-      shadowCompare(input, { tier: 'none', failed: true });
-      if (input.subjectOnly) return { claims: input.claims, binding: null };
-      return {
-        claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
-        binding: null,
-      };
-    }
-    throw error;
+    throw toOidcIdentityMappingRuntimeError(error, { clientId: input.clientId });
   }
-
-  // What the request resolved with is settled. Compared with the new selection, off the request's path.
-  if (binding || !input.selector?.fieldMappingSetId) {
-    shadowCompare(
-      input,
-      binding
-        ? {
-            tier: input.selector?.fieldMappingSetId ? 'explicit' : 'implicit_tenant_activation',
-            setId: binding.fieldMappingSetId,
-          }
-        : { tier: 'none' }
-    );
-  }
+  const { selection, binding } = resolution;
 
   if (!binding) {
-    if (input.selector?.fieldMappingSetId) {
-      throw new OIDCIdentityMappingRuntimeError(
-        'No active OIDC identity mapping binding found for selected policy',
-        {
-          code: 'policy.missing_identity_mapping_binding',
-          fieldMappingSetId: input.selector.fieldMappingSetId,
-          clientId: input.clientId,
-        }
-      );
-    }
     if (input.subjectOnly) return { claims: input.claims, binding: null };
     return {
       claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
@@ -207,12 +155,14 @@ export async function applyOIDCIdentityMapping(
     );
   }
 
-  const destinationProfileAdapter = input.env?.DB_ADMIN
-    ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-destination-profile-safety')
-    : input.adapter;
+  // The binding carries the tenant ID that owns the set: the calling tenant's, or the platform's.
   // A mapping the platform owns releases into a Destination Profile the platform owns: the
   // profile is looked up under its owner, so a profile a tenant owns is never taken for it.
-  const ownedByPlatform = input.ownerTenantId === PLATFORM_MAPPING_TENANT_ID;
+  const ownedByPlatform = binding.tenantId === PLATFORM_MAPPING_TENANT_ID;
+  const destinationProfileAdapter = requireDedicatedAdminDatabaseAdapter(
+    input.env,
+    'oidc-destination-profile-safety'
+  );
   const destinationDescriptor = await loadDestinationProfileConsentDescriptor(
     destinationProfileAdapter,
     ownedByPlatform ? PLATFORM_MAPPING_TENANT_ID : input.tenantId,
@@ -230,8 +180,11 @@ export async function applyOIDCIdentityMapping(
     }
   }
 
+  // The namespace the app's own selector names applies only where the app chose the set.
   const destinationNamespace =
-    input.selector?.destinationNamespace ?? binding.destinationNamespace ?? 'oidc.claim';
+    (selection.kind === 'bound' ? selection.selector?.destinationNamespace : undefined) ??
+    binding.destinationNamespace ??
+    'oidc.claim';
   const sourceClaims = await loadMappedCustomClaimSources(input, binding);
   const persistentIdentifiers = await resolveOIDCPersistentIdentifiers(input, binding);
   const runtimeResult = executeRuntimeMapping({
@@ -296,21 +249,6 @@ export async function applyOIDCIdentityMapping(
   };
 }
 
-/**
- * Starts the shadow comparison of the Mapping Set selection against what this request resolved with
- * (a no-op unless the platform turned it on). It changes nothing for the request.
- */
-function shadowCompare(input: ApplyOIDCIdentityMappingInput, current: ShadowCurrentResolution) {
-  scheduleOidcIdentityMappingShadowCompare({
-    env: input.env,
-    tenantId: input.tenantId,
-    clientId: input.clientId,
-    clientSelector: input.selector,
-    current,
-    waitUntil: input.waitUntil,
-  });
-}
-
 async function loadMappedCustomClaimSources(
   input: ApplyOIDCIdentityMappingInput,
   binding: RuntimeIdentityMappingBinding
@@ -335,8 +273,7 @@ async function loadMappedCustomClaimSources(
   // The platform's mapping is saved without tenant-defined fields, so a key it reads that the
   // claims lack is a standard one. Looking it up among the calling tenant's custom fields would
   // let a tenant's field of the same name stand in for it.
-  if (input.ownerTenantId === PLATFORM_MAPPING_TENANT_ID) return claims;
-  if (!input.env) return claims;
+  if (binding.tenantId === PLATFORM_MAPPING_TENANT_ID) return claims;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
   if (!subjectId) return claims;
 
@@ -375,7 +312,10 @@ async function applyOIDCDestinationFieldConsent(
   claims: Record<string, unknown>,
   binding: RuntimeIdentityMappingBinding | null
 ): Promise<Record<string, unknown>> {
-  const profileId = binding?.destinationProfileId ?? input.selector?.destinationProfileId;
+  // Only a Mapping Set that was selected brings a Destination Profile. An app whose selector names
+  // only a profile (no set) is not bound to it: the profile is not looked up for a request that
+  // no Mapping Set governs, as the consent screen does not look it up.
+  const profileId = binding?.destinationProfileId;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
   const authorizedClaimNames = input.authorizedClaimNames ?? [];
   if (!profileId) return filterOidcClaimsWithoutDestinationProfile(claims);
@@ -384,16 +324,17 @@ async function applyOIDCDestinationFieldConsent(
       'OIDC destination release requires a subject identifier',
       {
         code: 'policy.missing_destination_subject',
-        fieldMappingSetId: input.selector?.fieldMappingSetId,
+        fieldMappingSetId: binding?.fieldMappingSetId,
         clientId: input.clientId,
       }
     );
   }
   return filterOidcClaimsByDestinationConsent({
     coreAdapter: input.adapter,
-    adminAdapter: input.env?.DB_ADMIN
-      ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-destination-profile-consent')
-      : input.adapter,
+    adminAdapter: requireDedicatedAdminDatabaseAdapter(
+      input.env,
+      'oidc-destination-profile-consent'
+    ),
     tenantId: input.tenantId,
     subjectId,
     clientId: input.clientId,
@@ -702,11 +643,11 @@ function assertMappedSubjectNotReserved(
 }
 
 /**
- * The error the release of claims answers with for a failure of the new selection or of reading the
- * set it chose, so those failures answer as the ones above do (400 `invalid_client` /
- * `invalid_client_metadata` for a configuration the app cannot be served with, 500 for a
- * database or settings that cannot be read). Anything else is returned as it is. Used by the
- * resolution that replaces the current one; the current one does not call it yet.
+ * The error the release of claims answers with for a failure of the selection or of reading the
+ * set it chose: 400 `invalid_client` / `invalid_client_metadata` for a configuration the app
+ * cannot be served with (the set it names is gone or inactive, its Destination Profile is not one,
+ * a default or the app's own choice is not a value), 500 for a database or settings that cannot be
+ * read. Anything else is returned as it is.
  */
 export function toOidcIdentityMappingRuntimeError(
   error: unknown,

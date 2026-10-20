@@ -40,6 +40,75 @@ export function mappingReferenceProfileId(ref: Record<string, unknown>): string 
   return referenceString(ref.profileId) ?? referenceString(ref.profile_id);
 }
 
+/** What a reference names, once it has been resolved against a catalog (see `catalogReferenceResolver`). */
+export type ResolvedCatalogReference = MappingSourceReference;
+
+function namesAPart(value: string | undefined): value is string {
+  // The resolver reads a reference that names none as `unknown`; the stored form has none at all.
+  return value !== undefined && value !== '' && value !== 'unknown';
+}
+
+/**
+ * How a reference to a catalog entry is resolved for a Mapping Set the platform owns, in one place
+ * for everything that judges or runs such a set (compile, activation and the runtime), so none of
+ * them reads a reference differently from the others.
+ *
+ * A catalog entry has a row ID and a stable field ID (an entry's `ids` are its row ID and then
+ * its stable ID, the last being the one the runtime catalog carries). The control plane accepts a
+ * mapping that names either, so the reference is brought to the stable ID.
+ *
+ * The ID never decides what is read when the reference says where:
+ * - A reference that names a place (`path`, `fieldKey` or `nodeId`) reads that place. Its row ID is
+ *   brought to the stable ID only when the entry describes that same place; the ID of another
+ *   place's entry is left as it is, so it stays inconsistent with what is read and is refused.
+ * - A reference that names no place (`completePlace` set, for a source) reads the place the entry
+ *   describes: the path (and the namespace, when the reference has none) is taken from the entry,
+ *   and the classification and scope requirements follow from the place read. An explicit
+ *   namespace is kept, so one that makes the place another is refused with the rest. An entry that
+ *   describes no place to read (destination-only), an ID the catalog does not have, or no ID
+ *   completes nothing, and the reference stays what it was: unknown, and refused.
+ * An ID that already is a stable ID of the catalog stays.
+ */
+export function catalogReferenceResolver(
+  entries: readonly ClassifyingCatalogEntry[]
+): (
+  ref: MappingSourceReference,
+  options?: { completePlace?: boolean }
+) => ResolvedCatalogReference {
+  const byId = new Map<string, ClassifyingCatalogEntry>();
+  const stableIds = new Set<string>();
+  for (const entry of entries) {
+    stableIds.add(entry.ids[entry.ids.length - 1]);
+  }
+  // A stable ID wins over a row ID spelled the same.
+  for (const entry of entries) {
+    for (const id of entry.ids.slice(0, -1)) if (!byId.has(id)) byId.set(id, entry);
+  }
+  for (const entry of entries) byId.set(entry.ids[entry.ids.length - 1], entry);
+
+  return (ref, options = {}) => {
+    const id = ref.catalogEntryId;
+    if (id === undefined) return ref;
+    const entry = byId.get(id);
+    if (!entry) return ref;
+    const stable = entry.ids[entry.ids.length - 1];
+    if (namesAPart(ref.path)) {
+      const samePlace =
+        mappingSourceSubjectPath(entry) === mappingSourceSubjectPath(ref as MappingSourceReference);
+      return stableIds.has(id) || !samePlace ? ref : { ...ref, catalogEntryId: stable };
+    }
+    if (!options.completePlace || entry.targetType === 'destination-only') {
+      return stableIds.has(id) ? ref : { ...ref, catalogEntryId: stable };
+    }
+    return {
+      ...ref,
+      namespace: namesAPart(ref.namespace) ? ref.namespace : entry.namespace,
+      path: entry.path,
+      catalogEntryId: stable,
+    };
+  };
+}
+
 /** A stored source reference as the place it reads (an empty path when it names none). */
 export function toMappingSourceReference(ref: Record<string, unknown>): MappingSourceReference {
   return {

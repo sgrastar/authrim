@@ -17,6 +17,7 @@ import {
   RuntimeIdentityMappingOwnerError,
 } from './identity-mapping-owner';
 import {
+  catalogReferenceResolver,
   findConflictingSourceIds,
   mappingDestinationProfileIds,
   mappingReferenceCatalogEntryId,
@@ -58,6 +59,15 @@ export interface RuntimeIdentityMappingResolutionContext {
    * for the callers that do not judge sources by it.
    */
   resolveCanonicalCatalog?: boolean;
+  /**
+   * Resolve the mapping's references against the catalog the way a Mapping Set the platform owns
+   * is judged (see `catalogReferenceResolver`): an entry's row ID is brought to the stable ID the
+   * runtime catalog carries, and a source that names no place reads the place of its entry. Off,
+   * every reference is returned
+   * as stored, as for every caller before it; the read of a Mapping Set the platform owns for OIDC
+   * turns it on.
+   */
+  normalizeCatalogEntryIds?: boolean;
 }
 
 export interface RuntimeIdentityMappingBinding {
@@ -348,6 +358,27 @@ export async function resolveRuntimeIdentityMappingBinding(
       loadFieldMappingRules(adapter, ownerTenantId, selected.field_mapping_version_id),
     ]
   );
+  const resolveCatalogReference = catalogReferenceResolver(
+    catalogEntries.map((entry) => ({
+      ids: [entry.id, entry.stable_field_id || entry.id],
+      namespace: entry.namespace,
+      path: entry.path,
+      classification: entry.classification,
+      targetType: normalizeTargetType(entry.target_taxonomy),
+    }))
+  );
+  // Only a set the platform owns is read this way (see `normalizeCatalogEntryIds`); the place of a
+  // source that names none is taken from its catalog entry. A destination's path is its own name.
+  const withCatalogReference = (ref: FieldRef): FieldRef =>
+    context.normalizeCatalogEntryIds && ref.catalogEntryId
+      ? {
+          ...ref,
+          ...resolveCatalogReference(
+            { namespace: ref.namespace, path: ref.path, catalogEntryId: ref.catalogEntryId },
+            { completePlace: ref.side === 'source' }
+          ),
+        }
+      : ref;
   const activationScope = parseJsonObject(selected.activation_scope_json);
   const destinationProfileIds = runtimeDestinationProfileIds(
     edges.map((edge) => parseJsonObject(edge.target_ref_json)),
@@ -373,12 +404,19 @@ export async function resolveRuntimeIdentityMappingBinding(
       },
       entries: catalogEntries.map(toCatalogEntry),
     },
-    edges: toRuntimeEdges(edges),
-    transforms: toRuntimeTransforms(transforms, edges),
+    edges: toRuntimeEdges(edges).map((edge) => ({
+      ...edge,
+      sourceRef: withCatalogReference(edge.sourceRef),
+      targetRef: withCatalogReference(edge.targetRef),
+    })),
+    transforms: toRuntimeTransforms(transforms, edges).map((transform) => ({
+      ...transform,
+      outputTargetRef: withCatalogReference(transform.outputTargetRef),
+    })),
     validationRules: validationRules.map((rule) => ({
       id: rule.id,
       kind: rule.validation_kind as ValidationRuleKind,
-      targetRef: parseFieldRef(rule.target_ref_json),
+      targetRef: withCatalogReference(parseFieldRef(rule.target_ref_json)),
       defaultSeverity: rule.severity as ValidationRule['defaultSeverity'],
       parameters: parseJsonObject(rule.parameters_json ?? '{}'),
     })),

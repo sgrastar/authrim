@@ -9,9 +9,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 /**
  * The statements of docs/operations/identity-mapping-implicit-application.md, taken from the
  * document itself and run on the real Admin and Core baselines. They must find the activations the
- * runtime resolver would apply to an app that names no Mapping Set, pick the same winner, describe
- * the Destination Profile it brings, and count the apps that are exposed; and they must write
- * nothing.
+ * resolver's lookup by scope (still used by Introspection, VC and SAML) would apply to an app that
+ * names no Mapping Set, pick the same winner, describe the Destination Profile it brings, and count
+ * the apps that are exposed; they must find the selectors the selection reads as no choice or
+ * differently from before; and they must write nothing.
  */
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -844,8 +845,120 @@ describe('identity mapping implicit-application runbook SQL', () => {
     });
   });
 
+  describe('legacy-selectors', () => {
+    function addClient(id: string, identityMapping: string | null): void {
+      core
+        .prepare(
+          `INSERT INTO oauth_clients
+             (client_id, client_name, redirect_uris, grant_types, response_types, created_at,
+              updated_at, tenant_id, identity_mapping)
+           VALUES (?, ?, '[]', '[]', '[]', 1, 1, 'tenant-a', ?)`
+        )
+        .run(id, `App ${id}`, identityMapping);
+    }
+    const findings = () =>
+      Object.fromEntries(
+        all(core, runbook('legacy-selectors')).map((row) => [row.client_id, row.finding])
+      );
+
+    it('reports each shape the selection reads as no choice or differently from before, and no other', () => {
+      // Unset, or a choice: not reported.
+      addClient('null', null);
+      addClient('blank', '  ');
+      addClient('json-null', 'null');
+      addClient('empty-object', '{}');
+      addClient('other-keys', '{"destinationNamespace":"oidc.claim"}');
+      addClient('set', '{"fieldMappingSetId":"set-1"}');
+      addClient('set-pinned', '{"fieldMappingSetId":"set-1","fieldMappingVersionId":"v1"}');
+      addClient('older-spelling', '{"policySetId":"set-1"}');
+      addClient('null-set-older-spelling', '{"fieldMappingSetId":null,"policySetId":"set-1"}');
+      addClient('opt-out', '{"mode":"none"}');
+      addClient('null-mode', '{"mode":null,"fieldMappingSetId":"set-1"}');
+      // Not a choice, or no longer read.
+      addClient('profile-only', '{"destinationProfileId":"profile-1"}');
+      addClient('empty-set', '{"fieldMappingSetId":""}');
+      addClient('numeric-set', '{"fieldMappingSetId":5}');
+      addClient('padded-set', '{"fieldMappingSetId":" set-1"}');
+      addClient('long-set', `{"fieldMappingSetId":"${'s'.repeat(201)}"}`);
+      addClient('unknown-mode', '{"mode":"default"}');
+      addClient('mode-with-set', '{"mode":"none","fieldMappingSetId":"set-1"}');
+      addClient('mode-with-older-spelling', '{"mode":"none","policySetId":"set-1"}');
+      addClient('numeric-mode', '{"mode":1}');
+      addClient('not-json', 'not json');
+      addClient('array', '[]');
+      addClient('number', '5');
+      addClient('text', '"abc"');
+
+      expect(findings()).toEqual({
+        'profile-only': 'profile_only',
+        'empty-set': 'invalid_set_id',
+        'numeric-set': 'invalid_set_id',
+        'padded-set': 'invalid_set_id',
+        'long-set': 'invalid_set_id',
+        'unknown-mode': 'invalid_mode',
+        'mode-with-set': 'invalid_mode',
+        'mode-with-older-spelling': 'invalid_mode',
+        'numeric-mode': 'invalid_mode',
+        'not-json': 'not_json',
+        array: 'not_an_object',
+        number: 'not_an_object',
+        text: 'not_an_object',
+      });
+    });
+
+    it('names the Destination Profile a profile-only selector holds', () => {
+      addClient('profile-only', '{"destinationProfileId":"profile-1"}');
+
+      expect(all(core, runbook('legacy-selectors'))).toEqual([
+        expect.objectContaining({
+          tenant_id: 'tenant-a',
+          client_id: 'profile-only',
+          finding: 'profile_only',
+          destination_profile_id: 'profile-1',
+        }),
+      ]);
+    });
+
+    it('agrees with the selection the runtime makes: it reports exactly the selectors that are no choice or are no longer read', async () => {
+      const { readClientIdentityMappingChoice } = await import('@authrim/ar-lib-core');
+      const samples = [
+        'null',
+        '{}',
+        '{"destinationNamespace":"x"}',
+        '{"fieldMappingSetId":"set-1"}',
+        '{"policySetId":"set-1"}',
+        '{"mode":"none"}',
+        '{"mode":null,"fieldMappingSetId":"set-1"}',
+        '{"destinationProfileId":"p"}',
+        '{"fieldMappingSetId":""}',
+        '{"fieldMappingSetId":5}',
+        '{"fieldMappingSetId":" a"}',
+        '{"mode":"default"}',
+        '{"mode":"none","fieldMappingSetId":"set-1"}',
+        'not json',
+        '[]',
+        '5',
+        '"abc"',
+      ];
+      samples.forEach((sample, index) => addClient(`sample-${index}`, sample));
+      const reported = findings();
+
+      samples.forEach((sample, index) => {
+        const choice = readClientIdentityMappingChoice(sample).kind;
+        const legacyProfile = /destinationProfileId/.test(sample) && choice === 'unset';
+        const expected = choice === 'invalid' || legacyProfile;
+        expect(`sample-${index}` in reported, `${sample} (${choice})`).toBe(expected);
+      });
+    });
+  });
+
   describe('they only read', () => {
-    const NAMES = ['reachable-activations', 'apps-per-tenant', 'apps-without-mapping-set'];
+    const NAMES = [
+      'reachable-activations',
+      'apps-per-tenant',
+      'apps-without-mapping-set',
+      'legacy-selectors',
+    ];
 
     it.each(NAMES)('%s is a single SELECT with no write keyword', (name) => {
       const sql = runbook(name);
@@ -866,6 +979,7 @@ describe('identity mapping implicit-application runbook SQL', () => {
       expect(() => all(admin, runbook('reachable-activations'))).not.toThrow();
       expect(() => all(core, runbook('apps-per-tenant'))).not.toThrow();
       expect(() => all(core, runbook('apps-without-mapping-set'))).not.toThrow();
+      expect(() => all(core, runbook('legacy-selectors'))).not.toThrow();
       expect(() => admin.exec('DELETE FROM field_mapping_sets')).toThrow(/readonly/i);
     });
 

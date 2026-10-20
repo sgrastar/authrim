@@ -1,9 +1,9 @@
 import type { DatabaseAdapter } from '../db/adapter';
+import { loadDestinationProfileConsentDescriptor } from './destination-profile-consent';
 import {
   PLATFORM_MAPPING_TENANT_ID,
   RuntimeIdentityMappingOwnerError,
 } from './identity-mapping-owner';
-import { swallowedIdentityMappingFailureReasonCode } from './identity-mapping-swallowed-failure';
 import {
   resolveRuntimeIdentityMappingBinding,
   type RuntimeIdentityMappingBinding,
@@ -79,6 +79,28 @@ const RESOLUTION_REASON_CODES: ReadonlySet<string> = new Set([
   'admin_database_not_configured',
 ]);
 
+const CODE_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/**
+ * A short code for a failure: an own `code` that is a plain token, else a pattern of the message
+ * mapped to a fixed code, else the error's name.
+ */
+function failureCode(error: unknown): string {
+  if (!(error instanceof Error)) return 'unknown';
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === 'string' && CODE_PATTERN.test(code)) return code;
+  const message = error.message;
+  if (/no such table/i.test(message)) return 'no_such_table';
+  if (/no such column/i.test(message)) return 'no_such_column';
+  if (/DB_ADMIN is not configured|Admin database is not configured/i.test(message)) {
+    return 'admin_database_not_configured';
+  }
+  if (/D1_ERROR/i.test(message)) return 'd1_error';
+  if (/timed? ?out|timeout/i.test(message)) return 'database_timeout';
+  if (/network|connection|unavailable|overloaded/i.test(message)) return 'database_unavailable';
+  return CODE_PATTERN.test(error.name) ? error.name : 'unknown';
+}
+
 /**
  * Why a database failure happened, as one of a fixed set of codes. The error's own `code` and
  * `name` are not passed on unless they are one of those codes: they are free text to us, and can
@@ -86,10 +108,10 @@ const RESOLUTION_REASON_CODES: ReadonlySet<string> = new Set([
  * and otherwise reported as `unknown`.
  */
 export function identityMappingResolutionReasonCode(error: unknown): string {
-  const direct = swallowedIdentityMappingFailureReasonCode(error);
+  const direct = failureCode(error);
   if (RESOLUTION_REASON_CODES.has(direct)) return direct;
   if (error instanceof Error) {
-    const byMessage = swallowedIdentityMappingFailureReasonCode(new Error(error.message));
+    const byMessage = failureCode(new Error(error.message));
     if (RESOLUTION_REASON_CODES.has(byMessage)) return byMessage;
   }
   return 'unknown';
@@ -144,6 +166,10 @@ export async function loadMappingBindingBySetId(
       fieldMappingVersionId: input.versionId,
       partnerEntityId: input.clientId,
       clientId: input.clientId,
+      // A set the platform owns names its catalog entries by either ID (the control plane accepts
+      // both); the tenant's own sets, and every other protocol, are read as they are stored.
+      normalizeCatalogEntryIds:
+        input.protocol === 'oidc' && setRow.tenant_id === PLATFORM_MAPPING_TENANT_ID,
     });
   } catch (error) {
     if (error instanceof RuntimeIdentityMappingOwnerError) throw error;
@@ -151,6 +177,23 @@ export async function loadMappingBindingBySetId(
   }
   if (!binding) throw fail('set_inactive');
   if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+    throw fail('destination_profile_invalid');
+  }
+  // The profile it releases into must be there and be an active OIDC one, so that every caller
+  // (the ID token, UserInfo, the consent screen, the sub of an authorization request) gets the
+  // same answer for a profile that was set back to draft, removed, or is of another kind. It is
+  // looked up under the set's owner: a profile a tenant owns is not the platform set's.
+  let descriptor;
+  try {
+    descriptor = await loadDestinationProfileConsentDescriptor(
+      adapter,
+      setRow.tenant_id,
+      binding.destinationProfileId
+    );
+  } catch (error) {
+    throw fail('admin_database_unavailable', identityMappingResolutionReasonCode(error));
+  }
+  if (!descriptor || descriptor.destinationType !== 'oidc') {
     throw fail('destination_profile_invalid');
   }
   return binding;

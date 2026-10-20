@@ -3,8 +3,8 @@
  *
  * Which Mapping Set an OIDC app of the calling tenant is bound to, and why: the app's own choice,
  * the tenant's default, the platform's default, or none. It runs `selectIdentityMapping`, the
- * selection the shadow comparison runs, so what an admin sees is what the selection decides (the
- * release of claims does not use that selection yet).
+ * selection the ID token, UserInfo and the consent screen run, so what an admin sees is what
+ * decides at runtime.
  *
  * Without `client_id` it shows the tenant's view: the defaults, with no app level. With one, the
  * app must be the calling tenant's; another tenant's app and one that does not exist are both 404.

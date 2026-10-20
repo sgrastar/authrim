@@ -7,7 +7,9 @@
  * database, so it gives the same answer in every Worker whether or not DB_ADMIN is bound. Reading
  * the chosen set is `resolveOidcIdentityMappingBinding` (identity-mapping-resolution.ts).
  *
- * Nothing in the release of claims uses this yet; the admin API and the shadow comparison do.
+ * The release of claims (ID token, UserInfo, the subject of an authorization request) and the
+ * consent screen go through this selection (see `applyOIDCIdentityMapping`), and so does the admin
+ * API that shows what applies to an app.
  */
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
 import {
@@ -66,7 +68,7 @@ function isUsableSetId(value: unknown): value is string {
  * and backup checks still read) names a set; `{ mode: 'none' }` is the explicit opt-out; nothing
  * (null, undefined, empty, an object with neither) is unset.
  *
- * This only reads the value. Saving `{ mode: 'none' }` is not accepted yet.
+ * This only reads the value; the admin API checks what is saved.
  */
 export function readClientIdentityMappingChoice(raw: unknown): ClientIdentityMappingChoice {
   let value = raw;

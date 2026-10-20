@@ -231,11 +231,7 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 
 	'set.k.identity_mapping.oidc_default_set_id': 'Default Mapping Set (OIDC)',
 	'set.k.identity_mapping.oidc_default_set_id.desc':
-		'The ID of the Mapping Set used by apps in this scope that did not choose one of their own. Unset means no default, so no mapping is applied. A tenant can enter none to ignore the platform default as well. Only an active Mapping Set can be named. For now this is saved and checked only; sign-in does not use it yet.',
-
-	'set.k.identity_mapping.shadow_compare_enabled': 'Compare Mapping Set selection (shadow)',
-	'set.k.identity_mapping.shadow_compare_enabled.desc':
-		"While on, each OIDC identity mapping resolution is also run through the new selection (the app's own choice, then the tenant default, then the platform default), and a difference from what the request used is written to the log as a warning. Responses do not change. It adds a settings read and, when a Mapping Set is selected, a database read to each resolution, so turn it on only where you want the comparison. Platform setting; off by default.",
+		'The ID of the Mapping Set used by apps in this scope that did not choose one of their own. Unset means no default, so no mapping is applied. A tenant can enter none to ignore the platform default as well. Only an active Mapping Set can be named. Apps that name no Mapping Set of their own use it, for the ID token, UserInfo and the consent screen; an app can opt out with its own none. If the named Mapping Set cannot be used (deleted, inactive, not valid), those apps cannot sign in until it is fixed or cleared.',
 
 	'set.k.bulk_apply.max_tenants_per_request': 'Bulk apply: tenants per request',
 	'set.k.bulk_apply.max_tenants_per_request.desc':

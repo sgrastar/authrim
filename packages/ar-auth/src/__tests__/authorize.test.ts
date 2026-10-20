@@ -100,11 +100,17 @@ vi.mock('@authrim/ar-lib-core', async () => {
   };
 });
 
-// The database boundary of a real identity mapping: the binding the app's mapping resolves to, the
-// user's canonical record, and the Destination Profile consent filter. Unset, each is the real
+// The database boundary of a real identity mapping: the binding the app's Mapping Set resolves to,
+// the user's canonical record, and the Destination Profile consent filter. Unset, each is the real
 // implementation; the mapping itself always runs for real.
 const mappingFixture = vi.hoisted(() => ({
+  // What the Mapping Set the app is bound to reads as. The selection and the reading of the set
+  // are tested in ar-lib-core; here a binding stands for "the tenant's default Mapping Set".
   binding: null as unknown,
+  // What an activation of the whole tenant would resolve to if it were looked up by its scope: the
+  // OIDC path no longer looks for it, and `implicitLookups` counts the times it was asked.
+  implicit: null as unknown,
+  implicitLookups: 0,
   // A Destination Profile (its schema's claims) the real release filter is run against.
   profile: null as { claims: Array<Record<string, unknown>> } | null,
   // Whether the user has already agreed to release the profile's fields (the stored selection).
@@ -112,16 +118,35 @@ const mappingFixture = vi.hoisted(() => ({
   userRow: null as Record<string, unknown> | null,
   userLookups: [] as unknown[][],
 }));
+vi.mock('@authrim/ar-lib-core/services/identity-mapping-resolution', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/identity-mapping-resolution'
+  );
+  return {
+    ...actual,
+    resolveOidcIdentityMappingBinding: (...args: unknown[]) =>
+      // An app that opts out is bound to nothing, whatever the tenant names.
+      mappingFixture.binding &&
+      (args[0] as { clientSelector?: { mode?: string } | null }).clientSelector?.mode !== 'none'
+        ? Promise.resolve({
+            selection: { kind: 'bound', tier: 'tenant_default', setId: 'set-tenant', chain: [] },
+            binding: mappingFixture.binding,
+          })
+        : (actual.resolveOidcIdentityMappingBinding as (...a: unknown[]) => unknown)(...args),
+  };
+});
 vi.mock('@authrim/ar-lib-core/services/identity-mapping-runtime-resolver', async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
     '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver'
   );
   return {
     ...actual,
-    resolveRuntimeIdentityMappingBinding: (...args: unknown[]) =>
-      mappingFixture.binding
-        ? Promise.resolve(mappingFixture.binding)
-        : (actual.resolveRuntimeIdentityMappingBinding as (...a: unknown[]) => unknown)(...args),
+    resolveRuntimeIdentityMappingBinding: (...args: unknown[]) => {
+      mappingFixture.implicitLookups += 1;
+      return mappingFixture.implicit
+        ? Promise.resolve(mappingFixture.implicit)
+        : (actual.resolveRuntimeIdentityMappingBinding as (...a: unknown[]) => unknown)(...args);
+    },
   };
 });
 vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () => {
@@ -527,6 +552,8 @@ function createMockEnv(): Env {
       'region_shard_config:default': JSON.stringify(TEST_REGION_CONFIG),
     }) as unknown as KVNamespace,
     DB: createMockDB(),
+    // The Admin database: a Mapping Set the app is bound to is read from it.
+    DB_ADMIN: createMockDB(),
     PUBLIC_ASSETS: {} as R2Bucket,
     KEY_MANAGER: createMockDO() as unknown as Env['KEY_MANAGER'],
     SESSION_STORE: createMockSessionStore() as unknown as Env['SESSION_STORE'],
@@ -2516,33 +2543,6 @@ describe('Authorization Handler', () => {
         expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
       });
 
-      it('hands the shadow comparison of the identity mapping to waitUntil, also when the hint ends the request early', async () => {
-        const sign = await hintSigner();
-        const waitUntil = vi.fn();
-        const response = await app.request(
-          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=hint&prompt=none&id_token_hint=${encodeURIComponent(await sign('another-user'))}`,
-          {
-            method: 'GET',
-            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
-          },
-          env,
-          { waitUntil, passThroughOnException: vi.fn() } as unknown as ExecutionContext
-        );
-        // The request ended early, with login_required...
-        expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
-          'login_required'
-        );
-        // ...and the mapping it derived the hint's subject with carries a way to keep the
-        // comparison running past the response.
-        const input = mockDeriveOIDCSubject.mock.calls.at(-1)?.[0] as {
-          waitUntil?: (promise: Promise<unknown>) => void;
-        };
-        expect(input.waitUntil).toBeTypeOf('function');
-        const pending = Promise.resolve();
-        input.waitUntil?.(pending);
-        expect(waitUntil).toHaveBeenCalledWith(pending);
-      });
-
       it('answers login_required to an interactive request when another End-User is signed in', async () => {
         const sign = await hintSigner();
         const response = await app.request(
@@ -3538,9 +3538,9 @@ describe('Authorization Handler', () => {
             })),
           ],
         });
-        // The app has no identity mapping of its own (identity_mapping is null); the tenant's
-        // active, tenant-scope activation applies to it, and its Destination Profile is the one
-        // above. It maps nothing: it only decides what each surface may carry.
+        // The app has no identity mapping of its own (identity_mapping is null); the tenant names a
+        // default Mapping Set, and its Destination Profile is the one above. It maps nothing: it
+        // only decides what each surface may carry.
         const policy = { identity_mapping: null };
 
         beforeEach(() => {
@@ -3685,20 +3685,19 @@ describe('Authorization Handler', () => {
           });
         });
 
-        // CURRENT BEHAVIOR, documented as it is (field mapping tiers, stage 0). Not the intended
-        // behavior: stage 2 reverses it. `policy` is an app with `identity_mapping` NULL, yet the
-        // tenant-wide activation (activationScope { tenantId } here, `{ kind: 'tenant' }` as the
-        // admin console sends it) is the mapping the ID token is held to. This is how the 2026-10-10
-        // environment lost email, phone and name from its ID tokens: the Destination Profile lists
-        // the standard claims as optional, and for UserInfo only.
-        describe('[current behavior, reversed in stage 2] an app with no Mapping Set of its own', () => {
+        // The 2026-10-10 environment lost email, phone and name from its ID tokens this way: an
+        // activation for the whole tenant (`{ kind: 'tenant' }`, as the admin console sends it)
+        // bound apps that named no Mapping Set to a Destination Profile that lists the standard
+        // claims as optional, and for UserInfo only. An activation binds no app now: the app's
+        // own choice, else the tenant's default, else the platform's decides.
+        describe('an app with no Mapping Set of its own', () => {
           const allScopes = 'openid profile email phone';
 
           beforeEach(() => {
             mappingFixture.profileConsent = 'none';
           });
 
-          it('is held to the tenant-wide mapping, so its ID token loses the scope claims', async () => {
+          it('is held to the Mapping Set the tenant names as its default, so its ID token loses the scope claims the profile makes optional', async () => {
             const fragment = await authorizeFor('id_token', { scope: allScopes, client: policy });
 
             const idToken = decodeJwt(fragment.get('id_token')!);
@@ -3708,29 +3707,91 @@ describe('Authorization Handler', () => {
             }
           });
 
-          it('would carry them with no tenant-wide mapping in force (the contrast)', async () => {
-            mappingFixture.binding = null;
-            mappingFixture.profile = null;
+          describe('in a tenant with an activation for the whole tenant, and no default named', () => {
+            beforeEach(() => {
+              // The activation is there to be found (the binding above, as the old lookup would
+              // have resolved it); the app is bound to nothing.
+              mappingFixture.implicit = mappingFixture.binding;
+              mappingFixture.binding = null;
+              mappingFixture.implicitLookups = 0;
+            });
 
-            const fragment = await authorizeFor('id_token', { scope: allScopes, client: policy });
+            afterEach(() => {
+              mappingFixture.implicit = null;
+            });
+
+            it('is bound to nothing: its ID token carries the claims its scopes release', async () => {
+              const fragment = await authorizeFor('id_token', { scope: allScopes, client: policy });
+
+              expect(decodeJwt(fragment.get('id_token')!)).toMatchObject({
+                email: 'alice@example.com',
+                phone_number: '+8100000000',
+                name: 'Alice Example',
+              });
+              expect(mappingFixture.implicitLookups).toBe(0);
+            });
+
+            it('carries the claims the claims parameter asks for', async () => {
+              const fragment = await authorizeFor('id_token', {
+                scope: 'openid',
+                claims: { id_token: { email: { essential: true }, name: null } },
+                client: { ...policy, allow_claims_without_scope: true },
+              });
+
+              const idToken = decodeJwt(fragment.get('id_token')!);
+              expect(idToken.email).toBe('alice@example.com');
+              expect(idToken.name).toBe('Alice Example');
+              expect(mappingFixture.implicitLookups).toBe(0);
+            });
+
+            it('is not bound by the activation on the hybrid flows either, nor for the sub of an id_token_hint', async () => {
+              for (const responseType of ['code id_token', 'id_token token']) {
+                const fragment = await authorizeFor(responseType, {
+                  scope: allScopes,
+                  client: policy,
+                });
+                expect(decodeJwt(fragment.get('id_token')!).sub).toBe('mapped-user');
+              }
+              expect(mappingFixture.implicitLookups).toBe(0);
+            });
+          });
+
+          describe('in a tenant whose default Mapping Set cannot be used', () => {
+            beforeEach(async () => {
+              // The real selection runs: the tenant names a Mapping Set the Admin database lacks.
+              mappingFixture.binding = null;
+              await (env.SETTINGS as unknown as MockKVNamespace).put(
+                'settings:tenant:default:identity-mapping',
+                JSON.stringify({ 'identity_mapping.oidc_default_set_id': 'set-gone' })
+              );
+            });
+
+            it.each(['id_token', 'code id_token', 'id_token token'])(
+              'issues no ID token (%s), and does not go on without the mapping',
+              async (responseType) => {
+                const fragment = await authorizeFor(responseType, {
+                  scope: allScopes,
+                  client: policy,
+                });
+
+                expect(fragment.get('error')).toBe('server_error');
+                expect(fragment.get('id_token')).toBeNull();
+                expect(fragment.get('access_token')).toBeNull();
+              }
+            );
+          });
+
+          it('carries the claims its scopes release when the app opts out with { mode: "none" }, whatever the tenant names', async () => {
+            const fragment = await authorizeFor('id_token', {
+              scope: allScopes,
+              client: { identity_mapping: { mode: 'none' } },
+            });
 
             expect(decodeJwt(fragment.get('id_token')!)).toMatchObject({
               email: 'alice@example.com',
               phone_number: '+8100000000',
               name: 'Alice Example',
             });
-          });
-
-          it('loses the same when the claims parameter asks for them', async () => {
-            const fragment = await authorizeFor('id_token', {
-              scope: 'openid',
-              claims: { id_token: { email: { essential: true }, name: null } },
-              client: { ...policy, allow_claims_without_scope: true },
-            });
-
-            const idToken = decodeJwt(fragment.get('id_token')!);
-            expect(idToken).not.toHaveProperty('email');
-            expect(idToken).not.toHaveProperty('name');
           });
         });
 

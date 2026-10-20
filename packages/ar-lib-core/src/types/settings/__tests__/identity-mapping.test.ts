@@ -1,15 +1,12 @@
 /**
  * The identity-mapping category: the default Mapping Set of the platform and of a tenant
  * (`identity_mapping.oidc_default_set_id`). Settable at the platform and at a tenant, never at an
- * app; unset by default; no environment variable; and not read by the release of claims yet
- * (`in_development`). And the platform switch of the shadow comparison of its selection
- * (`identity_mapping.shadow_compare_enabled`).
+ * app; unset by default; no environment variable; and read by the release of claims (ID token,
+ * UserInfo and the consent screen), so it is not `in_development`. The shadow comparison switch
+ * that once sat beside it is retired (src/__tests__/retired-identity-mapping-shadow-setting.test.ts).
  */
 import { describe, expect, it } from 'vitest';
-import {
-  resolveEffectiveSettingsWithSources,
-  resolvePlatformSettingsWithSources,
-} from '../../../services/effective-settings';
+import { resolveEffectiveSettingsWithSources } from '../../../services/effective-settings';
 import { readOidcDefaultSetSelection } from '../../../services/identity-mapping-set-reference';
 import { createSettingsManager } from '../../../utils/settings-manager';
 import {
@@ -25,11 +22,9 @@ import {
   IDENTITY_MAPPING_NONE,
   IDENTITY_MAPPING_SET_ID_MAX_LENGTH,
   IDENTITY_MAPPING_SETTINGS_META,
-  IDENTITY_MAPPING_SHADOW_COMPARE_KEY,
 } from '../identity-mapping';
 
 const KEY = 'identity_mapping.oidc_default_set_id';
-const SHADOW_KEY = 'identity_mapping.shadow_compare_enabled';
 
 function kv(documents: Record<string, unknown>): KVNamespace {
   return {
@@ -69,7 +64,7 @@ describe('the identity-mapping category', () => {
   });
 
   it('holds the default Mapping Set, unset by default, with no environment variable', () => {
-    expect(Object.keys(IDENTITY_MAPPING_SETTINGS_META)).toEqual([KEY, SHADOW_KEY]);
+    expect(Object.keys(IDENTITY_MAPPING_SETTINGS_META)).toEqual([KEY]);
     const meta = IDENTITY_MAPPING_SETTINGS_META[KEY];
     expect(meta.type).toBe('string');
     expect(meta.default).toBeNull();
@@ -77,44 +72,10 @@ describe('the identity-mapping category', () => {
     expect(meta.envKey).toBeUndefined();
     // Not narrowed below the category: both the platform and a tenant can set it.
     expect(meta.scopes).toBeUndefined();
-    // The release of claims does not read it yet.
-    expect(meta.status).toBe('in_development');
+    // The release of claims reads it.
+    expect(meta.status).toBeUndefined();
     expect(meta.description).toMatch(/Unset means no default/);
     expect(meta.description).toMatch(/none means: do not use the platform default/);
-  });
-
-  it('holds the switch of the shadow comparison: a platform boolean, off by default, from the environment', () => {
-    const meta = IDENTITY_MAPPING_SETTINGS_META[SHADOW_KEY];
-    expect(IDENTITY_MAPPING_SHADOW_COMPARE_KEY).toBe(SHADOW_KEY);
-    expect(meta.type).toBe('boolean');
-    expect(meta.default).toBe(false);
-    expect(IDENTITY_MAPPING_DEFAULTS[SHADOW_KEY]).toBe(false);
-    expect(meta.envKey).toBe('IDENTITY_MAPPING_SHADOW_COMPARE');
-    // The platform decides: a tenant cannot turn it on, and an app has no such category.
-    expect(meta.scopes).toEqual(['platform']);
-    // It is applied (the comparison runs), unlike the default it compares.
-    expect(meta.status).toBeUndefined();
-  });
-
-  it('is off unless the platform saves true or the environment says true', async () => {
-    const read = async (docs: Record<string, unknown>, env: Record<string, string> = {}) =>
-      (
-        await resolvePlatformSettingsWithSources(
-          { SETTINGS: kv(docs), ...env } as never,
-          'identity-mapping'
-        )
-      ).values[SHADOW_KEY];
-    expect(await read({})).toBe(false);
-    expect(await read({ 'settings:platform:identity-mapping': { [SHADOW_KEY]: true } })).toBe(true);
-    expect(await read({}, { IDENTITY_MAPPING_SHADOW_COMPARE: 'true' })).toBe(true);
-    expect(await read({}, { IDENTITY_MAPPING_SHADOW_COMPARE: 'false' })).toBe(false);
-    // Saved wins over the environment.
-    expect(
-      await read(
-        { 'settings:platform:identity-mapping': { [SHADOW_KEY]: false } },
-        { IDENTITY_MAPPING_SHADOW_COMPARE: 'true' }
-      )
-    ).toBe(false);
   });
 
   it('gives its reserved value and the longest ID a name', () => {

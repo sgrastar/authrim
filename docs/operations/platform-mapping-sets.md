@@ -22,8 +22,14 @@ every tenant can read them. This page says what that means for operating an envi
   attributes, persistent identifiers (`oidc_pairwise_sub`), a Source Profile, or a Destination
   Profile a tenant owns. These are refused when the version is saved, compiled or activated.
 
-Nothing selects a platform Mapping Set yet. Creating and activating one does not change what any
-tenant's ID token or UserInfo carries.
+Creating and activating a platform Mapping Set changes nothing by itself: an app is bound to a
+Mapping Set only by a name. The platform's default (`identity_mapping.oidc_default_set_id` at the
+platform scope) can name one, which then applies to every app of every tenant that has no tenant
+default and names no Mapping Set of its own; a tenant's default can name one too. The ID token,
+UserInfo and consent screen of those apps then read the set under the platform as its owner. An
+app cannot be given a platform set directly yet: the Admin API refuses the app's own choice when it
+names one (it answers as a set that does not exist), until the backup side can carry that
+reference (see "What the backup side has to do" at the end of this page).
 
 ## Backup and restore
 
@@ -42,8 +48,9 @@ When you restore a tenant, or move it to another environment:
    `destination_profile_versions`, keeping their IDs.
 2. Apply the Admin migrations on the destination (a fresh install, `setup update` and `setup
 deploy` all do). The platform catalog needs no step of its own; see the next section.
-3. Restore the tenant. A tenant that selects a platform Mapping Set by ID (once selection exists)
-   resolves it only if the same ID exists in the destination.
+3. Restore the tenant. A tenant whose default names a platform Mapping Set by ID resolves it only
+   if the same ID exists in the destination; if it does not, the apps that follow that default
+   cannot sign in.
 
 Keep the IDs. A tenant's selection refers to the set by ID, so a copy under a new ID is a
 different set to it.
@@ -83,3 +90,23 @@ SELECT id, tenant_id, owner_scope_type
   FROM field_mapping_sets
  WHERE (owner_scope_type = 'platform') <> (tenant_id = 'platform');
 ```
+
+## What the backup side has to do
+
+This is a note for whoever owns the tenant backup and restore (the dependency rules in
+`phase3-sqlite-references.ts`). Nothing here is done yet.
+
+- A tenant backup holds the tenant's own rows. The platform's rows, and so a platform-owned
+  Mapping Set, are not part of it.
+- The tenant's settings document (category `identity-mapping`) can hold
+  `identity_mapping.oidc_default_set_id` naming a platform-owned set. The dependency rule for that
+  key must not treat the set as a required resource of the bundle (the bundle cannot contain it).
+  It needs an external precondition check instead: "the destination has a Mapping Set with this
+  ID, owned by the platform, and it is usable". A restore into an environment that lacks it should
+  say so, not fail with `backup_reference_target_missing`.
+- The same holds for the app's `identity_mapping` (`oauth_clients`) once the Admin API accepts a
+  platform set there. That is why saving it is refused for now (`TODO(backup dependency)` in
+  `validateOidcMappingSetReference`, scope `client`). When the precondition check exists for the
+  tenant default, apply it to the app's reference too, then lift the refusal and let the app
+  console offer platform sets again.
+- A set the tenant owns stays an ordinary required dependency, as today.

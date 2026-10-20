@@ -634,17 +634,7 @@ place(
 	{ primary: ['identity_mapping.oidc_default_set_id'] },
 	{
 		'identity_mapping.oidc_default_set_id':
-			'In development: saved and checked, not applied yet. Unset means no mapping applies; a tenant value none means: do not use the platform default either. Should become a picker of active Mapping Sets, with the apps it would affect.'
-	}
-);
-
-place(
-	'access/mapping-sets',
-	'Selection comparison (platform)',
-	{ advanced: ['identity_mapping.shadow_compare_enabled'] },
-	{
-		'identity_mapping.shadow_compare_enabled':
-			'Platform setting only (a tenant cannot set it). Turn on where the comparison of the default Mapping Set selection with what requests use is wanted; differences are logged as warnings.'
+			'Applied to apps that name no Mapping Set of their own (ID token, UserInfo and the consent screen). Unset means no mapping applies; a tenant value none means: do not use the platform default either. A value that cannot be used stops those apps from signing in. Should become a picker of active Mapping Sets, with the apps it would affect.'
 	}
 );
 

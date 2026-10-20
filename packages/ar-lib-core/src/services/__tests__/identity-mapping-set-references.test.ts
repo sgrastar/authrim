@@ -176,6 +176,20 @@ describe('findMappingSetReferences', () => {
     expect(mappingSetReferenceBlock(scan)).toBeNull();
   });
 
+  it('does not count an app that opts out with { mode: "none" } as naming any set', async () => {
+    const w = world();
+    const coreA = w.cores.get('tenant-a') as DatabaseSync;
+    addClient(coreA, 'tenant-a', 'opted-out', { mode: 'none' });
+    addClient(coreA, 'tenant-a', 'names-a-set', { fieldMappingSetId: 'set-a' });
+
+    const scan = await findMappingSetReferences(w.input());
+
+    expect(scan.unscanned).toEqual([]);
+    expect(scan.references).toEqual([
+      { kind: 'client', tenantId: 'tenant-a', clientId: 'names-a-set' },
+    ]);
+  });
+
   it('finds the places that name a tenant’s set: its default, apps, SAML provider, credential profile and SCIM', async () => {
     const w = world();
     const coreA = w.cores.get('tenant-a') as DatabaseSync;
