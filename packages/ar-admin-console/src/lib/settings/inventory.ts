@@ -631,6 +631,16 @@ place(
 	}
 );
 
+place(
+	'access/mapping-sets',
+	'Selection comparison (platform)',
+	{ advanced: ['identity_mapping.shadow_compare_enabled'] },
+	{
+		'identity_mapping.shadow_compare_enabled':
+			'Platform setting only (a tenant cannot set it). Turn on where the comparison of the default Mapping Set selection with what requests use is wanted; differences are logged as warnings.'
+	}
+);
+
 // ---------------------------------------------------------------------------------------------
 // Tenant settings
 

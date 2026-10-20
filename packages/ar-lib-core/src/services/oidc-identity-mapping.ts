@@ -21,6 +21,12 @@ import {
   isProtectedIdentityMappingDestinationClaim,
   loadDestinationProfileConsentDescriptor,
 } from './destination-profile-consent';
+import { IdentityMappingSelectionError } from './identity-mapping-selection';
+import { IdentityMappingResolutionError } from './identity-mapping-set-binding';
+import {
+  scheduleOidcIdentityMappingShadowCompare,
+  type ShadowCurrentResolution,
+} from './identity-mapping-shadow-compare';
 import {
   assertRuntimeIdentityMappingReleaseSafety,
   resolveRuntimeIdentityMappingBinding,
@@ -90,6 +96,11 @@ export interface ApplyOIDCIdentityMappingInput {
   sourceAttributes?:
     | Record<string, unknown>
     | ((names: string[]) => Promise<Record<string, unknown> | null>);
+  /**
+   * Hands a promise to the Worker to keep alive past the response (`executionCtx.waitUntil`). Only
+   * the shadow comparison of the Mapping Set selection uses it, so it never delays the response.
+   */
+  waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 export interface ApplyOIDCIdentityMappingResult {
@@ -144,6 +155,7 @@ export async function applyOIDCIdentityMapping(
         adminDatabaseBound: Boolean(input.env?.DB_ADMIN),
         error,
       });
+      shadowCompare(input, { tier: 'none', failed: true });
       if (input.subjectOnly) return { claims: input.claims, binding: null };
       return {
         claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
@@ -151,6 +163,19 @@ export async function applyOIDCIdentityMapping(
       };
     }
     throw error;
+  }
+
+  // What the request resolved with is settled. Compared with the new selection, off the request's path.
+  if (binding || !input.selector?.fieldMappingSetId) {
+    shadowCompare(
+      input,
+      binding
+        ? {
+            tier: input.selector?.fieldMappingSetId ? 'explicit' : 'implicit_tenant_activation',
+            setId: binding.fieldMappingSetId,
+          }
+        : { tier: 'none' }
+    );
   }
 
   if (!binding) {
@@ -269,6 +294,21 @@ export async function applyOIDCIdentityMapping(
     claims: await applyOIDCDestinationFieldConsent(input, mappedClaims, binding),
     binding,
   };
+}
+
+/**
+ * Starts the shadow comparison of the Mapping Set selection against what this request resolved with
+ * (a no-op unless the platform turned it on). It changes nothing for the request.
+ */
+function shadowCompare(input: ApplyOIDCIdentityMappingInput, current: ShadowCurrentResolution) {
+  scheduleOidcIdentityMappingShadowCompare({
+    env: input.env,
+    tenantId: input.tenantId,
+    clientId: input.clientId,
+    clientSelector: input.selector,
+    current,
+    waitUntil: input.waitUntil,
+  });
 }
 
 async function loadMappedCustomClaimSources(
@@ -659,6 +699,62 @@ function assertMappedSubjectNotReserved(
     fieldMappingVersionId: binding.fieldMappingVersionId,
     clientId: input.clientId,
   });
+}
+
+/**
+ * The error the release of claims answers with for a failure of the new selection or of reading the
+ * set it chose, so those failures answer as the ones above do (400 `invalid_client` /
+ * `invalid_client_metadata` for a configuration the app cannot be served with, 500 for a
+ * database or settings that cannot be read). Anything else is returned as it is. Used by the
+ * resolution that replaces the current one; the current one does not call it yet.
+ */
+export function toOidcIdentityMappingRuntimeError(
+  error: unknown,
+  context: { clientId?: string } = {}
+): unknown {
+  if (error instanceof IdentityMappingResolutionError) {
+    switch (error.code) {
+      case 'set_missing':
+      case 'set_inactive':
+        return new OIDCIdentityMappingRuntimeError(
+          'No active OIDC identity mapping binding found for selected policy',
+          {
+            code: 'policy.missing_identity_mapping_binding',
+            fieldMappingSetId: error.setId,
+            clientId: context.clientId,
+          }
+        );
+      case 'destination_profile_invalid':
+        return new OIDCIdentityMappingRuntimeError(
+          'OIDC identity mapping must reference exactly one Destination Profile',
+          {
+            code: 'policy.invalid_destination_profile_binding',
+            fieldMappingSetId: error.setId,
+            clientId: context.clientId,
+          }
+        );
+      default:
+        // The Admin database could not be read: not a fault of the app's configuration.
+        return error;
+    }
+  }
+  if (error instanceof IdentityMappingSelectionError) {
+    if (error.code === 'default_setting_invalid' || error.code === 'client_selector_invalid') {
+      return new OIDCIdentityMappingRuntimeError(
+        error.code === 'default_setting_invalid'
+          ? 'The default OIDC identity mapping is not usable'
+          : 'The OIDC identity mapping of the client is not usable',
+        {
+          code:
+            error.code === 'default_setting_invalid'
+              ? 'policy.invalid_default_identity_mapping'
+              : 'policy.invalid_client_identity_mapping',
+          clientId: context.clientId,
+        }
+      );
+    }
+  }
+  return error;
 }
 
 export class OIDCIdentityMappingRuntimeError extends Error {
