@@ -33,7 +33,9 @@ it.each(streams)(
     const reference = new DatabaseSync(':memory:');
     try {
       const additions = stream.migrations.filter((m) =>
-        /_tenant_backup_(snapshot_storage|preimage_row_partitions)\.sql$/.test(m.file)
+        /_tenant_backup_(snapshot_storage|preimage_row_partitions|preimage_native_order)\.sql$/.test(
+          m.file
+        )
       );
       for (const migration of stream.migrations.filter((m) => !additions.includes(m)))
         db.exec(renderPortableMigrationSql(readFileSync(root + migration.file, 'utf8'), 'sqlite'));

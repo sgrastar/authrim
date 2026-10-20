@@ -263,6 +263,88 @@ it('returns small rows in 250-row batches instead of one storage roundtrip per r
       .split('\n')
   ).toHaveLength(600);
 });
+it('reads a large row by key and resumes inside it while omitted rows pile up before it', async () => {
+  const value = 'x'.repeat(2.5 * 1024 * 1024);
+  db.prepare("INSERT INTO accounts VALUES ('a','0','small',0,NULL)").run();
+  db.prepare("INSERT INTO accounts VALUES ('a','5',?,0,NULL)").run(value);
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing')"
+  );
+  // Rows written after T0 sort between the two T0 rows; more than a page of them each time.
+  const insertAfterT0 = (prefix: string) => {
+    const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'new',0,NULL)");
+    for (let i = 0; i < 150; i++) insert.run(`${prefix}${String(i).padStart(3, '0')}`);
+  };
+  insertAfterT0('1');
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  const parts: Uint8Array[] = [];
+  let cursor: string | null = null;
+  let resumedInsideRow = false;
+  for (let call = 0; call < 50; call++) {
+    const chunk = await readNextSqliteSnapshotChunk(input, cursor);
+    if (!chunk) break;
+    parts.push(chunk.bytes);
+    cursor = chunk.nextCursor;
+    if ((JSON.parse(cursor) as { chunk: number }).chunk > 0) {
+      resumedInsideRow = true;
+      insertAfterT0(`2${call}`);
+    }
+  }
+  expect(resumedInsideRow).toBe(true);
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const rows = (
+    parts.map((part) => decoder.decode(part, { stream: true })).join('') + decoder.decode()
+  )
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(rows.map((row) => row.id)).toEqual([
+    ['text', '0'],
+    ['text', '5'],
+  ]);
+  expect(rows[1].value).toEqual(['text', value]);
+});
+
+it('refuses REAL primary key values instead of paging past rows it cannot position', async () => {
+  const measures: SnapshotTableSchema = {
+    table: 'measures',
+    tenantColumn: 'tenant_id',
+    columns: ['tenant_id', 'x'],
+    primaryKey: ['tenant_id', 'x'],
+    uniqueKeys: [],
+  };
+  db.exec(
+    `CREATE TABLE measures(tenant_id TEXT NOT NULL, x REAL NOT NULL, PRIMARY KEY(tenant_id, x));
+    ${sqliteSnapshotTriggers(measures)}
+    INSERT INTO measures VALUES ('a', -1e999), ('a', -2), ('a', 1.5);
+    INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing')`
+  );
+  const input = {
+    database,
+    schema: measures,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  await expect(text(readSqliteSnapshotDataset(input))).rejects.toThrow(
+    'backup_snapshot_unsupported_key_type'
+  );
+  const realPosition = JSON.stringify({
+    after: '[["text","a"],["real","-Inf"]]',
+    chunk: 0,
+    order: 'native',
+  });
+  await expect(readNextSqliteSnapshotChunk(input, realPosition)).rejects.toThrow(
+    'backup_snapshot_unsupported_key_type'
+  );
+});
+
 it('rejects a cursor past the current row instead of silently ending the dataset', async () => {
   db.exec(
     "INSERT INTO accounts VALUES ('a','0','value',0,NULL); INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
@@ -276,6 +358,79 @@ it('rejects a cursor past the current row instead of silently ending the dataset
   };
   for (const cursor of ['null', '{}', '{"after":"","chunk":-1}', '{"after":"","chunk":999}'])
     await expect(readNextSqliteSnapshotChunk(input, cursor)).rejects.toThrow('invalid_cursor');
+});
+
+it('crosses a long run of rows written after T0 in few queries and does not walk it twice', async () => {
+  // Time-ordered ids put every row written during capture after the T0 rows. Each page used to
+  // advance 100 omitted keys, so one call issued about one query per 100 of them and the next
+  // call walked the same run again. One export step shares one Worker subrequest budget.
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'t0',0,NULL)");
+  for (let index = 0; index < 300; index++) insert.run(String(index).padStart(3, '0'));
+  db.exec(`INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing');
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+      INSERT INTO accounts SELECT 'a', printf('z%06d', i), 'new', 0, NULL FROM n;`);
+  let queries = 0;
+  const counted: Pick<DatabaseAdapter, 'query' | 'queryOne'> = {
+    async query<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.query<T>(sql, params);
+    },
+    async queryOne<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.queryOne<T>(sql, params);
+    },
+  };
+  const input = {
+    database: counted,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  let cursor: string | null = null;
+  const perCall: number[] = [];
+  const values: string[] = [];
+  for (;;) {
+    queries = 0;
+    const next = await readNextSqliteSnapshotChunk(input, cursor);
+    perCall.push(queries);
+    if (!next) break;
+    for (const row of new TextDecoder().decode(next.bytes).trim().split('\n'))
+      values.push((JSON.parse(row) as { value: [string, string] }).value[1]);
+    cursor = next.nextCursor;
+  }
+  expect(values).toEqual(Array.from({ length: 300 }, () => 't0'));
+  // The run of 20,000 omitted keys is crossed once, in scans that double up to 12,800 keys.
+  expect(perCall).toHaveLength(3);
+  expect(Math.max(...perCall)).toBeLessThan(40);
+  expect(perCall[2]).toBeLessThanOrEqual(4);
+});
+
+it('refuses to resume a position recorded in the legacy record_key text order', async () => {
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'value',0,NULL)");
+  for (const id of ['1', '2']) insert.run(id);
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  const legacy = JSON.stringify({ after: '[["text","a"],["text","1"]]', chunk: 0 });
+  await expect(readNextSqliteSnapshotChunk(input, legacy)).rejects.toThrow('invalid_cursor');
+  await expect(
+    readNextSqliteSnapshotChunk(input, JSON.stringify({ after: '', chunk: 1 }))
+  ).rejects.toThrow('invalid_cursor');
+  // The initial legacy position names no row, so it means the same start in either order.
+  const first = await readNextSqliteSnapshotChunk(input, JSON.stringify({ after: '', chunk: 0 }));
+  expect(JSON.parse(first?.nextCursor ?? '')).toEqual({
+    after: '[["text","a"],["text","2"]]',
+    chunk: 0,
+    order: 'native',
+  });
 });
 
 it('applies a deterministic row transform before resumable chunks are emitted', async () => {
