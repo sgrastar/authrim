@@ -11087,6 +11087,52 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/identity-mapping/effective:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminIdentityMappingEffective
+      summary: Show which Mapping Set an app is bound to, and why.
+      description: >-
+        Runs the selection of the Mapping Set for an OIDC app of the calling tenant: the app's own
+        choice (`identity_mapping`), else the tenant's default, else the platform's default
+        (`identity_mapping.oidc_default_set_id`), else none. Only an unset level falls to the next;
+        a level that is set and unusable is a failure, reported as `selection.kind` `failed` with
+        the level, never as the next level's answer. `chain` gives what each level says (`unset`,
+        `set`, `none`, `invalid`) and where a default came from (`kv`: saved at the tenant;
+        `platform`: inherited). Without `client_id` the view is the tenant's, with no app level.
+        An app of another tenant, and one that does not exist, answer 404. The selection reads no
+        database; the name, owner and state of the sets it names are read from the Admin database
+        in one query and are left out (`setFound` absent) when it cannot be read. The release of
+        claims does not use this selection yet. The endpoint is rate limited with the moderate
+        profile.
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: The app (OIDC client) of the calling tenant.
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingEffective'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}/versions':
     get:
       tags:
@@ -37115,6 +37161,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MappingSetUsageResponse'
+    IdentityMappingEffective:
+      description: The Mapping Set an app is bound to, and the levels that decided it.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentityMappingEffectiveResponse'
     MappingSetInUse:
       description: >-
         The change was refused: the Mapping Set is named somewhere (`referenced`), the version
@@ -56167,6 +56219,155 @@ components:
             Whether deleting, deactivating, rolling back or replacing the set would be refused
             now (it is named, or could not be checked everywhere). Null when it is not known: the
             other tenants of a platform set were not looked at and nothing else is in the way.
+    IdentityMappingEffectiveChainEntry:
+      type: object
+      required:
+        - tier
+        - state
+      properties:
+        tier:
+          type: string
+          enum:
+            - client
+            - tenant_default
+            - platform_default
+        state:
+          type: string
+          enum:
+            - unset
+            - set
+            - none
+            - invalid
+            - not_consulted
+          description: >-
+            What the level says. This endpoint reads every level, so `unset`, `set`, `none` and
+            `invalid` are what is found. `not_consulted` is given for the two defaults only when
+            they were not read for this answer: the app's own `identity_mapping` is not a choice
+            (`selection` is `failed` with `client_selector_invalid`, and nothing below it is
+            looked at), or the app decides (a set, or an opt-out) and the settings that hold the
+            defaults could not be read.
+        setId:
+          type: string
+          description: The set the level names, when `state` is `set`.
+        source:
+          type: string
+          enum:
+            - kv
+            - platform
+            - tenant
+            - env
+            - default
+          description: >-
+            For the two defaults: `kv` is saved at the tenant itself, `platform` is the platform's
+            value.
+        setFound:
+          type: boolean
+          description: >-
+            Whether the set exists and the calling tenant may name it (its own or the
+            platform's). False for a set that does not exist and for another tenant's. Absent,
+            with the other `set*` fields, when the Admin database could not be read.
+        setName:
+          type: string
+        setOwner:
+          type: string
+          enum:
+            - tenant
+            - platform
+        setLifecycleState:
+          type: string
+    IdentityMappingEffectiveSelection:
+      oneOf:
+        - type: object
+          required:
+            - kind
+            - tier
+            - setId
+          properties:
+            kind:
+              type: string
+              enum:
+                - bound
+            tier:
+              type: string
+              enum:
+                - client
+                - tenant_default
+                - platform_default
+            setId:
+              type: string
+            pinnedVersionId:
+              type: string
+              description: The version the app's own choice pins, if it does.
+            setFound:
+              type: boolean
+            setName:
+              type: string
+            setOwner:
+              type: string
+              enum:
+                - tenant
+                - platform
+            setLifecycleState:
+              type: string
+        - type: object
+          required:
+            - kind
+            - reason
+          properties:
+            kind:
+              type: string
+              enum:
+                - none
+            reason:
+              type: string
+              enum:
+                - client_opt_out
+                - tenant_opt_out
+                - no_default
+        - type: object
+          required:
+            - kind
+            - code
+          properties:
+            kind:
+              type: string
+              enum:
+                - failed
+            code:
+              type: string
+              enum:
+                - default_setting_invalid
+                - client_selector_invalid
+              description: >-
+                A level is set and not usable. The selection does not fall to the next level.
+            tier:
+              type: string
+              enum:
+                - client
+                - tenant_default
+                - platform_default
+    IdentityMappingEffectiveResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - clientId
+        - selection
+        - chain
+      properties:
+        tenantId:
+          type: string
+        clientId:
+          type: string
+          nullable: true
+          description: The app asked about; null for the tenant's view.
+        selection:
+          $ref: '#/components/schemas/IdentityMappingEffectiveSelection'
+        chain:
+          type: array
+          description: The app's level, the tenant default and the platform default, in that order.
+          items:
+            $ref: '#/components/schemas/IdentityMappingEffectiveChainEntry'
     MappingSetInUseError:
       type: object
       additionalProperties: true

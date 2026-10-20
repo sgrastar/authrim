@@ -429,6 +429,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	["GET","/api/admin/iat-tokens","List initial access tokens.","admin"],
 	["POST","/api/admin/iat-tokens","Create an initial access token.","admin"],
 	["DELETE","/api/admin/iat-tokens/{tokenHash}","Revoke an initial access token.","admin"],
+	["GET","/api/admin/identity-mapping/effective","Show which Mapping Set an app is bound to, and why.","admin"],
 	["GET","/api/admin/identity-mapping/usage","Show where a Mapping Set is used.","admin"],
 	["GET","/api/admin/ip-allowlist","List admin IP allowlist entries","admin"],
 	["POST","/api/admin/ip-allowlist","Create admin IP allowlist entry","admin"],
