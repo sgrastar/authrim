@@ -19,12 +19,11 @@
     {
       "id": "authrim-agent-access-inspector-fixture",
       "exposure": "local-test-only",
-      "transport": "stdio-or-loopback",
+      "transport": "loopback-http",
       "path": null,
       "authentication": "test fixture",
       "dataClassification": "synthetic",
       "sourceFiles": [
-        "packages/ar-agent-access/scripts/inspector-server.ts",
         "packages/ar-agent-access/scripts/conformance-http-server.ts",
         "packages/ar-agent-access/scripts/mcp-conformance-fixture.ts"
       ]
