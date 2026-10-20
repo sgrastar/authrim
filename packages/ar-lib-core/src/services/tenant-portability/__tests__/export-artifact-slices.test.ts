@@ -17,6 +17,7 @@ import { cleanupCancelledTenantBackupArtifactPage } from '../cancelled-artifact-
 import { runTenantBackupArtifactVerificationStep } from '../verify-artifact-step';
 import { readTenantBackupArtifact } from '../artifact-reader';
 import { openTenantBackupDownload } from '../published-artifact-reader';
+import { cleanupCancelledTenantBackupArtifactPage } from '../cancelled-artifact-cleanup';
 import {
   initialTenantBackupContainerVerificationProgress,
   verifyTenantBackupContainerV2Slice,
@@ -183,6 +184,9 @@ beforeEach(async () => {
     },
     async head(key: string) {
       return objects.get(key) ?? null;
+    },
+    async delete(key: string) {
+      objects.delete(key);
     },
     async get(key: string) {
       const object = objects.get(key);
@@ -1072,4 +1076,254 @@ it('keeps a spill until a saved checkpoint moves past it and reuses it when noth
   expect(spills()).toBe(0);
   await runVerify(attemptId, expected);
   expectDatasets((await decodeSaved(attemptId)).decoded);
+});
+
+type Lease = typeof lease;
+const spillCount = () =>
+  (db.prepare('SELECT count(*) AS n FROM tenant_backup_export_spills').get() as { n: number }).n;
+
+/** Export step under any lease and clock, for workers other than the fixture's own. */
+function exportAs(
+  as: Lease,
+  clock: () => number,
+  attemptId: string,
+  expected: ReturnType<typeof expectation>,
+  cursor: string | null,
+  read: typeof readNext,
+  slice = { frameBytes: 8 * 1024, readCalls: 3 }
+) {
+  return runTenantBackupArtifactStep(
+    {
+      operation: {
+        ...operation,
+        phase: 'export_artifact',
+        cursor_json: cursor,
+        lease_owner: as.owner,
+        fencing_token: as.fencingToken,
+      },
+      lease: as,
+      signal,
+    },
+    {
+      database: adapter,
+      bucket,
+      attemptId,
+      key: session,
+      now: clock,
+      expected,
+      readNext: (datasetId, sourceCursor) => read(datasetId, sourceCursor),
+      async assertBoundary() {},
+      slice,
+    }
+  );
+}
+
+/**
+ * A checkpoint that names a spill: a slice is lost right after reserving its third part, and
+ * one-row retries with a 3-call budget stop inside that reserved frame.
+ */
+async function spillCheckpoint(): Promise<{
+  attemptId: string;
+  expected: ReturnType<typeof expectation>;
+  cursor: string;
+}> {
+  const { attemptId, expected } = await prepare();
+  let puts = 0;
+  const original = bucket.put.bind(bucket);
+  bucket.put = (async (...args: Parameters<R2Bucket['put']>) => {
+    if (++puts === 3) putFault = 'before';
+    return original(...args);
+  }) as R2Bucket['put'];
+  await expect(
+    exportStep(attemptId, expected, 'export_artifact', JSON.stringify({ version: 2, attemptId }), {
+      slice: { frameBytes: 8 * 1024, readCalls: 60 },
+      read: batched(7),
+    })
+  ).rejects.toThrow('r2_unavailable');
+  bucket.put = original;
+  let cursor = JSON.stringify({ version: 2, attemptId });
+  while (!(JSON.parse(cursor) as { spill?: unknown }).spill) {
+    const result = await exportStep(attemptId, expected, 'export_artifact', cursor, {
+      slice: { frameBytes: 8 * 1024, readCalls: 3 },
+      read: batched(1),
+    });
+    expect(result.phase).toBe('export_artifact');
+    cursor = result.cursor!;
+  }
+  expect(spillCount()).toBeGreaterThan(0);
+  return { attemptId, expected, cursor };
+}
+
+it('refuses spill writes and collection from a worker whose lease was taken over', async () => {
+  const { attemptId, expected, cursor } = await spillCheckpoint();
+  const spillId = (JSON.parse(cursor) as { spill: { id: string } }).spill.id;
+  // The old worker keeps its writer; its clock moves on with real time.
+  let staleClock = 102;
+  const staleWriter = await TenantBackupArtifactWriter.resume(
+    adapter,
+    bucket,
+    attemptId,
+    lease,
+    () => staleClock
+  );
+
+  // The lease expires and another worker claims the operation and adopts the attempt.
+  const operations = new TenantBackupOperationStore(adapter);
+  const later = 101 + 180_000 + 100;
+  const claimed = (await operations.claim('tenant-a', 'operation', 'worker-2', later))!;
+  const takeover = { ...lease, owner: 'worker-2', fencingToken: claimed.fencing_token };
+  await TenantBackupArtifactWriter.resume(adapter, bucket, attemptId, takeover, () => later);
+  staleClock = later + 50;
+  const staleNow = () => staleClock;
+
+  // Its writes and its collection are refused; the new owner's saved spill survives.
+  await staleWriter.collectSpills(null);
+  expect(
+    db
+      .prepare('SELECT count(*) AS n FROM tenant_backup_export_spills WHERE spill_id=?')
+      .get(spillId)
+  ).not.toEqual({ n: 0 });
+  await expect(
+    staleWriter.saveSpill('00000000-0000-4000-8000-000000000000', 1, ['ab'.repeat(40)])
+  ).rejects.toThrow('backup_artifact_write_failed');
+  expect(
+    db
+      .prepare('SELECT count(*) AS n FROM tenant_backup_export_spills WHERE spill_id=?')
+      .get('00000000-0000-4000-8000-000000000000')
+  ).toEqual({ n: 0 });
+  // A whole slice under the old lease is refused before it reads anything.
+  let staleReads = 0;
+  await expect(
+    exportAs(lease, staleNow, attemptId, expected, cursor, async (datasetId, value) => {
+      staleReads++;
+      return batched(1)(datasetId, value);
+    })
+  ).rejects.toThrow('backup_artifact_write_failed');
+  expect(staleReads).toBe(0);
+
+  // The new owner resumes from the saved checkpoint and its spill, and finishes.
+  let clock = later + 100;
+  let phase = 'export_artifact';
+  let current: string | null = cursor;
+  while (phase === 'export_artifact') {
+    const result = await exportAs(
+      takeover,
+      () => ++clock,
+      attemptId,
+      expected,
+      current,
+      batched(1)
+    );
+    phase = result.phase;
+    current = result.cursor;
+  }
+  expect(spillCount()).toBe(0);
+});
+
+it('collects spills on the next slice when sealing was interrupted before collection', async () => {
+  const { attemptId, expected, cursor } = await spillCheckpoint();
+  // The worker dies right after sealing, before it collects the spills.
+  const original = TenantBackupArtifactWriter.prototype.collectSpills;
+  let afterSeal = false;
+  const realSeal = TenantBackupArtifactWriter.prototype.seal;
+  TenantBackupArtifactWriter.prototype.seal = async function (
+    this: TenantBackupArtifactWriter,
+    parts,
+    bytes
+  ) {
+    await realSeal.call(this, parts, bytes);
+    afterSeal = true;
+  };
+  TenantBackupArtifactWriter.prototype.collectSpills = async function (
+    this: TenantBackupArtifactWriter,
+    keep
+  ) {
+    if (afterSeal) throw new Error('worker_lost');
+    return original.call(this, keep);
+  };
+  try {
+    await expect(
+      exportStep(attemptId, expected, 'export_artifact', cursor, {
+        slice: { frameBytes: 8 * 1024, readCalls: 10_000 },
+        read: batched(50),
+      })
+    ).rejects.toThrow('worker_lost');
+  } finally {
+    TenantBackupArtifactWriter.prototype.seal = realSeal;
+    TenantBackupArtifactWriter.prototype.collectSpills = original;
+  }
+  expect(afterSeal).toBe(true);
+  expect(
+    db.prepare('SELECT state FROM tenant_backup_artifact_attempts WHERE id=?').get(attemptId)
+  ).toEqual({ state: 'sealed' });
+  expect(spillCount()).toBeGreaterThan(0);
+
+  // The retry of that slice finds the attempt sealed, collects what is left and moves on.
+  let reads = 0;
+  const result = await exportStep(attemptId, expected, 'export_artifact', cursor, {
+    slice: { frameBytes: 8 * 1024, readCalls: 3 },
+    read: async (datasetId, value) => {
+      reads++;
+      return batched(1)(datasetId, value);
+    },
+  });
+  expect(result.phase).toBe('verify_artifact');
+  expect(reads).toBe(0);
+  expect(spillCount()).toBe(0);
+  await runVerify(attemptId, expected);
+  expectDatasets((await decodeSaved(attemptId)).decoded);
+});
+
+it('fails a slice closed when cancellation cleans up its attempt and spills mid-way', async () => {
+  const { attemptId, expected, cursor } = await spillCheckpoint();
+  const operations = new TenantBackupOperationStore(adapter);
+  let cleaned = false;
+  const read: typeof readNext = async (datasetId, value) => {
+    if (!cleaned) {
+      cleaned = true;
+      // While this slice reads, the operation is cancelled and cleanup removes its artifact.
+      await operations.requestCancel('tenant-a', 'operation', 103);
+      const cleaner = (await operations.claimCancellation(
+        'tenant-a',
+        'operation',
+        'cleaner',
+        104
+      ))!;
+      const context = {
+        operation: cleaner,
+        lease: { ...lease, owner: 'cleaner', fencingToken: cleaner.fencing_token },
+        signal,
+      };
+      for (let page = 0; page < 10; page++) {
+        const result = await cleanupCancelledTenantBackupArtifactPage({
+          database: adapter,
+          bucket: bucket as unknown as Parameters<
+            typeof cleanupCancelledTenantBackupArtifactPage
+          >[0]['bucket'],
+          context,
+          now: () => 105,
+        });
+        if (result.done) break;
+      }
+    }
+    return batched(1)(datasetId, value);
+  };
+  await expect(
+    exportStep(attemptId, expected, 'export_artifact', cursor, {
+      slice: { frameBytes: 8 * 1024, readCalls: 40 },
+      read,
+    })
+  ).rejects.toThrow('backup_artifact_write_failed');
+  expect(cleaned).toBe(true);
+  // The attempt, its parts, objects and spills are gone, and the slice wrote nothing after it.
+  expect(
+    db
+      .prepare('SELECT count(*) AS n FROM tenant_backup_artifact_attempts WHERE id=?')
+      .get(attemptId)
+  ).toEqual({ n: 0 });
+  expect(db.prepare('SELECT count(*) AS n FROM tenant_backup_artifact_parts').get()).toEqual({
+    n: 0,
+  });
+  expect(spillCount()).toBe(0);
+  expect(objects.size).toBe(0);
 });
