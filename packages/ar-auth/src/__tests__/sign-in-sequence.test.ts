@@ -65,6 +65,8 @@ const world = vi.hoisted(() => ({
   failNextTransaction: false,
   /** Writing an audit event fails. */
   failAudit: false,
+  /** Runs after each read or write of the core database; a test can hold a request there. */
+  afterStatement: undefined as undefined | ((sql: string) => Promise<void>),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -235,16 +237,21 @@ function createCoreDatabase(): DatabaseAdapter {
     );
   const adapter = {
     query: async (sql: string, params?: unknown[]) => db.prepare(sql).all(...bind(params)),
-    queryOne: async (sql: string, params?: unknown[]) =>
-      (db.prepare(sql).get(...bind(params)) as unknown) ?? null,
+    queryOne: async (sql: string, params?: unknown[]) => {
+      const row = (db.prepare(sql).get(...bind(params)) as unknown) ?? null;
+      if (world.afterStatement) await world.afterStatement(sql);
+      return row;
+    },
     execute: async (sql: string, params?: unknown[]) => {
       if (world.failAudit && sql.includes('INSERT INTO flow_audit_events')) {
         throw new Error('audit store unavailable');
       }
-      return {
+      const result = {
         success: true,
         rowsAffected: Number(db.prepare(sql).run(...bind(params)).changes),
       };
+      if (world.afterStatement) await world.afterStatement(sql);
+      return result;
     },
     transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
       if (world.failNextTransaction) {
@@ -678,12 +685,33 @@ async function resumeAndComplete(
   start: Response_,
   interactionId: string
 ): Promise<{ steps: Response_[]; final?: Response_; continuation?: string }> {
-  let flow: Response_ = await browser.post('/api/v1/login/interactions/start', {
+  return completeResumed(
+    browser,
+    start,
+    interactionId,
+    await resume(browser, start, interactionId)
+  );
+}
+
+/** Resumes the interaction, the way the Login UI does when the browser comes back to it. */
+async function resume(browser: Browser, start: Response_, interactionId: string) {
+  const flow: Response_ = await browser.post('/api/v1/login/interactions/start', {
     resume_interaction_id: interactionId,
     contract_hash: start.json.contract_hash as string,
     signature: start.json.signature as string,
   });
   expect(flow.status).toBe(200);
+  return flow;
+}
+
+/** Submits what is left of a resumed interaction (a screen, the completion). */
+async function completeResumed(
+  browser: Browser,
+  start: Response_,
+  interactionId: string,
+  resumed: Response_
+): Promise<{ steps: Response_[]; final?: Response_; continuation?: string }> {
+  let flow = resumed;
   const steps: Response_[] = [];
   let current = (flow.json.interaction as { current_step_id: string | null }).current_step_id;
   for (let guard = 0; guard < 5 && current; guard += 1) {
@@ -818,6 +846,7 @@ describe('sign-in sequences through the real handlers', () => {
     world.sessionStore = createSessionStore();
     world.sessions.clear();
     world.mail.length = 0;
+    world.afterStatement = undefined;
     runtimeHandlers.clearLoginRuntimeFlowVersionCacheForTests();
   });
 
@@ -1324,25 +1353,114 @@ describe('sign-in sequences through the real handlers', () => {
       expect(await consentRows()).toHaveLength(1);
     });
 
-    it('is recorded for one user only when two sessions race to complete it', async () => {
+    /** Two browsers, signed in as different users, both back at the same open interaction. */
+    async function twoUsersAtOneInteraction() {
       const browser = browserWith();
       const { start, interaction } = await startFlow(browser, { oidcClientId: 'consent-client' });
       await selectMethod(browser, start, 'mail_otp', given);
       const other = browserWith(signedIn('user_other'));
       browser.cookies.set('authrim_session', signedIn('user_existing'));
+      return {
+        start,
+        interactionId: interaction.id,
+        first: { browser, resumed: await resume(browser, start, interaction.id) },
+        second: { browser: other, resumed: await resume(other, start, interaction.id) },
+      };
+    }
 
-      const [first, second] = await Promise.all([
-        resumeAndComplete(browser, start, interaction.id),
-        resumeAndComplete(other, start, interaction.id),
-      ]);
+    /**
+     * Holds the next request whose statement matches `pattern` right after that statement. Resolves,
+     * once it is held, to the function that lets it go on.
+     */
+    function holdAfter(pattern: RegExp): Promise<() => void> {
+      return new Promise((held) => {
+        world.afterStatement = async (sql) => {
+          if (!pattern.test(sql)) return;
+          world.afterStatement = undefined;
+          await new Promise<void>((release) => held(release));
+        };
+      });
+    }
 
-      const statuses = [first.final?.status, second.final?.status].sort();
-      expect(statuses).toEqual([200, 403]);
+    async function expectCompletedFor(interactionId: string, userId: string) {
       const rows = await consentRows();
       expect(rows).toHaveLength(1);
-      // The record is the winner's, and the interaction is about that user alone.
-      const winner = first.final?.status === 200 ? 'user_existing' : 'user_other';
-      expect(rows[0].subject_user_id).toBe(winner);
+      expect(rows[0].subject_user_id).toBe(userId);
+      expect(
+        await (world.db as DatabaseAdapter).queryOne(
+          'SELECT state, user_id FROM flow_interactions WHERE id = ?',
+          [interactionId]
+        )
+      ).toEqual({ state: 'completed', user_id: userId });
+    }
+
+    it('is recorded for one user only when two sessions race to complete it', async () => {
+      const { start, interactionId, first, second } = await twoUsersAtOneInteraction();
+
+      const results = await Promise.all([
+        completeResumed(first.browser, start, interactionId, first.resumed),
+        completeResumed(second.browser, start, interactionId, second.resumed),
+      ]);
+
+      // Which one wins, and where the other is stopped, depends on how the requests interleave:
+      // before the winner has finished (the interaction is another user's), after it (the
+      // interaction is no longer open), or in between (its step was completed after the other read
+      // the interaction). The three tests below pin each order down.
+      const winner = results.findIndex((result) => result.final?.status === 200);
+      expect(winner).not.toBe(-1);
+      const loser = results[1 - winner].final;
+      expect([
+        [403, 'access_denied'],
+        [409, 'interaction_not_active'],
+        [409, 'step_not_active'],
+      ]).toContainEqual([loser?.status, loser?.json.error]);
+      await expectCompletedFor(interactionId, winner === 0 ? 'user_existing' : 'user_other');
+    });
+
+    it('refuses the other user while the first one is completing the interaction', async () => {
+      const { start, interactionId, first, second } = await twoUsersAtOneInteraction();
+      // The first completion stops right after it made the interaction its user's.
+      const held = holdAfter(/SET user_id = \?/);
+      const firstDone = completeResumed(first.browser, start, interactionId, first.resumed);
+      const release = await held;
+
+      const refused = await completeResumed(second.browser, start, interactionId, second.resumed);
+      release();
+      const done = await firstDone;
+
+      expect([refused.final?.status, refused.final?.json.error]).toEqual([403, 'access_denied']);
+      expect(done.final?.status).toBe(200);
+      await expectCompletedFor(interactionId, 'user_existing');
+    });
+
+    it('refuses the other user when the first one completes the step it was submitting', async () => {
+      const { start, interactionId, first, second } = await twoUsersAtOneInteraction();
+      // The second submission stops right after it read the interaction, still open at the step.
+      const held = holdAfter(/SELECT id, flow_id[\s\S]*FROM flow_interactions/);
+      const secondDone = completeResumed(second.browser, start, interactionId, second.resumed);
+      const release = await held;
+
+      const done = await completeResumed(first.browser, start, interactionId, first.resumed);
+      release();
+      const refused = await secondDone;
+
+      expect(done.final?.status).toBe(200);
+      expect([refused.final?.status, refused.final?.json.error]).toEqual([409, 'step_not_active']);
+      await expectCompletedFor(interactionId, 'user_existing');
+    });
+
+    it('refuses the other user once the first one has completed the interaction', async () => {
+      const { start, interactionId, first, second } = await twoUsersAtOneInteraction();
+
+      const done = await completeResumed(first.browser, start, interactionId, first.resumed);
+      const refused = await completeResumed(second.browser, start, interactionId, second.resumed);
+
+      expect(done.final?.status).toBe(200);
+      expect([refused.final?.status, refused.final?.json.error]).toEqual([
+        409,
+        'interaction_not_active',
+      ]);
+      await expectCompletedFor(interactionId, 'user_existing');
     });
 
     it('is refused when the same statement in the same version has become required meanwhile', async () => {
