@@ -411,7 +411,9 @@ describe('tenant backup R2 object snapshot port', () => {
     expect(source.get).not.toHaveBeenCalled();
   });
 
-  it('reads a large plaintext artifact as fixed-size ranges', async () => {
+  // One full production chunk (5 MiB) is copied, encoded and decoded. That takes about a second
+  // alone, but well over the default 5 s on a busy CI runner collecting coverage.
+  it('reads a large plaintext artifact as fixed-size ranges', { timeout: 30_000 }, async () => {
     const bytes = new Uint8Array(TENANT_BACKUP_R2_CHUNK_BYTES + 3);
     bytes.fill(7);
     const objectKey = 'imports/tenant-a/large.csv';
