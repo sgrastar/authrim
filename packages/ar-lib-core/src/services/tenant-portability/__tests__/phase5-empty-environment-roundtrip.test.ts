@@ -179,6 +179,8 @@ describe('Phase 5 empty-environment roundtrip', () => {
         const rows = source
           .prepare(sqliteSnapshotPageQuery(entry.capture, 'json', entry.partitions))
           .all('phase5-snapshot', 'tenant-a', '', 10_000)
+          // A progress row (row_json NULL) only moves past other tenants' rows.
+          .filter((row) => row.row_json !== null)
           .map((row) => String(row.row_json));
         exported.set(
           entry.dataset.id,

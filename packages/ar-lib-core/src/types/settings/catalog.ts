@@ -41,6 +41,7 @@ import { TENANT_DISCOVERY_UI_CATEGORY_META } from './tenant-discovery-ui';
 import { SUPPORT_OPS_CATEGORY_META } from './support-ops';
 import { SELF_SERVICE_CATEGORY_META } from './self-service';
 import { SERVICE_SITE_CATEGORY_META } from './service-site';
+import { IDENTITY_MAPPING_CATEGORY_META } from './identity-mapping';
 
 /**
  * All category metadata for easy registration
@@ -95,6 +96,8 @@ export const ALL_CATEGORY_META = {
   'support-ops': SUPPORT_OPS_CATEGORY_META,
   'self-service': SELF_SERVICE_CATEGORY_META,
   'service-site': SERVICE_SITE_CATEGORY_META,
+  // Default Mapping Sets (platform, tenant)
+  'identity-mapping': IDENTITY_MAPPING_CATEGORY_META,
 } as const;
 
 /**
@@ -238,6 +241,10 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   },
   'service-site': {
     allowedScopes: ['tenant'],
+  },
+  // The platform's and each tenant's default Mapping Set; an app's own choice is on the app.
+  'identity-mapping': {
+    allowedScopes: ['platform', 'tenant'],
   },
 
   // Diagnostic Logging (tenant + client in future)

@@ -185,6 +185,8 @@ export * from './utils/totp-backup-codes';
 export * from './services/identity-mapping-owner';
 export * from './services/identity-mapping-runtime-resolver';
 export * from './services/identity-mapping-set-binding';
+export * from './services/identity-mapping-platform-checks';
+export * from './services/identity-mapping-set-reference';
 export * from './services/identity-mapping-source-reads';
 export * from './services/identity-mapping-output-graph';
 export * from './services/server-flow-execution';

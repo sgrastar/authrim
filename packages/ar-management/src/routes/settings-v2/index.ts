@@ -66,6 +66,7 @@ import {
   type AdminAuthContext,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalMachinePermission,
   ensureDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   getTenantIdFromContext,
@@ -97,6 +98,7 @@ import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
 import { BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS } from '../../human-verification-provider-projection';
+import { identityMappingReferenceProblem } from './identity-mapping-reference';
 import {
   humanVerificationDocumentRefusal,
   patchTouchesHumanVerification,
@@ -343,6 +345,26 @@ function checkRolePermission(
     return perms.editRoles.some((role) => userRoles.includes(role));
   }
   return perms.viewRoles.some((role) => userRoles.includes(role));
+}
+
+/**
+ * Whether the caller may edit a category at the platform scope. A person needs a role that may,
+ * held through a global assignment, with a global tenant scope: `adminAuth.roles` adds up every
+ * assignment that applies to the request, so it is not what a change that reaches every tenant is
+ * judged on. A machine token has no roles; it needs the settings write permission for every
+ * tenant (a global tenant scope, and the permission among its global ones). A token limited to
+ * some tenants holds nothing for the platform, whatever its permissions are.
+ */
+export function hasGlobalPlatformSettingsEdit(
+  adminAuth: AdminAuthContext | undefined,
+  category: CategoryName
+): boolean {
+  if (!adminAuth) return false;
+  if (adminAuth.authMethod === 'machine_access_token') {
+    return hasGlobalMachinePermission(adminAuth, ADMIN_PERMISSIONS.SETTINGS_WRITE);
+  }
+  if (!(adminAuth.tenantScope ?? []).includes('*')) return false;
+  return checkRolePermission(adminAuth.globalRoles ?? [], category, 'platform', 'edit');
 }
 
 export function hasTenantSettingsPermission(
@@ -1738,6 +1760,23 @@ settingsV2.patch(
             }
           }
 
+          if (category === 'identity-mapping') {
+            const mappingProblem = await identityMappingReferenceProblem(c.env, body, {
+              type: 'tenant',
+              tenantId,
+            });
+            if (mappingProblem) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: mappingProblem.reason,
+              });
+              return mappingProblem.status === 503
+                ? errorResponse(c, 'temporarily_unavailable', mappingProblem.message, 503)
+                : errorResponse(c, 'validation_failed', mappingProblem.message, 400);
+            }
+          }
+
           const postLoginValidation = await validatePostLoginRelatedPatch(
             c.env,
             tenantId,
@@ -2591,9 +2630,11 @@ settingsV2.patch('/platform/settings/:category', (c) => {
     }
 
     const adminAuth = c.get('adminAuth');
-    const userRoles = adminAuth?.roles || [];
 
-    if (!checkRolePermission(userRoles, category, 'platform', 'edit')) {
+    // A platform setting reaches every tenant, so the role has to come from a global assignment:
+    // `roles` also holds what is given for one tenant only (an Admin of one tenant who is a
+    // super_admin there must not change what every other tenant inherits).
+    if (!hasGlobalPlatformSettingsEdit(adminAuth, category)) {
       return errorResponse(
         c,
         'forbidden',
@@ -2639,8 +2680,9 @@ settingsV2.patch('/platform/settings/:category', (c) => {
 
           const platformError =
             category === 'tenant'
-              ? (validatePlatformUIPatch(body, c.env) ?? validateCategoryPatch(category, body))
-              : validateCategoryPatch(category, body);
+              ? (validatePlatformUIPatch(body, c.env) ??
+                validateCategoryPatch(category, body, 'platform'))
+              : validateCategoryPatch(category, body, 'platform');
           if (platformError) {
             await recordSettingsAuditFailure(c, {
               category,
@@ -2648,6 +2690,22 @@ settingsV2.patch('/platform/settings/:category', (c) => {
               reason: `${category}_validation_failed`,
             });
             return errorResponse(c, 'validation_failed', platformError, 400);
+          }
+
+          // The Mapping Set a default names must exist and be usable by every tenant (checked in
+          // the Admin database, which the form checks above do not reach).
+          if (category === 'identity-mapping') {
+            const mappingProblem = await identityMappingReferenceProblem(c.env, body, scope);
+            if (mappingProblem) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: mappingProblem.reason,
+              });
+              return mappingProblem.status === 503
+                ? errorResponse(c, 'temporarily_unavailable', mappingProblem.message, 503)
+                : errorResponse(c, 'validation_failed', mappingProblem.message, 400);
+            }
           }
 
           const actor = adminAuth?.userId ?? 'unknown';

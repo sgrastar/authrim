@@ -229,6 +229,10 @@ export const jaSettings = {
 	'set.k.session.backchannel_retry_max_delay_ms': '再送の間隔の上限',
 	'set.k.session.backchannel_retry_backoff_multiplier': '再送の間隔を延ばす倍率',
 
+	'set.k.identity_mapping.oidc_default_set_id': '既定のマッピングセット（OIDC）',
+	'set.k.identity_mapping.oidc_default_set_id.desc':
+		'この範囲のアプリが自分のマッピングセットを選んでいないときに使う、マッピングセットの ID です。未設定のときは既定なしで、マッピングは適用されません。テナントで none を指定すると、プラットフォームの既定も使いません。有効なマッピングセットだけを指定できます。現在は保存と検証だけで、サインインにはまだ反映されません。',
+
 	'settings.advanced': '詳細設定',
 	'settings.setHere': '上書きしている設定数: {n}',
 	'settings.readOnly.title': '閲覧のみ',
