@@ -52,7 +52,21 @@ export function decodeTenantBackupContainerRow(
   };
 }
 
+/** Largest row a container may carry (transfer limit, without its newline). */
 export const TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES = MAX_ROW_BYTES;
+
+/**
+ * Largest SQL row (its JSON plus newline) a restore target accepts. Validation, restore and
+ * read-back refuse larger SQL rows up front with `backup_sqlite_row_too_large`. Raising it needs
+ * its own design: D1 stores at most about 2 MB per value.
+ */
+export const TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES = 256 * 1024;
+
+/** Throw the permanent `backup_sqlite_row_too_large` for an SQL row a restore target refuses. */
+export function assertTenantBackupSqliteRowFits(rowJson: string): void {
+  if (new TextEncoder().encode(rowJson).length + 1 > TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES)
+    throw new Error('backup_sqlite_row_too_large');
+}
 
 /** Read one NDJSON row from an already authenticated dataset byte range. */
 export function readNextTenantBackupContainerRow(

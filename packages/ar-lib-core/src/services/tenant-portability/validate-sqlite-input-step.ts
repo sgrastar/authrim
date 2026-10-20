@@ -4,7 +4,10 @@ import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
 import type { TenantBundleManifest } from './bundle-manifest';
 import { DatabaseTenantBundleReferenceIndex } from './validation-index';
 import { inspectSqliteInputRow } from './sqlite-input-inspection';
-import { TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES } from './container-dataset-reader';
+import {
+  assertTenantBackupSqliteRowFits,
+  TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES,
+} from './container-dataset-reader';
 
 function fail(): never {
   throw new Error('backup_sqlite_validation_step_invalid');
@@ -123,6 +126,8 @@ export async function runSqliteInputValidationStep(
     // row limit) and is then validated alone, so every slice makes progress.
     if (rowBytes > TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES)
       throw new Error('backup_sqlite_row_too_large');
+    // SQL rows must also fit the restore target, or restore would fail on them much later.
+    if (input.policy.dataset.store === 'database') assertTenantBackupSqliteRowFits(row.rowJson);
     if (count > 0 && bytes + rowBytes > VALIDATION_BATCH_BYTES) break;
     const recordCount = records.length;
     const referenceCount = references.length;

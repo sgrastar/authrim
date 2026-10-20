@@ -9,6 +9,10 @@ import {
 } from '../sqlite-restore-target';
 import type { SqliteDatasetInspectionPolicy } from '../sqlite-dataset-inspector';
 import type { TenantBundleManifest } from '../bundle-manifest';
+import {
+  assertTenantBackupSqliteRowFits,
+  TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES,
+} from '../container-dataset-reader';
 let db: DatabaseSync;
 let now: number;
 let denied: boolean;
@@ -153,6 +157,33 @@ it('writes typed rows once and reopens after a lost response without replacing d
     resumed.writeRow(policy, manifest, row.replace('日本語', 'different'))
   ).rejects.toThrow();
   expect(db.prepare('SELECT value FROM tenants').get()?.value).toBe('日本語');
+});
+it('accepts a row exactly at the SQL restore row limit and rejects one byte more', async () => {
+  // The limit counts the row's newline, as the container stores it.
+  const empty = row.replace('日本語', '');
+  const padding = (bytes: number) => bytes - 1 - new TextEncoder().encode(empty).length;
+  const sized = (bytes: number) => row.replace('日本語', 'v'.repeat(padding(bytes)));
+  const atLimit = sized(TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES);
+  const overLimit = sized(TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES + 1);
+  expect(new TextEncoder().encode(atLimit + '\n').length).toBe(
+    TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES
+  );
+  expect(() => assertTenantBackupSqliteRowFits(atLimit)).not.toThrow();
+  expect(() => assertTenantBackupSqliteRowFits(overLimit)).toThrow('backup_sqlite_row_too_large');
+
+  const target = await SqliteRestoreTarget.open(input());
+  await expect(target.writeRows(policy, manifest, [overLimit])).rejects.toThrow(
+    'backup_restore_target_rejected'
+  );
+  expect(db.prepare('SELECT count(*) AS n FROM tenants').get()?.n).toBe(0);
+  await target.writeRows(policy, manifest, [atLimit]);
+  await target.verifyRows(policy, manifest, [atLimit]);
+  await expect(target.verifyRows(policy, manifest, [overLimit])).rejects.toThrow(
+    'backup_restore_target_rejected'
+  );
+  expect(db.prepare('SELECT length(value) AS n FROM tenants').get()?.n).toBe(
+    padding(TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES)
+  );
 });
 it('writes multiple restore rows with one atomic database batch', async () => {
   db.exec(

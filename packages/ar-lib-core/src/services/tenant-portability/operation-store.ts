@@ -28,6 +28,23 @@ export interface TenantBackupOperation {
   next_attempt_at: number;
   failure_count: number;
   last_error_code: string | null;
+  /** Set when the operation failed permanently; cleanup then finishes it as 'failed'. */
+  failure_reason?: TenantBackupPermanentFailure | null;
+}
+
+/**
+ * Step errors that retrying cannot fix. The scheduler cleans such an operation up like a
+ * cancellation instead of retrying it, and keeps the code as the failure reason.
+ */
+export const TENANT_BACKUP_PERMANENT_FAILURES = [
+  'backup_export_too_large',
+  'backup_artifact_too_large',
+  'backup_sqlite_row_too_large',
+] as const;
+export type TenantBackupPermanentFailure = (typeof TENANT_BACKUP_PERMANENT_FAILURES)[number];
+
+export function isTenantBackupPermanentFailure(code: string): code is TenantBackupPermanentFailure {
+  return (TENANT_BACKUP_PERMANENT_FAILURES as readonly string[]).includes(code);
 }
 export interface TenantBackupLease {
   tenantId: string;
@@ -244,13 +261,60 @@ export class TenantBackupOperationStore {
     );
   }
 
-  /** The executor calls this only after verifying that every owned resource was cleaned up. */
+  /**
+   * The executor calls this only after verifying that every owned resource was cleaned up. A
+   * permanently failed operation ends as 'failed' (its reason kept), any other as 'cancelled'.
+   */
   async finishCancellation(
     lease: TenantBackupLease,
     revision: number,
     now: number
   ): Promise<TenantBackupOperation | null> {
-    return this.releaseLease(lease, revision, 'cancelling', 'cancelled', now);
+    leaseValues(lease);
+    time(now);
+    if (!Number.isSafeInteger(revision) || revision < 0)
+      throw new Error('invalid_backup_operation_revision');
+    return this.database.queryOne(
+      `UPDATE tenant_backup_operations
+      SET state=CASE WHEN failure_reason IS NULL THEN 'cancelled' ELSE 'failed' END,
+      lease_owner=NULL,lease_expires_at=NULL,fencing_token=fencing_token+1,revision=revision+1,updated_at=?
+      WHERE tenant_id=? AND id=? AND state='cancelling' AND lease_owner=? AND fencing_token=? AND revision=? AND lease_expires_at>? AND updated_at<=? RETURNING *`,
+      [now, lease.tenantId, lease.operationId, lease.owner, lease.fencingToken, revision, now, now]
+    );
+  }
+
+  /**
+   * Give up on a running operation that can never succeed: record why and hand it to the same
+   * cleanup a cancellation gets, so partial artifacts, spills and staging are removed.
+   */
+  async failPermanently(
+    lease: TenantBackupLease,
+    revision: number,
+    reason: TenantBackupPermanentFailure,
+    now: number
+  ): Promise<TenantBackupOperation | null> {
+    leaseValues(lease);
+    time(now);
+    if (!Number.isSafeInteger(revision) || revision < 0 || !isTenantBackupPermanentFailure(reason))
+      throw new Error('invalid_backup_operation_failure');
+    return this.database.queryOne(
+      `UPDATE tenant_backup_operations
+      SET state='cancelling',phase='cleanup',cursor_json=NULL,failure_reason=?,failure_count=0,
+      last_error_code=NULL,next_attempt_at=0,lease_owner=NULL,lease_expires_at=NULL,
+      fencing_token=fencing_token+1,revision=revision+1,updated_at=?
+      WHERE tenant_id=? AND id=? AND state='running' AND lease_owner=? AND fencing_token=? AND revision=? AND lease_expires_at>? AND updated_at<=? RETURNING *`,
+      [
+        reason,
+        now,
+        lease.tenantId,
+        lease.operationId,
+        lease.owner,
+        lease.fencingToken,
+        revision,
+        now,
+        now,
+      ]
+    );
   }
 
   async yieldCancellation(

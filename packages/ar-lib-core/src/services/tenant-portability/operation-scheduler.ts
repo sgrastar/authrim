@@ -1,5 +1,5 @@
 import type { DatabaseAdapter } from '../../db/adapter';
-import { TenantBackupOperationStore } from './operation-store';
+import { isTenantBackupPermanentFailure, TenantBackupOperationStore } from './operation-store';
 import { executeTenantBackupBatch, type TenantBackupOperationHandlers } from './operation-executor';
 
 /**
@@ -88,16 +88,22 @@ export async function runTenantBackupScheduler(
       failureCodes.add(errorCode);
       // Do not reschedule a new owner after cancellation, lease takeover, or a stale response.
       if (current?.lease_owner === workerId) {
-        await store.retryFailure(
-          {
-            tenantId: item.tenant_id,
-            operationId: item.id,
-            owner: workerId,
-            fencingToken: current.fencing_token,
-          },
-          current.revision,
-          now()
-        );
+        const lease = {
+          tenantId: item.tenant_id,
+          operationId: item.id,
+          owner: workerId,
+          fencingToken: current.fencing_token,
+        };
+        // Retrying cannot fix these; clean the operation up and keep the reason instead.
+        if (
+          current.state === 'running' &&
+          isTenantBackupPermanentFailure(errorCode) &&
+          (await store.failPermanently(lease, current.revision, errorCode, now()))
+        ) {
+          failures++;
+          continue;
+        }
+        await store.retryFailure(lease, current.revision, now());
       }
       failures++;
     }

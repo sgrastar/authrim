@@ -10,6 +10,7 @@ import {
   runSqliteRestoreDatasetVerificationStep,
 } from './restore-sqlite-step';
 import { sqliteRestoreVerifyRowBudget } from './sqlite-restore-target';
+import { assertTenantBackupSqliteRowFits } from './container-dataset-reader';
 import { TENANT_BACKUP_MAX_SQLITE_DATASETS } from './installed-sqlite-datasets';
 import {
   cloneSqliteDatasetInspectionPolicy,
@@ -75,6 +76,7 @@ async function readCompleteDataset(
     });
     if (next === null) return { rows, bytes };
     if (!next.nextCursor || next.nextCursor === sourceCursor) throw fail();
+    assertTenantBackupSqliteRowFits(next.rowJson);
     const rowBytes = new TextEncoder().encode(next.rowJson).length;
     if (rows.length >= remainingRows || bytes + rowBytes > remainingBytes) return null;
     rows.push(next.rowJson);
@@ -93,7 +95,8 @@ async function transformRows(
   const transformed: string[] = [];
   for (const row of rows) {
     const value = await source.policy.restoreTransform.transform(context, row, mode);
-    if (!value || new TextEncoder().encode(value).length > 16 * 1024 * 1024) throw fail();
+    if (!value) throw fail();
+    assertTenantBackupSqliteRowFits(value);
     transformed.push(value);
   }
   return transformed;

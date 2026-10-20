@@ -6,6 +6,7 @@ import {
 } from './sqlite-dataset-inspector';
 import { openPlannedSqliteRestoreTarget } from './sqlite-restore-plan';
 import { sqliteRestoreVerifyRowBudget } from './sqlite-restore-target';
+import { assertTenantBackupSqliteRowFits } from './container-dataset-reader';
 
 type TargetInput = Parameters<typeof openPlannedSqliteRestoreTarget>[0];
 export interface SqliteRestoreDatasetCursor {
@@ -178,11 +179,9 @@ async function runVerifyBatch(
       }
     const rowBytes = new TextEncoder().encode(rowJson).length;
     if (!rowJson) invalid();
-    // Like the write path: a row over the batch bound is verified alone on the single-row path.
-    if (rowBytes > RESTORE_BATCH_BYTES) {
-      if (!processedRows) return runSingleStep(context, input, 'verify');
-      break;
-    }
+    // Rows the restore target cannot hold fail permanently here instead of in the target. Every
+    // other row is far below the batch bound, so a batch always takes at least one row.
+    assertTenantBackupSqliteRowFits(rowJson);
     if (processedRows && bytes + rowBytes > RESTORE_BATCH_BYTES) break;
     if (held) heldRows.push(next.rowJson);
     else rows.push(rowJson);
@@ -306,10 +305,8 @@ async function runWriteBatch(
         throw new Error('backup_restore_row_transform_failed');
       }
     const rowBytes = new TextEncoder().encode(rowJson).length;
-    if (!rowJson || rowBytes > RESTORE_BATCH_BYTES) {
-      if (!processedRows) return runSingleStep(context, input, 'write');
-      break;
-    }
+    if (!rowJson) invalid();
+    assertTenantBackupSqliteRowFits(rowJson);
     if (processedRows && bytes + rowBytes > RESTORE_BATCH_BYTES) break;
     if (held) heldRows.push(next.rowJson);
     else rows.push(rowJson);
@@ -613,12 +610,8 @@ async function runSingleStep(
     } catch {
       throw new Error('backup_restore_row_transform_failed');
     }
-    if (
-      typeof rowJson !== 'string' ||
-      !rowJson ||
-      new TextEncoder().encode(rowJson).length > 16 * 1024 * 1024
-    )
-      invalid();
+    if (typeof rowJson !== 'string' || !rowJson) invalid();
+    assertTenantBackupSqliteRowFits(rowJson);
     // Mapping or other installed transforms may yield; recheck the exact plan before mutation.
     await input.inventory.headForLease(context.lease);
     await input.assertValidatedUnpublishedPlan(head.chain_digest);

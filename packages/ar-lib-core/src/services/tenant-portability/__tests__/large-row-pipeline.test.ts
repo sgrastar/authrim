@@ -132,44 +132,58 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+function validationCursor(): string {
+  return JSON.stringify({
+    version: 1,
+    sessionId: 'session-a',
+    bundleId: manifest.bundleId,
+    datasetId: dataset.id,
+    sourceCursor: null,
+    rows: 0,
+  });
+}
+
+function validate(cursor: string, stepPolicy: SqliteDatasetInspectionPolicy) {
+  return runSqliteInputValidationStep(
+    {
+      operation: {
+        id: 'import-a',
+        tenant_id: 'tenant-a',
+        kind: 'import',
+        state: 'running',
+        phase: 'validate_sqlite_dataset',
+        cursor_json: cursor,
+      },
+      lease,
+      signal,
+    } as unknown as TenantBackupStepContext,
+    {
+      database: { batch: async () => [] } as never,
+      now: () => 100,
+      sessionId: 'session-a',
+      policy: stepPolicy,
+      manifest,
+      assertPinnedInput: async () => {},
+      readNextRow: (sourceCursor) => source.readNextRow(sourceCursor),
+    }
+  );
+}
+
 it(
   'validates rows over the batch bound alone instead of stalling on them',
   { timeout: 180_000 },
   async () => {
-    let cursor = JSON.stringify({
-      version: 1,
-      sessionId: 'session-a',
-      bundleId: manifest.bundleId,
-      datasetId: dataset.id,
-      sourceCursor: null,
-      rows: 0,
-    });
+    // Only SQL restore caps rows at 256 KiB, so the transfer-sized path is exercised with
+    // a dataset that is not restored into a database table.
+    const objectPolicy = {
+      ...policy,
+      dataset: { ...dataset, store: 'object' },
+    } as unknown as SqliteDatasetInspectionPolicy;
+    let cursor = validationCursor();
     const perSlice: number[] = [];
     for (let slices = 0; slices < 10; slices++) {
       const before = mocks.inspected.length;
-      const result = await runSqliteInputValidationStep(
-        {
-          operation: {
-            id: 'import-a',
-            tenant_id: 'tenant-a',
-            kind: 'import',
-            state: 'running',
-            phase: 'validate_sqlite_dataset',
-            cursor_json: cursor,
-          },
-          lease,
-          signal,
-        } as unknown as TenantBackupStepContext,
-        {
-          database: { batch: async () => [] } as never,
-          now: () => 100,
-          sessionId: 'session-a',
-          policy,
-          manifest,
-          assertPinnedInput: async () => {},
-          readNextRow: (sourceCursor) => source.readNextRow(sourceCursor),
-        }
-      );
+      const result = await validate(cursor, objectPolicy);
       perSlice.push(mocks.inspected.length - before);
       cursor = result.cursor!;
       if (result.phase === 'advance_validation_dataset') break;
@@ -183,10 +197,20 @@ it(
 );
 
 it(
-  'verifies restored rows over the batch bound on the single-row path',
+  'rejects a database row larger than the SQL restore target accepts during validation',
   { timeout: 180_000 },
   async () => {
-    let cursor = JSON.stringify({
+    await expect(validate(validationCursor(), policy)).rejects.toThrow(
+      'backup_sqlite_row_too_large'
+    );
+  }
+);
+
+it(
+  'rejects a database row larger than the SQL restore target accepts during verification',
+  { timeout: 180_000 },
+  async () => {
+    const cursor = JSON.stringify({
       version: 1,
       targetId: 'target-a',
       targetOrdinal: 0,
@@ -196,17 +220,15 @@ it(
       verifySourceCursor: null,
       rowsVerified: 0,
     });
-    let phase = 'verify_sqlite_dataset';
-    for (let slices = 0; slices < 10 && phase === 'verify_sqlite_dataset'; slices++) {
-      const before = JSON.parse(cursor).rowsVerified;
-      const result = await runSqliteRestoreDatasetVerificationStep(
+    await expect(
+      runSqliteRestoreDatasetVerificationStep(
         {
           operation: {
             id: 'import-a',
             tenant_id: 'tenant-a',
             kind: 'import',
             state: 'running',
-            phase,
+            phase: 'verify_sqlite_dataset',
             cursor_json: cursor,
           },
           lease,
@@ -221,15 +243,9 @@ it(
           manifest,
           readNextValidatedRow: ({ sourceCursor }) => source.readNextRow(sourceCursor),
         } as never
-      );
-      phase = result.phase;
-      cursor = result.cursor!;
-      if (phase === 'verify_sqlite_dataset')
-        expect(JSON.parse(cursor).rowsVerified).toBeGreaterThan(before);
-    }
-    expect(phase).toBe('advance_restore_dataset');
-    expect(JSON.parse(cursor).rowsVerified).toBe(sizes.length);
-    expect(mocks.verifyRow).toHaveBeenCalledTimes(2);
-    expect(mocks.verifyDataset).toHaveBeenCalledWith(expect.anything(), sizes.length);
+      )
+    ).rejects.toThrow('backup_sqlite_row_too_large');
+    expect(mocks.verifyRows).not.toHaveBeenCalled();
+    expect(mocks.verifyRow).not.toHaveBeenCalled();
   }
 );

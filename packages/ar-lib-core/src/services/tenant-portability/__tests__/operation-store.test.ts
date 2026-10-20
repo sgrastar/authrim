@@ -43,6 +43,15 @@ beforeEach(() => {
       'utf8'
     )
   );
+  db.exec(
+    readFileSync(
+      new URL(
+        '../../../../../../migrations/admin/d1/046_tenant_backup_operation_failure_reason.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
   adapter = {
     async query<T>(sql: string, params: unknown[] = []) {
       return db.prepare(sql).all(...(params as SQLInputValue[])) as T[];
@@ -1012,6 +1021,61 @@ it('stops normal retries after eight failures while cancellation remains recover
     ).advanced
   ).toBe(1);
   expect((await store.get(create.tenantId, create.id))?.state).toBe('cancelled');
+});
+it('sends a permanent failure straight to cleanup and finishes it as failed', async () => {
+  await store.create(create);
+  const cleanups: string[] = [];
+  const handlers: TenantBackupOperationHandlers = {
+    async run() {
+      throw new Error('backup_export_too_large');
+    },
+    async cleanup(context) {
+      cleanups.push(context.operation.phase);
+      return { cursor: null, done: true };
+    },
+  };
+  const tick = (now: number) =>
+    runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => now);
+  expect(await tick(101)).toMatchObject({
+    failures: 1,
+    failureCodes: ['backup_export_too_large'],
+  });
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'cancelling',
+    phase: 'cleanup',
+    cursor_json: null,
+    failure_reason: 'backup_export_too_large',
+    failure_count: 0,
+    last_error_code: null,
+    lease_owner: null,
+    next_attempt_at: 0,
+  });
+  expect((await tick(102)).advanced).toBe(1);
+  expect(cleanups).toEqual(['cleanup']);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'failed',
+    failure_reason: 'backup_export_too_large',
+    lease_owner: null,
+  });
+  // A finished operation is not picked up again.
+  expect((await tick(103)).inspected).toBe(0);
+});
+it('keeps a user cancellation a cancellation when no permanent failure was recorded', async () => {
+  await store.create(create);
+  await store.requestCancel(create.tenantId, create.id, 101);
+  const handlers: TenantBackupOperationHandlers = {
+    async run() {
+      throw new Error('unexpected');
+    },
+    async cleanup() {
+      return { cursor: null, done: true };
+    },
+  };
+  await runTenantBackupScheduler(adapter, handlers, new AbortController().signal, () => 102);
+  expect(await store.get(create.tenantId, create.id)).toMatchObject({
+    state: 'cancelled',
+    failure_reason: null,
+  });
 });
 it('does not overwrite cancellation with a failed stale handler retry', async () => {
   await store.create(create);

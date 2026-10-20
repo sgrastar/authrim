@@ -8,7 +8,10 @@ import {
 import type { TenantBackupExecutionInventory } from './execution-inventory';
 import { finalizeTenantBackupInputValidation } from './finalize-input-validation';
 import { loadPlannedTenantBackupInput } from './input-plan';
-import { readNextTenantBackupContainerRow } from './container-dataset-reader';
+import {
+  assertTenantBackupSqliteRowFits,
+  readNextTenantBackupContainerRow,
+} from './container-dataset-reader';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector';
 import type { TenantBackupContainerDatasetSource } from './container-frame-reader';
@@ -285,6 +288,8 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       for (;;) {
         const row = readNextTenantBackupContainerRow(bytes, cursor);
         if (!row) break;
+        if (candidatePolicy.dataset.store === 'database')
+          assertTenantBackupSqliteRowFits(row.rowJson);
         rows.push(row.rowJson);
         if (batchRows + rows.length > VALIDATION_BATCH_ROWS) break;
         cursor = row.nextCursor;

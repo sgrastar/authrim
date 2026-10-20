@@ -1,4 +1,5 @@
 import { backupOwnershipPredicate, type BackupRowOwnership } from './row-ownership';
+import { TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES } from './container-dataset-reader';
 import { readSqliteRestoreSeedFingerprint } from './sqlite-restore-seed';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { TenantBundleManifest } from './bundle-manifest';
@@ -815,7 +816,7 @@ export class SqliteRestoreTarget {
     const inspector = await createSqliteDatasetInspectorFactory(policy)(policy.dataset, manifest);
     try {
       const bytes = new TextEncoder().encode(rowJson + '\n');
-      if (bytes.length > 256 * 1024) throw error();
+      if (bytes.length > TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES) throw error();
       const inspected = await inspector.chunk(bytes, 0);
       if (!inspected.records.length) throw error();
       await inspector.finish();

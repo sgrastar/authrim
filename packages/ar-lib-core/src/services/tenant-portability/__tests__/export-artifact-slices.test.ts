@@ -13,6 +13,7 @@ import {
 } from '../bundle-key-envelope';
 import { saveTenantBackupExportManifest } from '../export-manifest-store';
 import { runTenantBackupArtifactStep } from '../export-artifact-step';
+import { cleanupCancelledTenantBackupArtifactPage } from '../cancelled-artifact-cleanup';
 import { runTenantBackupArtifactVerificationStep } from '../verify-artifact-step';
 import { readTenantBackupArtifact } from '../artifact-reader';
 import { openTenantBackupDownload } from '../published-artifact-reader';
@@ -123,10 +124,12 @@ beforeEach(async () => {
     '004_tenant_backup_validation_index.sql',
     '008_tenant_backup_retry_state.sql',
     '009_tenant_backup_artifact_parts.sql',
+    '012_tenant_backup_cipher_journal.sql',
     '036_tenant_backup_capacity_parts.sql',
     '021_tenant_backup_export_manifests.sql',
     '020_tenant_backup_publications.sql',
     '044_tenant_backup_export_dataset_progress.sql',
+    '046_tenant_backup_operation_failure_reason.sql',
   ])
     db.exec(
       readFileSync(
@@ -737,6 +740,102 @@ it('refuses to export or verify more data frames than import accepts', async () 
       }
     )
   ).rejects.toThrow('backup_artifact_too_large');
+});
+
+it('fails an export over the frame cap for good and cleans up its attempt, parts and spills', async () => {
+  const { attemptId, expected } = await prepare();
+  // A slice is lost after reserving its third part; its retries then stop mid-frame and spill.
+  let puts = 0;
+  const original = bucket.put.bind(bucket);
+  bucket.put = (async (...args: Parameters<R2Bucket['put']>) => {
+    if (++puts === 3) putFault = 'before';
+    return original(...args);
+  }) as R2Bucket['put'];
+  let cursor: string | null = JSON.stringify({ version: 2, attemptId });
+  await expect(
+    exportStep(attemptId, expected, 'export_artifact', cursor, {
+      slice: { frameBytes: 8 * 1024, readCalls: 60 },
+      read: batched(7),
+    })
+  ).rejects.toThrow('r2_unavailable');
+  bucket.put = original;
+  const slice = { frameBytes: 8 * 1024, readCalls: 3 };
+  const spilledAfterAFrame = (value: string) => {
+    const parsed = JSON.parse(value) as { spill: unknown; sequence?: number };
+    return parsed.spill !== null && parsed.sequence! > 0;
+  };
+  while (!spilledAfterAFrame(cursor!))
+    cursor = (
+      await exportStep(attemptId, expected, 'export_artifact', cursor, { slice, read: batched(1) })
+    ).cursor;
+  // The next frame is one more than import accepts.
+  await expect(
+    exportStep(attemptId, expected, 'export_artifact', cursor, {
+      slice: { ...slice, readCalls: 60, maxDataFrames: JSON.parse(cursor!).sequence },
+      read: batched(1),
+    })
+  ).rejects.toThrow('backup_export_too_large');
+  const count = (table: string, column = 'attempt_id') =>
+    db.prepare(`SELECT count(*) AS n FROM ${table} WHERE ${column}=?`).get(attemptId)?.n;
+  const stagedObjects = () =>
+    [...objects.keys()].filter((key) => key.startsWith(`tenant-backup-staging/${attemptId}/`));
+  expect(count('tenant_backup_artifact_attempts', 'id')).toBe(1);
+  expect(count('tenant_backup_artifact_parts')).toBeGreaterThan(0);
+  expect(count('tenant_backup_export_spills')).toBeGreaterThan(0);
+  expect(stagedObjects().length).toBeGreaterThan(0);
+
+  // What the scheduler does with a permanent failure code: no retry, straight to cleanup.
+  const store = new TenantBackupOperationStore(adapter);
+  const running = (await store.get('tenant-a', 'operation'))!;
+  expect(
+    await store.failPermanently(lease, running.revision, 'backup_export_too_large', 103)
+  ).toMatchObject({
+    state: 'cancelling',
+    phase: 'cleanup',
+    cursor_json: null,
+    failure_reason: 'backup_export_too_large',
+    failure_count: 0,
+    last_error_code: null,
+    lease_owner: null,
+  });
+  const cleaning = (await store.claimCancellation('tenant-a', 'operation', 'cleaner', 104))!;
+  const context = {
+    operation: cleaning,
+    lease: {
+      tenantId: 'tenant-a',
+      operationId: 'operation',
+      owner: 'cleaner',
+      fencingToken: cleaning.fencing_token,
+    },
+    signal,
+  };
+  const cleanupBucket = {
+    async head(key: string) {
+      return objects.has(key) ? {} : null;
+    },
+    async delete(key: string) {
+      objects.delete(key);
+    },
+  };
+  let done = false;
+  for (let page = 0; page < 10 && !done; page++)
+    ({ done } = await cleanupCancelledTenantBackupArtifactPage({
+      database: adapter,
+      bucket: cleanupBucket,
+      context,
+      now: () => 105,
+    }));
+  expect(done).toBe(true);
+  expect(count('tenant_backup_artifact_attempts', 'id')).toBe(0);
+  expect(count('tenant_backup_artifact_parts')).toBe(0);
+  expect(count('tenant_backup_export_spills')).toBe(0);
+  expect(count('tenant_backup_export_datasets')).toBe(0);
+  expect(count('tenant_backup_cipher_frames')).toBe(0);
+  expect(stagedObjects()).toEqual([]);
+  expect(await store.finishCancellation(context.lease, cleaning.revision, 106)).toMatchObject({
+    state: 'failed',
+    failure_reason: 'backup_export_too_large',
+  });
 });
 
 it('imports an export cut into many short frames', async () => {

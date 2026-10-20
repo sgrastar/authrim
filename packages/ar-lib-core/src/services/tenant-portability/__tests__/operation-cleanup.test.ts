@@ -30,6 +30,7 @@ beforeEach(() => {
     '036_tenant_backup_capacity_parts',
     '037_tenant_backup_container_inputs',
     '045_tenant_backup_input_frames',
+    '046_tenant_backup_operation_failure_reason',
   ])
     sql.exec(
       readFileSync(
