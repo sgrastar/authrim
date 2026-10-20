@@ -282,23 +282,6 @@ beforeAll(async () => {
   ).join('');
 });
 
-describe('row-aligned export frames', () => {
-  it('cuts frames on row boundaries near 4 MiB and keeps every row inside one frame', async () => {
-    const object = await encode({ 'core.a': rows('a', 70_000, 100), 'core.b': rows('b', 10) });
-    const verified = await verifyAll(object, TENANT_BACKUP_VERIFY_ALL);
-    expect(verified.frames.length).toBeGreaterThan(1);
-    const data = join([
-      ...(await decodeTenantBackupContainerV2({ parts: [object], session })).datasets.values(),
-    ]);
-    for (const frame of verified.frames) {
-      expect(frame.plainBytes).toBeLessThanOrEqual(
-        TENANT_BACKUP_CONTAINER_V2_LIMITS.targetFramePlainBytes
-      );
-      expect(data[frame.plainOffset + frame.plainBytes - 1]).toBe(10);
-    }
-  });
-});
-
 describe('frame-by-frame verification', () => {
   it('accepts what the whole-container decoder accepts, across one-frame slices', async () => {
     const data = {
@@ -534,12 +517,22 @@ describe('frame reader', () => {
   it('refuses rows spread over more frames than any encoder produces', async () => {
     const row = encoder.encode(`{"id":["text","${'x'.repeat(200)}"]}\n`);
     const data = { 'core.a': row, 'core.b': rows('b', 2) };
-    // Four frames hold the first row: readable. Five: refused instead of read frame by frame.
-    const four = await readerFor(await build(data, [50, 100, 150]));
+    // Twelve frames hold the first row: readable. Thirteen: refused instead of read frame by frame.
+    const four = await readerFor(
+      await build(
+        data,
+        Array.from({ length: 11 }, (_, index) => (index + 1) * 18)
+      )
+    );
     expect((await four.dataset('core.a').readNextRow(null))?.rowJson).toBe(
       new TextDecoder().decode(row.subarray(0, -1))
     );
-    const five = await readerFor(await build(data, [40, 80, 120, 160]));
+    const five = await readerFor(
+      await build(
+        data,
+        Array.from({ length: 12 }, (_, index) => (index + 1) * 16)
+      )
+    );
     await expect(five.dataset('core.a').readNextRow(null)).rejects.toThrow(
       'backup_container_frame_reader_invalid'
     );
@@ -556,6 +549,22 @@ describe('frame reader', () => {
       'backup_container_frame_reader_invalid'
     );
   });
+
+  it(
+    'reads a 15 MiB row that sliced-export 4 MiB cuts and a stopped transition split',
+    { timeout: 180_000 },
+    async () => {
+      const big = encoder.encode(`{"id":["text","${'y'.repeat(15 * 1024 * 1024)}"]}\n`);
+      const data = { 'core.a': join([rows('a', 3), big, rows('a', 2)]), 'core.b': rows('b', 1) };
+      const all = join(Object.values(data));
+      const mebi = 1024 * 1024;
+      // Fixed 4 MiB cuts inside the big row, with one short frame where a transition stopped.
+      const cuts = [4 * mebi, 6 * mebi, 10 * mebi, 14 * mebi, 18 * mebi].filter(
+        (cut) => cut < all.length
+      );
+      await expectSameRows(await build(data, cuts));
+    }
+  );
 
   it('fails like the in-memory reader on cursors that are not row starts', async () => {
     const data = { 'core.a': rows('a', 4) };
@@ -586,12 +595,13 @@ describe('frame reader', () => {
       expect(await source.readNextRow(cursor)).toEqual(
         readNextTenantBackupContainerRow(bytes, cursor)
       );
-      // The header, the row's frame and at most the previous frame (for the row-start check).
+      // The header, the frames holding the row (two when a 12 MiB cut splits it) and at most
+      // the previous frame for the row-start check: never the whole object.
       expect(requests[0].length).toBe(133);
-      expect(requests.length).toBeLessThanOrEqual(3);
+      expect(requests.length).toBeLessThanOrEqual(4);
       for (const request of requests.slice(1))
         expect(request.length).toBeLessThanOrEqual(
-          TENANT_BACKUP_CONTAINER_V2_LIMITS.targetFramePlainBytes + 25
+          TENANT_BACKUP_CONTAINER_V2_LIMITS.capacityPartBytes + 25
         );
     }
   );

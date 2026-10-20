@@ -6,11 +6,6 @@ const MAGIC = new TextEncoder().encode('AUTHRIM2');
 const HEADER_BYTES = 8 + 93 + 32;
 const SINGLE_OBJECT_DATA_BYTES = 16 * 1024 * 1024;
 const CAPACITY_PART_BYTES = 12 * 1024 * 1024;
-/** Data frames end on a row boundary near this size, so a restore step decrypts little more than it reads. */
-const TARGET_FRAME_PLAIN_BYTES = 4 * 1024 * 1024;
-/** Upper bound for one frame's plaintext: a single row may exceed the target up to the row limit. */
-const MAX_FRAME_PLAIN_BYTES = 16 * 1024 * 1024;
-const FRAME_OVERHEAD_BYTES = 9 + 16;
 const MAX_CONTAINER_BYTES = 256 * 1024 * 1024;
 
 export interface TenantBackupContainerDatasetV2 {
@@ -84,27 +79,6 @@ function records(bytes: Uint8Array): number {
   return rows;
 }
 
-/**
- * Frame boundaries for the plaintext data: each frame ends after a newline once it reaches the target
- * size, so readers rarely assemble a row from two frames. A longer row gets a frame of its own; only
- * a row beyond one capacity part is split, which keeps every frame inside a single R2 part.
- */
-function frameCuts(data: Uint8Array): number[] {
-  const cuts = [0];
-  let start = 0;
-  while (data.length - start > TARGET_FRAME_PLAIN_BYTES) {
-    const target = start + TARGET_FRAME_PLAIN_BYTES;
-    const before = data.lastIndexOf(10, target - 1);
-    let end = before >= start ? before + 1 : data.indexOf(10, target) + 1;
-    if (end <= start || end - start > CAPACITY_PART_BYTES) end = start + CAPACITY_PART_BYTES;
-    if (end >= data.length) break;
-    cuts.push(end);
-    start = end;
-  }
-  cuts.push(data.length);
-  return cuts;
-}
-
 function frame(sequence: number, type: 1 | 2, encrypted: Uint8Array): Uint8Array {
   const output = new Uint8Array(9 + encrypted.length);
   const view = new DataView(output.buffer);
@@ -129,6 +103,175 @@ function validateSession(session: TenantBundleKeyEnvelope, manifest: TenantBundl
     hex(session.envelope.subarray(1, 17)) !== manifest.bundleId
   )
     invalid();
+}
+
+/** Header, stream key and frame sealing shared by the one-shot and the checkpointed writers. */
+export interface TenantBackupContainerV2Cipher {
+  header: Uint8Array;
+  seal(sequence: number, type: 1 | 2, plain: Uint8Array): Promise<Uint8Array>;
+  open(sequence: number, type: 1 | 2, encrypted: Uint8Array): Promise<Uint8Array>;
+}
+
+export async function openTenantBackupContainerV2Cipher(
+  session: TenantBundleKeyEnvelope,
+  streamSalt: Uint8Array
+): Promise<TenantBackupContainerV2Cipher> {
+  if (!(streamSalt instanceof Uint8Array) || streamSalt.length !== 32) invalid();
+  const salt = new Uint8Array(streamSalt);
+  const header = new Uint8Array(HEADER_BYTES);
+  header.set(MAGIC);
+  header.set(session.envelope, 8);
+  header.set(salt, 101);
+  const headerHash = new Uint8Array(await crypto.subtle.digest('SHA-256', header));
+  const key = await deriveTenantBundleStreamKey(session.contentKey, salt);
+  return {
+    header,
+    async seal(sequence, type, plain) {
+      const encrypted = new Uint8Array(
+        await crypto.subtle.encrypt(
+          tenantBundleCipherParameters(headerHash, sequence, type),
+          key,
+          Uint8Array.from(plain)
+        )
+      );
+      return frame(sequence, type, encrypted);
+    },
+    async open(sequence, type, encrypted) {
+      try {
+        return new Uint8Array(
+          await crypto.subtle.decrypt(
+            tenantBundleCipherParameters(headerHash, sequence, type),
+            key,
+            Uint8Array.from(encrypted)
+          )
+        );
+      } catch {
+        invalid();
+      }
+    },
+  };
+}
+
+export interface TenantBackupContainerV2Frame {
+  sequence: number;
+  type: 1 | 2;
+  encrypted: Uint8Array;
+  /** Offset just past this frame. */
+  end: number;
+}
+
+/** Walk length-prefixed frames from `start`; every frame must end inside `bytes`. */
+export function* tenantBackupContainerV2Frames(
+  bytes: Uint8Array,
+  start: number
+): Generator<TenantBackupContainerV2Frame> {
+  let offset = start;
+  while (offset < bytes.length) {
+    if (bytes.length - offset < 9) invalid();
+    const view = new DataView(bytes.buffer, bytes.byteOffset + offset, bytes.length - offset);
+    const length = view.getUint32(0);
+    const sequence = view.getUint32(4);
+    const type = bytes[offset + 8];
+    if (length < 21 || offset + 4 + length > bytes.length) invalid();
+    if (type !== 1 && type !== 2) invalid();
+    const end = offset + 4 + length;
+    yield { sequence, type, encrypted: bytes.subarray(offset + 9, end), end };
+    offset = end;
+  }
+}
+
+export async function tenantBackupContainerV2Metadata(input: {
+  manifest: TenantBundleManifest;
+  datasets: TenantBackupContainerDatasetV2[];
+  dataFrames: number;
+  dataSha256: string;
+}): Promise<{
+  manifest: TenantBackupContainerManifestV2;
+  footer: TenantBackupContainerFooterV2;
+  bytes: Uint8Array;
+}> {
+  const totalBytes = input.datasets.reduce((sum, dataset) => sum + dataset.bytes, 0);
+  const totalRows = input.datasets.reduce((sum, dataset) => sum + dataset.rows, 0);
+  const manifest: TenantBackupContainerManifestV2 = {
+    formatVersion: 2,
+    backup: structuredClone(input.manifest),
+    datasets: input.datasets.map((dataset) => ({ ...dataset })),
+    totalRows,
+    totalBytes,
+    dataSha256: input.dataSha256,
+  };
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const footer: TenantBackupContainerFooterV2 = {
+    formatVersion: 2,
+    datasets: manifest.datasets.length,
+    dataFrames: input.dataFrames,
+    totalRows,
+    totalBytes,
+    dataSha256: input.dataSha256,
+    manifestSha256: await sha256(manifestBytes),
+  };
+  return { manifest, footer, bytes: canonicalMetadata(manifest, footer) };
+}
+
+/**
+ * Authenticate decrypted metadata against the envelope and the counted data frames. Dataset
+ * offsets and counts are checked here; their bytes and digests are the caller's to check.
+ */
+export async function parseTenantBackupContainerV2Metadata(
+  metadata: Uint8Array,
+  envelope: Uint8Array,
+  dataFrames: number
+): Promise<{ manifest: TenantBackupContainerManifestV2; footer: TenantBackupContainerFooterV2 }> {
+  let parsed: { manifest: TenantBackupContainerManifestV2; footer: TenantBackupContainerFooterV2 };
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(metadata);
+    parsed = JSON.parse(text) as typeof parsed;
+    if (JSON.stringify(parsed) !== text) invalid();
+  } catch {
+    invalid();
+  }
+  const { manifest, footer } = parsed;
+  if (
+    manifest?.formatVersion !== 2 ||
+    footer?.formatVersion !== 2 ||
+    !Array.isArray(manifest.datasets) ||
+    footer.datasets !== manifest.datasets.length ||
+    footer.dataFrames !== dataFrames ||
+    footer.totalRows !== manifest.totalRows ||
+    footer.totalBytes !== manifest.totalBytes ||
+    footer.dataSha256 !== manifest.dataSha256 ||
+    footer.manifestSha256 !== (await sha256(new TextEncoder().encode(JSON.stringify(manifest)))) ||
+    hex(envelope.subarray(1, 17)) !== manifest.backup.bundleId
+  )
+    invalid();
+  const ids = new Set<string>();
+  let expectedOffset = 0;
+  let totalRows = 0;
+  for (const dataset of manifest.datasets) {
+    if (
+      !dataset ||
+      typeof dataset.id !== 'string' ||
+      !dataset.id ||
+      ids.has(dataset.id) ||
+      dataset.offset !== expectedOffset ||
+      !Number.isSafeInteger(dataset.bytes) ||
+      dataset.bytes < 0 ||
+      !Number.isSafeInteger(dataset.rows) ||
+      dataset.rows < 0 ||
+      !/^[a-f0-9]{64}$/.test(dataset.sha256)
+    )
+      invalid();
+    ids.add(dataset.id);
+    expectedOffset += dataset.bytes;
+    totalRows += dataset.rows;
+  }
+  if (expectedOffset !== manifest.totalBytes || totalRows !== manifest.totalRows) invalid();
+  return { manifest, footer };
+}
+
+/** Newline-delimited record count used for dataset row totals. */
+export function tenantBackupContainerV2Records(bytes: Uint8Array): number {
+  return records(bytes);
 }
 
 /**
@@ -180,54 +323,32 @@ export async function encodeTenantBackupContainerV2(input: {
   if (seen.size !== expected.length) invalid();
   const data = join(allData, totalBytes);
   const dataSha256 = await sha256(data);
-  const manifest: TenantBackupContainerManifestV2 = {
-    formatVersion: 2,
-    backup: structuredClone(input.manifest),
+  const dataFrames = Math.max(1, Math.ceil(data.length / CAPACITY_PART_BYTES));
+  const {
+    manifest,
+    footer,
+    bytes: metadata,
+  } = await tenantBackupContainerV2Metadata({
+    manifest: input.manifest,
     datasets: datasetStats,
-    totalRows,
-    totalBytes,
-    dataSha256,
-  };
-  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
-  const cuts = frameCuts(data);
-  const dataFrames = cuts.length - 1;
-  const footer: TenantBackupContainerFooterV2 = {
-    formatVersion: 2,
-    datasets: datasetStats.length,
     dataFrames,
-    totalRows,
-    totalBytes,
     dataSha256,
-    manifestSha256: await sha256(manifestBytes),
-  };
-  const salt = input.streamSalt
-    ? new Uint8Array(input.streamSalt)
-    : crypto.getRandomValues(new Uint8Array(32));
-  if (salt.length !== 32) invalid();
-  const header = new Uint8Array(HEADER_BYTES);
-  header.set(MAGIC);
-  header.set(input.session.envelope, 8);
-  header.set(salt, 101);
-  const headerHash = new Uint8Array(await crypto.subtle.digest('SHA-256', header));
-  const key = await deriveTenantBundleStreamKey(input.session.contentKey, salt);
+  });
+  if (manifest.totalRows !== totalRows || manifest.totalBytes !== totalBytes) invalid();
+  const cipher = await openTenantBackupContainerV2Cipher(
+    input.session,
+    input.streamSalt ?? crypto.getRandomValues(new Uint8Array(32))
+  );
+  const header = cipher.header;
   const frames: Uint8Array[] = [];
   for (let sequence = 0; sequence < dataFrames; sequence++) {
-    const plain = data.subarray(cuts[sequence], cuts[sequence + 1]);
-    const encrypted = new Uint8Array(
-      await crypto.subtle.encrypt(tenantBundleCipherParameters(headerHash, sequence, 1), key, plain)
+    const plain = data.subarray(
+      sequence * CAPACITY_PART_BYTES,
+      Math.min((sequence + 1) * CAPACITY_PART_BYTES, data.length)
     );
-    frames.push(frame(sequence, 1, encrypted));
+    frames.push(await cipher.seal(sequence, 1, plain));
   }
-  const metadata = canonicalMetadata(manifest, footer);
-  const metadataSequence = dataFrames;
-  const encryptedMetadata = new Uint8Array(
-    await crypto.subtle.encrypt(
-      tenantBundleCipherParameters(headerHash, metadataSequence, 2),
-      key,
-      Uint8Array.from(metadata)
-    )
-  );
-  frames.push(frame(metadataSequence, 2, encryptedMetadata));
+  frames.push(await cipher.seal(dataFrames, 2, metadata));
 
   const single = join([header, ...frames]);
   if (single.length <= SINGLE_OBJECT_DATA_BYTES) return { manifest, footer, parts: [single] };
@@ -254,128 +375,7 @@ export interface DecodedTenantBackupContainerV2 {
   datasets: Map<string, Uint8Array>;
 }
 
-export interface TenantBackupContainerCipherV2 {
-  headerHash: Uint8Array<ArrayBuffer>;
-  key: CryptoKey;
-}
-
-/** Check the fixed v2 header against the accepted key envelope and derive this stream's key. */
-export async function openTenantBackupContainerHeaderV2(
-  header: Uint8Array,
-  session: TenantBundleKeyEnvelope
-): Promise<TenantBackupContainerCipherV2> {
-  if (header.length !== HEADER_BYTES || !MAGIC.every((byte, index) => header[index] === byte))
-    invalid();
-  const envelope = header.subarray(8, 101);
-  if (
-    session.envelope.length !== envelope.length ||
-    !envelope.every((byte, index) => byte === session.envelope[index])
-  )
-    invalid();
-  return {
-    headerHash: new Uint8Array(await crypto.subtle.digest('SHA-256', Uint8Array.from(header))),
-    key: await deriveTenantBundleStreamKey(session.contentKey, header.subarray(101, HEADER_BYTES)),
-  };
-}
-
-/** Parse the 9-byte frame prefix; `frameBytes` includes the 4-byte length field itself. */
-export function readTenantBackupFramePrefixV2(
-  prefix: Uint8Array,
-  sequence: number
-): { type: 1 | 2; frameBytes: number } {
-  if (prefix.length < 9) invalid();
-  const view = new DataView(prefix.buffer, prefix.byteOffset, 9);
-  const length = view.getUint32(0);
-  const type = prefix[8];
-  if (length < 21 || view.getUint32(4) !== sequence || (type !== 1 && type !== 2)) invalid();
-  return { type, frameBytes: 4 + length };
-}
-
-/** AES-GCM over one frame; the header hash, sequence and type are bound as additional data. */
-export async function decryptTenantBackupFrameV2(
-  cipher: TenantBackupContainerCipherV2,
-  sequence: number,
-  type: 1 | 2,
-  encrypted: Uint8Array<ArrayBuffer>
-): Promise<Uint8Array> {
-  try {
-    return new Uint8Array(
-      await crypto.subtle.decrypt(
-        tenantBundleCipherParameters(cipher.headerHash, sequence, type),
-        cipher.key,
-        encrypted
-      )
-    );
-  } catch {
-    return invalid();
-  }
-}
-
-/**
- * Validate the authenticated metadata frame of a container with `dataFrames` data frames. Dataset
- * descriptors must tile the data exactly; their hashes and row counts are checked by the caller.
- */
-export async function parseTenantBackupContainerMetadataV2(
-  metadata: Uint8Array,
-  dataFrames: number,
-  envelope: Uint8Array
-): Promise<{ manifest: TenantBackupContainerManifestV2; footer: TenantBackupContainerFooterV2 }> {
-  let parsed: { manifest: TenantBackupContainerManifestV2; footer: TenantBackupContainerFooterV2 };
-  try {
-    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(metadata);
-    parsed = JSON.parse(text) as typeof parsed;
-    if (JSON.stringify(parsed) !== text) invalid();
-  } catch {
-    invalid();
-  }
-  const { manifest, footer } = parsed;
-  if (
-    manifest?.formatVersion !== 2 ||
-    footer?.formatVersion !== 2 ||
-    !Array.isArray(manifest.datasets) ||
-    footer.datasets !== manifest.datasets.length ||
-    footer.dataFrames !== dataFrames ||
-    footer.totalRows !== manifest.totalRows ||
-    footer.totalBytes !== manifest.totalBytes ||
-    footer.dataSha256 !== manifest.dataSha256 ||
-    footer.manifestSha256 !== (await sha256(new TextEncoder().encode(JSON.stringify(manifest)))) ||
-    hex(envelope.subarray(1, 17)) !== manifest.backup.bundleId
-  )
-    invalid();
-  const ids = new Set<string>();
-  let expectedOffset = 0;
-  let totalRows = 0;
-  for (const dataset of manifest.datasets) {
-    if (
-      !dataset ||
-      typeof dataset.id !== 'string' ||
-      !dataset.id ||
-      ids.has(dataset.id) ||
-      dataset.offset !== expectedOffset ||
-      !Number.isSafeInteger(dataset.bytes) ||
-      dataset.bytes < 0 ||
-      !Number.isSafeInteger(dataset.rows) ||
-      dataset.rows < 0 ||
-      !/^[a-f0-9]{64}$/.test(dataset.sha256)
-    )
-      invalid();
-    ids.add(dataset.id);
-    expectedOffset += dataset.bytes;
-    totalRows += dataset.rows;
-  }
-  if (expectedOffset !== manifest.totalBytes || totalRows !== manifest.totalRows) invalid();
-  return { manifest, footer };
-}
-
-/** Rows as counted by the encoder: newline-terminated rows plus an unterminated tail. */
-export function tenantBackupContainerRowCountV2(newlines: number, bytes: number, lastByte: number) {
-  return bytes && lastByte !== 10 ? newlines + 1 : newlines;
-}
-
-/**
- * Authenticate a whole in-memory container (small inputs, tests and the browser inspector). Large
- * inputs are verified frame by frame by decode_input instead; both accept exactly the same bytes.
- */
+/** Authenticate the whole container before exposing dataset bytes to a restore plan. */
 export async function decodeTenantBackupContainerV2(input: {
   parts: readonly Uint8Array[];
   session: TenantBundleKeyEnvelope;
@@ -388,43 +388,39 @@ export async function decodeTenantBackupContainerV2(input: {
   const bytes = join(input.parts);
   if (bytes.length < HEADER_BYTES + 9 + 16 || bytes.length > MAX_CONTAINER_BYTES + 1024 * 1024)
     invalid();
-  const cipher = await openTenantBackupContainerHeaderV2(
-    bytes.subarray(0, HEADER_BYTES),
-    input.session
+  if (!MAGIC.every((byte, index) => bytes[index] === byte)) invalid();
+  const envelope = bytes.subarray(8, 101);
+  if (
+    input.session.envelope.length !== envelope.length ||
+    !envelope.every((byte, index) => byte === input.session.envelope[index])
+  )
+    invalid();
+  const cipher = await openTenantBackupContainerV2Cipher(
+    input.session,
+    bytes.subarray(101, HEADER_BYTES)
   );
   const plainData: Uint8Array[] = [];
   let metadata: Uint8Array | null = null;
-  let offset = HEADER_BYTES;
   let sequence = 0;
   let dataFrames = 0;
-  while (offset < bytes.length) {
-    const { type, frameBytes } = readTenantBackupFramePrefixV2(
-      bytes.subarray(offset, offset + 9),
-      sequence
-    );
-    if (offset + frameBytes > bytes.length) invalid();
-    const plain = await decryptTenantBackupFrameV2(
-      cipher,
-      sequence,
-      type,
-      bytes.subarray(offset + 9, offset + frameBytes)
-    );
-    if (type === 1) {
+  for (const item of tenantBackupContainerV2Frames(bytes, HEADER_BYTES)) {
+    if (item.sequence !== sequence) invalid();
+    const plain = await cipher.open(sequence, item.type, item.encrypted);
+    if (item.type === 1) {
       if (metadata) invalid();
       plainData.push(plain);
       dataFrames++;
     } else {
-      if (metadata || offset + frameBytes !== bytes.length) invalid();
+      if (metadata || item.end !== bytes.length) invalid();
       metadata = plain;
     }
     sequence++;
-    offset += frameBytes;
   }
   if (!metadata) invalid();
-  const { manifest, footer } = await parseTenantBackupContainerMetadataV2(
+  const { manifest, footer } = await parseTenantBackupContainerV2Metadata(
     metadata,
-    dataFrames,
-    bytes.subarray(8, 101)
+    envelope,
+    dataFrames
   );
   const data = join(plainData);
   if (data.length !== manifest.totalBytes || (await sha256(data)) !== manifest.dataSha256)
@@ -432,17 +428,72 @@ export async function decodeTenantBackupContainerV2(input: {
   const datasets = new Map<string, Uint8Array>();
   for (const dataset of manifest.datasets) {
     const value = data.slice(dataset.offset, dataset.offset + dataset.bytes);
-    if ((await sha256(value)) !== dataset.sha256 || records(value) !== dataset.rows) invalid();
+    if (
+      value.length !== dataset.bytes ||
+      (await sha256(value)) !== dataset.sha256 ||
+      records(value) !== dataset.rows
+    )
+      invalid();
     datasets.set(dataset.id, value);
   }
   return { manifest, footer, datasets };
 }
+
+/** Frame prefix (length, sequence, type) and AES-GCM tag around a frame's plaintext. */
+const FRAME_OVERHEAD_BYTES = 9 + 16;
+/** Largest frame plaintext a streaming reader accepts (encoders write 4 or 12 MiB). */
+const MAX_FRAME_PLAIN_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Check a container header read from storage against the accepted key envelope and open its
+ * stream cipher. Frames read later are authenticated with this header's hash.
+ */
+export async function openTenantBackupContainerHeaderV2(
+  header: Uint8Array,
+  session: TenantBundleKeyEnvelope
+): Promise<TenantBackupContainerV2Cipher> {
+  if (header.length !== HEADER_BYTES || !MAGIC.every((byte, index) => header[index] === byte))
+    invalid();
+  const envelope = header.subarray(8, 101);
+  if (
+    session.envelope.length !== envelope.length ||
+    !envelope.every((byte, index) => byte === session.envelope[index])
+  )
+    invalid();
+  const cipher = await openTenantBackupContainerV2Cipher(session, header.subarray(101));
+  if (!cipher.header.every((byte, index) => byte === header[index])) invalid();
+  return cipher;
+}
+
+/** Parse a 9-byte frame prefix; `frameBytes` includes the 4-byte length field itself. */
+export function readTenantBackupFramePrefixV2(
+  prefix: Uint8Array,
+  sequence: number
+): { type: 1 | 2; frameBytes: number } {
+  if (prefix.length < 9) invalid();
+  const view = new DataView(prefix.buffer, prefix.byteOffset, 9);
+  const length = view.getUint32(0);
+  const type = prefix[8];
+  if (length < 21 || view.getUint32(4) !== sequence || (type !== 1 && type !== 2)) invalid();
+  return { type, frameBytes: 4 + length };
+}
+
+/** Rows as the encoder counts them: newline-terminated rows plus an unterminated tail. */
+export function tenantBackupContainerRowCountV2(newlines: number, bytes: number, lastByte: number) {
+  return bytes && lastByte !== 10 ? newlines + 1 : newlines;
+}
+
+/**
+ * Largest container object export, verification and import accept. All three stream the
+ * container (sliced export and verification, frame-indexed import), so they share this one cap;
+ * the in-memory `decodeTenantBackupContainerV2` keeps its own 256 MiB bound.
+ */
+export const TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES = 16 * 1024 * 1024 * 1024;
 
 export const TENANT_BACKUP_CONTAINER_V2_LIMITS = {
   singleObjectDataBytes: SINGLE_OBJECT_DATA_BYTES,
   capacityPartBytes: CAPACITY_PART_BYTES,
   headerBytes: HEADER_BYTES,
   frameOverheadBytes: FRAME_OVERHEAD_BYTES,
-  targetFramePlainBytes: TARGET_FRAME_PLAIN_BYTES,
   maxFramePlainBytes: MAX_FRAME_PLAIN_BYTES,
 } as const;

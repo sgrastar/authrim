@@ -152,10 +152,16 @@ export async function writeTenantBackupDatasetSlice(input: {
   else {
     const descriptor = input.expected.datasets[state.datasetIndex];
     if (!descriptor) fail();
-    const chunk =
+    let chunk =
       descriptor.disposition === 'include'
         ? await input.readNext(descriptor.id, previous?.sourceCursor ?? null, input.signal)
         : null;
+    // A position past omitted rows carries no bytes; v1 frames need bytes, so read on.
+    while (chunk && !chunk.bytes.length) {
+      const cursor = chunk.nextCursor;
+      chunk = await input.readNext(descriptor.id, cursor, input.signal);
+      if (chunk?.nextCursor === cursor) fail();
+    }
     if (chunk) {
       if (
         typeof chunk.nextCursor !== 'string' ||

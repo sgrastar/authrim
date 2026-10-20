@@ -117,17 +117,13 @@ export async function executeTenantBackupBatch(
   handlers: TenantBackupOperationHandlers,
   now: () => number,
   maxTransitions: number,
-  /** Stop starting new transitions once this much wall time has passed since the claim. */
-  budgetMs?: number
+  /** Clock value after which no further transition starts under this lease (the run's budget). */
+  deadline?: number
 ): Promise<TenantBackupBatchExecutionResult> {
-  if (
-    !Number.isSafeInteger(maxTransitions) ||
-    maxTransitions < 1 ||
-    maxTransitions > 32 ||
-    (budgetMs !== undefined && (!Number.isSafeInteger(budgetMs) || budgetMs < 1))
-  )
+  if (!Number.isSafeInteger(maxTransitions) || maxTransitions < 1 || maxTransitions > 32)
     throw new Error('invalid_backup_operation_transition_limit');
-  const started = now();
+  if (deadline !== undefined && !Number.isSafeInteger(deadline))
+    throw new Error('invalid_backup_operation_deadline');
   input.signal.throwIfAborted();
   const current = await store.get(input.tenantId, input.operationId);
   if (!current) return { outcome: 'unclaimed', transitions: 0 };
@@ -193,7 +189,7 @@ export async function executeTenantBackupBatch(
       if (
         result.disposition !== 'continue' ||
         transition + 1 === maxTransitions ||
-        (budgetMs !== undefined && now() - started >= budgetMs)
+        (deadline !== undefined && now() >= deadline)
       ) {
         const state = { continue: 'queued', wait: 'waiting', ready: 'ready' } as const;
         const released = await store.release(

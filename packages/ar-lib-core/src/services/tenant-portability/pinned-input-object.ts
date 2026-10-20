@@ -1,10 +1,11 @@
+import { TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES } from './backup-container-v2';
 import type { TenantBackupInputIdentity } from './input-frame-reader';
 
 /**
- * Largest input an import accepts. Uploads could be larger (8 MiB × 10,000 parts), but validation
- * scratch rows for an input this size already take a large share of the admin D1 database.
+ * Largest input an import accepts: the container cap that export and verification share. Uploads
+ * could be larger (8 MiB × 10,000 parts), but nothing can produce or restore such a container.
  */
-export const TENANT_BACKUP_MAX_INPUT_BYTES = 16 * 1024 * 1024 * 1024;
+export const TENANT_BACKUP_MAX_INPUT_BYTES = TENANT_BACKUP_CONTAINER_V2_MAX_OBJECT_BYTES;
 /** Objects up to this size are fetched once and served from memory for the rest of the invocation. */
 const WHOLE_OBJECT_BYTES = 4 * 1024 * 1024;
 /** Authorization is re-checked before the first range request and then before every 16th. */

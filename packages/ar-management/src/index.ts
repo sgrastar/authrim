@@ -4002,13 +4002,20 @@ async function deleteExpiredTenantRows(
  * [triggers]
  * crons = ["0 * * * *"]  # Hourly
  */
-// One cron invocation runs at most 16 checkpointed transitions across all due operations and
-// starts none after 120 s; one operation gets at most 60 s of that. Cron invocations have a 30 s
-// CPU limit and share their subrequests, so the budget is per invocation: a decode_input transition
-// is bounded to ~0.7 s of CPU and 256 frame reads, a row batch to ~400 D1 queries.
+/** Transitions one operation may take in a scheduled run. */
 const TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT = 16;
-const TENANT_BACKUP_SCHEDULED_OPERATION_BUDGET_MS = 60_000;
-const TENANT_BACKUP_SCHEDULED_INVOCATION_BUDGET = { transitions: 16, wallMs: 120_000 };
+/**
+ * Transitions all operations of one scheduled run may take together. Each transition is bounded
+ * in subrequests (a decode_input slice reads at most 256 frames, a row batch ~400 D1 queries), so
+ * this bounds the invocation's subrequests too.
+ */
+const TENANT_BACKUP_SCHEDULED_TICK_TRANSITIONS = 16;
+/**
+ * Wall time after which a scheduled run starts no further backup transition. A cron invocation
+ * on a sub-hourly schedule gets 30 s of CPU for everything it does, and one export or verify
+ * transition can spend a few seconds, so stop early and leave room for the rest of this handler.
+ */
+const TENANT_BACKUP_SCHEDULED_BUDGET_MS = 15_000;
 
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const log = createLogger().module('SCHEDULED');
@@ -4028,8 +4035,8 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
         Date.now,
         ['export', 'import'],
         TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT,
-        TENANT_BACKUP_SCHEDULED_OPERATION_BUDGET_MS,
-        TENANT_BACKUP_SCHEDULED_INVOCATION_BUDGET
+        TENANT_BACKUP_SCHEDULED_BUDGET_MS,
+        TENANT_BACKUP_SCHEDULED_TICK_TRANSITIONS
       );
       if (operations.inspected > 0)
         log.info('Tenant backup operation scheduler completed', operations);

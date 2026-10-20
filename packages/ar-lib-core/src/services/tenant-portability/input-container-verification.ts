@@ -1,11 +1,10 @@
 import {
-  decryptTenantBackupFrameV2,
   openTenantBackupContainerHeaderV2,
-  parseTenantBackupContainerMetadataV2,
+  parseTenantBackupContainerV2Metadata,
   readTenantBackupFramePrefixV2,
   tenantBackupContainerRowCountV2,
   TENANT_BACKUP_CONTAINER_V2_LIMITS,
-  type TenantBackupContainerCipherV2,
+  type TenantBackupContainerV2Cipher,
   type TenantBackupContainerFooterV2,
   type TenantBackupContainerManifestV2,
 } from './backup-container-v2';
@@ -136,8 +135,8 @@ function hashContext(
   kind: 'data' | 'dataset',
   state: Pick<VerifyProgress, 'sequence' | 'dataset' | 'datasetBytes' | 'dataFrames'>
 ): string {
-  return JSON.stringify([
-    'authrim-import-decode-v1',
+  // Prefixed like the export and verify checkpoint contexts, which share this seal key.
+  return `authrim-import-decode:${JSON.stringify([
     Array.from(session.envelope.subarray(1, 17), (byte) => byte.toString(16).padStart(2, '0')).join(
       ''
     ),
@@ -145,7 +144,7 @@ function hashContext(
     state.dataFrames,
     state.sequence,
     ...(kind === 'dataset' ? [state.dataset, state.datasetBytes] : []),
-  ]);
+  ])}`;
 }
 
 /**
@@ -214,10 +213,10 @@ export async function verifyTenantBackupContainerV2Slice(input: {
     progress.dataFrames
   );
   reads -= 1;
-  const { manifest, footer } = await parseTenantBackupContainerMetadataV2(
+  const { manifest, footer } = await parseTenantBackupContainerV2Metadata(
     metadata,
-    progress.dataFrames,
-    header.subarray(8, 101)
+    header.subarray(8, 101),
+    progress.dataFrames
   );
   await input.acceptManifest(manifest);
   return verifyData({
@@ -236,7 +235,7 @@ export async function verifyTenantBackupContainerV2Slice(input: {
  * `maxDataFrames` fails; reaching the limit only pauses the walk.
  */
 async function walk(
-  object: PinnedTenantBackupInputObject,
+  object: Pick<PinnedTenantBackupInputObject, 'size' | 'read'>,
   start: Extract<TenantBackupContainerVerificationProgress, { stage: 'walk' }>,
   limit: number,
   signal: AbortSignal,
@@ -282,8 +281,8 @@ async function walk(
 }
 
 async function readMetadata(
-  object: PinnedTenantBackupInputObject,
-  cipher: TenantBackupContainerCipherV2,
+  object: Pick<PinnedTenantBackupInputObject, 'size' | 'read'>,
+  cipher: TenantBackupContainerV2Cipher,
   metadataOffset: number,
   dataFrames: number
 ): Promise<Uint8Array> {
@@ -292,7 +291,7 @@ async function readMetadata(
   const bytes = await object.read(metadataOffset, frameBytes);
   const prefix = readTenantBackupFramePrefixV2(bytes.subarray(0, 9), dataFrames);
   if (prefix.type !== 2 || prefix.frameBytes !== frameBytes) fail();
-  return decryptTenantBackupFrameV2(cipher, dataFrames, 2, bytes.subarray(9));
+  return cipher.open(dataFrames, 2, bytes.subarray(9));
 }
 
 /** Load the frames this slice may verify, plus the previous frame to anchor the chain. */
@@ -324,7 +323,7 @@ function nextFrame(frame: TenantBackupInputFrame): TenantBackupInputFrame {
 async function verifyData(input: {
   object: PinnedTenantBackupInputObject;
   session: TenantBundleKeyEnvelope;
-  cipher: TenantBackupContainerCipherV2;
+  cipher: TenantBackupContainerV2Cipher;
   seal: TenantBackupCheckpointSeal;
   manifest: TenantBackupContainerManifestV2;
   footer: TenantBackupContainerFooterV2;
@@ -376,12 +375,7 @@ async function verifyData(input: {
     const bytes = await input.object.read(frame.objectOffset, frame.frameBytes);
     const prefix = readTenantBackupFramePrefixV2(bytes.subarray(0, 9), frame.sequence);
     if (prefix.type !== 1 || prefix.frameBytes !== frame.frameBytes) fail();
-    const plain = await decryptTenantBackupFrameV2(
-      input.cipher,
-      frame.sequence,
-      1,
-      bytes.subarray(9)
-    );
+    const plain = await input.cipher.open(frame.sequence, 1, bytes.subarray(9));
     if (plain.length !== frame.plainBytes) fail();
     data.update(plain);
     let offset = 0;
@@ -450,7 +444,8 @@ export async function walkTenantBackupContainerV2Frames(input: {
  * resume from `progress`; `maxFrames` bounds the whole walk, `frames` one call.
  */
 export async function readTenantBackupContainerV2Manifest(input: {
-  object: PinnedTenantBackupInputObject;
+  /** Any random-access source: a pinned R2 object, or a browser File. */
+  object: Pick<PinnedTenantBackupInputObject, 'size' | 'read'>;
   session: TenantBundleKeyEnvelope;
   progress?: unknown;
   frames?: number;
@@ -478,10 +473,10 @@ export async function readTenantBackupContainerV2Manifest(input: {
   if (!walked.metadataOffset) return { done: false, progress: walked.progress };
   const dataFrames = walked.progress.sequence;
   const metadata = await readMetadata(input.object, cipher, walked.metadataOffset, dataFrames);
-  const parsed = await parseTenantBackupContainerMetadataV2(
+  const parsed = await parseTenantBackupContainerV2Metadata(
     metadata,
-    dataFrames,
-    header.subarray(8, 101)
+    header.subarray(8, 101),
+    dataFrames
   );
   if (walked.progress.plainOffset !== parsed.manifest.totalBytes) fail();
   return { done: true, ...parsed };

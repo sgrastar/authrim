@@ -82,7 +82,7 @@ not publish packages or deploy resources.
 
 ## Requirements
 
-- Node.js `>=20.0.0`
+- Node.js `>=22.0.0`
 - `pnpm@9` for source preparation and repository development
 - Wrangler CLI installed and authenticated with `wrangler login`
 

@@ -1,9 +1,8 @@
 import {
-  decryptTenantBackupFrameV2,
   openTenantBackupContainerHeaderV2,
   readTenantBackupFramePrefixV2,
   TENANT_BACKUP_CONTAINER_V2_LIMITS,
-  type TenantBackupContainerCipherV2,
+  type TenantBackupContainerV2Cipher,
   type TenantBackupContainerDatasetV2,
 } from './backup-container-v2';
 import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
@@ -32,10 +31,12 @@ const CACHED_FRAMES = 2;
 /** Readers a caller should keep open at once; each holds up to two decrypted frames. */
 export const TENANT_BACKUP_INPUT_READERS_KEPT = 2;
 /**
- * Frames one row may span. Encoders split only rows longer than a 12 MiB capacity part, and rows
- * are at most 16 MiB, so real rows span at most three frames.
+ * Frames one row may span. Sliced exports cut fixed 4 MiB frames inside rows, plus a shorter frame
+ * wherever a transition stopped; the one-shot encoder cuts 12 MiB frames. A 16 MiB row therefore
+ * spans about six frames, a few more if transitions stopped inside it. The cap keeps a row built
+ * from thousands of tiny frames from costing thousands of reads.
  */
-const MAX_ROW_FRAMES = 4;
+const MAX_ROW_FRAMES = 12;
 /** Frames a whole-dataset read may touch; callers use it only for datasets of at most 4 MiB. */
 const MAX_READ_ALL_FRAMES = 64;
 
@@ -80,7 +81,7 @@ export class TenantBackupContainerFrameReader {
 
   private constructor(
     private readonly object: PinnedTenantBackupInputObject,
-    private readonly cipher: TenantBackupContainerCipherV2,
+    private readonly cipher: TenantBackupContainerV2Cipher,
     private readonly frames: readonly TenantBackupInputFrame[],
     datasets: readonly TenantBackupContainerDatasetV2[]
   ) {
@@ -222,12 +223,7 @@ export class TenantBackupContainerFrameReader {
       const bytes = await this.object.read(frame.objectOffset, frame.frameBytes);
       const prefix = readTenantBackupFramePrefixV2(bytes.subarray(0, 9), frame.sequence);
       if (prefix.type !== 1 || prefix.frameBytes !== frame.frameBytes) fail();
-      const plain = await decryptTenantBackupFrameV2(
-        this.cipher,
-        frame.sequence,
-        1,
-        bytes.subarray(9)
-      );
+      const plain = await this.cipher.open(frame.sequence, 1, bytes.subarray(9));
       if (plain.length !== frame.plainBytes) fail();
       return plain;
     })();
