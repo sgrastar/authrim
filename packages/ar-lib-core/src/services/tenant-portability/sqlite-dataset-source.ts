@@ -1,17 +1,56 @@
 import type { DatabaseAdapter } from '../../db/adapter';
-import { sqliteSnapshotPageQuery, type CaptureSchema } from './sqlite-snapshot';
+import {
+  sqliteSnapshotPageQuery,
+  sqliteSnapshotRowQuery,
+  type CaptureSchema,
+} from './sqlite-snapshot';
 import { packedSqliteRowToJson } from './sqlite-packed-row';
 
 const PAGE_ROWS = 100;
+/**
+ * Consecutive short pages (mostly omitted rows: post-T0 inserts, rewritten rows, other tenants'
+ * rows) double how many keys the next page scans, up to this bound. A run of R omitted rows then
+ * costs about
+ * log2(R / PAGE_ROWS) + R / MAX_SCAN_ROWS queries instead of R / PAGE_ROWS, which matters
+ * because one export step shares a single Worker invocation's subrequest budget.
+ */
+const MAX_SCAN_ROWS = 128 * PAGE_ROWS;
 const FRAGMENT_BYTES = 256 * 1024;
 const READ_BATCH_ROWS = 250;
 const READ_BATCH_BYTES = 1024 * 1024;
+const NATIVE_KEY_TAGS = new Set(['integer', 'text', 'blob']);
+
+/**
+ * Pages order REAL keys by a decimal text form that does not round-trip (for example -Inf), so a
+ * position after one could skip rows. No captured table keys on REAL; refuse rather than guess.
+ */
+function assertNativeRecordKey(recordKey: string): void {
+  let terms: unknown;
+  try {
+    terms = JSON.parse(recordKey);
+  } catch {
+    throw new Error('backup_snapshot_invalid_row');
+  }
+  if (
+    !Array.isArray(terms) ||
+    !terms.length ||
+    terms.some((term) => !Array.isArray(term) || typeof term[0] !== 'string')
+  )
+    throw new Error('backup_snapshot_invalid_row');
+  if (terms.some((term) => !NATIVE_KEY_TAGS.has((term as [string])[0])))
+    throw new Error('backup_snapshot_unsupported_key_type');
+}
 
 export interface SqliteSnapshotSourceCursor {
   /** Last fully emitted row key; source identity is pinned by the operation inventory. */
   after: string;
   /** Deterministic output chunk within the next row. Large rows replay only that row on resume. */
   chunk: number;
+  /**
+   * Row order the position belongs to. Positions written before native primary key paging
+   * followed record_key text order and cannot be resumed under the current order.
+   */
+  order?: 'native';
 }
 interface SourceInput {
   database: Pick<DatabaseAdapter, 'query' | 'queryOne'>;
@@ -29,23 +68,51 @@ interface SourceInput {
   assertSnapshotActive?: () => Promise<void>;
 }
 
-/** Trusted COW source with durable output positions. Cursor must come from the same operation. */
+/**
+ * The statements one snapshot read sends. Each must stay under D1's SQL statement length limit
+ * (100,000 bytes) for every captured table, including wide tables and long composite keys.
+ */
+export function sqliteSnapshotReadStatements(
+  schema: CaptureSchema,
+  partitions?: readonly string[]
+): { sql: string; fastSql: string; fragmentSql: string } {
+  const pageSql = sqliteSnapshotPageQuery(schema, 'packed', partitions, {
+    scanLimit: true,
+  });
+  // MATERIALIZED: a row body is read by key once, not once per reference to row_json.
+  const sql = `WITH candidates AS MATERIALIZED (${pageSql})
+    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
+      count(*) OVER () AS page_rows
+    FROM candidates ORDER BY page_order`;
+  const fastSql = `WITH candidates AS MATERIALIZED (${pageSql}), ranked AS (
+    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
+      CAST(row_json AS BLOB) AS row_blob,
+      page_order, count(*) OVER () AS page_rows,
+      sum(length(CAST(row_json AS BLOB))) OVER (ORDER BY page_order) AS cumulative_bytes,
+      max(length(CAST(row_json AS BLOB))) OVER (ORDER BY page_order) AS max_prefix_bytes
+    FROM candidates
+  ) SELECT record_key,row_type,total_bytes,page_rows,hex(row_blob) AS fragment
+    FROM ranked WHERE (cumulative_bytes<=? AND max_prefix_bytes<=?) OR row_blob IS NULL
+    ORDER BY page_order`;
+  const fragmentSql = `WITH candidate AS (${sqliteSnapshotRowQuery(schema, 'packed', partitions)})
+    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
+      hex(substr(CAST(row_json AS BLOB),?,?)) AS fragment
+    FROM candidate`;
+  return { sql, fastSql, fragmentSql };
+}
+
+/**
+ * Trusted COW source with durable output positions. Cursor must come from the same operation.
+ * A zero-byte item only moves the position past omitted rows.
+ */
 export async function* readSqliteSnapshotChunks(
   input: SourceInput & { cursor?: SqliteSnapshotSourceCursor }
 ): AsyncGenerator<{ bytes: Uint8Array; nextCursor: SqliteSnapshotSourceCursor }> {
   const { database, snapshotId, tenantId, signal } = input;
-  const pageSql = sqliteSnapshotPageQuery(input.schema, 'packed', input.partitions);
-  const sql = `WITH candidates AS (${pageSql})
-    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes
-    FROM candidates ORDER BY record_key`;
-  const fastSql = `WITH candidates AS (${pageSql}), ranked AS (
-    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
-      CAST(row_json AS BLOB) AS row_blob,
-      sum(length(CAST(row_json AS BLOB))) OVER (ORDER BY record_key) AS cumulative_bytes,
-      max(length(CAST(row_json AS BLOB))) OVER (ORDER BY record_key) AS max_prefix_bytes
-    FROM candidates
-  ) SELECT record_key,row_type,total_bytes,hex(row_blob) AS fragment
-    FROM ranked WHERE cumulative_bytes<=? AND max_prefix_bytes<=? ORDER BY record_key`;
+  const { sql, fastSql, fragmentSql } = sqliteSnapshotReadStatements(
+    input.schema,
+    input.partitions
+  );
   async function active(): Promise<void> {
     signal.throwIfAborted();
     if (input.assertSnapshotActive) {
@@ -61,8 +128,11 @@ export async function* readSqliteSnapshotChunks(
   }
   interface Row {
     record_key: string;
-    row_type: 'blob' | 'text';
+    /** 'null' marks a progress-only row: the cursor moves past rows the snapshot omits. */
+    row_type: 'blob' | 'text' | 'null';
     total_bytes: number;
+    /** Rows on the whole page, before the fast read cuts it to the byte budget. */
+    page_rows?: number;
     fragment?: string;
   }
   function decodeFragment(fragment: string): Uint8Array {
@@ -73,22 +143,16 @@ export async function* readSqliteSnapshotChunks(
       bytes[i] = parseInt(fragment.slice(i * 2, i * 2 + 2), 16);
     return bytes;
   }
-  const fragmentSql = `WITH candidate AS (${pageSql})
-    SELECT record_key,typeof(row_json) AS row_type,length(CAST(row_json AS BLOB)) AS total_bytes,
-      hex(substr(CAST(row_json AS BLOB),?,?)) AS fragment
-    FROM candidate WHERE record_key=?`;
-  async function* fragments(after: string, row: Row): AsyncGenerator<Uint8Array> {
+  async function* fragments(row: Row): AsyncGenerator<Uint8Array> {
     let offset = 0;
     while (offset < row.total_bytes) {
       await active();
       const part = await database.queryOne<Row & { fragment: string }>(fragmentSql, [
         snapshotId,
         tenantId,
-        after,
-        1,
+        row.record_key,
         offset + 1,
         FRAGMENT_BYTES,
-        row.record_key,
       ]);
       await active();
       if (
@@ -130,6 +194,11 @@ export async function* readSqliteSnapshotChunks(
   let skip = input.cursor?.chunk ?? 0;
   if (typeof after !== 'string' || !Number.isSafeInteger(skip) || skip < 0)
     throw new Error('backup_snapshot_invalid_cursor');
+  // A legacy position names a row in record_key text order; resuming it here would skip or repeat rows.
+  if (input.cursor && input.cursor.order !== 'native' && (after !== '' || skip !== 0))
+    throw new Error('backup_snapshot_invalid_cursor');
+  if (after !== '') assertNativeRecordKey(after);
+  let scanRows = PAGE_ROWS;
   while (true) {
     await active();
     let rows =
@@ -139,17 +208,45 @@ export async function* readSqliteSnapshotChunks(
             tenantId,
             after,
             PAGE_ROWS,
+            scanRows,
             READ_BATCH_BYTES,
             FRAGMENT_BYTES,
           ])
         : [];
     if (!rows.length)
-      rows = await database.query<Row>(sql, [snapshotId, tenantId, after, PAGE_ROWS]);
+      rows = await database.query<Row>(sql, [snapshotId, tenantId, after, PAGE_ROWS, scanRows]);
     await active();
     if (!rows.length) {
       if (skip) throw new Error('backup_snapshot_invalid_cursor');
       return;
     }
+    if (rows[0].row_type === 'null') {
+      // Every scanned row was omitted. A resumed row is still the next row after the new
+      // position, so its skip count carries over.
+      const [progress] = rows;
+      if (
+        rows.length !== 1 ||
+        typeof progress.record_key !== 'string' ||
+        !progress.record_key ||
+        progress.record_key === after
+      )
+        throw new Error('backup_snapshot_invalid_row');
+      assertNativeRecordKey(progress.record_key);
+      after = progress.record_key;
+      scanRows = Math.min(scanRows * 2, MAX_SCAN_ROWS);
+      // A position-only step: the batch it ends carries the new position, so the next read does
+      // not walk the same omitted rows again. Mid-row positions stay on the resumed row.
+      if (skip === 0)
+        yield { bytes: new Uint8Array(0), nextCursor: { after, chunk: 0, order: 'native' } };
+      continue;
+    }
+    // A short page met mostly omitted rows, such as other tenants' rows in a shared table: scan
+    // wider. A full page found enough rows: scan one page again, so a dense run is not read
+    // MAX_SCAN_ROWS keys at a time.
+    const pageRows = rows[0].page_rows;
+    if (!Number.isSafeInteger(pageRows) || (pageRows ?? 0) < rows.length)
+      throw new Error('backup_snapshot_invalid_row');
+    scanRows = (pageRows ?? 0) < PAGE_ROWS ? Math.min(scanRows * 2, MAX_SCAN_ROWS) : PAGE_ROWS;
     for (const row of rows) {
       signal.throwIfAborted();
       if (
@@ -161,6 +258,7 @@ export async function* readSqliteSnapshotChunks(
         row.total_bytes < 1
       )
         throw new Error('backup_snapshot_invalid_row');
+      assertNativeRecordKey(row.record_key);
       async function* rawRowChunks(): AsyncGenerator<Uint8Array> {
         const raw = row.fragment
           ? (async function* () {
@@ -169,7 +267,7 @@ export async function* readSqliteSnapshotChunks(
                 throw new Error('backup_snapshot_invalid_fragment');
               yield bytes;
             })()
-          : fragments(after, row);
+          : fragments(row);
         if (row.row_type === 'blob')
           yield* coalesce(packedSqliteRowToJson(raw, input.schema.columns));
         else {
@@ -209,8 +307,8 @@ export async function* readSqliteSnapshotChunks(
             yield {
               bytes: current.value,
               nextCursor: next.done
-                ? { after: row.record_key, chunk: 0 }
-                : { after, chunk: ordinal + 1 },
+                ? { after: row.record_key, chunk: 0, order: 'native' }
+                : { after, chunk: ordinal + 1, order: 'native' },
             };
           ordinal++;
           current = next;
@@ -228,7 +326,8 @@ export async function* readSqliteSnapshotChunks(
 
 /** Compatibility streaming API; production resumable writers use readSqliteSnapshotChunks. */
 export async function* readSqliteSnapshotDataset(input: SourceInput): AsyncGenerator<Uint8Array> {
-  for await (const chunk of readSqliteSnapshotChunks(input)) yield chunk.bytes;
+  for await (const chunk of readSqliteSnapshotChunks(input))
+    if (chunk.bytes.length) yield chunk.bytes;
 }
 
 /** Read one resumable chunk and release the iterator before returning to the durable executor. */
@@ -244,7 +343,8 @@ export async function readNextSqliteSnapshotChunk(
         !cursor ||
         typeof cursor.after !== 'string' ||
         !Number.isSafeInteger(cursor.chunk) ||
-        cursor.chunk < 0
+        cursor.chunk < 0 ||
+        (cursor.order !== undefined && cursor.order !== 'native')
       )
         throw new Error('invalid');
     } catch {
@@ -260,6 +360,11 @@ export async function readNextSqliteSnapshotChunk(
     for (;;) {
       const next = await iterator.next();
       if (next.done) break;
+      if (!next.value.bytes.length) {
+        // Positions only travel with bytes: callers require every step to return data.
+        if (parts.length) nextCursor = next.value.nextCursor;
+        continue;
+      }
       if (parts.length > 0 && totalBytes + next.value.bytes.length > READ_BATCH_BYTES) break;
       parts.push(next.value.bytes);
       totalBytes += next.value.bytes.length;

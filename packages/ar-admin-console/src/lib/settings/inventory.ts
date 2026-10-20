@@ -70,6 +70,11 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'access/policies', scope: 'tenant' },
 	{ id: 'access/roles', scope: 'tenant' },
 	{ id: 'access/schema', scope: 'tenant' },
+	{
+		id: 'access/mapping-sets',
+		scope: 'tenant',
+		note: 'The default Mapping Set is also set by the platform (Settings API, platform scope); a tenant value none refuses it.'
+	},
 	{ id: 'users/lifecycle', scope: 'tenant' },
 	{ id: 'users/support', scope: 'tenant' },
 	{ id: 'customization/branding', scope: 'tenant' },
@@ -613,6 +618,16 @@ place(
 	{
 		'plugin.enabled':
 			'Allows the code of external (custom) plugins to run. It does not switch the built-in email providers, CAPTCHA providers or TOTP: those are chosen under Email and under Sign-in methods.'
+	}
+);
+
+place(
+	'access/mapping-sets',
+	'Default Mapping Set',
+	{ primary: ['identity_mapping.oidc_default_set_id'] },
+	{
+		'identity_mapping.oidc_default_set_id':
+			'In development: saved and checked, not applied yet. Unset means no mapping applies; a tenant value none means: do not use the platform default either. Should become a picker of active Mapping Sets, with the apps it would affect.'
 	}
 );
 

@@ -73,6 +73,44 @@ it('does not infer ownership from tenant_id when an explicit scoped rule exists'
     scopeTypeColumn: 'scope_type',
   });
 });
+it.each([
+  ['CREATE INDEX c_order ON oauth_clients(tenant_id, id)', 'c_order'],
+  ['CREATE UNIQUE INDEX c_order ON oauth_clients(tenant_id, id)', 'c_order'],
+  ['CREATE INDEX c_tenant ON oauth_clients(tenant_id)', undefined],
+  ['CREATE INDEX c_wider ON oauth_clients(tenant_id, id, name)', undefined],
+  ['CREATE INDEX c_desc ON oauth_clients(tenant_id, id DESC)', undefined],
+  ['CREATE INDEX c_nocase ON oauth_clients(tenant_id, id COLLATE NOCASE)', undefined],
+  ['CREATE INDEX c_partial ON oauth_clients(tenant_id, id) WHERE name IS NOT NULL', undefined],
+  // The tenant equality compares with the column's NOCASE collation; a BINARY index can't serve it.
+  [
+    'CREATE INDEX c_binary ON oauth_clients(tenant_id COLLATE BINARY, id)',
+    undefined,
+    'tenant_id TEXT NOT NULL COLLATE NOCASE',
+  ],
+  [
+    'CREATE INDEX c_inherit ON oauth_clients(tenant_id, id)',
+    undefined,
+    'tenant_id TEXT NOT NULL COLLATE NOCASE',
+  ],
+])(
+  'records a (tenant, primary key) index for export paging: %s',
+  (index, expected, tenant = 'tenant_id TEXT NOT NULL') => {
+    const plan = planSqliteTenantDatasets(
+      'core',
+      schemas(`CREATE TABLE tenants(id TEXT PRIMARY KEY NOT NULL);
+      CREATE TABLE oauth_clients(id TEXT PRIMARY KEY NOT NULL,${tenant},name TEXT);
+      ${index};`),
+      selection
+    );
+    const [clients, tenants] = plan.captureSchemas;
+    // Absent rather than undefined, so plans without such an index persist byte-identically.
+    expect(Object.keys(clients).includes('tenantOrderIndex')).toBe(expected !== undefined);
+    expect(clients.table).toBe('oauth_clients');
+    expect('parent' in clients ? null : clients.tenantOrderIndex).toBe(expected);
+    // A key that starts with the tenant is already paged by tenant.
+    expect(Object.keys(tenants).includes('tenantOrderIndex')).toBe(false);
+  }
+);
 it('blocks partial capture when parent ownership cannot be resolved', () => {
   const plan = planSqliteTenantDatasets(
     'core',

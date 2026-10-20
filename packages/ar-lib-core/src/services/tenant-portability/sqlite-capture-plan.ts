@@ -20,6 +20,7 @@ function schemaSignature(schema: CaptureSchema): string {
             column: schema.tenantColumn,
             scopeTypeColumn: schema.scopeTypeColumn,
             tenantIdentity: schema.tenantIdentity ?? 'tenantId',
+            tenantOrderIndex: schema.tenantOrderIndex ?? null,
           },
   });
 }

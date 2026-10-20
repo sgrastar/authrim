@@ -99,3 +99,39 @@ export function assessSqliteCaptureStructure(table: BackupSchemaTable): {
           },
   };
 }
+
+/**
+ * The installed index that orders one tenant's rows by primary key: non-partial, with key columns
+ * exactly the tenant column followed by the complete primary key, all ascending BINARY. Without
+ * one, an export page has to walk the primary key index across every tenant's rows.
+ */
+export function sqliteTenantOrderIndex(
+  table: BackupSchemaTable,
+  tenantColumn: string,
+  primaryKey: readonly string[]
+): string | undefined {
+  if (!primaryKey.length || primaryKey[0] === tenantColumn) return undefined;
+  const expected = [tenantColumn, ...primaryKey];
+  return table.indexes
+    .filter((index) => {
+      if (index.partial || !/^[a-z][a-z0-9_]*$/.test(index.name)) return false;
+      // An index column inherits the column's collation unless the index names one. With an
+      // explicit COLLATE, a BINARY index column can sit on a NOCASE tenant column, and the tenant
+      // equality (column collation) could not use it. Auto-indexes have no SQL to check.
+      if (index.sql === null || /\bCOLLATE\b/i.test(index.sql)) return false;
+      const keys = index.columns
+        .filter((column) => column.key)
+        .sort((left, right) => left.position - right.position);
+      return (
+        keys.length === expected.length &&
+        keys.every(
+          (column, position) =>
+            column.name === expected[position] &&
+            !column.descending &&
+            column.collation.toUpperCase() === 'BINARY'
+        )
+      );
+    })
+    .map((index) => index.name)
+    .sort()[0];
+}

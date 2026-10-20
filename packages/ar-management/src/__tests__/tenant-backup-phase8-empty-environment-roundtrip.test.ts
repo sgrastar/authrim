@@ -264,6 +264,8 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         const rows = source[entry.family as Family]
           .prepare(sqliteSnapshotPageQuery(entry.capture, 'json', entry.partitions))
           .all('phase8-snapshot', 'tenant-a', '', 10_000)
+          // A progress row (row_json NULL) only moves past other tenants' rows.
+          .filter((row: Record<string, unknown>) => row.row_json !== null)
           .map((row: Record<string, unknown>) => String(row.row_json));
         const accepted: string[] = [];
         for (const rowJson of rows) {
