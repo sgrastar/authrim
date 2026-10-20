@@ -44,6 +44,13 @@ import {
 } from '@authrim/ar-lib-field-mapping/authoring';
 import type { CsvSourceProfileParserOptions } from '@authrim/ar-lib-field-mapping/authoring';
 import type { FieldCatalogEntry } from '@authrim/ar-lib-field-mapping/contract';
+import {
+  checkDestinationProfileUnreferenced,
+  checkMappingSetUnreferenced,
+  checkMappingVersionDeactivation,
+  checkMappingVersionSwap,
+  type MappingSetConflict,
+} from './identity-mapping-set-reference-guard';
 
 type AdminContext = Context<{ Bindings: Env }>;
 
@@ -1421,7 +1428,9 @@ class IdentityMappingControlPlaneError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly code: string
+    readonly code: string,
+    /** Fields added to the error body (the references that made a change a conflict). */
+    readonly extra: Record<string, unknown> = {}
   ) {
     super(message);
   }
@@ -4341,6 +4350,15 @@ export class IdentityMappingControlPlaneRepository {
     fieldMappingSetId: string,
     fieldMappingVersionId: string
   ) {
+    // The version must be one of this set: its snapshots are found by the version alone.
+    const version = await this.getFieldMappingVersion(
+      tenantId,
+      fieldMappingSetId,
+      fieldMappingVersionId
+    );
+    if (!version) {
+      throw notFound('field mapping version not found');
+    }
     const now = this.now();
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
@@ -4352,8 +4370,14 @@ export class IdentityMappingControlPlaneRepository {
       await tx.execute(
         `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
-          WHERE tenant_id = ? AND field_mapping_version_id = ? AND lifecycle_state = ?`,
-        ['retired', now, tenantId, fieldMappingVersionId, 'active']
+          WHERE tenant_id = ?
+            AND field_mapping_version_id IN (
+              SELECT id
+                FROM field_mapping_versions
+               WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?
+            )
+            AND lifecycle_state = ?`,
+        ['retired', now, tenantId, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
       );
       await tx.execute(
         `UPDATE field_mapping_versions
@@ -7598,13 +7622,13 @@ export async function adminIdentityMappingDestinationProfileActivateHandler(c: A
 }
 
 export async function adminIdentityMappingDestinationProfileDeleteHandler(c: AdminContext) {
-  return handleMutation(c, 'destination-profile.delete', async (repository, tenantId) =>
-    repository.deleteDestinationProfile(
-      tenantId,
-      requiredParam(c, 'destinationProfileId'),
-      hasPlatformOwnerScopeAuthority(c)
-    )
-  );
+  return handleMutation(c, 'destination-profile.delete', async (repository, tenantId) => {
+    const profileId = requiredParam(c, 'destinationProfileId');
+    const allowPlatformScope = hasPlatformOwnerScopeAuthority(c);
+    // A profile that a Mapping Set in use releases into cannot go.
+    refuseIfInUse(await checkDestinationProfileUnreferenced(c, { profileId, allowPlatformScope }));
+    return repository.deleteDestinationProfile(tenantId, profileId, allowPlatformScope);
+  });
 }
 
 export async function adminIdentityMappingAttributeGroupsListHandler(c: AdminContext) {
@@ -7691,6 +7715,14 @@ export async function adminIdentityFieldMappingSetDeleteHandler(c: AdminContext)
       fieldMappingSetId,
       'write'
     );
+    // A set that is still named (a default, an app, a credential profile) cannot be deleted.
+    refuseIfInUse(
+      await checkMappingSetUnreferenced(c, {
+        setId: fieldMappingSetId,
+        ownerTenantId,
+        action: 'deleted',
+      })
+    );
     return repository.deleteFieldMappingSet(ownerTenantId, fieldMappingSetId);
   });
 }
@@ -7763,10 +7795,25 @@ export async function adminIdentityFieldMappingVersionActivateHandler(c: AdminCo
       fieldMappingSetId,
       'write'
     );
+    const fieldMappingVersionId = requiredParam(c, 'fieldMappingVersionId');
+    // Replacing the version in use must not break what names the set.
+    const snapshotId = isRecord(body) ? body.snapshotId : undefined;
+    if (typeof snapshotId === 'string' && snapshotId) {
+      refuseIfInUse(
+        await checkMappingVersionSwap(c, {
+          mode: 'activate',
+          setId: fieldMappingSetId,
+          ownerTenantId,
+          versionId: fieldMappingVersionId,
+          snapshotId,
+          activationScope: isRecord(body) ? body.activationScope : undefined,
+        })
+      );
+    }
     return repository.activateFieldMappingVersion(
       ownerTenantId,
       fieldMappingSetId,
-      requiredParam(c, 'fieldMappingVersionId'),
+      fieldMappingVersionId,
       body as ActivateFieldMappingRequest
     );
   });
@@ -7782,10 +7829,19 @@ export async function adminIdentityFieldMappingVersionDeactivateHandler(c: Admin
       fieldMappingSetId,
       'write'
     );
+    const fieldMappingVersionId = requiredParam(c, 'fieldMappingVersionId');
+    // Switching off the version in use leaves what names the set without a mapping.
+    refuseIfInUse(
+      await checkMappingVersionDeactivation(c, {
+        setId: fieldMappingSetId,
+        ownerTenantId,
+        versionId: fieldMappingVersionId,
+      })
+    );
     return repository.deactivateFieldMappingVersion(
       ownerTenantId,
       fieldMappingSetId,
-      requiredParam(c, 'fieldMappingVersionId')
+      fieldMappingVersionId
     );
   });
 }
@@ -7799,6 +7855,13 @@ export async function adminIdentityFieldMappingSetRollbackHandler(c: AdminContex
       tenantId,
       fieldMappingSetId,
       'write'
+    );
+    refuseIfInUse(
+      await checkMappingVersionSwap(c, {
+        mode: 'rollback',
+        setId: fieldMappingSetId,
+        ownerTenantId,
+      })
     );
     return repository.rollbackFieldMappingSet(ownerTenantId, fieldMappingSetId);
   });
@@ -8190,6 +8253,7 @@ function controlPlaneErrorResponse(c: AdminContext, error: unknown): Response {
       {
         error: error.code,
         error_description: error.message,
+        ...error.extra,
       },
       error.status as 400 | 404 | 409 | 500
     );
@@ -9479,4 +9543,16 @@ function forbidden(message: string): IdentityMappingControlPlaneError {
 
 function conflict(message: string): IdentityMappingControlPlaneError {
   return new IdentityMappingControlPlaneError(message, 409, 'conflict');
+}
+
+/** Refuses the change when the reference check found a reason to (see the reference guard). */
+function refuseIfInUse(conflicted: MappingSetConflict | null): void {
+  if (conflicted) {
+    throw new IdentityMappingControlPlaneError(
+      conflicted.message,
+      409,
+      'conflict',
+      conflicted.extra
+    );
+  }
 }

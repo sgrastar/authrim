@@ -891,6 +891,11 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'identity field mapping'
   ),
   readOnly(
+    '/api/admin/identity-mapping/usage',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping set usage'
+  ),
+  readOnly(
     '/api/admin/credential-profiles',
     ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,
     'credential profiles'

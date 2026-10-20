@@ -349,11 +349,11 @@ export async function resolveRuntimeIdentityMappingBinding(
     ]
   );
   const activationScope = parseJsonObject(selected.activation_scope_json);
-  const destinationProfileIds = uniqueDestinationProfileIds(edges);
+  const destinationProfileIds = runtimeDestinationProfileIds(
+    edges.map((edge) => parseJsonObject(edge.target_ref_json)),
+    activationScope
+  );
   const scopedDestinationProfileId = readString(activationScope.destinationProfileId);
-  if (scopedDestinationProfileId && !destinationProfileIds.includes(scopedDestinationProfileId)) {
-    destinationProfileIds.unshift(scopedDestinationProfileId);
-  }
 
   return {
     id: selected.activation_id,
@@ -373,21 +373,8 @@ export async function resolveRuntimeIdentityMappingBinding(
       },
       entries: catalogEntries.map(toCatalogEntry),
     },
-    edges: edges.map((edge) => ({
-      id: edge.id,
-      sourceRef: parseFieldRef(edge.source_ref_json),
-      targetRef: parseFieldRef(edge.target_ref_json),
-      edgeKind: edge.edge_kind ?? undefined,
-    })),
-    transforms: transforms.map((transform) => ({
-      id: transform.id,
-      inputEdgeIds: transform.edge_id ? [transform.edge_id] : [],
-      operation: transform.operation as TransformOperation,
-      parameters: parseJsonObject(transform.parameters_json ?? '{}'),
-      outputTargetRef: transform.target_ref_json
-        ? parseFieldRef(transform.target_ref_json)
-        : inferTransformOutputTargetRef(transform, edges),
-    })),
+    edges: toRuntimeEdges(edges),
+    transforms: toRuntimeTransforms(transforms, edges),
     validationRules: validationRules.map((rule) => ({
       id: rule.id,
       kind: rule.validation_kind as ValidationRuleKind,
@@ -419,6 +406,23 @@ export async function resolveRuntimeIdentityMappingBinding(
         : scopedDestinationProfileId,
     destinationProfileIds,
   };
+}
+
+/**
+ * The Destination Profiles a mapping releases into, as the runtime counts them: the ones its
+ * edges name (once each, without the prefix some authors give), and the one the activation's
+ * scope names (`destinationProfileId`) when that is not already among them, compared as it was
+ * written. A caller that needs exactly one counts this set, so a scope that names another profile
+ * than the edges is two.
+ */
+export function runtimeDestinationProfileIds(
+  targetRefs: ReadonlyArray<Record<string, unknown>>,
+  activationScope: Record<string, unknown>
+): string[] {
+  const ids = mappingDestinationProfileIds(targetRefs);
+  const scoped = readString(activationScope.destinationProfileId);
+  if (scoped && !ids.includes(scoped)) ids.unshift(scoped);
+  return ids;
 }
 
 function uniqueDestinationProfileIds(edges: EdgeRow[]): string[] {
@@ -492,6 +496,17 @@ function rankActivations(
 
 function destinationProfileReferencesMatch(left: string, right: string): boolean {
   return normalizeDestinationProfileReference(left) === normalizeDestinationProfileReference(right);
+}
+
+/**
+ * Whether an activation with this scope applies to a call in this context: the rule `rankActivations`
+ * ranks by, shared so that what judges a scope before it is saved is what the runtime will do.
+ */
+export function activationScopeApplies(
+  scope: Record<string, unknown>,
+  context: RuntimeIdentityMappingResolutionContext
+): boolean {
+  return activationScore(scope, context) >= 0;
 }
 
 function activationScore(
@@ -761,6 +776,43 @@ function findCatalogEntry(catalog: FieldCatalogBundle, ref: FieldRef) {
       (entry.namespace === ref.namespace && entry.path === ref.path) ||
       entry.aliases?.some((alias) => alias.namespace === ref.namespace && alias.path === ref.path)
   );
+}
+
+function toRuntimeEdges(edges: EdgeRow[]): MappingRuleEdge[] {
+  return edges.map((edge) => ({
+    id: edge.id,
+    sourceRef: parseFieldRef(edge.source_ref_json),
+    targetRef: parseFieldRef(edge.target_ref_json),
+    edgeKind: edge.edge_kind ?? undefined,
+  }));
+}
+
+function toRuntimeTransforms(transforms: TransformRow[], edges: EdgeRow[]): MappingTransformStep[] {
+  return transforms.map((transform) => ({
+    id: transform.id,
+    inputEdgeIds: transform.edge_id ? [transform.edge_id] : [],
+    operation: transform.operation as TransformOperation,
+    parameters: parseJsonObject(transform.parameters_json ?? '{}'),
+    outputTargetRef: transform.target_ref_json
+      ? parseFieldRef(transform.target_ref_json)
+      : inferTransformOutputTargetRef(transform, edges),
+  }));
+}
+
+/**
+ * The edges and transforms of a version as the runtime reads them (every spelling of a reference
+ * resolved), for a check that must judge a version before it is in use.
+ */
+export async function loadRuntimeMappingGraph(
+  adapter: DatabaseAdapter,
+  ownerTenantId: string,
+  fieldMappingVersionId: string
+): Promise<{ edges: MappingRuleEdge[]; transforms: MappingTransformStep[] }> {
+  const [edges, transforms] = await Promise.all([
+    loadEdges(adapter, ownerTenantId, fieldMappingVersionId),
+    loadTransforms(adapter, ownerTenantId, fieldMappingVersionId),
+  ]);
+  return { edges: toRuntimeEdges(edges), transforms: toRuntimeTransforms(transforms, edges) };
 }
 
 function inferTransformOutputTargetRef(transform: TransformRow, edges: EdgeRow[]): FieldRef {

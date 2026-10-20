@@ -102,7 +102,7 @@ export function seedMapping(db: SQLiteDatabase, input: SeedMappingInput): string
 
 export function seedDestinationProfile(
   db: SQLiteDatabase,
-  input: { owner: string; id: string; destinationType?: string }
+  input: { owner: string; id: string; destinationType?: string; attributes?: string[] }
 ): void {
   const type = input.destinationType ?? 'oidc';
   db.prepare(
@@ -126,6 +126,7 @@ export function seedDestinationProfile(
     input.id,
     JSON.stringify({
       destinationType: type,
+      ...(input.attributes ? { attributes: input.attributes.map((name) => ({ name })) } : {}),
       claims: [
         {
           claimName: 'email',
@@ -136,4 +137,64 @@ export function seedDestinationProfile(
       ],
     })
   );
+}
+
+/**
+ * Another version of a set seeded with `seedMapping`: published, with a compiled snapshot (in the
+ * state given) over the same catalog and one rule that releases into the given profiles. It has no
+ * activation.
+ */
+export function seedMappingVersion(
+  db: SQLiteDatabase,
+  input: {
+    owner: string;
+    /** The `id` the set was seeded with. */
+    setSeed: string;
+    /** Names the new version's rows. */
+    id: string;
+    profiles?: string[];
+    snapshotState?: string;
+  }
+): { versionId: string; snapshotId: string } {
+  const { owner, setSeed, id } = input;
+  const run = (sql: string, ...params: Array<string | number | null>) =>
+    db.prepare(sql).run(...params);
+  run(
+    `INSERT INTO field_mapping_versions (id, tenant_id, field_mapping_set_id, version_label, lifecycle_state, field_mapping_hash, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'published', ?, 1, 1)`,
+    `ver-${id}`,
+    owner,
+    `set-${setSeed}`,
+    `label-${id}`,
+    `hash-${id}`
+  );
+  run(
+    `INSERT INTO compiled_mapping_snapshots (id, tenant_id, field_mapping_version_id, catalog_version_id, snapshot_hash, lifecycle_state, compiled_at)
+     VALUES (?, ?, ?, ?, ?, ?, 2)`,
+    `snap-${id}`,
+    owner,
+    `ver-${id}`,
+    `catalog-${setSeed}`,
+    `snapshot-${id}`,
+    input.snapshotState ?? 'draft'
+  );
+  run(
+    `INSERT INTO mapping_rules (id, tenant_id, field_mapping_version_id, rule_key, rule_kind, action, priority, created_at, updated_at)
+     VALUES (?, ?, ?, 'rule', 'direct', 'allow', 0, 1, 1)`,
+    `rule-${id}`,
+    owner,
+    `ver-${id}`
+  );
+  (input.profiles ?? [`profile-${setSeed}`]).forEach((profileId, index) => {
+    run(
+      `INSERT INTO mapping_rule_edges (id, tenant_id, rule_id, source_ref_json, target_ref_json, edge_kind, display_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'direct', 0, 1, 1)`,
+      `edge-${id}-${index}`,
+      owner,
+      `rule-${id}`,
+      JSON.stringify({ side: 'source', namespace: 'authrim.profile', path: 'email' }),
+      JSON.stringify({ side: 'destination', profileId, namespace: 'oidc.claim', path: 'email' })
+    );
+  });
+  return { versionId: `ver-${id}`, snapshotId: `snap-${id}` };
 }
