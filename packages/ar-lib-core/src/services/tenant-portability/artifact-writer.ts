@@ -26,6 +26,8 @@ const ACTIVE = `EXISTS (SELECT 1 FROM tenant_backup_artifact_attempts a JOIN ten
   ON o.id=a.operation_id AND o.tenant_id=a.tenant_id WHERE a.id=? AND a.tenant_id=? AND a.state='writing'
   AND a.fencing_token=? AND o.fencing_token=a.fencing_token AND o.state='running'
   AND o.lease_owner=? AND o.lease_expires_at>? AND o.updated_at<=?)`;
+/** Like ACTIVE, but also after sealing, for cleanup the export step owes a sealed attempt. */
+const OWNED = ACTIVE.replace("a.state='writing'", "a.state IN ('writing','sealed')");
 function fail(): never {
   throw new Error('backup_artifact_write_failed');
 }
@@ -335,12 +337,17 @@ export class TenantBackupArtifactWriter {
     }
     return chunks;
   }
-  /** Spills for frames up to `ordinal` are no longer needed once that frame's part is written. */
-  async deleteSpills(ordinal: number): Promise<void> {
-    if (!Number.isSafeInteger(ordinal) || ordinal < 0) fail();
+  /**
+   * Delete every spill except the one the saved checkpoint names (`keep`). Call it only with the
+   * durable cursor's spill: one written by a slice whose checkpoint was never saved, or one a saved
+   * checkpoint has since moved past, is never read again.
+   */
+  async collectSpills(keep: string | null): Promise<void> {
+    if (keep !== null && !/^[a-f0-9-]{36}$/.test(keep)) fail();
     await this.db.execute(
-      `DELETE FROM tenant_backup_export_spills WHERE attempt_id=? AND ordinal<=? AND ${ACTIVE}`,
-      [this.attemptId, ordinal, ...this.params()]
+      `DELETE FROM tenant_backup_export_spills WHERE attempt_id=? AND (? IS NULL OR spill_id<>?)
+      AND ${OWNED}`,
+      [this.attemptId, keep, keep, ...this.params()]
     );
   }
   /** Retries must repeat identical values; a different value for a saved dataset fails. */

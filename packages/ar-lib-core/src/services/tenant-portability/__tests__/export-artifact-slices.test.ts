@@ -786,3 +786,102 @@ it.each([
     });
   }
 );
+
+it('keeps a spill until a saved checkpoint moves past it and reuses it when nothing new was read', async () => {
+  const { attemptId, expected } = await prepare();
+  const start = JSON.stringify({ version: 2, attemptId });
+  const spills = () =>
+    (
+      db.prepare('SELECT count(DISTINCT spill_id) AS n FROM tenant_backup_export_spills').get() as {
+        n: number;
+      }
+    ).n;
+  // A slice is lost right after reserving its third part, before the upload.
+  let puts = 0;
+  const original = bucket.put.bind(bucket);
+  bucket.put = (async (...args: Parameters<R2Bucket['put']>) => {
+    if (++puts === 3) putFault = 'before';
+    return original(...args);
+  }) as R2Bucket['put'];
+  await expect(
+    exportStep(attemptId, expected, 'export_artifact', start, {
+      slice: { frameBytes: 8 * 1024, readCalls: 60 },
+      read: batched(7),
+    })
+  ).rejects.toThrow('r2_unavailable');
+  bucket.put = original;
+
+  // Positions after "idle:" cursors carry no rows for a while, like a run of omitted rows.
+  let idle = 0;
+  const read: typeof readNext = async (datasetId, cursor) => {
+    if (cursor?.startsWith('idle:')) {
+      if (idle > 0) {
+        idle--;
+        return {
+          bytes: new Uint8Array(0),
+          nextCursor: `idle:${idle}:${cursor.split(':').slice(2).join(':')}`,
+        };
+      }
+      return batched(1)(datasetId, cursor.split(':').slice(2).join(':') || null);
+    }
+    const next = await batched(1)(datasetId, cursor);
+    return next && { ...next, nextCursor: `idle:0:${next.nextCursor}` };
+  };
+  const slice = { frameBytes: 8 * 1024, readCalls: 3 };
+  let cursor: string | null = start;
+  while (!JSON.parse(cursor!).spill) {
+    const result = await exportStep(attemptId, expected, 'export_artifact', cursor, {
+      slice,
+      read,
+    });
+    expect(result.phase).toBe('export_artifact');
+    cursor = result.cursor;
+  }
+  const spilled = cursor!;
+  const spill = JSON.parse(spilled).spill as { id: string };
+  expect(spills()).toBe(1);
+
+  // Ten slices that read only positions keep the same spill instead of storing it again.
+  idle = 30;
+  for (let i = 0; i < 10; i++) {
+    const result = await exportStep(attemptId, expected, 'export_artifact', cursor, {
+      slice,
+      read,
+    });
+    cursor = result.cursor;
+    expect(JSON.parse(cursor!).spill).toEqual(JSON.parse(spilled).spill);
+  }
+  expect(spills()).toBe(1);
+
+  // A slice that finishes the spilled frame and then dies before its checkpoint is saved leaves
+  // the saved checkpoint's spill in place, so the retry still resumes from it.
+  const parts = objects.size;
+  let calls = 0;
+  await expect(
+    exportStep(attemptId, expected, 'export_artifact', spilled, {
+      slice: { frameBytes: 8 * 1024, readCalls: 200 },
+      read: async (datasetId, value) => {
+        if (++calls > 120) throw new Error('worker_lost');
+        return read(datasetId, value);
+      },
+    })
+  ).rejects.toThrow('worker_lost');
+  expect(objects.size).toBeGreaterThan(parts);
+  expect(
+    db
+      .prepare('SELECT count(*) AS n FROM tenant_backup_export_spills WHERE spill_id=?')
+      .get(spill.id)
+  ).not.toEqual({ n: 0 });
+
+  let phase = 'export_artifact';
+  cursor = spilled;
+  while (phase === 'export_artifact') {
+    const result = await exportStep(attemptId, expected, phase, cursor, { slice, read });
+    phase = result.phase;
+    cursor = result.cursor;
+  }
+  // Sealing collects every spill, including any left behind the last part.
+  expect(spills()).toBe(0);
+  await runVerify(attemptId, expected);
+  expectDatasets((await decodeSaved(attemptId)).decoded);
+});

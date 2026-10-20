@@ -292,7 +292,10 @@ export async function runTenantBackupArtifactStep(
   await input.assertBoundary();
   const written = await writer.progress();
   // A sealed attempt means the last slice finished but its checkpoint was lost.
-  if (written.state === 'sealed') return verify;
+  if (written.state === 'sealed') {
+    await writer.collectSpills(null);
+    return verify;
+  }
   if (written.reservedParts < state.parts) fail();
   // Parts that a failed slice reserved after this checkpoint fix the frames this retry must cut.
   const reserved =
@@ -302,6 +305,10 @@ export async function runTenantBackupArtifactStep(
 
   // A spill holds the start of a reserved frame that the previous slice had to leave unfinished.
   if (state.spill && !reserved.has(state.parts)) fail();
+  // Only the saved checkpoint's spill can be read again. Others belong to a slice whose checkpoint
+  // was never saved, or to frames a saved checkpoint has already moved past.
+  await writer.collectSpills(state.spill?.id ?? null);
+  const loadedSpill = state.spill;
   const spilled = state.spill
     ? join(
         await Promise.all(
@@ -324,6 +331,8 @@ export async function runTenantBackupArtifactStep(
   const completed: TenantBackupExportDatasetStat[] = [];
   let buffer: Uint8Array[] = spilled.length ? [spilled] : [];
   let bufferBytes = spilled.length;
+  /** False while the buffer still holds exactly the loaded spill, which can then be kept as is. */
+  let bufferChanged = false;
   let calls = 0;
   const readSession = {};
 
@@ -346,6 +355,7 @@ export async function runTenantBackupArtifactStep(
     return frame;
   };
   const takeBuffer = (length = bufferBytes): Uint8Array => {
+    bufferChanged = true;
     const all = join(buffer);
     buffer = length < all.length ? [all.slice(length)] : [];
     bufferBytes = all.length - length;
@@ -360,9 +370,7 @@ export async function runTenantBackupArtifactStep(
     return plain;
   };
   const writeFrame = async (length: number): Promise<void> => {
-    const ordinal = state.parts;
     await writePart([await sealFrame(takeBuffer(length))]);
-    if (reserved.has(ordinal)) await writer.deleteSpills(ordinal);
   };
 
   for (;;) {
@@ -392,6 +400,7 @@ export async function runTenantBackupArtifactStep(
       pieces.push(await cipher.seal(state.sequence, 2, metadata.bytes));
       await writePart(pieces);
       await writer.seal(state.parts, state.objectBytes);
+      await writer.collectSpills(null);
       await input.assertBoundary();
       return verify;
     }
@@ -402,7 +411,10 @@ export async function runTenantBackupArtifactStep(
       while (bufferBytes && (!reserved.has(state.parts) || bufferBytes >= nextFrameBytes()))
         await writeFrame(Math.min(bufferBytes, nextFrameBytes()));
       await writer.saveDatasetStats(completed);
-      if (bufferBytes) {
+      if (bufferBytes && !bufferChanged && loadedSpill?.bytes === bufferBytes) {
+        // Nothing new was read toward the frame: the saved spill still holds exactly these bytes.
+        state.spill = loadedSpill;
+      } else if (bufferBytes) {
         if (bufferBytes > MAX_SPILL_BYTES) throw new Error('backup_export_spill_limit');
         const id = crypto.randomUUID();
         const plain = join(buffer);
@@ -481,6 +493,7 @@ export async function runTenantBackupArtifactStep(
     datasetLast = bytes[bytes.length - 1];
     buffer.push(bytes);
     bufferBytes += bytes.length;
+    bufferChanged = true;
     // Frames may end inside a row; verification and readers carry row state across frames.
     while (bufferBytes >= nextFrameBytes()) await writeFrame(nextFrameBytes());
   }
