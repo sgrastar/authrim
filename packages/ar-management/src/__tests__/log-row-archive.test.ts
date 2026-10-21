@@ -35,6 +35,19 @@ const TENANT_KEY = 'key-a';
 const migration = (path: string) =>
   readFileSync(new URL(`../../../../migrations/${path}`, import.meta.url), 'utf8');
 
+/** D1 refuses a string or blob over 2,000,000 bytes, results included. */
+const D1_MAX_LENGTH = 2_000_000;
+function d1Sized<T>(rows: T[]): T[] {
+  for (const row of rows)
+    for (const value of Object.values(row as Record<string, unknown>))
+      if (
+        (typeof value === 'string' || value instanceof Uint8Array) &&
+        value.length > D1_MAX_LENGTH
+      )
+        throw new Error('string or blob too big: SQLITE_TOOBIG');
+  return rows;
+}
+
 function adapter(db: DatabaseSync): DatabaseAdapter {
   const run = (sql: string, params: unknown[] = []) => {
     const result = db.prepare(sql).run(...(params as SqlValue[]));
@@ -42,10 +55,11 @@ function adapter(db: DatabaseSync): DatabaseAdapter {
   };
   return {
     async query<T>(sql: string, params: unknown[] = []) {
-      return db.prepare(sql).all(...(params as SqlValue[])) as T[];
+      return d1Sized(db.prepare(sql).all(...(params as SqlValue[])) as T[]);
     },
     async queryOne<T>(sql: string, params: unknown[] = []) {
-      return (db.prepare(sql).get(...(params as SqlValue[])) as T | undefined) ?? null;
+      const row = db.prepare(sql).get(...(params as SqlValue[])) as T | undefined;
+      return row ? d1Sized([row])[0] : null;
     },
     async execute(sql: string, params: unknown[] = []) {
       return run(sql, params);
@@ -439,29 +453,59 @@ describe('log row archive', () => {
     ).toEqual([1000, 1000, 500]);
   });
 
-  it('cuts batches at 4 MiB of rows and skips a table with a row too large to move', async () => {
+  it('cuts batches at 4 MiB of rows and moves a large row in a batch of its own', async () => {
     const insert = core.prepare('INSERT INTO audit_log VALUES (?, ?, ?, ?, ?, ?)');
     const at = Math.floor((NOW - 9 * DAY) / 1000);
     const large = 'x'.repeat(200 * 1024);
     for (let index = 0; index < 25; index++)
       insert.run(`a${String(index).padStart(2, '0')}`, 'tenant-a', null, 'x', large, at);
-    // Over the 256 KiB row limit: this table stops, the others still move.
-    admin
-      .prepare('INSERT INTO admin_audit_log VALUES (?, ?, ?, ?, ?)')
-      .run('m-huge', 'tenant-a', 'x', 'y'.repeat(300 * 1024), NOW - 9 * DAY);
+    // The oldest row of this table is larger than a whole batch of small rows would be.
+    const adminInsert = admin.prepare('INSERT INTO admin_audit_log VALUES (?, ?, ?, ?, ?)');
+    adminInsert.run('m-before', 'tenant-a', 'x', 'y'.repeat(2048), NOW - 9 * DAY - 2);
+    // Under D1's 2,000,000-byte row limit, but its hex is not.
+    adminInsert.run('m-huge', 'tenant-a', 'x', 'y'.repeat(1_500_000), NOW - 9 * DAY - 1);
+    adminInsert.run('m-after', 'tenant-a', 'x', 'y'.repeat(2048), NOW - 9 * DAY);
     admin
       .prepare('INSERT INTO key_access_events VALUES (?, ?, ?)')
       .run('k1', 'tenant-a', NOW - 9 * DAY);
 
-    expect(await run()).toMatchObject({ failed: 1, complete: false });
+    let result = await run();
+    for (let runs = 1; runs < 5 && !result.complete; runs++) result = await run();
+    expect(result).toMatchObject({ failed: 0, complete: true });
     expect(ids(core, 'audit_log')).toEqual([]);
-    expect(ids(admin, 'admin_audit_log')).toEqual(['m-huge']);
+    expect(ids(admin, 'admin_audit_log')).toEqual([]);
     expect(ids(admin, 'key_access_events')).toEqual([]);
-    const counts = catalog()
-      .filter((row) => row.source_table === 'core.audit_log')
-      .map((row) => row.record_count as number)
-      .sort((a, b) => b - a);
-    expect(counts).toEqual([20, 5]);
+    const counts = (table: string) =>
+      catalog()
+        .filter((row) => row.source_table === table)
+        .map((row) => row.record_count as number)
+        .sort((a, b) => b - a);
+    expect(counts('core.audit_log')).toEqual([20, 5]);
+    expect(counts('admin.admin_audit_log')).toEqual([1, 1, 1]);
+    // The large row, read in parts, comes back whole.
+    const huge = await Promise.all(
+      catalog()
+        .filter((row) => row.source_table === 'admin.admin_audit_log')
+        .map((row) => records(row))
+    );
+    const row = huge.flat().find((record) => JSON.stringify(record.row).includes('"m-huge"'));
+    expect(
+      Object.values(row?.row as Record<string, [string, unknown]>).some(
+        ([, value]) => value === 'y'.repeat(1_500_000)
+      )
+    ).toBe(true);
+  });
+
+  it('still refuses a row larger than one batch, which D1 cannot hold', async () => {
+    admin
+      .prepare('INSERT INTO admin_audit_log VALUES (?, ?, ?, ?, ?)')
+      .run('m-over', 'tenant-a', 'x', 'y'.repeat(4 * 1024 * 1024 + 1024), NOW - 9 * DAY);
+    admin
+      .prepare('INSERT INTO key_access_events VALUES (?, ?, ?)')
+      .run('k1', 'tenant-a', NOW - 9 * DAY);
+    expect(await run()).toMatchObject({ failed: 1 });
+    expect(ids(admin, 'admin_audit_log')).toEqual(['m-over']);
+    expect(ids(admin, 'key_access_events')).toEqual([]);
   });
 
   it('moves one batch of each table in turn, so a large backlog does not starve the others', async () => {

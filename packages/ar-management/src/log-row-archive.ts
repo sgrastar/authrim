@@ -37,8 +37,15 @@ export const LOG_ROW_ARCHIVE_CRON = '*/10 * * * *';
 /** Time one run spends moving rows; the next run continues where it stopped. */
 export const LOG_ROW_ARCHIVE_BUDGET_MS = 10_000;
 export const LOG_ROW_ARCHIVE_BATCH_ROWS = 1000;
+/** Packed bytes one batch reads; a row larger than LARGE_ROW_BYTES goes in a batch of its own. */
 const BATCH_MAX_BYTES = 4 * 1024 * 1024;
-const ROW_MAX_BYTES = 256 * 1024;
+/**
+ * A D1 string holds at most 2,000,000 bytes and `hex()` doubles a row, so bodies are read in parts
+ * of this size, and at most READ_BYTES of small rows in one query (as the DR snapshot reader does).
+ * A row over this size is archived alone, so no row a D1 table can hold stops its table.
+ */
+const LARGE_ROW_BYTES = 256 * 1024;
+const READ_BYTES = 1024 * 1024;
 const LEASE_TASK_ID = 'log_row_archive';
 /** Batches of a page's round robin kept between runs (each a (scan, tenant) position). */
 const MAX_SAVED_WORK = 4096;
@@ -156,7 +163,7 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 async function rowJson(hex: string, columns: readonly string[]): Promise<string> {
-  if (hex.length > ROW_MAX_BYTES * 2 || hex.length % 2 !== 0 || !/^[0-9A-F]*$/.test(hex))
+  if (hex.length > BATCH_MAX_BYTES * 2 || hex.length % 2 !== 0 || !/^[0-9A-F]*$/.test(hex))
     invalid('log_row_archive_row_invalid');
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -260,23 +267,49 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
     for (const head of heads) {
       if (typeof head.id !== 'string' || !head.id || !Number.isSafeInteger(head.event_at))
         invalid();
-      if (!Number.isSafeInteger(head.bytes) || head.bytes > ROW_MAX_BYTES)
+      if (!Number.isSafeInteger(head.bytes) || head.bytes < 0 || head.bytes > BATCH_MAX_BYTES)
         invalid('log_row_archive_row_too_large');
+      const large = head.bytes > LARGE_ROW_BYTES;
       bytes += head.bytes;
-      // Resumed batches hold the journalled rows; new ones stop at BATCH_MAX_BYTES.
-      if (!('ids' in select) && chosen.length && bytes > BATCH_MAX_BYTES) break;
+      // Resumed batches hold the journalled rows; new ones stop at BATCH_MAX_BYTES and give a
+      // large row a batch of its own.
+      if (!('ids' in select) && chosen.length && (large || bytes > BATCH_MAX_BYTES)) break;
       chosen.push(head);
+      if (!('ids' in select) && large) break;
     }
-    const bodies = new Map(
-      (chosen.length
-        ? await store.adapter.query<{ id: string; row_hex: string }>(
-            `SELECT id, hex(${packed}) AS row_hex FROM ${quote(table.table)} AS r
-             WHERE tenant_id = ? AND id IN (SELECT value FROM json_each(?))`,
-            [tenantId, JSON.stringify(chosen.map(({ id }) => id))]
-          )
-        : []
-      ).map(({ id, row_hex }) => [id, row_hex])
-    );
+    const bodies = new Map<string, string>();
+    const small = chosen.filter((head) => head.bytes <= LARGE_ROW_BYTES);
+    for (let start = 0; start < small.length; ) {
+      let end = start;
+      for (
+        let read = 0;
+        end < small.length && (end === start || read + small[end].bytes <= READ_BYTES);
+        end++
+      )
+        read += small[end].bytes;
+      for (const { id, row_hex } of await store.adapter.query<{ id: string; row_hex: string }>(
+        `SELECT id, hex(${packed}) AS row_hex FROM ${quote(table.table)} AS r
+         WHERE tenant_id = ? AND id IN (SELECT value FROM json_each(?))`,
+        [tenantId, JSON.stringify(small.slice(start, end).map(({ id }) => id))]
+      ))
+        bodies.set(id, row_hex);
+      start = end;
+    }
+    for (const head of chosen.filter((row) => row.bytes > LARGE_ROW_BYTES)) {
+      let hex = '';
+      for (let offset = 0; offset < head.bytes; offset += LARGE_ROW_BYTES) {
+        const part = await store.adapter.queryOne<{ part: string | null }>(
+          `SELECT hex(substr(${packed}, ?, ?)) AS part FROM ${quote(table.table)} AS r
+           WHERE tenant_id = ? AND id = ?`,
+          [offset + 1, LARGE_ROW_BYTES, tenantId, head.id]
+        );
+        const expected = Math.min(LARGE_ROW_BYTES, head.bytes - offset) * 2;
+        if (typeof part?.part !== 'string' || part.part.length !== expected)
+          invalid('log_row_archive_row_changed');
+        hex += part.part;
+      }
+      bodies.set(head.id, hex);
+    }
     const records: Array<LogChunkRecord & { expiresAt: number | null }> = [];
     for (const head of chosen) {
       let json = await rowJson(bodies.get(head.id) ?? invalid(), names);
