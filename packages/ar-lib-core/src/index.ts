@@ -192,6 +192,7 @@ export * from './services/identity-mapping-implicit-activations';
 export * from './services/identity-mapping-platform-checks';
 export * from './services/identity-mapping-set-reference';
 export * from './services/identity-mapping-set-references';
+export * from './services/identity-mapping-reference-limits';
 export * from './services/identity-mapping-set-swap';
 export * from './services/saml-destination-policy';
 export * from './services/identity-mapping-source-reads';

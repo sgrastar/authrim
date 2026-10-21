@@ -244,6 +244,24 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.bulk_apply.max_keys_per_request.desc':
 		'Die höchste Zahl an Einstellungen (gesetzte oder gelöschte Schlüssel, über alle Kategorien), die eine Sammelanwendung enthalten darf. Wird auf 1 bis 100 begrenzt. Plattformeinstellung; Standard 20.',
 
+	'set.k.identity_mapping.reference_scan_tenant_limit': 'Nutzungssuche des Mapping-Sets: Tenants',
+	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
+		'Die höchste Zahl von Tenants, deren Apps gelesen werden, wenn die Stellen gesucht werden, die ein Mapping-Set der Plattform verwenden. Jeder Tenant ist ein Datenbankzugriff; bei mehr Tenants gilt der Rest als nicht geprüft, und Löschen oder Deaktivieren des Sets wird abgelehnt. Zwischen 1 und 1000. Plattformeinstellung; standardmäßig 200.',
+
+	'set.k.identity_mapping.reference_scan_row_limit':
+		'Nutzungssuche des Mapping-Sets: Zeilen pro Stelle',
+	'set.k.identity_mapping.reference_scan_row_limit.desc':
+		'Die höchste Zahl von Zeilen, die aus einer Stelle gelesen werden (Tenant-Standards, Apps eines Tenants, SAML-Anbieter eines Tenants), wenn die Nutzung eines Mapping-Sets gesucht wird. Eine größere Stelle wird abgeschnitten, und die Anzahl gilt als Untergrenze. Zwischen 10 und 5000. Plattformeinstellung; standardmäßig 500.',
+
+	'set.k.identity_mapping.reference_scan_concurrency':
+		'Nutzungssuche des Mapping-Sets: Parallelität',
+	'set.k.identity_mapping.reference_scan_concurrency.desc':
+		'Wie viele Tenants gleichzeitig gelesen werden, wenn die Nutzung eines Mapping-Sets der Plattform gesucht wird. Zwischen 1 und 16. Plattformeinstellung; standardmäßig 8.',
+
+	'set.k.identity_mapping.reference_display_limit': 'Nutzung des Mapping-Sets: angezeigte Verweise',
+	'set.k.identity_mapping.reference_display_limit.desc':
+		'Wie viele Verweise die Nutzungsantwort und die Ablehnung eines Löschens auflisten; die Anzahl ist immer die gesamte. Zwischen 1 und 100. Plattformeinstellung; standardmäßig 20.',
+
 	'settings.advanced': 'Erweitert',
 	'settings.setHere': 'Überschriebene Einstellungen: {n}',
 	'settings.readOnly.title': 'Nur ansehen',

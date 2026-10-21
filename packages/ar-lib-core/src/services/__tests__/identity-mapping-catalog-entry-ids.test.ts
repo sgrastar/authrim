@@ -5,6 +5,7 @@
  * one place while naming the entry of another is never made consistent by it.
  */
 import { describe, expect, it } from 'vitest';
+import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import { PLATFORM_MAPPING_TENANT_ID } from '../identity-mapping-owner';
 import {
   assertRuntimeIdentityMappingReleaseSafety,
@@ -248,6 +249,84 @@ describe('a source that names only its catalog entry', () => {
       path: 'email',
       catalogEntryId: 'field.profile.email.x',
     });
+  });
+});
+
+describe('the destination of a platform-owned Mapping Set that names a catalog entry', () => {
+  const P = PLATFORM_MAPPING_TENANT_ID;
+
+  /** The edge reads email and releases it under `claim`, naming `catalogEntryId` for the claim. */
+  function seedClaim(claim: string, catalogEntryId: string): Database {
+    const db = seed(P, { namespace: 'authrim.profile', path: 'email' });
+    db.prepare('UPDATE mapping_rule_edges SET target_ref_json = ?').run(
+      JSON.stringify({
+        side: 'destination',
+        namespace: 'oidc.claim',
+        path: claim,
+        profileId: 'profile-x',
+        catalogEntryId,
+      })
+    );
+    return db;
+  }
+
+  it.each([
+    ['the claim name of the entry', 'email'],
+    ['a custom claim name', 'mail'],
+  ])('brings the row ID to the stable ID whatever the claim is called: %s', async (_n, claim) => {
+    const binding = await load(seedClaim(claim, 'entry-x'), P);
+
+    expect(binding.edges[0].targetRef).toMatchObject({
+      path: claim,
+      catalogEntryId: 'field.profile.email.x',
+    });
+  });
+
+  it('keeps a stable ID, and an ID the catalog does not have', async () => {
+    const stable = await load(seedClaim('mail', 'field.profile.email.x'), P);
+    const unknown = await load(seedClaim('mail', 'entry-nothing'), P);
+
+    expect(stable.edges[0].targetRef.catalogEntryId).toBe('field.profile.email.x');
+    expect(unknown.edges[0].targetRef.catalogEntryId).toBe('entry-nothing');
+  });
+
+  it('is released: the value is not dropped at the output because its ID is a row ID', async () => {
+    const binding = await load(seedClaim('mail', 'entry-x'), P);
+
+    const result = executeRuntimeMapping({
+      catalog: binding.catalog,
+      sourceValues: [
+        {
+          sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'email' },
+          value: 'a@example.com',
+        },
+      ] as never,
+      edges: binding.edges,
+      transforms: [],
+      validationRules: [],
+      fieldMappingSet: binding.fieldMappingSet,
+    });
+
+    expect(result.values.map((value) => [value.sourceRef.path, value.value])).toEqual([
+      ['mail', 'a@example.com'],
+    ]);
+  });
+
+  it('is read as stored in a set a tenant owns', async () => {
+    const db = seed('tenant-a', { namespace: 'authrim.profile', path: 'email' });
+    db.prepare('UPDATE mapping_rule_edges SET target_ref_json = ?').run(
+      JSON.stringify({
+        side: 'destination',
+        namespace: 'oidc.claim',
+        path: 'mail',
+        profileId: 'profile-x',
+        catalogEntryId: 'entry-x',
+      })
+    );
+
+    const binding = await load(db, 'tenant-a');
+
+    expect(binding.edges[0].targetRef.catalogEntryId).toBe('entry-x');
   });
 });
 

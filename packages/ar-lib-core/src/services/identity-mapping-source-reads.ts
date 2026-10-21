@@ -67,13 +67,15 @@ function namesAPart(value: string | undefined): value is string {
  *   namespace is kept, so one that makes the place another is refused with the rest. An entry that
  *   describes no place to read (destination-only), an ID the catalog does not have, or no ID
  *   completes nothing, and the reference stays what it was: unknown, and refused.
+ * - A destination (`destination` set) keeps its name, whatever it is: only its ID is brought to the
+ *   stable ID.
  * An ID that already is a stable ID of the catalog stays.
  */
 export function catalogReferenceResolver(
   entries: readonly ClassifyingCatalogEntry[]
 ): (
   ref: MappingSourceReference,
-  options?: { completePlace?: boolean }
+  options?: { completePlace?: boolean; destination?: boolean }
 ) => ResolvedCatalogReference {
   const byId = new Map<string, ClassifyingCatalogEntry>();
   const stableIds = new Set<string>();
@@ -92,12 +94,18 @@ export function catalogReferenceResolver(
     const entry = byId.get(id);
     if (!entry) return ref;
     const stable = entry.ids[entry.ids.length - 1];
+    if (options.destination) {
+      // A destination's path is the name it is released under, which says nothing about the entry
+      // (a custom claim name differs from the entry's own), so the ID is brought to the stable ID
+      // whatever the name is: the runtime catalog carries only the stable ones.
+      return stableIds.has(id) ? ref : { ...ref, catalogEntryId: stable };
+    }
     if (namesAPart(ref.path)) {
       const samePlace =
         mappingSourceSubjectPath(entry) === mappingSourceSubjectPath(ref as MappingSourceReference);
       return stableIds.has(id) || !samePlace ? ref : { ...ref, catalogEntryId: stable };
     }
-    if (!options.completePlace || entry.targetType === 'destination-only') {
+    if (!options.completePlace || isDestinationOnlyTargetType(entry.targetType)) {
       return stableIds.has(id) ? ref : { ...ref, catalogEntryId: stable };
     }
     return {
@@ -305,6 +313,16 @@ export function sensitiveClassificationRank(classification: string): number {
   return 0;
 }
 
+/**
+ * Whether a catalog entry's stored taxonomy says it describes what is released, not what is read.
+ * `destination` is the older word for `destination-only` (the runtime reads it as that, see
+ * `normalizeTargetType` of the resolver), so the checks that run before the runtime (compile,
+ * activation) read it the same way: a source is never an entry the runtime would not read.
+ */
+export function isDestinationOnlyTargetType(value: string | null | undefined): boolean {
+  return value === 'destination-only' || value === 'destination';
+}
+
 /** A catalog entry, as far as classifying a source needs it. */
 export interface ClassifyingCatalogEntry {
   /** The ids a mapping edge may name the entry by. */
@@ -339,7 +357,8 @@ export function resolveSourceClassification(
   }
   if (builtIn && !ref.catalogEntryId) return builtIn.classification;
 
-  const isSource = (entry: ClassifyingCatalogEntry) => entry.targetType !== 'destination-only';
+  const isSource = (entry: ClassifyingCatalogEntry) =>
+    !isDestinationOnlyTargetType(entry.targetType);
   if (ref.catalogEntryId) {
     const named = entries.filter((entry) => entry.ids.includes(ref.catalogEntryId as string));
     if (named.length === 0 || !named.every(isSource)) return null;

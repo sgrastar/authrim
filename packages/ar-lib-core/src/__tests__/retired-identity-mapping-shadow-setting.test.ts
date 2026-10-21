@@ -40,7 +40,14 @@ const SAVED = {
 
 describe('the retired identity mapping shadow comparison setting', () => {
   it('is no longer a setting', () => {
-    expect(Object.keys(IDENTITY_MAPPING_SETTINGS_META)).toEqual([KEY]);
+    // The default Mapping Set, and the platform's limits of the search for what names a set.
+    expect(Object.keys(IDENTITY_MAPPING_SETTINGS_META)).toEqual([
+      KEY,
+      'identity_mapping.reference_scan_tenant_limit',
+      'identity_mapping.reference_scan_row_limit',
+      'identity_mapping.reference_scan_concurrency',
+      'identity_mapping.reference_display_limit',
+    ]);
     expect(Object.keys(IDENTITY_MAPPING_CATEGORY_META.settings)).not.toContain(RETIRED_KEY);
     expect(Object.keys(IDENTITY_MAPPING_DEFAULTS)).not.toContain(RETIRED_KEY);
     expect(TENANT_SETTING_FIELD_POLICIES.map((policy) => policy.key)).not.toContain(RETIRED_KEY);

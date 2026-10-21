@@ -241,6 +241,22 @@ export const jaSettings = {
 	'set.k.bulk_apply.max_keys_per_request.desc':
 		'一括適用の 1 回のリクエストに含められる設定（設定または解除するキー。カテゴリをまたいだ合計）の上限です。1 から 100 の範囲に収めます。プラットフォーム設定で、既定は 20 です。',
 
+	'set.k.identity_mapping.reference_scan_tenant_limit': 'マッピングセット利用検索：テナント数',
+	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
+		'プラットフォームが所有するマッピングセットの利用箇所を探すときに、アプリを読み取るテナントの最大数です。テナント 1 件ごとにデータベースを 1 回読みます。これより多いテナントがあるとき、残りは「未確認」として報告され、そのセットの削除や無効化は拒否されます。1〜1000 の範囲で指定します。プラットフォーム設定で、既定は 200 です。',
+
+	'set.k.identity_mapping.reference_scan_row_limit': 'マッピングセット利用検索：1 か所あたりの行数',
+	'set.k.identity_mapping.reference_scan_row_limit.desc':
+		'マッピングセットの利用箇所を探すときに、1 か所（テナントの既定、1 テナントのアプリ、1 テナントの SAML プロバイダー）から読み取る最大行数です。これを超える場所は途中で打ち切られ、件数は下限値として返されます。10〜5000 の範囲で指定します。プラットフォーム設定で、既定は 500 です。',
+
+	'set.k.identity_mapping.reference_scan_concurrency': 'マッピングセット利用検索：同時読み取り数',
+	'set.k.identity_mapping.reference_scan_concurrency.desc':
+		'プラットフォームが所有するマッピングセットの利用箇所を探すときに、同時に読み取るテナントの数です。1〜16 の範囲で指定します。プラットフォーム設定で、既定は 8 です。',
+
+	'set.k.identity_mapping.reference_display_limit': 'マッピングセット利用状況：表示する参照数',
+	'set.k.identity_mapping.reference_display_limit.desc':
+		'利用状況の応答と、削除が拒否されたときの応答に一覧として載せる参照の数です。件数そのものは常に全体の数を返します。1〜100 の範囲で指定します。プラットフォーム設定で、既定は 20 です。',
+
 	'settings.advanced': '詳細設定',
 	'settings.setHere': '上書きしている設定数: {n}',
 	'settings.readOnly.title': '閲覧のみ',

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   catalogReferenceResolver,
+  isDestinationOnlyTargetType,
   findConflictingSourceIds,
   isTenantDefinedSubjectNamespace,
   mappingDestinationProfileIds,
@@ -451,5 +452,47 @@ describe('catalogReferenceResolver', () => {
 
     expect(clash({ namespace: 'x', path: 'p', catalogEntryId: 'b' }).catalogEntryId).toBe('b');
     expect(clash({ namespace: 'x', path: 'p', catalogEntryId: 'a' }).catalogEntryId).toBe('b');
+  });
+});
+
+describe('an entry of the older taxonomy `destination`', () => {
+  // Stored before the taxonomy was named `destination-only`: the runtime reads it as that, and so
+  // do the checks that run before it (compile and activation), which get the stored word.
+  const legacy = {
+    ids: ['claim_email', 'field.oidc.email'],
+    namespace: 'oidc.claim',
+    path: 'email',
+    classification: 'pii',
+    targetType: 'destination',
+  };
+  const current = { ...legacy, targetType: 'destination-only' };
+  const read = { namespace: 'oidc.claim', path: 'email' };
+
+  it('is no source of what it describes, as destination-only is none', () => {
+    for (const entry of [legacy, current]) {
+      expect(resolveSourceClassification([entry], read), entry.targetType).toBeNull();
+      expect(
+        resolveSourceClassification([entry], { ...read, catalogEntryId: 'claim_email' }),
+        entry.targetType
+      ).toBeNull();
+    }
+  });
+
+  it('completes no place for a reference that names only it', () => {
+    for (const entry of [legacy, current]) {
+      const resolved = catalogReferenceResolver([entry])(
+        { namespace: '', path: '', catalogEntryId: 'claim_email' },
+        { completePlace: true }
+      );
+      expect(resolved.path, entry.targetType).toBe('');
+    }
+  });
+
+  it('agrees with the word the runtime reads it by', () => {
+    expect(isDestinationOnlyTargetType('destination')).toBe(true);
+    expect(isDestinationOnlyTargetType('destination-only')).toBe(true);
+    for (const other of ['canonical', 'custom', 'derived', 'review-only', undefined, '']) {
+      expect(isDestinationOnlyTargetType(other), String(other)).toBe(false);
+    }
   });
 });

@@ -236,6 +236,22 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.bulk_apply.max_keys_per_request.desc':
 		'أكبر عدد من الإعدادات (المفاتيح المضبوطة أو المُزالة عبر كل الفئات) يمكن أن يحمله طلب تطبيق جماعي واحد. يُحصر بين 1 و100. إعداد على مستوى المنصة، والقيمة الافتراضية 20.',
 
+	'set.k.identity_mapping.reference_scan_tenant_limit': 'بحث استخدام مجموعة الربط: المستأجرون',
+	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
+		'أكبر عدد من المستأجرين تُقرأ تطبيقاتهم عند البحث عن أماكن استخدام مجموعة ربط تملكها المنصة. كل مستأجر قراءة لقاعدة بيانات؛ وإذا زاد العدد عن ذلك يُعدّ الباقي غير مفحوص ويُرفض حذف المجموعة أو إيقافها. بين 1 و1000. إعداد للمنصة؛ القيمة الافتراضية 200.',
+
+	'set.k.identity_mapping.reference_scan_row_limit': 'بحث استخدام مجموعة الربط: الصفوف لكل موضع',
+	'set.k.identity_mapping.reference_scan_row_limit.desc':
+		'أكبر عدد من الصفوف يُقرأ من موضع واحد (إعدادات المستأجرين الافتراضية، أو تطبيقات مستأجر واحد، أو موفّري SAML لمستأجر واحد) عند البحث عن أماكن استخدام مجموعة ربط. يُقطع الموضع الأكبر ويُعطى العدد كحدّ أدنى. بين 10 و5000. إعداد للمنصة؛ القيمة الافتراضية 500.',
+
+	'set.k.identity_mapping.reference_scan_concurrency': 'بحث استخدام مجموعة الربط: التزامن',
+	'set.k.identity_mapping.reference_scan_concurrency.desc':
+		'عدد المستأجرين الذين يُقرؤون في الوقت نفسه عند البحث عن أماكن استخدام مجموعة ربط تملكها المنصة. بين 1 و16. إعداد للمنصة؛ القيمة الافتراضية 8.',
+
+	'set.k.identity_mapping.reference_display_limit': 'استخدام مجموعة الربط: المراجع المعروضة',
+	'set.k.identity_mapping.reference_display_limit.desc':
+		'عدد المراجع التي يسردها جواب الاستخدام ورفض الحذف؛ أما العدد فيبقى دائماً الإجمالي. بين 1 و100. إعداد للمنصة؛ القيمة الافتراضية 20.',
+
 	'settings.advanced': 'متقدم',
 	'settings.setHere': 'الإعدادات المتجاوزة: {n}',
 	'settings.readOnly.title': 'عرض فقط',

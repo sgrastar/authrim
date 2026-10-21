@@ -472,6 +472,66 @@ An app whose `identity_mapping` is `NULL`, empty, `null`, `{}`, or an object wit
 and no destination profile is unset, and follows the default. (The admin API refuses to save
 most of these shapes, so the rows come from hand edits or older versions.)
 
+## Deleting a Mapping Set, and what the search for its uses looks at
+
+A Mapping Set that something names (a platform or tenant default, an app, a SAML provider, a
+credential profile version, a federation trust source, SCIM) cannot be deleted or switched off:
+the request is refused with 409 and `reason` `referenced`, with the first references. The same
+search answers `GET /api/admin/identity-mapping/usage?set_id=...`.
+
+`DELETE /api/admin/identity-mapping/sets/{id}` switches a set that is on off and deletes it in one
+request. There is no step of switching it off first, and nothing is left half done: the set, its
+activations, snapshots, versions and rules go in one atomic batch, or none of them does. The
+request is refused (409, nothing changed) when:
+
+- something names the set, or where it is used could not be checked everywhere
+  (`reason` `scan_incomplete`);
+- `If-Match` is sent and is not the `content_version` (`ETag`) of the set as it is now;
+- someone saved the set or switched another version on between the moment the request read the
+  set and the batch (the batch begins with a check of the version in use, else the one saved last).
+
+A repeat of a successful request with the same `Idempotency-Key` is answered with the stored answer.
+A repeat with another key, once the set is gone, is 404. The older
+`DELETE /api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}` still refuses a set that
+is switched on.
+
+The audit record `identity_mapping.set.deleted` says whether the set was on (`was_enabled`).
+
+An app that names the set from another tenant's database, or a default saved after the search
+read that place, cannot be excluded by the batch itself (the references live in other databases):
+the search and the batch are not one transaction. Check usage first when that matters.
+
+### How far the search looks
+
+The search reads each place with a row limit, reads the other tenants' databases for a platform
+set a few at a time, and lists only the first references. These are platform settings of the
+`identity-mapping` category (Settings API `PATCH /api/admin/platform/settings/identity-mapping`;
+a tenant cannot set them), with a deployment default in the environment (see
+`docs/ENVIRONMENT_VARIABLES.md`):
+
+| Setting                                        | Environment variable                           | Default | Range     |
+| ---------------------------------------------- | ---------------------------------------------- | ------- | --------- |
+| `identity_mapping.reference_scan_tenant_limit` | `IDENTITY_MAPPING_REFERENCE_SCAN_TENANT_LIMIT` | 200     | 1 - 1000  |
+| `identity_mapping.reference_scan_row_limit`    | `IDENTITY_MAPPING_REFERENCE_SCAN_ROW_LIMIT`    | 500     | 10 - 5000 |
+| `identity_mapping.reference_scan_concurrency`  | `IDENTITY_MAPPING_REFERENCE_SCAN_CONCURRENCY`  | 8       | 1 - 16    |
+| `identity_mapping.reference_display_limit`     | `IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT`     | 20      | 1 - 100   |
+
+The order is the saved platform value, then the environment variable, then the default. A value
+that is outside the range, or that is not a whole number, is not used (the default is). A change
+takes effect on the next search.
+
+What each one does when it is too low:
+
+- Tenants: a platform set is looked for in at most this many tenants' databases (the calling tenant
+  is always among them). With more tenants, the rest are listed as not looked at
+  (`tenant_limit`), and deleting or switching off the set is refused as `scan_incomplete`. Raise
+  it (the cost is a database read per tenant), or run the search with global authority.
+- Rows per place: a place that holds more rows that name the set (a tenant's apps, say) is cut
+  off, and the count is given as a lower bound (`countIsLowerBound`). The change is refused anyway,
+  since something names the set.
+- Concurrency: only how many tenants are read at once.
+- Displayed references: only how many references the answer lists. The count is always the whole.
+
 ## Rolling back
 
 Redeploy the previous version of the Workers that release claims (`ar-auth`, `ar-token`,

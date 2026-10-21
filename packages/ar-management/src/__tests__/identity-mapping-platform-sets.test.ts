@@ -860,6 +860,71 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
       expect(rejected.json.error_description).toContain('custom catalog field');
     });
 
+    it.each([
+      ['the row ID', 'platform_tenant_defined_loyalty'],
+      ['the stable ID', 'field.tenant.loyalty'],
+    ])(
+      'refuses to compile a source that names only an entry of a tenant-defined namespace (%s)',
+      async (_name, catalogEntryId) => {
+        const { api, db, platformProfile, createPlatformSet } = await setup();
+        // Not marked custom: only its namespace says that a tenant defines its keys.
+        db.prepare(
+          `INSERT INTO field_catalog_entries (id, tenant_id, catalog_version_id, stable_field_id, namespace, path, target_taxonomy, value_type, cardinality, classification, created_at, updated_at)
+           VALUES ('platform_tenant_defined_loyalty', 'platform', ?, 'field.tenant.loyalty', 'authrim.custom_claims', 'loyalty', 'canonical', 'string', 'single', 'internal', 1, 1)`
+        ).run(PLATFORM_CATALOG_VERSION);
+        const setId = await createPlatformSet();
+        const versionId = await savedVersion(api, setId, [
+          emailRule(platformProfile, {
+            edges: [
+              {
+                sourceRef: { side: 'source', catalogEntryId },
+                targetRef: {
+                  side: 'destination',
+                  namespace: 'oidc.claim',
+                  path: 'email',
+                  profileId: platformProfile,
+                },
+              },
+            ],
+          }),
+        ]);
+
+        const rejected = await compile(api, setId, versionId);
+
+        expect(rejected.status).toBe(400);
+        expect(rejected.json.error_description).toContain('tenant-defined field');
+      }
+    );
+
+    it('refuses to compile a source that names only an entry of the older taxonomy `destination`', async () => {
+      const { api, db, platformProfile, createPlatformSet } = await setup();
+      db.prepare(
+        `INSERT INTO field_catalog_entries (id, tenant_id, catalog_version_id, stable_field_id, namespace, path, target_taxonomy, value_type, cardinality, classification, created_at, updated_at)
+         VALUES ('platform_legacy_claim', 'platform', ?, 'field.legacy.claim', 'oidc.claim', 'nickname', 'destination', 'string', 'single', 'internal', 1, 1)`
+      ).run(PLATFORM_CATALOG_VERSION);
+      const setId = await createPlatformSet();
+      const versionId = await savedVersion(api, setId, [
+        emailRule(platformProfile, {
+          edges: [
+            {
+              sourceRef: { side: 'source', catalogEntryId: 'field.legacy.claim' },
+              targetRef: {
+                side: 'destination',
+                namespace: 'oidc.claim',
+                path: 'email',
+                profileId: platformProfile,
+              },
+            },
+          ],
+        }),
+      ]);
+
+      const rejected = await compile(api, setId, versionId);
+
+      expect(rejected.status).toBe(400);
+      expect(rejected.json.error_description).toContain('not a field of the platform catalog');
+    });
+
     it('compiles a source of the platform catalog', async () => {
       const { api, platformProfile, createPlatformSet } = await setup();
       const setId = await createPlatformSet();

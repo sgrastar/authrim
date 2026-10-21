@@ -130,6 +130,8 @@ interface Faults {
   failOn: RegExp | null;
   /** Runs once, right after a write whose SQL matches this (to put another admin's change in). */
   afterWrite: { match: RegExp; run: () => void } | null;
+  /** Runs once, right before a batch with a statement matching this (another admin's change lands first). */
+  beforeBatch: { match: RegExp; run: () => void } | null;
   /** Every write (execute or batch statement) the adapter was asked for. */
   writes: string[];
   /**
@@ -172,6 +174,11 @@ function faultyAdapter(inner: DatabaseAdapter, faults: Faults): DatabaseAdapter 
     transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(wrapped),
     batch: async (statements: Array<{ sql: string; params?: unknown[] }>) => {
       statements.forEach((statement) => check(statement.sql));
+      const before = faults.beforeBatch;
+      if (before && statements.some((statement) => before.match.test(statement.sql))) {
+        faults.beforeBatch = null;
+        before.run();
+      }
       if (faults.retryAfterApply?.test(statements.map((statement) => statement.sql).join('\n'))) {
         faults.retryAfterApply = null;
         await inner.batch(statements as never);
@@ -208,6 +215,7 @@ async function setup(options: { bindToAuthority?: boolean } = {}) {
   const faults: Faults = {
     failOn: null,
     afterWrite: null,
+    beforeBatch: null,
     writes: [],
     retryAfterApply: null,
     blindAfterApply: null,
@@ -1968,19 +1976,13 @@ describe('repeating a request', () => {
 });
 
 describe('deleting a set', () => {
-  it('is refused while the set is switched on, and goes when it is off and nothing names it', async () => {
+  it('switches a set that is on off and deletes it in one request', async () => {
     const t = await setup();
     const created = await t.create();
+    expect(t.activeVersions(created.id)).toHaveLength(1);
 
-    const early = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
-    await t.request(t.tenantAdmin, 'PUT', `${SETS}/${created.id}`, {
-      display_name: 'x',
-      enabled: false,
-      content: t.content(),
-    });
     const done = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
 
-    expect(early.status).toBe(409);
     expect(done.status).toBe(200);
     expect(done.json).toEqual({ id: created.id, owner: 'tenant', deleted: true });
     expect({ ...t.rowCounts(), idempotency: 0 }).toMatchObject({
@@ -1993,6 +1995,175 @@ describe('deleting a set', () => {
       graphs: 0,
     });
     expect(audits('identity_mapping.set.deleted')).toHaveLength(1);
+    expect(audits('identity_mapping.set.deleted')[0].metadata).toMatchObject({ was_enabled: true });
+  });
+
+  it('deletes a set that is off, and a set that has several versions', async () => {
+    const t = await setup();
+    const created = await t.create();
+    await t.request(t.tenantAdmin, 'PUT', `${SETS}/${created.id}`, {
+      display_name: 'x',
+      enabled: false,
+      content: t.content(),
+    });
+    expect(t.versionRows(created.id)).toHaveLength(2);
+
+    const done = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
+
+    expect(done.status).toBe(200);
+    expect(t.rowCounts()).toMatchObject({ sets: 0, versions: 0, activations: 0, snapshots: 0 });
+    expect(audits('identity_mapping.set.deleted')[0].metadata).toMatchObject({
+      was_enabled: false,
+    });
+  });
+
+  it('does nothing in the Admin database when it is refused for a reference', async () => {
+    const t = await setup();
+    const created = await t.create();
+    insertOAuthClient(t.coreA, {
+      tenantId: TENANT,
+      clientId: 'app-on',
+      identityMapping: { fieldMappingSetId: created.id },
+    });
+    const before = t.rowCounts();
+
+    const refused = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
+
+    expect(refused.status).toBe(409);
+    expect(refused.json).toMatchObject({ reason: 'referenced' });
+    expect({ ...t.rowCounts(), idempotency: 0 }).toEqual({ ...before, idempotency: 0 });
+    expect(t.activeVersions(created.id)).toHaveLength(1);
+  });
+
+  it('expects the content version it is given in If-Match, and "*" for any set that is there', async () => {
+    const t = await setup();
+    const created = await t.create();
+
+    const stale = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`, undefined, {
+      headers: { 'If-Match': '"not-the-version"' },
+    });
+    expect(stale.status).toBe(409);
+    expect(t.rowCounts().sets).toBe(1);
+
+    const matched = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`, undefined, {
+      headers: { 'If-Match': `"${created.version_id}"` },
+    });
+    expect(matched.status).toBe(200);
+
+    const other = await t.create();
+    const any = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${other.id}`, undefined, {
+      headers: { 'If-Match': '*' },
+    });
+    expect(any.status).toBe(200);
+    expect(t.rowCounts().sets).toBe(0);
+  });
+
+  it('deletes nothing when another admin saved the set after this request looked at it', async () => {
+    const t = await setup();
+    const created = await t.create();
+    t.faults.beforeBatch = {
+      match: /DELETE FROM field_mapping_sets/,
+      run: () => {
+        t.db
+          .prepare(
+            `INSERT INTO field_mapping_versions (id, tenant_id, field_mapping_set_id, version_label, lifecycle_state, field_mapping_hash, created_at, updated_at)
+             VALUES ('ver-elsewhere', ?, ?, 'elsewhere', 'published', 'h', 1, 1)`
+          )
+          .run(TENANT, created.id);
+        t.db
+          .prepare(
+            "UPDATE field_mapping_activations SET field_mapping_version_id = 'ver-elsewhere' WHERE field_mapping_set_id = ? AND lifecycle_state = 'active'"
+          )
+          .run(created.id);
+      },
+    };
+
+    const refused = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
+
+    expect(refused.status).toBe(409);
+    expect(t.rowCounts().sets).toBe(1);
+    expect(t.versionRows(created.id)).toHaveLength(2);
+    expect(t.activeVersions(created.id).map((row) => row.version)).toEqual(['ver-elsewhere']);
+    expect(audits('identity_mapping.set.deleted')).toHaveLength(0);
+  });
+
+  it('deletes nothing when another admin switched the set on, though the version is the same one', async () => {
+    const t = await setup();
+    const created = await t.create();
+    // Switched off: the latest saved version is the one that was in use.
+    const off = await t.request(t.tenantAdmin, 'PUT', `${SETS}/${created.id}`, {
+      display_name: 'x',
+      enabled: false,
+      content: t.content(),
+    });
+    expect(off.status).toBe(200);
+    expect(t.activeVersions(created.id)).toHaveLength(0);
+    // After this request looked at the set, another admin switches it on again: same version.
+    t.faults.beforeBatch = {
+      match: /DELETE FROM field_mapping_sets/,
+      run: () => {
+        t.db
+          .prepare(
+            `UPDATE field_mapping_activations
+                SET lifecycle_state = 'active',
+                    field_mapping_version_id = (
+                      SELECT lv.id FROM field_mapping_versions lv
+                       WHERE lv.field_mapping_set_id = ?
+                       ORDER BY (lv.lifecycle_state = 'draft') ASC, lv.created_at DESC, lv.rowid DESC
+                       LIMIT 1)
+              WHERE id = (SELECT id FROM field_mapping_activations WHERE field_mapping_set_id = ?
+                          ORDER BY created_at DESC, id DESC LIMIT 1)`
+          )
+          .run(created.id, created.id);
+      },
+    };
+
+    const refused = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
+
+    expect(refused.status).toBe(409);
+    expect(t.rowCounts().sets).toBe(1);
+    expect(t.activeVersions(created.id)).toHaveLength(1);
+    expect(audits('identity_mapping.set.deleted')).toHaveLength(0);
+  });
+
+  it('judges the set by how it was when it was first read: one switched on since is not deleted', async () => {
+    const t = await setup();
+    const created = await t.create();
+    const before = t.rowCounts();
+
+    // The caller read the set as switched off (and at the version it has now); it is on.
+    await expect(
+      t.repository.deleteFieldMappingSetEndingActivation(TENANT, created.id, {
+        expectedCurrentVersionId: created.version_id,
+        expectedActiveVersionId: null,
+      })
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(t.rowCounts()).toEqual(before);
+  });
+
+  it('leaves the set whole when a statement of the batch fails (all or nothing)', async () => {
+    const t = await setup();
+    const created = await t.create();
+    const before = t.rowCounts();
+    t.faults.failOn = /DELETE FROM field_mapping_sets/;
+
+    const failed = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
+    t.faults.failOn = null;
+
+    expect(failed.status).toBe(500);
+    expect({ ...t.rowCounts(), idempotency: 0 }).toEqual({ ...before, idempotency: 0 });
+    expect(t.activeVersions(created.id)).toHaveLength(1);
+  });
+
+  it('answers 404 to a repeat without a key once the set is gone', async () => {
+    const t = await setup();
+    const created = await t.create();
+    await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
+
+    const again = await t.request(t.tenantAdmin, 'DELETE', `${SETS}/${created.id}`);
+
+    expect(again.status).toBe(404);
   });
 
   it('is refused while something names it, as the old endpoint does', async () => {

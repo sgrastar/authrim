@@ -140,10 +140,22 @@ these paths.
 
 ### Identity Mapping
 
-There is no environment variable for identity mapping. The Mapping Set that applies to OIDC apps
-that name none of their own is the setting `identity_mapping.oidc_default_set_id` (Settings API,
-`identity-mapping` category, platform and tenant scope): a Mapping Set ID means nothing outside the
-database it lives in, so it is not read from the environment. Left unset, no mapping applies.
+The Mapping Set that applies to OIDC apps that name none of their own is the setting
+`identity_mapping.oidc_default_set_id` (Settings API, `identity-mapping` category, platform and
+tenant scope). It has no environment variable: a Mapping Set ID means nothing outside the database
+it lives in. Left unset, no mapping applies.
+
+The limits of the search for the places that name a Mapping Set (the usage API, and the refusal to
+delete or switch off a set that is in use) are platform settings of the same category, each with a
+deployment default here. A value saved through the Settings API overrides the variable; a value
+outside the range, or that is not a whole number, is ignored and the built-in default applies.
+
+| Variable                                       | Type   | Default | Range     | Description                                                                        |
+| ---------------------------------------------- | ------ | ------- | --------- | ---------------------------------------------------------------------------------- |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_TENANT_LIMIT` | number | `200`   | 1 - 1000  | Tenants whose apps are read for a platform set; more are reported as not looked at |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_ROW_LIMIT`    | number | `500`   | 10 - 5000 | Rows read from one place before it is cut off (the count is then a lower bound)    |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_CONCURRENCY`  | number | `8`     | 1 - 16    | Tenants read at the same time                                                      |
+| `IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT`     | number | `20`    | 1 - 100   | References listed in an answer (the count is always the whole)                     |
 
 The platform setting `identity_mapping.shadow_compare_enabled` and its variable
 `IDENTITY_MAPPING_SHADOW_COMPARE` are retired: the comparison it switched on had nothing left to

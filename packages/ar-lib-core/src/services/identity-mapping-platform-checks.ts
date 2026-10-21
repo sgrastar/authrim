@@ -210,7 +210,28 @@ export function findPlatformMappingCompileViolation(
     );
   };
 
+  // A reference that names only its catalog entry has no place of its own for the save-time check
+  // to judge: the place it reads is the entry's. So the place once resolved is judged again, and a
+  // destination that names an entry is judged by the entry's namespace.
+  const completedSourceViolation = (ref: Ref, what: string): string | null => {
+    const place = catalogSource(ref);
+    return readsTenantDefinedSubjectPart(place)
+      ? `platform mapping cannot ${what} a tenant-defined field: ${describeRef({ ...ref, ...place })}`
+      : null;
+  };
+  const namedEntryViolation = (ref: Ref, what: string): string | null => {
+    const entryId = mappingReferenceCatalogEntryId(ref);
+    const named = entryId === undefined ? undefined : entries.find((e) => e.ids.includes(entryId));
+    return named && isTenantDefinedSubjectNamespace(named.namespace)
+      ? `platform mapping cannot ${what} a tenant-defined field: ${describeRef({ ...ref, namespace: named.namespace })}`
+      : null;
+  };
+
   for (const edge of mapping.edges) {
+    const completed =
+      completedSourceViolation(edge.sourceRef, 'read') ??
+      namedEntryViolation(edge.targetRef, 'use');
+    if (completed) return completed;
     if (resolveSourceClassification(entries, catalogSource(edge.sourceRef)) === null) {
       return `platform mapping source is not a field of the platform catalog: ${describeRef(edge.sourceRef)}`;
     }
@@ -223,6 +244,11 @@ export function findPlatformMappingCompileViolation(
   }
   for (const rule of mapping.validationRules) {
     const ref = rule.targetRef;
+    const isSource = (str(ref.side) ?? RUNTIME_DEFAULT_SIDE) === 'source';
+    const completed = isSource
+      ? completedSourceViolation(ref, 'validate')
+      : namedEntryViolation(ref, 'validate');
+    if (completed) return completed;
     if (
       (str(ref.side) ?? RUNTIME_DEFAULT_SIDE) === 'source' &&
       resolveSourceClassification(entries, catalogSource(ref)) === null
