@@ -602,6 +602,9 @@ place('monitoring/log-settings', 'Permission check logs', {
 	],
 	search: ['audit.check_api_mode']
 });
+place('monitoring/log-settings', 'Log storage', {
+	primary: ['log-storage.d1_retention_days']
+});
 place(
 	'monitoring/destinations',
 	'Backups',

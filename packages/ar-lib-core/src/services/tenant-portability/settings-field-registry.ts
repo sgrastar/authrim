@@ -501,6 +501,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'log-storage',
+      'number',
+      'value',
+      `
+    log-storage.d1_retention_days
+  `,
+    ],
+    [
       'dcr',
       'boolean',
       'value',

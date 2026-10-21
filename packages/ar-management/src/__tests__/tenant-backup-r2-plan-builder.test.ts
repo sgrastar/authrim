@@ -41,6 +41,12 @@ const logCatalog: SnapshotTableSchema = {
     'created_at',
     'committed_at',
     'deleted_at',
+    'source_table',
+    'chunk_id',
+    'first_event_at',
+    'last_event_at',
+    'max_expires_at',
+    'never_expires',
   ],
   primaryKey: ['id'],
   uniqueKeys: [],
@@ -121,6 +127,19 @@ const jobs: SnapshotTableSchema = {
   primaryKey: ['id'],
   uniqueKeys: [],
 };
+/** Admin migration 047 adds these to the Admin catalog only. */
+const ARCHIVE_COLUMNS = [
+  'source_table',
+  'chunk_id',
+  'first_event_at',
+  'last_event_at',
+  'max_expires_at',
+  'never_expires',
+];
+const coreLogCatalog: SnapshotTableSchema = {
+  ...logCatalog,
+  columns: logCatalog.columns.filter((column) => !ARCHIVE_COLUMNS.includes(column)),
+};
 const SCHEMAS: readonly CaptureSchema[] = [
   logCatalog,
   recordIndex,
@@ -131,7 +150,10 @@ const SCHEMAS: readonly CaptureSchema[] = [
   jobs,
 ];
 
-function createDatabase(): DatabaseSync {
+const schemasFor = (family: 'core' | 'admin') =>
+  SCHEMAS.map((schema) => (family === 'core' && schema === logCatalog ? coreLogCatalog : schema));
+
+function createDatabase(family: 'core' | 'admin'): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE log_object_catalog (id TEXT PRIMARY KEY NOT NULL, tenant_key TEXT NOT NULL,
@@ -139,7 +161,12 @@ function createDatabase(): DatabaseSync {
       object_kind TEXT NOT NULL, status TEXT NOT NULL, record_count INTEGER NOT NULL,
       byte_count INTEGER NOT NULL, checksum_sha256 TEXT, compression TEXT,
       encryption_scope TEXT, key_version INTEGER, created_at INTEGER NOT NULL,
-      committed_at INTEGER, deleted_at INTEGER);
+      committed_at INTEGER, deleted_at INTEGER${
+        family === 'admin'
+          ? `, source_table TEXT, chunk_id TEXT, first_event_at INTEGER, last_event_at INTEGER,
+      max_expires_at INTEGER, never_expires INTEGER`
+          : ''
+      });
     CREATE TABLE log_chunk_record_index (record_id TEXT NOT NULL, tenant_key TEXT NOT NULL,
       log_type TEXT NOT NULL, plane TEXT NOT NULL, object_catalog_id TEXT NOT NULL,
       chunk_id TEXT NOT NULL, event_at INTEGER NOT NULL, status TEXT NOT NULL,
@@ -160,7 +187,9 @@ function createDatabase(): DatabaseSync {
     CREATE TABLE logging_message_jobs (id TEXT PRIMARY KEY NOT NULL, tenant_key TEXT,
       payload_object_ref TEXT NOT NULL, payload_sha256 TEXT NOT NULL, status TEXT NOT NULL);
     ${SQLITE_SNAPSHOT_SCHEMA}
-    ${SCHEMAS.map((schema) => sqliteSnapshotTriggers(schema)).join('\n')}`);
+    ${schemasFor(family)
+      .map((schema) => sqliteSnapshotTriggers(schema))
+      .join('\n')}`);
   return db;
 }
 
@@ -198,11 +227,22 @@ function chunk(
     created_at: events[0] ?? 0,
     committed_at: events[0] ?? 0,
     deleted_at: null,
+    source_table: null,
+    chunk_id: null,
+    first_event_at: null,
+    last_event_at: null,
+    max_expires_at: null,
+    never_expires: null,
     ...overrides,
   };
+  const columns = (
+    db.prepare("SELECT name FROM pragma_table_info('log_object_catalog')").all() as {
+      name: string;
+    }[]
+  ).map(({ name }) => name);
   db.prepare(
-    `INSERT INTO log_object_catalog VALUES (${logCatalog.columns.map(() => '?').join(',')})`
-  ).run(...logCatalog.columns.map((column) => (row as Record<string, SqlValue>)[column]));
+    `INSERT INTO log_object_catalog (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`
+  ).run(...columns.map((column) => (row as Record<string, SqlValue>)[column]));
   for (const [index, eventAt] of events.entries())
     db.prepare('INSERT INTO log_chunk_record_index VALUES (?,?,?,?,?,?,?,?)').run(
       `${id}-r${index}`,
@@ -225,23 +265,26 @@ function startSnapshot(db: DatabaseSync, id: string) {
 function planned(): PlannedInstalledSqliteDataset[] {
   let ordinal = 0;
   return (['core', 'admin'] as const).flatMap((family) =>
-    SCHEMAS.filter(
-      (schema) =>
-        family === 'admin' || !['logging_dlq_items', 'logging_message_jobs'].includes(schema.table)
-    ).map((schema) => ({
-      ordinal: ordinal++,
-      firstOrdinal: 0,
-      resourceId: `${family}-db`,
-      family,
-      table: schema.table,
-      capture: schema,
-      dataset: {
-        id: `${family}.${schema.table}`,
-        kind: 'log_dependencies',
-        store: 'database',
-        disposition: 'include',
-      } as never,
-    }))
+    schemasFor(family)
+      .filter(
+        (schema) =>
+          family === 'admin' ||
+          !['logging_dlq_items', 'logging_message_jobs'].includes(schema.table)
+      )
+      .map((schema) => ({
+        ordinal: ordinal++,
+        firstOrdinal: 0,
+        resourceId: `${family}-db`,
+        family,
+        table: schema.table,
+        capture: schema,
+        dataset: {
+          id: `${family}.${schema.table}`,
+          kind: 'log_dependencies',
+          store: 'database',
+          disposition: 'include',
+        } as never,
+      }))
   );
 }
 
@@ -339,8 +382,8 @@ describe('R2 plans listed from the T0 snapshot after the hold', () => {
       .flatMap(([, page]) => page.map((plan) => JSON.parse(plan).descriptor));
 
   beforeEach(() => {
-    core = createDatabase();
-    admin = createDatabase();
+    core = createDatabase('core');
+    admin = createDatabase('admin');
   });
   afterEach(() => {
     core.close();
@@ -390,6 +433,40 @@ describe('R2 plans listed from the T0 snapshot after the hold', () => {
       targetEncryptionScope: 'tenant-log-archive',
     });
     expect(byId.get('plain')?.context).not.toHaveProperty('keyVersion');
+  });
+
+  it('plans archived row chunks from their catalog row, which has no record index', async () => {
+    const day = 86_400_000;
+    const archived = (id: string, first: number, last: number) =>
+      chunk(admin, id, [], {
+        source_table: 'core.audit_log',
+        chunk_id: `arc_${id}`,
+        record_count: 1000,
+        first_event_at: first,
+        last_event_at: last,
+        never_expires: 1,
+        created_at: first,
+        committed_at: last,
+      });
+    archived('rows-inside', BOUNDARY - 6 * day, BOUNDARY - 5 * day);
+    archived('rows-outside', BOUNDARY - 20 * day, BOUNDARY - 19 * day);
+    // The Core catalog has no archive columns; its chunks are planned from their record index.
+    chunk(core, 'core-chunk', [BOUNDARY - day]);
+    startSnapshot(core, 'snap-core-db');
+    startSnapshot(admin, 'snap-admin-db');
+    // A batch archived after T0 is not part of the backup.
+    archived('rows-after', BOUNDARY - 4 * day, BOUNDARY - 3 * day);
+
+    const { recorded } = await prepareAll(['logs.archive_object_bodies']);
+    const listed = plans(recorded[0]);
+    expect(listed.map((plan) => plan.context.sourceRowId).sort()).toEqual([
+      'core-chunk',
+      'rows-inside',
+    ]);
+    expect(listed.find((plan) => plan.context.sourceRowId === 'rows-inside')).toMatchObject({
+      sourceEncoding: 'log_chunk_v1',
+      context: { chunkId: 'arc_rows-inside', sourceEncrypted: true },
+    });
   });
 
   it('pages more than 4,096 chunks deterministically across calls', async () => {

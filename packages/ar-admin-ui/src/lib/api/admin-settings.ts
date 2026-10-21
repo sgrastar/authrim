@@ -387,6 +387,8 @@ export const CATEGORY_NAMES = [
 	'assurance',
 	// Check API Audit
 	'check-api-audit',
+	// Log storage (D1 retention before R2)
+	'log-storage',
 	// Login UI Customization
 	'login-ui',
 	'authentication-methods',

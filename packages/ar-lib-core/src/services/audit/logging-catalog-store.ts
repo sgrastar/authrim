@@ -39,12 +39,19 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
   }
 
   async createPendingObject(row: LogObjectCatalogRow): Promise<boolean> {
+    // Archived row chunks also fill the columns added by admin migration 047; other chunks keep
+    // the original column list so that catalogs without those columns accept them.
+    const archive = row.rowArchive;
     const result = await this.adapter.execute(
       `INSERT INTO log_object_catalog (
         id, tenant_key, log_type, plane, surface, object_key, object_kind, status,
         record_count, byte_count, checksum_sha256, compression, encryption_scope,
-        key_version, created_at, committed_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        key_version, created_at, committed_at, deleted_at${
+          archive
+            ? ', source_table, chunk_id, first_event_at, last_event_at, max_expires_at, never_expires'
+            : ''
+        }
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${archive ? ', ?, ?, ?, ?, ?, ?' : ''})
       ON CONFLICT(id) DO NOTHING`,
       [
         row.id,
@@ -66,6 +73,16 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
         // writer lease without requiring a second coordination table or schema transition.
         row.status === 'pending' ? (row.claimLeaseUntil ?? null) : (row.committedAt ?? null),
         null,
+        ...(archive
+          ? [
+              archive.sourceTable,
+              archive.chunkId,
+              archive.firstEventAt,
+              archive.lastEventAt,
+              archive.neverExpires ? null : archive.maxExpiresAt,
+              archive.neverExpires ? 1 : 0,
+            ]
+          : []),
       ]
     );
     // Only an explicit conflict result loses the claim. Some compatible executors do not expose

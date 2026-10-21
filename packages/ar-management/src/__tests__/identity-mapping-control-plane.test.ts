@@ -4196,9 +4196,10 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
     expect(
       statements.some((sql) => sql.includes('DELETE FROM federation_metadata_refresh_jobs'))
     ).toBe(true);
+    // The import events are log rows: they stay and leave with the D1 log retention.
     expect(
       statements.some((sql) => sql.includes('DELETE FROM federation_selected_entity_import_events'))
-    ).toBe(true);
+    ).toBe(false);
     expect(statements.some((sql) => sql.includes('DELETE FROM federation_entity_statements'))).toBe(
       true
     );

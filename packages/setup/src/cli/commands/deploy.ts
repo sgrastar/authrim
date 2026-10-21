@@ -189,6 +189,7 @@ import {
   waitForInitialBootstrapHandoff,
 } from '../../core/control-bootstrap-handoff.js';
 import { ensureInitialNotificationProviderConfiguration } from '../../core/notification-provider-bootstrap.js';
+import { ensureInitialLogStorageSettings } from '../../core/log-storage-bootstrap.js';
 import { getMissingRequiredDeploySecrets } from '../../core/secrets.js';
 import {
   buildCloudflareBootstrapTokenEndDate,
@@ -3690,6 +3691,18 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               notificationProviderSpinner.fail('Initial notification provider bootstrap failed');
               console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
               initialNotificationProviderSuccess = false;
+            }
+            const logStorageSpinner = startDeploySpinner(
+              'Setting the initial log retention in D1...'
+            );
+            try {
+              await ensureInitialLogStorageSettings({ lock: currentLock });
+              logStorageSpinner.succeed('Log rows stay in D1 for 7 days, then move to R2');
+            } catch (error) {
+              // Archiving stays off (the code default) until the setting is changed.
+              logStorageSpinner.warn(
+                `Initial log retention not set: ${error instanceof Error ? error.message : String(error)}`
+              );
             }
           }
 

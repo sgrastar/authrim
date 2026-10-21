@@ -212,6 +212,7 @@ import {
 import { publishDynamicPluginWorkerBundles } from '../core/dynamic-plugin-publication.js';
 import { publishAndActivateMigrationRelease } from '../core/migration-release-publication.js';
 import { ensureInitialNotificationProviderConfiguration } from '../core/notification-provider-bootstrap.js';
+import { ensureInitialLogStorageSettings } from '../core/log-storage-bootstrap.js';
 import {
   assertLocalDeploymentCapacity,
   isInsufficientLocalDiskSpaceError,
@@ -5638,6 +5639,13 @@ export function createApiRoutes(): Hono {
                 addProgress(
                   `⚠️ Initial notification provider bootstrap failed: ${initialNotificationProviderError}`
                 );
+              }
+              try {
+                await ensureInitialLogStorageSettings({ lock: existingDeploymentLock });
+                addProgress('✅ Log rows stay in D1 for 7 days, then move to R2');
+              } catch (error) {
+                // Archiving stays off (the code default) until the setting is changed.
+                addProgress(`⚠️ Initial log retention not set: ${sanitizeError(error)}`);
               }
             }
 

@@ -4131,7 +4131,12 @@ export async function runScheduledRetiredR2GenerationCleanup(
         current.status === 'committed' &&
         current.object_key === row.replacement_object_key) ||
       (row.reason === 'catalog_delete' && current.status === 'deleted');
-    if (!safelyRetired || current?.object_key === row.object_key) {
+    // A deleted catalog row keeps the key of the body it no longer serves; any other row that
+    // still names the key is still served from it.
+    if (
+      !safelyRetired ||
+      (row.reason !== 'catalog_delete' && current?.object_key === row.object_key)
+    ) {
       skipped += 1;
       continue;
     }

@@ -321,7 +321,9 @@ async function logObjectRows(
       integer(row, 'deleted_at') === null
   );
   for (const row of candidates) if (requiredText(row, 'tenant_key') !== tenantKey) invalid();
-  const archived = (row: PortableSqliteRow) => text(row, 'source_table') !== null;
+  // Only the Admin catalog has the archive columns (admin migration 047); Core rows lack them.
+  const archived = (row: PortableSqliteRow) =>
+    Object.hasOwn(row, 'source_table') && text(row, 'source_table') !== null;
   // Committed T0 index rows per (catalog, log type, plane, chunk), aggregated in SQL.
   const indexEntry = plannedEntry(planned, family, 'log_chunk_record_index');
   const byCatalog = new Map<
@@ -371,9 +373,7 @@ async function logObjectRows(
             },
           ]
         : (byCatalog.get(id) ?? [])
-    ).filter(
-      (entry) => entry.logType === logType && entry.plane === plane
-    );
+    ).filter((entry) => entry.logType === logType && entry.plane === plane);
     const chunkIds = committed.map(({ chunkId }) => chunkId).sort();
     const count = committed.reduce((total, entry) => total + entry.count, 0);
     return {

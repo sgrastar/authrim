@@ -7,6 +7,20 @@ export interface LogChunkRecord {
   indexedFields?: Record<string, unknown>;
 }
 
+/**
+ * Catalog fields of a chunk of whole log rows moved out of a D1 table. Such a chunk has no
+ * per-record index; readers and backups select it by these fields. Times are Unix milliseconds.
+ */
+export interface LogRowArchiveCatalogFields {
+  sourceTable: string;
+  firstEventAt: number;
+  lastEventAt: number;
+  /** When the last row expires; ignored while `neverExpires`. */
+  maxExpiresAt: number | null;
+  /** Some row has no expiry, so the chunk is never removed by expiry. */
+  neverExpires: boolean;
+}
+
 export interface LogObjectCatalogRow {
   id: string;
   tenantKey: string;
@@ -25,6 +39,7 @@ export interface LogObjectCatalogRow {
   createdAt: number;
   committedAt?: number;
   claimLeaseUntil?: number;
+  rowArchive?: LogRowArchiveCatalogFields & { chunkId: string };
 }
 
 export interface LogChunkRecordIndexRow {
@@ -134,6 +149,8 @@ export interface WriteLogChunkInput {
   objectCatalogId?: string;
   catalogStore?: LogChunkCatalogStore;
   encryption?: LogChunkEncryptionOptions;
+  /** A chunk of whole archived rows: no record index is written, the catalog carries these. */
+  rowArchive?: LogRowArchiveCatalogFields;
   /**
    * Emergency/test-only escape hatch for non-sensitive chunks.
    * Production log chunks should always provide encryption.

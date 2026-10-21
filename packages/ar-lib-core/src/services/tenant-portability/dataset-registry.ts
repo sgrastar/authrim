@@ -218,6 +218,7 @@ const TABLE_GROUPS: Partial<
       tenant_backup_restored_holds
       tenant_backup_r2_retired_generations
       tenant_backup_restored_hold_objects
+      log_archive_batches
     `,
   },
   control: {

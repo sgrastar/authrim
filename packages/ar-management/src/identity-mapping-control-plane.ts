@@ -6208,10 +6208,8 @@ export class IdentityMappingControlPlaneRepository {
         'DELETE FROM federation_metadata_refresh_jobs WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
       );
-      await tx.execute(
-        'DELETE FROM federation_selected_entity_import_events WHERE tenant_id = ? AND trust_source_id = ?',
-        [tenantId, trustSourceId]
-      );
+      // The import events are the log of what this source did; they outlive the source and leave
+      // with the other log rows (D1 retention, then the R2 archive).
       await tx.execute(
         'DELETE FROM federation_entity_statements WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]

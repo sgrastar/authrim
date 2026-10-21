@@ -73,6 +73,11 @@ import {
   processScheduledAdminJobQueues,
 } from './scheduled-admin-jobs';
 import {
+  createLogRowArchiver,
+  LOG_ROW_ARCHIVE_BUDGET_MS,
+  LOG_ROW_ARCHIVE_CRON,
+} from './log-row-archive';
+import {
   isTenantRuntimeRegistryRefreshCron,
   refreshTenantRuntimeRegistrySnapshots,
 } from './tenant-runtime-registry-snapshot-jobs';
@@ -4221,6 +4226,25 @@ async function handleCoveredScheduled(
       });
     }
     await processInteractiveAdminJobQueues(env, log);
+    return;
+  }
+  if (event.cron === LOG_ROW_ARCHIVE_CRON) {
+    try {
+      const page = await listMaintenanceTenantIds(env, log, 'jobs:log-row-archive:tenant-cursor');
+      const result = await createLogRowArchiver({ env, log: log.module('LOG-ROW-ARCHIVE') }).run(
+        page.targets,
+        LOG_ROW_ARCHIVE_BUDGET_MS
+      );
+      // Each run moves on to the next page of tenants, so a busy tenant cannot starve the others;
+      // what a run left behind is picked up when its page comes round again.
+      if (result.enabled && result.leased)
+        await env.AUTHRIM_CONFIG!.put(page.cursorKey, page.nextCursor);
+      log.debug('Log row archive run', result);
+    } catch (error) {
+      log.warn('Log row archive deferred', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
     return;
   }
   if (event.cron !== R2_STORAGE_MAINTENANCE_CRON) {
