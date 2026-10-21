@@ -440,7 +440,7 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
 
   // Security Check 3: Validate user has permission for this category at tenant scope
   const adminAuth = c.get('adminAuth');
-  if (!hasTenantSettingsPermission(adminAuth, category, 'view')) {
+  if (!hasTenantSettingsPermission(adminAuth, category, 'view', tenantId)) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view tenant settings', 403);
   }
 
