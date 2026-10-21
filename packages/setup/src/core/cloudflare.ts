@@ -3248,70 +3248,27 @@ function stripAnsiSequences(value: string): string {
   return value.replace(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, 'g'), '');
 }
 
-function findJsonContainerCandidates(
-  value: string,
-  openingCharacter: '[' | '{',
-  closingCharacter: ']' | '}'
-): string[] {
-  const candidates: string[] = [];
-  const normalized = stripAnsiSequences(value);
-
-  for (let start = 0; start < normalized.length; start++) {
-    if (normalized[start] !== openingCharacter) continue;
-
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-
-    for (let index = start; index < normalized.length; index++) {
-      const character = normalized[index];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (character === '\\') {
-          escaped = true;
-        } else if (character === '"') {
-          inString = false;
-        }
-        continue;
-      }
-
-      if (character === '"') {
-        inString = true;
-      } else if (character === openingCharacter) {
-        depth++;
-      } else if (character === closingCharacter) {
-        depth--;
-        if (depth === 0) {
-          candidates.push(normalized.slice(start, index + 1));
-          break;
-        }
-      }
-    }
-  }
-
-  return candidates;
-}
-
+/**
+ * The first output value that `normalizeRows` accepts. Candidates are the independent JSON values
+ * in the output, longest first (so a banner or a notice around the result is tolerated). A value
+ * that is rejected is rejected whole: what lies inside it is never tried as a result of its own,
+ * because a failure response that happens to hold an empty list would otherwise read as an empty
+ * inventory.
+ */
 function parseValidatedJsonOutput<T>(
   stdout: string,
   normalizeRows: (rows: unknown) => T[],
   invalidOutputMessage: string
 ): T[] {
-  const normalized = stripAnsiSequences(stdout).trim();
-  const candidates = Array.from(
-    new Set([
-      normalized,
-      ...findJsonContainerCandidates(normalized, '[', ']'),
-      ...findJsonContainerCandidates(normalized, '{', '}'),
-    ])
-  ).sort((left, right) => right.length - left.length);
+  const fragments = findIndependentJsonFragments(stripAnsiSequences(stdout)).sort(
+    (left, right) => right.length - left.length
+  );
 
-  for (const candidate of candidates) {
+  for (const fragment of fragments) {
     try {
-      return normalizeRows(JSON.parse(candidate));
+      return normalizeRows(fragment.value);
     } catch {
-      // Try the next complete JSON container found in noisy Wrangler output.
+      // Try the next independent JSON value found in noisy Wrangler output.
     }
   }
 
@@ -4631,75 +4588,13 @@ export async function executeD1Command(
   throw new Error('D1 command retry loop exited unexpectedly');
 }
 
-function normalizeD1QueryRows<T extends Record<string, unknown>>(payload: unknown): T[] {
-  let queryResults = payload;
-  if (!Array.isArray(payload) && payload && typeof payload === 'object' && 'result' in payload) {
-    const envelope = payload as { success?: unknown; result?: unknown };
-    if (envelope.success !== true) {
-      throw new TypeError('Cloudflare D1 query response was not successful');
-    }
-    queryResults = envelope.result;
-  }
-
-  const entries = Array.isArray(queryResults) ? queryResults : [queryResults];
-  return entries.flatMap((entry, entryIndex) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new TypeError(`D1 result entry ${entryIndex} was not an object`);
-    }
-    if ((entry as { success?: unknown }).success === false) {
-      throw new TypeError(`D1 result entry ${entryIndex} was not successful`);
-    }
-    const results = (entry as { results?: unknown }).results;
-    if (!Array.isArray(results)) {
-      throw new TypeError(`D1 result entry ${entryIndex} did not contain a results array`);
-    }
-    return results.map((row, rowIndex) => {
-      if (!row || typeof row !== 'object' || Array.isArray(row)) {
-        throw new TypeError(`D1 result row ${rowIndex} was not an object`);
-      }
-      return row as T;
-    });
-  });
-}
-
-export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
-  output: string
-): T[] {
-  return parseValidatedJsonOutput(
-    output,
-    normalizeD1QueryRows<T>,
-    'Wrangler output did not contain a valid D1 query result'
-  );
-}
-
-function parseD1RowsFromWranglerResult<T extends Record<string, unknown>>(
-  result: D1ExecuteCommandResult
-): T[] {
-  const candidates = Array.from(
-    new Set(
-      [result.stdout, result.stderr, [result.stdout, result.stderr].filter(Boolean).join('\n')]
-        .map((output) => output.trim())
-        .filter(Boolean)
-    )
-  );
-
-  for (const candidate of candidates) {
-    try {
-      return parseD1RowsFromWranglerJson<T>(candidate);
-    } catch {
-      // Wrangler has emitted JSON on both stdout and stderr across released versions.
-    }
-  }
-
-  throw new SyntaxError('Wrangler stdout and stderr did not contain a valid D1 query result');
-}
-
 /**
- * The rows of a D1 result that reports success, or an error. Unlike normalizeD1QueryRows, an
- * empty list, an entry that does not say `success: true`, and a failure response are all errors,
- * so "no rows" can only mean a query that ran and found nothing.
+ * The rows of one D1 query response, or an error. "No rows" is a statement about the data, so it
+ * is believed only from a response that reports success: exactly one result entry, and that entry
+ * says `success: true`. An empty list of entries, an entry without `success`, a failure
+ * response and several entries (this reads one statement) are all errors.
  */
-function normalizeD1QueryRowsStrict<T extends Record<string, unknown>>(payload: unknown): T[] {
+function normalizeD1QueryRows<T extends Record<string, unknown>>(payload: unknown): T[] {
   const entries = Array.isArray(payload)
     ? payload
     : payload && typeof payload === 'object' && 'result' in payload
@@ -4710,20 +4605,29 @@ function normalizeD1QueryRowsStrict<T extends Record<string, unknown>>(payload: 
   if (!Array.isArray(entries) || entries.length !== 1) {
     throw new TypeError('D1 query response did not contain exactly one successful result');
   }
-  for (const entry of entries) {
-    if (!entry || typeof entry !== 'object' || (entry as { success?: unknown }).success !== true) {
-      throw new TypeError('D1 query response contained a result that was not successful');
-    }
+  const entry: unknown = entries[0];
+  if (!entry || typeof entry !== 'object' || (entry as { success?: unknown }).success !== true) {
+    throw new TypeError('D1 query response contained a result that was not successful');
   }
-  return normalizeD1QueryRows<T>(entries);
+  const results = (entry as { results?: unknown }).results;
+  if (!Array.isArray(results)) {
+    throw new TypeError('D1 result entry did not contain a results array');
+  }
+  return results.map((row, rowIndex) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new TypeError(`D1 result row ${rowIndex} was not an object`);
+    }
+    return row as T;
+  });
 }
 
 /**
  * The independent JSON values in `text`: each `[...]` or `{...}` that parses, taken whole and in
- * order, with whatever lies inside one never listed again as a value of its own.
+ * order, with whatever lies inside one never listed again as a value of its own. `length` is the
+ * size of the text the value was read from.
  */
-function findIndependentJsonFragments(text: string): unknown[] {
-  const fragments: unknown[] = [];
+function findIndependentJsonFragments(text: string): Array<{ value: unknown; length: number }> {
+  const fragments: Array<{ value: unknown; length: number }> = [];
   let index = 0;
   while (index < text.length) {
     const open = text[index];
@@ -4757,7 +4661,7 @@ function findIndependentJsonFragments(text: string): unknown[] {
       continue;
     }
     try {
-      fragments.push(JSON.parse(text.slice(index, end + 1)));
+      fragments.push({ value: JSON.parse(text.slice(index, end + 1)), length: end + 1 - index });
       index = end + 1;
     } catch {
       index += 1;
@@ -4767,62 +4671,64 @@ function findIndependentJsonFragments(text: string): unknown[] {
 }
 
 /**
- * Reads the answer from Wrangler's output, stdout and stderr both. Every independent JSON value
- * in either must be a successful result: one that reports a failure (or is not a D1 result at
- * all) makes the whole output a failure, whatever else it carries. The answer is the single
+ * Whether a JSON value found in Wrangler's output is shaped like a D1 result, successful or not:
+ * an object with a `success`, `results` or `error` key, or a list holding at least one such
+ * object. Wrangler also prints diagnostics around the result, and a configuration warning such as
+ * `Unexpected fields found in d1_databases[0] field` holds JSON-valid text (`[0]`) that is no
+ * result of any kind. Those are not counted, so they can neither be taken for the answer nor
+ * spoil it. A failed result has the same shape as a successful one, so it is still counted.
+ */
+function looksLikeD1ResultFragment(value: unknown): boolean {
+  const isEntry = (candidate: unknown): boolean =>
+    !!candidate &&
+    typeof candidate === 'object' &&
+    !Array.isArray(candidate) &&
+    ['success', 'results', 'error'].some((key) => key in candidate);
+  return Array.isArray(value) ? value.some(isEntry) : isEntry(value);
+}
+
+/**
+ * Reads the answer from Wrangler's output, stdout and stderr both. Every D1-shaped JSON value in
+ * either must be a successful result: one that reports a failure (or lacks `success: true`) makes
+ * the whole output a failure, whatever else it carries. The answer is the single
  * value that is left; two results, even agreeing ones, are refused.
  */
-function parseD1RowsFromWranglerResultStrict<T extends Record<string, unknown>>(
-  result: D1ExecuteCommandResult
+function parseD1RowsFromWranglerOutputs<T extends Record<string, unknown>>(
+  outputs: ReadonlyArray<string | undefined>
 ): T[] {
-  const fragments = [result.stdout, result.stderr].flatMap((output) =>
-    findIndependentJsonFragments(stripAnsiSequences(output ?? ''))
+  const fragments = outputs.flatMap((output) =>
+    findIndependentJsonFragments(stripAnsiSequences(output ?? '')).filter((fragment) =>
+      looksLikeD1ResultFragment(fragment.value)
+    )
   );
   if (fragments.length === 0) {
-    throw new SyntaxError('Wrangler output did not contain a valid D1 query result');
+    throw new SyntaxError('Wrangler stdout and stderr did not contain a valid D1 query result');
   }
-  const rows = fragments.map((fragment) => normalizeD1QueryRowsStrict<T>(fragment));
+  const rows = fragments.map((fragment) => normalizeD1QueryRows<T>(fragment.value));
   if (rows.length !== 1) {
     throw new SyntaxError('Wrangler output contained more than one D1 query result');
   }
   return rows[0];
 }
 
-/**
- * queryD1Rows for a check whose "found nothing" answer lets a write go ahead. A result counts
- * only when D1 reported a successful result entry; an empty list, a failure response and output
- * that cannot be parsed all throw (the Cloudflare API is tried only when Wrangler could not
- * answer, and held to the same rule).
- */
-export async function queryD1RowsStrict<T extends Record<string, unknown>>(
-  dbName: string,
-  sql: string,
-  options: { target?: LocalWranglerTarget } = {}
-): Promise<T[]> {
-  if (options.target) {
-    const result = await executeD1Command(dbName, sql, { json: true, target: options.target });
-    return parseD1RowsFromWranglerResultStrict<T>(result);
-  }
-  let wranglerError: unknown;
-  try {
-    const result = await executeD1Command(dbName, sql, { json: true });
-    return parseD1RowsFromWranglerResultStrict<T>(result);
-  } catch (error) {
-    wranglerError = error;
-  }
-  try {
-    const apiRows = await queryD1RowsViaApi<T>(dbName, sql, normalizeD1QueryRowsStrict<T>);
-    if (apiRows) return apiRows;
-  } catch (apiError) {
-    const wranglerMessage = describeInventoryError(wranglerError, 'unknown Wrangler error');
-    const apiMessage = describeInventoryError(apiError, 'unknown API error');
-    throw new Error(
-      `Could not query D1 via Wrangler (${wranglerMessage}) or the Cloudflare API (${apiMessage})`
-    );
-  }
-  throw wranglerError;
+export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
+  output: string
+): T[] {
+  return parseD1RowsFromWranglerOutputs<T>([output]);
 }
 
+function parseD1RowsFromWranglerResult<T extends Record<string, unknown>>(
+  result: D1ExecuteCommandResult
+): T[] {
+  return parseD1RowsFromWranglerOutputs<T>([result.stdout, result.stderr]);
+}
+
+/**
+ * Runs a read-only query and returns its rows. A result counts only when D1 reported a
+ * successful result entry: an empty list, a failure response and output that cannot be parsed all
+ * throw, so an empty array always means a query that ran and found nothing. (The Cloudflare API is
+ * tried only when Wrangler could not answer, and is held to the same rule.)
+ */
 export async function queryD1Rows<T extends Record<string, unknown>>(
   dbName: string,
   sql: string,
@@ -4856,8 +4762,7 @@ export async function queryD1Rows<T extends Record<string, unknown>>(
 
 async function queryD1RowsViaApi<T extends Record<string, unknown>>(
   databaseIdentifier: string,
-  sql: string,
-  normalize: (payload: unknown) => T[] = normalizeD1QueryRows<T>
+  sql: string
 ): Promise<T[] | null> {
   const credentials = await resolveCloudflareInventoryCredentials();
   if (!credentials) return null;
@@ -4893,7 +4798,7 @@ async function queryD1RowsViaApi<T extends Record<string, unknown>>(
     throw new Error(`Cloudflare D1 query failed (${response.status})`);
   }
 
-  return normalize(data);
+  return normalizeD1QueryRows<T>(data);
 }
 
 /**
@@ -6107,7 +6012,7 @@ export async function ensureInitialTenantInD1(
   try {
     // Every setup, update and deploy path ends up here, so this is where a tenant that already
     // holds the reserved ID or code is found, before anything is written.
-    const reservedRows = await queryD1RowsStrict<{ id: unknown; tenant_code: unknown }>(
+    const reservedRows = await queryD1Rows<{ id: unknown; tenant_code: unknown }>(
       dbName,
       RESERVED_TENANT_ROWS_QUERY_SQL,
       { target: options.target }
