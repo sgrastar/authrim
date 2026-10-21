@@ -31,8 +31,8 @@ import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-
 /**
  * The default Mapping Set of the platform and of a tenant (`identity_mapping.oidc_default_set_id`),
  * saved through the real Settings API routes on the real Admin schema: what may be named, what is
- * refused and why, and who may save it where. Nothing reads the value at runtime yet; these tests
- * are about the save.
+ * refused and why, and who may save it where. The release of claims reads the value (see
+ * oidc-identity-mapping-explicit-resolution.test.ts in ar-lib-core); these tests are about the save.
  */
 
 const KEY = 'identity_mapping.oidc_default_set_id';
@@ -347,6 +347,18 @@ describe('saving a tenant’s default Mapping Set', () => {
     });
     expect(refused.status).toBe(400);
     expect(refused.json.message).toMatch(/is not a identity mapping setting/);
+  });
+
+  it('refuses the retired shadow comparison switch, at the platform and at a tenant', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    for (const url of [TENANT_URL, PLATFORM_URL]) {
+      const refused = await t.patch(cookie, url, {
+        set: { 'identity_mapping.shadow_compare_enabled': true },
+      });
+      expect(refused.status, url).toBe(400);
+      expect(refused.json.message).toMatch(/is not a identity mapping setting/);
+    }
   });
 
   it('is not available for an app', async () => {

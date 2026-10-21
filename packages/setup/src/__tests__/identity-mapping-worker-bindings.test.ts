@@ -12,9 +12,9 @@ import type { WorkerComponent } from '../core/naming.js';
  * A Worker that resolves the identity mapping reads it from the Admin database (DB_ADMIN) and
  * decides which mapping applies from the tenant's settings (SETTINGS, KV). A Worker that resolves
  * it without DB_ADMIN used to swallow the failure and answer without the mapping (UserInfo did, so
- * its claims differed from the ID token's). This fixes, against the source, the capability
- * manifests and the generated Wrangler configuration, that every Worker which calls the
- * resolution declares and receives both.
+ * its claims differed from the ID token's); now a selection that names a set fails without
+ * DB_ADMIN. This fixes, against the source, the capability manifests and the generated Wrangler
+ * configuration, that every Worker which calls the resolution declares and receives both.
  */
 
 const ROOT_DIR = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -27,7 +27,7 @@ const PACKAGES_DIR = join(ROOT_DIR, 'packages');
  * selection of the Mapping Set (`selectIdentityMapping`: the app, the tenant default, the platform
  * default, which are read from SETTINGS) and the reading of the chosen set
  * (`loadMappingBindingBySetId`, `resolveOidcIdentityMappingBinding`: read from DB_ADMIN), which the
- * release of claims will move to.
+ * release of claims and the consent screen call.
  */
 const RESOLUTION_ENTRY_POINTS =
   /\b(resolveRuntimeIdentityMappingBinding|applyOIDCIdentityMapping|deriveOIDCSubject|mapIDTokenClaims|releaseIDTokenClaims|applyIntrospectionIdentityMapping|selectIdentityMapping|resolveOidcIdentityMappingBinding|loadMappingBindingBySetId)\b/;
@@ -166,91 +166,4 @@ describe('Workers that resolve the identity mapping', () => {
       });
     }
   );
-});
-
-/**
- * The shadow comparison of the Mapping Set selection runs after the current resolution, off the
- * request's path. A Worker that does not hand it to `waitUntil` lets the runtime cut it off when
- * the response is sent (an early answer, such as login_required, included). So every place in a
- * Worker that starts an OIDC resolution passes `waitUntil`: the direct calls
- * (`applyOIDCIdentityMapping`, `deriveOIDCSubject`) and the contexts the ID token release is run
- * with (the object that carries `loadUserAttributes`).
- */
-describe('Workers that resolve the OIDC identity mapping hand the shadow comparison to waitUntil', () => {
-  /** The `{ ... }` that encloses `index`, balanced, or the argument object that starts at it. */
-  function enclosingObject(source: string, index: number): string {
-    let depth = 0;
-    let start = index;
-    for (; start >= 0; start -= 1) {
-      const char = source[start];
-      if (char === '}') depth += 1;
-      if (char === '{') {
-        if (depth === 0) break;
-        depth -= 1;
-      }
-    }
-    return balancedFrom(source, start);
-  }
-  function balancedFrom(source: string, start: number): string {
-    let depth = 0;
-    for (let i = start; i < source.length; i += 1) {
-      if (source[i] === '{') depth += 1;
-      if (source[i] === '}') {
-        depth -= 1;
-        if (depth === 0) return source.slice(start, i + 1);
-      }
-    }
-    return source.slice(start);
-  }
-
-  function sites(): Array<{ file: string; kind: string; text: string }> {
-    const found: Array<{ file: string; kind: string; text: string }> = [];
-    for (const entry of readdirSync(PACKAGES_DIR, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === 'ar-lib-core') continue;
-      let files: string[];
-      try {
-        files = runtimeSourceFiles(join(PACKAGES_DIR, entry.name, 'src'));
-      } catch {
-        continue;
-      }
-      for (const file of files) {
-        const source = withoutComments(readFileSync(file, 'utf8'));
-        const name = file.slice(PACKAGES_DIR.length + 1);
-        for (const match of source.matchAll(
-          /\b(applyOIDCIdentityMapping|deriveOIDCSubject)\(\s*\{/g
-        )) {
-          found.push({
-            file: name,
-            kind: match[1],
-            text: balancedFrom(source, match.index + match[0].length - 1),
-          });
-        }
-        for (const match of source.matchAll(/\bloadUserAttributes:/g)) {
-          found.push({
-            file: name,
-            kind: 'IDTokenReleaseContext',
-            text: enclosingObject(source, match.index),
-          });
-        }
-      }
-    }
-    return found;
-  }
-
-  it('finds the places that start a resolution (so the check below is not empty)', () => {
-    const kinds = new Set(sites().map((site) => `${site.file.split('/')[0]}:${site.kind}`));
-    expect(kinds).toEqual(
-      new Set([
-        'ar-userinfo:applyOIDCIdentityMapping',
-        'ar-auth:deriveOIDCSubject',
-        'ar-auth:IDTokenReleaseContext',
-        'ar-token:IDTokenReleaseContext',
-      ])
-    );
-  });
-
-  it('passes waitUntil at every one of them', () => {
-    const without = sites().filter((site) => !/\bwaitUntil\b/.test(site.text));
-    expect(without.map((site) => `${site.file} (${site.kind})`)).toEqual([]);
-  });
 });

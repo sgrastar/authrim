@@ -1126,14 +1126,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
-      'identity-mapping',
-      'boolean',
-      'value',
-      `
-    identity_mapping.shadow_compare_enabled
-  `,
-    ],
-    [
       'bulk-apply',
       'number',
       'value',

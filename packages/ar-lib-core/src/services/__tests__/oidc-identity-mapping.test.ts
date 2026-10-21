@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { RuntimeIdentityMappingOwnerError } from '../identity-mapping-owner';
-import { resetSwallowedIdentityMappingFailureThrottle } from '../identity-mapping-swallowed-failure';
+import { IdentityMappingSelectionError } from '../identity-mapping-selection';
+import { IdentityMappingResolutionError } from '../identity-mapping-set-binding';
 
 const {
   resolveBinding,
@@ -26,8 +27,46 @@ const {
 }));
 
 vi.mock('../identity-mapping-runtime-resolver', () => ({
-  resolveRuntimeIdentityMappingBinding: resolveBinding,
+  resolveRuntimeIdentityMappingBinding: vi.fn(),
   assertRuntimeIdentityMappingReleaseSafety: assertReleaseSafety,
+}));
+
+// The selection and the reading of the chosen set are the unit under test in
+// oidc-identity-mapping-explicit-resolution.test.ts. Here `resolveBinding` stands for them: what
+// it returns is the binding the app is bound to (null: none), what it throws is a failure of
+// either, so these tests are about what the release does with the answer.
+vi.mock('../identity-mapping-resolution', () => ({
+  resolveOidcIdentityMappingBinding: async (input: {
+    clientSelector?: { fieldMappingSetId?: string } | null;
+  }) => {
+    const binding = await resolveBinding(input);
+    // A set the app names that cannot be bound is a failure, not an app without a mapping.
+    if (!binding && input.clientSelector?.fieldMappingSetId) {
+      const { IdentityMappingResolutionError } = await import('../identity-mapping-set-binding');
+      throw new IdentityMappingResolutionError(
+        'set_missing',
+        'client',
+        input.clientSelector.fieldMappingSetId
+      );
+    }
+    const chain = [
+      { tier: 'client', state: 'unset' },
+      { tier: 'tenant_default', state: 'unset' },
+      { tier: 'platform_default', state: 'unset' },
+    ];
+    return binding
+      ? {
+          selection: {
+            kind: 'bound',
+            tier: 'client',
+            setId: binding.fieldMappingSetId,
+            selector: input.clientSelector ?? undefined,
+            chain,
+          },
+          binding,
+        }
+      : { selection: { kind: 'none', reason: 'no_default', chain }, binding: null };
+  },
 }));
 
 vi.mock('@authrim/ar-lib-field-mapping/runtime', () => ({
@@ -41,11 +80,11 @@ vi.mock('../destination-profile-consent', async (importOriginal) => ({
   loadDestinationProfileConsentDescriptor: loadDescriptor,
 }));
 
+import * as release from '../oidc-identity-mapping';
 import {
-  applyOIDCIdentityMapping,
-  deriveOIDCSubject,
   mappingSourceRefs,
   OIDCIdentityMappingRuntimeError,
+  type ApplyOIDCIdentityMappingInput,
 } from '../oidc-identity-mapping';
 
 const adapter = {} as DatabaseAdapter;
@@ -59,6 +98,17 @@ const adminAdapter = {
   getType: vi.fn(),
   close: vi.fn(),
 } as unknown as DatabaseAdapter;
+
+type TestInput = Omit<ApplyOIDCIdentityMappingInput, 'env'> &
+  Partial<Pick<ApplyOIDCIdentityMappingInput, 'env'>>;
+/** The Worker's environment: the Admin database is bound unless a test says otherwise. */
+const withEnv = (input: TestInput): ApplyOIDCIdentityMappingInput => ({
+  env: { DB_ADMIN: adminAdapter as never },
+  ...input,
+});
+const applyOIDCIdentityMapping = (input: TestInput) =>
+  release.applyOIDCIdentityMapping(withEnv(input));
+const deriveOIDCSubject = (input: TestInput) => release.deriveOIDCSubject(withEnv(input));
 const binding = {
   fieldMappingSetId: 'set-1',
   fieldMappingVersionId: 'version-1',
@@ -111,31 +161,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     });
   });
 
-  it('resolves control-plane mappings from the dedicated Admin database when configured', async () => {
-    const claims = { sub: 'user-1' };
-
-    await applyOIDCIdentityMapping({
-      adapter,
-      env: { DB_ADMIN: adminAdapter as never },
-      tenantId: 'tenant-a',
-      clientId: 'client-a',
-      claims,
-    });
-
-    expect(resolveBinding).toHaveBeenCalledWith(
-      adminAdapter,
-      expect.objectContaining({
-        tenantId: 'tenant-a',
-        protocol: 'oidc',
-        role: 'op',
-        clientId: 'client-a',
-      })
-    );
-    expect(resolveBinding).not.toHaveBeenCalledWith(adapter, expect.anything());
-  });
-
-  it('hands the owner to the resolver only when the caller gives one', async () => {
-    const claims = { sub: 'user-1' };
+  it('selects with the app’s own selector, the tenant and the Worker’s environment', async () => {
     const selector = { fieldMappingSetId: 'set-1' };
 
     await applyOIDCIdentityMapping({
@@ -143,23 +169,33 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
       tenantId: 'tenant-a',
       clientId: 'client-a',
       selector,
-      claims,
-    });
-    await applyOIDCIdentityMapping({
-      adapter,
-      tenantId: 'tenant-a',
-      ownerTenantId: 'platform',
-      clientId: 'client-a',
-      selector,
-      claims,
+      claims: { sub: 'user-1' },
     });
 
-    expect(resolveBinding.mock.calls[0][1].ownerTenantId).toBeUndefined();
-    expect(resolveBinding.mock.calls[1][1]).toMatchObject({
+    expect(resolveBinding).toHaveBeenCalledWith({
+      clientSelector: selector,
       tenantId: 'tenant-a',
-      ownerTenantId: 'platform',
-      fieldMappingSetId: 'set-1',
+      clientId: 'client-a',
+      env: { DB_ADMIN: adminAdapter },
     });
+  });
+
+  it('never reads the tenant Core database for a mapping', async () => {
+    const core = {
+      query: vi.fn(),
+      queryOne: vi.fn(),
+    } as unknown as DatabaseAdapter;
+
+    await applyOIDCIdentityMapping({
+      adapter: core,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: { sub: 'user-1' },
+    });
+
+    expect(core.query).not.toHaveBeenCalled();
+    expect(core.queryOne).not.toHaveBeenCalled();
+    expect(loadDescriptor.mock.calls[0][0]).toBe(adminAdapter);
   });
 
   it('does not let a wrong owner turn into a request that goes on without the mapping', async () => {
@@ -169,7 +205,6 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
       applyOIDCIdentityMapping({
         adapter,
         tenantId: 'tenant-a',
-        ownerTenantId: 'platform',
         clientId: 'client-a',
         claims: { sub: 'user-1' },
       })
@@ -233,7 +268,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     });
   });
 
-  it('propagates resolver errors only when the policy explicitly requires mapping', async () => {
+  it('propagates a failure of the resolution whether or not the app names a Mapping Set', async () => {
     resolveBinding.mockRejectedValue(new Error('database unavailable'));
 
     await expect(
@@ -243,7 +278,7 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
         clientId: 'client-a',
         claims: { sub: 'user-1' },
       })
-    ).resolves.toEqual({ claims: { sub: 'user-1' }, binding: null });
+    ).rejects.toThrow('database unavailable');
 
     await expect(
       applyOIDCIdentityMapping({
@@ -787,114 +822,94 @@ describe('deriveOIDCSubject', () => {
   });
 });
 
-describe('when the identity mapping cannot be resolved and the app names no Mapping Set', () => {
-  let errorSpy: ReturnType<typeof vi.spyOn>;
-  const recorded = () =>
-    errorSpy.mock.calls
-      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
-      .filter((entry) => entry.action === 'identity_mapping_resolution_swallowed');
-
+describe('when the identity mapping cannot be resolved', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetSwallowedIdentityMappingFailureThrottle();
-    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    resolveBinding.mockRejectedValue(new Error('no such table: field_mapping_activations'));
-  });
-  afterEach(() => errorSpy.mockRestore());
-
-  it('goes on without the mapping, as before, and records the failure as an error', async () => {
-    await expect(
-      applyOIDCIdentityMapping({
-        adapter,
-        env: { DB_ADMIN: adminAdapter as never },
-        tenantId: 'tenant-a',
-        clientId: 'client-a',
-        claims: { sub: 'user-1', email: 'user@example.com' },
-      })
-    ).resolves.toEqual({
-      claims: { sub: 'user-1', email: 'user@example.com' },
-      binding: null,
-    });
-
-    expect(recorded()).toEqual([
-      expect.objectContaining({
-        level: 'error',
-        module: 'OIDC-IDENTITY-MAPPING',
-        tenantId: 'tenant-a',
-        clientId: 'client-a',
-        failure_kind: 'query_failed',
-        reason_code: 'no_such_table',
-      }),
-    ]);
   });
 
-  it('names the unbound Admin database when the lookup fell back to the tenant database', async () => {
-    await applyOIDCIdentityMapping({
+  const apply = (selector?: { fieldMappingSetId: string }) =>
+    applyOIDCIdentityMapping({
       adapter,
       tenantId: 'tenant-a',
       clientId: 'client-a',
-      claims: { sub: 'user-1' },
+      selector,
+      claims: { sub: 'user-1', email: 'user@example.com' },
     });
 
-    expect(recorded()).toEqual([
-      expect.objectContaining({ failure_kind: 'admin_database_unbound' }),
-    ]);
+  it('fails, with no mapping to go on without, when the set cannot be read', async () => {
+    resolveBinding.mockRejectedValue(
+      new IdentityMappingResolutionError(
+        'admin_database_unavailable',
+        'tenant_default',
+        'set-1',
+        'no_such_table'
+      )
+    );
+
+    await expect(apply()).rejects.toMatchObject({
+      name: 'IdentityMappingResolutionError',
+      code: 'admin_database_unavailable',
+    });
+    expect(filterBaselineClaims).not.toHaveBeenCalled();
   });
 
-  it('records the failure for the subject-only derivation too, and still answers the given sub', async () => {
+  it('fails the same way for the subject-only derivation', async () => {
+    resolveBinding.mockRejectedValue(new Error('no such table: field_mapping_sets'));
+
     await expect(
       deriveOIDCSubject({
         adapter,
-        env: { DB_ADMIN: adminAdapter as never },
         tenantId: 'tenant-a',
         clientId: 'client-a',
-        claims: { sub: 'user-1' },
-      })
-    ).resolves.toBe('user-1');
-
-    expect(recorded()).toHaveLength(1);
-  });
-
-  it('records one error for a run of failures, not one per request', async () => {
-    for (let request = 0; request < 50; request += 1) {
-      await applyOIDCIdentityMapping({
-        adapter,
-        env: { DB_ADMIN: adminAdapter as never },
-        tenantId: 'tenant-a',
-        clientId: `client-${request}`,
-        claims: { sub: 'user-1' },
-      });
-    }
-
-    expect(recorded()).toHaveLength(1);
-  });
-
-  it('records nothing when the app names a Mapping Set: that failure is thrown, not swallowed', async () => {
-    await expect(
-      applyOIDCIdentityMapping({
-        adapter,
-        env: { DB_ADMIN: adminAdapter as never },
-        tenantId: 'tenant-a',
-        clientId: 'client-a',
-        selector: { fieldMappingSetId: 'required-set' },
         claims: { sub: 'user-1' },
       })
     ).rejects.toThrow('no such table');
-
-    expect(recorded()).toEqual([]);
   });
 
-  it('records nothing when the lookup works and finds no mapping', async () => {
-    resolveBinding.mockResolvedValue(null);
+  it.each([
+    ['set_missing', 'policy.missing_identity_mapping_binding'],
+    ['set_inactive', 'policy.missing_identity_mapping_binding'],
+    ['destination_profile_invalid', 'policy.invalid_destination_profile_binding'],
+  ] as const)(
+    'answers a default set that is %s as a configuration the app cannot use',
+    async (code, expected) => {
+      resolveBinding.mockRejectedValue(
+        new IdentityMappingResolutionError(code, 'platform_default', 'set-p')
+      );
 
-    await applyOIDCIdentityMapping({
-      adapter,
-      env: { DB_ADMIN: adminAdapter as never },
-      tenantId: 'tenant-a',
-      clientId: 'client-a',
-      claims: { sub: 'user-1' },
+      const error = await apply().catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(OIDCIdentityMappingRuntimeError);
+      expect((error as OIDCIdentityMappingRuntimeError).details).toMatchObject({
+        code: expected,
+        fieldMappingSetId: 'set-p',
+        clientId: 'client-a',
+      });
+    }
+  );
+
+  it('answers a default that is not a usable value as a configuration the app cannot use', async () => {
+    resolveBinding.mockRejectedValue(
+      new IdentityMappingSelectionError('default_setting_invalid', 'tenant_default', undefined)
+    );
+
+    const error = await apply().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(OIDCIdentityMappingRuntimeError);
+    expect((error as OIDCIdentityMappingRuntimeError).details).toMatchObject({
+      code: 'policy.invalid_default_identity_mapping',
     });
+  });
 
-    expect(recorded()).toEqual([]);
+  it('answers unreadable settings as a failure that is not the app’s configuration', async () => {
+    const unreadable = new IdentityMappingSelectionError(
+      'settings_unreadable',
+      undefined,
+      undefined,
+      'database_timeout'
+    );
+    resolveBinding.mockRejectedValue(unreadable);
+
+    await expect(apply()).rejects.toBe(unreadable);
   });
 });

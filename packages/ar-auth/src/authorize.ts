@@ -5027,8 +5027,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           loadUserAttributes: (userId, names) =>
             loadUserAttributesForMapping(c, tenantId, userId, names),
           log,
-          // For the shadow comparison of the Mapping Set selection; it does nothing to the response.
-          waitUntil: (promise) => c.executionCtx.waitUntil(promise),
         },
         {
           claims: idTokenClaims,
@@ -5249,9 +5247,6 @@ async function idTokenHintNamesUser(
       destinationSurface: 'id_token',
       grantedScopes: scope?.split(' ').filter(Boolean),
       claims: { sub: userId },
-      // For the shadow comparison of the Mapping Set selection: kept running past the response,
-      // which a hint that does not match ends early. It does nothing to the response.
-      waitUntil: (promise) => c.executionCtx.waitUntil(promise),
       sourceAttributes: (names) =>
         resolveAccountDataContextFromHono(c, userId)
           .then(() => loadUserAttributesForMapping(c, tenantId, userId, names))

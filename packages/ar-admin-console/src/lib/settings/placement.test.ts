@@ -218,13 +218,13 @@ describe('where settings live', () => {
 		}
 	});
 
-	it('places the default Mapping Set once, on the Mapping Sets page, as saved but not applied', () => {
+	it('places the default Mapping Set once, on the Mapping Sets page, as applied', () => {
 		const key = 'identity_mapping.oidc_default_set_id';
 		const meta = ALL_CATEGORY_META['identity-mapping'].settings[key];
 		expect(categoryOf(key)).toBe('identity-mapping');
-		// Nothing reads it at runtime yet.
-		expect(meta.status).toBe('in_development');
-		expect(NOT_APPLIED.get(key)).toBe('to-wire');
+		// The release of claims reads it (ID token, UserInfo and the consent screen).
+		expect(meta.status).toBeUndefined();
+		expect(NOT_APPLIED.has(key)).toBe(false);
 		expect(placed).not.toContain(key);
 		expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
 			{ page: 'access/mapping-sets', depth: 'primary' }
@@ -238,30 +238,19 @@ describe('where settings live', () => {
 	it('lets only the platform and a tenant set the default Mapping Set, never an app', () => {
 		const category = 'identity-mapping';
 		expect(Object.keys(ALL_CATEGORY_META[category].settings)).toEqual([
-			'identity_mapping.oidc_default_set_id',
-			'identity_mapping.shadow_compare_enabled'
+			'identity_mapping.oidc_default_set_id'
 		]);
 		expect(
 			ALL_CATEGORY_META[category].settings['identity_mapping.oidc_default_set_id'].envKey
 		).toBe(undefined);
 	});
 
-	it('places the shadow comparison switch once, as an applied platform-only setting', () => {
+	it('no longer has the shadow comparison switch: the resolution it compared is gone', () => {
 		const key = 'identity_mapping.shadow_compare_enabled';
-		const meta = ALL_CATEGORY_META['identity-mapping'].settings[key];
-		expect(categoryOf(key)).toBe('identity-mapping');
-		// The comparison runs, so it is not "in development" and not listed as not applied.
-		expect(meta.status).toBeUndefined();
-		expect(NOT_APPLIED.has(key)).toBe(false);
-		expect(meta.scopes).toEqual(['platform']);
-		expect(meta.envKey).toBe('IDENTITY_MAPPING_SHADOW_COMPARE');
-		expect(placed).not.toContain(key);
-		expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
-			{ page: 'access/mapping-sets', depth: 'advanced' }
-		]);
-		// Named in every language the console has.
-		expect(hasMessage(settingText(key).label)).toBe(true);
-		expect(settingText(key).description).toBeDefined();
+		expect(everyKey, key).not.toContain(key);
+		expect([...placed, ...drafted], key).not.toContain(key);
+		expect(NOT_APPLIED.has(key), key).toBe(false);
+		expect(hasMessage(settingText(key).label)).toBe(false);
 	});
 
 	it('places the bulk apply limits once, as applied platform-only settings', () => {

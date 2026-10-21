@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import {
   adminAuthMiddleware,
+  applyOIDCIdentityMapping,
   loadMappingBindingBySetId,
   PLATFORM_MAPPING_TENANT_ID,
   type DatabaseAdapter,
@@ -262,14 +263,15 @@ const OIDC_PROFILE_SCHEMA = {
 
 async function createActiveOidcProfile(
   repository: IdentityMappingControlPlaneRepository,
-  owner: 'platform' | 'tenant'
+  owner: 'platform' | 'tenant',
+  options: { schema?: unknown; profileKey?: string } = {}
 ): Promise<string> {
   const created = await repository.createDestinationProfile('tenant-a', {
     destinationType: 'oidc',
-    profileKey: `oidc_${owner}`,
+    profileKey: options.profileKey ?? `oidc_${owner}`,
     displayName: `OIDC ${owner}`,
     ownerScopeType: owner,
-    schema: OIDC_PROFILE_SCHEMA,
+    schema: options.schema ?? OIDC_PROFILE_SCHEMA,
   } as never);
   const allowPlatform = owner === 'platform';
   await repository.reviewDestinationProfileVersion(
@@ -1654,6 +1656,320 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
         expect(binding.edges[0].targetRef.path).toBe('email');
       }
     );
+
+    // The runtime reads the catalog by the stable field ID, the stored rows by either ID: a source
+    // that names the catalog entry by its row ID must come out the same through the release
+    // check, in the tenant's context, as one that names it by the stable ID.
+    describe('a source naming the catalog entry in each way, through to the tenant’s ID token and UserInfo', () => {
+      // A profile that releases email without the user's selection (required), so a value that is
+      // read shows up in the claims.
+      const RELEASED_EMAIL_SCHEMA = {
+        destinationType: 'oidc',
+        claims: [
+          {
+            claimName: 'sub',
+            required: true,
+            nullable: false,
+            surfaces: ['id_token', 'userinfo'],
+            classification: 'internal',
+          },
+          {
+            claimName: 'email',
+            required: true,
+            surfaces: ['id_token', 'userinfo'],
+            requiredScopes: ['email'],
+            classification: 'pii',
+          },
+        ],
+      };
+      const entryForms: Array<[string, Record<string, unknown>]> = [
+        ['the row ID (catalogEntryId)', { catalogEntryId: 'platform_canonical_email' }],
+        ['the row ID (catalog_entry_id)', { catalog_entry_id: 'platform_canonical_email' }],
+        ['the stable ID', { catalogEntryId: 'field.canonical.email' }],
+        ['the stable ID (catalog_entry_id)', { catalog_entry_id: 'field.canonical.email' }],
+        ['the path alone', {}],
+        ['the fieldKey alone', { path: undefined, fieldKey: 'email' }],
+        // The reference names its entry and nothing of where to read.
+        [
+          'the row ID alone',
+          { path: undefined, namespace: undefined, catalogEntryId: 'platform_canonical_email' },
+        ],
+        [
+          'the stable ID alone',
+          { path: undefined, namespace: undefined, catalogEntryId: 'field.canonical.email' },
+        ],
+        [
+          'the row ID alone (catalog_entry_id)',
+          { path: undefined, namespace: undefined, catalog_entry_id: 'platform_canonical_email' },
+        ],
+        [
+          'the stable ID alone, with the namespace',
+          { path: undefined, catalogEntryId: 'field.canonical.email' },
+        ],
+      ];
+
+      it.each(entryForms)('saves, compiles, activates and releases %s', async (_name, entry) => {
+        const { api, adapter, repository, createPlatformSet } = await setup();
+        const profileId = await createActiveOidcProfile(repository, 'platform', {
+          schema: RELEASED_EMAIL_SCHEMA,
+          profileKey: 'oidc_platform_released_email',
+        });
+        const setId = await createPlatformSet();
+        const rule = emailRule(profileId);
+        rule.edges[0].sourceRef = {
+          side: 'source',
+          namespace: 'authrim.canonical',
+          path: 'email',
+          ...entry,
+        } as never;
+        // The released claim is a catalog entry too: the mapping runtime keeps only the values the
+        // catalog describes, and the platform catalog describes email by its entry.
+        rule.edges[0].targetRef = {
+          ...rule.edges[0].targetRef,
+          catalogEntryId: 'platform_canonical_email',
+        } as never;
+        const version = await api.call(PLATFORM_ADMIN, 'POST', `/${setId}/versions`, {
+          versionLabel: 'v1',
+          rules: [rule],
+        });
+        expect(version.status).toBe(200);
+        const versionId = version.result.id as string;
+        const compiled = await api.call(
+          PLATFORM_ADMIN,
+          'POST',
+          `/${setId}/versions/${versionId}/compile`,
+          { catalogVersionId: PLATFORM_CATALOG_VERSION }
+        );
+        expect(compiled.status).toBe(200);
+        const activated = await api.call(
+          PLATFORM_ADMIN,
+          'POST',
+          `/${setId}/versions/${versionId}/activate`,
+          { snapshotId: compiled.result.id, activationScope: {} }
+        );
+        expect(activated.status).toBe(200);
+
+        // Another tenant, the platform's default naming the set, ID token and UserInfo: the value
+        // of the user's email is read and released.
+        const core = sqliteAdapter(openCoreDatabase());
+        const env = {
+          DB_ADMIN: adapter,
+          SETTINGS: {
+            get: async (key: string) =>
+              key === 'settings:platform:identity-mapping'
+                ? JSON.stringify({ 'identity_mapping.oidc_default_set_id': setId })
+                : null,
+          },
+        } as never;
+        for (const destinationSurface of ['id_token', 'userinfo'] as const) {
+          const result = await applyOIDCIdentityMapping({
+            adapter: core,
+            env,
+            tenantId: 'tenant-b',
+            clientId: 'client-b',
+            destinationSurface,
+            grantedScopes: ['openid', 'email'],
+            claims: { sub: 'user-1' },
+            sourceAttributes: { email: 'alice@example.com' },
+          });
+          expect(result.binding).toMatchObject({
+            tenantId: PLATFORM_MAPPING_TENANT_ID,
+            fieldMappingSetId: setId,
+          });
+          expect(result.claims).toMatchObject({ sub: 'user-1', email: 'alice@example.com' });
+        }
+      });
+    });
+
+    // A source that names only its entry reads the entry's place, so nothing can be read from a
+    // reference whose entry is not a place to read, or that does not exist.
+    describe('a source that names only a catalog entry that is not a place to read', () => {
+      const unreadable: Array<[string, Record<string, unknown>]> = [
+        ['an ID the catalog does not have', { catalogEntryId: 'field.canonical.nothing' }],
+        ['an ID the catalog does not have (row)', { catalogEntryId: 'platform_nothing' }],
+        [
+          'an entry of another namespace than the one the reference gives',
+          { namespace: 'authrim.custom_claims', catalogEntryId: 'field.canonical.email' },
+        ],
+        [
+          'an entry of another place than the namespace the reference gives reads',
+          { namespace: 'authrim.claims', catalogEntryId: 'platform_canonical_email' },
+        ],
+      ];
+
+      it.each([
+        ['the row ID', 'platform_canonical_email'],
+        ['the stable ID', 'field.canonical.email'],
+      ])(
+        'holds email to its classification at activation, naming only %s',
+        async (_name, catalogEntryId) => {
+          const { api, repository, createPlatformSet } = await setup();
+          // A profile whose email claim is classified lower than email is.
+          const unscoped = await createActiveOidcProfile(repository, 'platform', {
+            profileKey: 'oidc_platform_unscoped',
+            schema: {
+              destinationType: 'oidc',
+              claims: [
+                {
+                  claimName: 'sub',
+                  required: true,
+                  nullable: false,
+                  surfaces: ['id_token', 'userinfo'],
+                },
+                {
+                  claimName: 'email',
+                  surfaces: ['id_token'],
+                  requiredScopes: ['email'],
+                  classification: 'public',
+                },
+              ],
+            },
+          });
+          const setId = await createPlatformSet();
+          const rule = emailRule(unscoped);
+          rule.edges[0].sourceRef = {
+            side: 'source',
+            namespace: 'authrim.canonical',
+            catalogEntryId,
+          } as never;
+          const version = await api.call(PLATFORM_ADMIN, 'POST', `/${setId}/versions`, {
+            versionLabel: 'v1',
+            rules: [rule],
+          });
+          const versionId = version.result.id as string;
+          const compiled = await api.call(
+            PLATFORM_ADMIN,
+            'POST',
+            `/${setId}/versions/${versionId}/compile`,
+            { catalogVersionId: PLATFORM_CATALOG_VERSION }
+          );
+          expect(compiled.status).toBe(200);
+
+          const activation = await api.call(
+            PLATFORM_ADMIN,
+            'POST',
+            `/${setId}/versions/${versionId}/activate`,
+            { snapshotId: compiled.result.id, activationScope: {} }
+          );
+
+          // Refused for what email is, not for being a source nobody can classify.
+          expect(activation.status).toBe(400);
+          expect(activation.json.error_description).toContain(
+            'cannot lower classification from pii'
+          );
+        }
+      );
+
+      it.each(unreadable)('is refused when compiled, naming %s', async (_name, entry) => {
+        const { api, platformProfile, createPlatformSet } = await setup();
+        const setId = await createPlatformSet();
+        const rule = emailRule(platformProfile);
+        rule.edges[0].sourceRef = {
+          side: 'source',
+          namespace: 'authrim.canonical',
+          path: undefined,
+          ...entry,
+        } as never;
+        const version = await api.call(PLATFORM_ADMIN, 'POST', `/${setId}/versions`, {
+          versionLabel: 'v1',
+          rules: [rule],
+        });
+
+        // Refused when saved (a tenant-defined namespace) or when compiled: never accepted.
+        if (version.status !== 200) {
+          expect(version.status).toBe(400);
+          return;
+        }
+        const compiled = await api.call(
+          PLATFORM_ADMIN,
+          'POST',
+          `/${setId}/versions/${version.result.id}/compile`,
+          { catalogVersionId: PLATFORM_CATALOG_VERSION }
+        );
+
+        expect(compiled.status).toBe(400);
+      });
+    });
+
+    // email is pii; email_verified is internal. A source that reads email and names the entry of
+    // email_verified (by either ID) must never take the lower classification from the ID.
+    describe('a source that reads email and names the catalog entry of another place', () => {
+      const wrongEntries: Array<[string, Record<string, unknown>]> = [
+        ['the row ID', { catalogEntryId: 'platform_canonical_email_verified' }],
+        [
+          'the row ID (catalog_entry_id)',
+          { catalog_entry_id: 'platform_canonical_email_verified' },
+        ],
+        ['the stable ID', { catalogEntryId: 'field.canonical.email_verified' }],
+      ];
+      const mismatched = (platformProfile: string, entry: Record<string, unknown>) => {
+        const rule = emailRule(platformProfile);
+        rule.edges[0].sourceRef = {
+          side: 'source',
+          namespace: 'authrim.canonical',
+          path: 'email',
+          ...entry,
+        } as never;
+        return rule;
+      };
+
+      it.each(wrongEntries)('is refused when compiled, naming %s', async (_name, entry) => {
+        const { api, platformProfile, createPlatformSet } = await setup();
+        const setId = await createPlatformSet();
+        const version = await api.call(PLATFORM_ADMIN, 'POST', `/${setId}/versions`, {
+          versionLabel: 'v1',
+          rules: [mismatched(platformProfile, entry)],
+        });
+        expect(version.status).toBe(200);
+
+        const compiled = await api.call(
+          PLATFORM_ADMIN,
+          'POST',
+          `/${setId}/versions/${version.result.id}/compile`,
+          { catalogVersionId: PLATFORM_CATALOG_VERSION }
+        );
+
+        expect(compiled.status).toBe(400);
+        expect(compiled.json.error_description).toContain('not a field of the platform catalog');
+      });
+
+      it.each(wrongEntries)(
+        'is refused at activation when it is put in after compiling, naming %s',
+        async (_name, entry) => {
+          const { api, db, platformProfile, createPlatformSet } = await setup();
+          const setId = await createPlatformSet();
+          const version = await api.call(PLATFORM_ADMIN, 'POST', `/${setId}/versions`, {
+            versionLabel: 'v1',
+            rules: [emailRule(platformProfile)],
+          });
+          const versionId = version.result.id as string;
+          const compiled = await api.call(
+            PLATFORM_ADMIN,
+            'POST',
+            `/${setId}/versions/${versionId}/compile`,
+            { catalogVersionId: PLATFORM_CATALOG_VERSION }
+          );
+          expect(compiled.status).toBe(200);
+          db.prepare('UPDATE mapping_rule_edges SET source_ref_json = ?').run(
+            JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.canonical',
+              path: 'email',
+              ...entry,
+            })
+          );
+
+          const activation = await api.call(
+            PLATFORM_ADMIN,
+            'POST',
+            `/${setId}/versions/${versionId}/activate`,
+            { snapshotId: compiled.result.id, activationScope: {} }
+          );
+
+          expect(activation.status).toBe(400);
+        }
+      );
+    });
 
     it('still refuses a source spelled by fieldKey that the catalog does not have', async () => {
       const { api, platformProfile, createPlatformSet } = await setup();

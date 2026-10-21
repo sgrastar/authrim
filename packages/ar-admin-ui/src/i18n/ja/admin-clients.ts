@@ -197,11 +197,12 @@ const adminClients = {
 	admin_client_detail_claims_parameter: 'Claims Parameter',
 	admin_client_detail_identity_mapping_section: 'Field Mapping',
 	admin_client_detail_identity_mapping_policy: 'OIDC claim Field Mapping Set',
-	admin_client_detail_identity_mapping_policy_default: 'テナント既定 / client overrideなし',
+	admin_client_detail_identity_mapping_policy_default: 'テナント既定に従う（client overrideなし）',
+	admin_client_detail_identity_mapping_policy_none: 'マッピングを使わない（既定も無視）',
 	admin_client_detail_identity_mapping_policy_hint:
-		'このclientのOIDC UserInfoとtoken claimsで使用するactive Field Mapping Setを選択します。',
+		'このclientのIDトークン、UserInfo、同意画面で使用するactive Field Mapping Setを選択します。「テナント既定に従う」は、テナント既定のMapping Set、なければプラットフォーム既定、それもなければマッピングなしになります。activateしただけでは適用されません。',
 	admin_client_detail_identity_mapping_policy_display_hint:
-		'OIDC field mappingのclient overrideです。空の場合はテナント既定のactivationを使用します。',
+		'OIDC field mappingのclient overrideです。空の場合はテナント既定のMapping Set（なければプラットフォーム既定、なければなし）に従います。',
 	admin_client_detail_attribute_release_consent: 'Claim提供の同意',
 	admin_client_detail_attribute_release_consent_disabled: 'claim提供前に確認しない',
 	admin_client_detail_attribute_release_consent_once: '初回のみ確認して記憶する',

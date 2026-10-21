@@ -23,7 +23,6 @@ import {
   getChallengeStoreByChallengeId,
   getFeatureFlag,
   getLogger,
-  logSwallowedIdentityMappingFailure,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   hashIpAddress,
@@ -37,11 +36,12 @@ import {
   resolveOidcFieldRequiredScopes,
   resolveDestinationProfileConsentVersion,
   resolveRuntimeIdentityMappingBinding,
+  resolveOidcIdentityMappingBinding,
+  toOidcIdentityMappingRuntimeError,
   requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
   type DatabaseAdapter,
   type Env,
-  type Logger,
   type Challenge,
   type FlowAssignmentTargetType,
   type FlowConditionConfig,
@@ -1739,20 +1739,25 @@ async function resolveRuntimeDestinationFieldConsent(
   tenantId: string,
   requestContext: FlowRequestContext
 ): Promise<RuntimeDestinationFieldConsentContent | null> {
-  if (!c.env.DB_ADMIN || requestContext.protocol === 'direct') return null;
+  if (requestContext.protocol === 'direct') return null;
+  // An OIDC request reads the Admin database only when the Mapping Set it is bound to is one (a
+  // selection of none needs none), and fails then if it is not bound, as the release of claims
+  // does. The other protocols have nothing to look up without it.
+  if (!c.env.DB_ADMIN && requestContext.protocol !== 'oidc') return null;
 
-  const adminAdapter = requireDedicatedAdminDatabaseAdapter(
-    c.env,
-    'flow-destination-profile-consent'
-  );
+  const adminAdapter = c.env.DB_ADMIN
+    ? requireDedicatedAdminDatabaseAdapter(c.env, 'flow-destination-profile-consent')
+    : null;
   const selector = await resolveRuntimeDestinationProfileSelector(
     db,
     adminAdapter,
+    c.env,
     tenantId,
-    requestContext,
-    getLogger(c)
+    requestContext
   );
   if (!selector) return null;
+  // A selector is only returned with an Admin database to read the profile from.
+  if (!adminAdapter) return null;
   const descriptor = await loadDestinationProfileConsentDescriptor(
     adminAdapter,
     tenantId,
@@ -1793,10 +1798,10 @@ async function resolveRuntimeDestinationFieldConsent(
 
 async function resolveRuntimeDestinationProfileSelector(
   db: DatabaseAdapter,
-  adminDb: DatabaseAdapter,
+  adminDb: DatabaseAdapter | null,
+  env: Env,
   tenantId: string,
-  requestContext: FlowRequestContext,
-  logger?: Logger
+  requestContext: FlowRequestContext
 ): Promise<{
   profileId: string;
   fieldPolicies?: DestinationFieldReleasePolicies;
@@ -1817,7 +1822,6 @@ async function resolveRuntimeDestinationProfileSelector(
         WHERE tenant_id = ? AND client_id = ?`,
       [tenantId, requestContext.client_id]
     );
-    const selector = parseJsonRecord(row?.identity_mapping);
     const claimsPolicy: OIDCClaimsClientPolicy = {
       allow_claims_without_scope:
         row?.allow_claims_without_scope === 1 || row?.allow_claims_without_scope === true,
@@ -1825,68 +1829,26 @@ async function resolveRuntimeDestinationProfileSelector(
         row?.claims_parameter_policy
       ) as OIDCClaimsClientPolicy['claims_parameter_policy'],
     };
-    const fieldMappingSetId = readString(selector.fieldMappingSetId, 200);
-    if (fieldMappingSetId) {
-      const binding = await resolveRuntimeIdentityMappingBinding(adminDb, {
-        tenantId,
-        protocol: 'oidc',
-        role: 'op',
-        fieldMappingSetId,
-        fieldMappingVersionId: readString(selector.fieldMappingVersionId, 200) ?? undefined,
-        partnerEntityId: requestContext.client_id,
-        clientId: requestContext.client_id,
-      });
-      if (!binding || binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
-        throw new Error('OIDC Mapping Set must resolve exactly one Destination Profile');
-      }
-      return {
-        profileId: binding.destinationProfileId,
-        consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
-        claimsPolicy,
-      };
-    }
-    // An app with no Mapping Set of its own is bound by the tenant's active activation, which the
-    // release looks up in the same way (applyOIDCIdentityMapping), so the fields the user is asked
-    // about are the fields that release is held to. Unusable here (none, several Destination
-    // Profiles, unreadable) it is left to the release, which answers for it.
-    let tenantBinding: Awaited<ReturnType<typeof resolveRuntimeIdentityMappingBinding>> = null;
+    // The same selection and reading of the Mapping Set the ID token and UserInfo go through
+    // (applyOIDCIdentityMapping), so the fields the user is asked about are the fields the release
+    // is held to. An app's own choice, else the tenant's default, else the platform's, else none:
+    // an activation's scope never binds an app to a set. A choice that cannot be used fails.
+    let profileId: string | undefined;
     try {
-      tenantBinding = await resolveRuntimeIdentityMappingBinding(adminDb, {
+      const resolution = await resolveOidcIdentityMappingBinding({
+        env,
         tenantId,
-        protocol: 'oidc',
-        role: 'op',
-        partnerEntityId: requestContext.client_id,
         clientId: requestContext.client_id,
+        clientSelector: row?.identity_mapping,
       });
+      // Exactly one Destination Profile is checked by the reading of the set.
+      profileId = resolution.binding?.destinationProfileId;
     } catch (error) {
-      // Left to the release, which answers for it; recorded here so that a mapping which exists
-      // and cannot be read is visible (the user is then asked about other fields than the
-      // release holds the ID token to).
-      logSwallowedIdentityMappingFailure({
-        component: 'LOGIN-RUNTIME-FLOW',
-        tenantId,
-        clientId: requestContext.client_id,
-        adminDatabaseBound: true,
-        error,
-        logger,
-      });
-      tenantBinding = null;
+      throw toOidcIdentityMappingRuntimeError(error, { clientId: requestContext.client_id });
     }
-    if (
-      tenantBinding &&
-      tenantBinding.destinationProfileIds.length === 1 &&
-      tenantBinding.destinationProfileId
-    ) {
-      return {
-        profileId: tenantBinding.destinationProfileId,
-        consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
-        claimsPolicy,
-      };
-    }
-    const legacyProfileId = readString(selector.destinationProfileId, 200);
-    return legacyProfileId
+    return profileId
       ? {
-          profileId: legacyProfileId,
+          profileId,
           consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
           claimsPolicy,
         }
@@ -1894,6 +1856,7 @@ async function resolveRuntimeDestinationProfileSelector(
   }
 
   if (requestContext.protocol === 'saml' && requestContext.saml_sp_id) {
+    if (!adminDb) return null;
     const rows = await db.query<{ id: string; config_json: string }>(
       `SELECT id, config_json
          FROM identity_providers

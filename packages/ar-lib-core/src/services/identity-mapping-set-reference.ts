@@ -7,7 +7,7 @@
  *   (`readOidcDefaultSetSelection`);
  * - the reference: whether the set it names can be used (`validateOidcMappingSetReference`).
  *
- * Nothing here changes how claims are released.
+ * The release of claims reads the same names through the selection (identity-mapping-selection.ts).
  */
 import type { DatabaseAdapter } from '../db/adapter';
 import {
@@ -144,8 +144,8 @@ export interface ValidateOidcMappingSetReferenceInput {
   contextTenantId: string;
   /**
    * Where the name is saved. `platform`: only a set the platform owns. `tenant`: the tenant's own
-   * set or the platform's. `client`: for an app's own choice, the tenant's own set only for now
-   * (a platform-owned set answers `set_missing` until the runtime resolves it; see below).
+   * set or the platform's. `client` (an app's own choice): the tenant's own set only for now (a
+   * platform-owned set answers `set_missing`; see the backup dependency note below).
    */
   scope: IdentityMappingDefaultScope | 'client';
   setId: string;
@@ -281,13 +281,16 @@ export async function validateOidcMappingSetReference(
 ): Promise<OidcMappingSetReferenceResult> {
   const adapter = input.adminAdapter;
 
-  // TODO(stage 2): lift this when the sign-in, token and UserInfo paths resolve an app's own
-  // Mapping Set under its owner (ownerTenantId). Until then they look it up under the app's
-  // tenant only, so an app saved with a platform-owned set would fail every sign-in (fail closed).
-  // Refused at save time instead, as a set that does not exist. It is decided from the owner
-  // alone, before the set's state is judged, so a platform set that is a draft, has no activation
-  // or the wrong number of profiles answers exactly as a set that does not exist. The tenant
-  // default may name a platform set.
+  // TODO(backup dependency): lift this when the tenant backup's dependency rules can carry a
+  // reference to a platform-owned set. A tenant backup holds the tenant's own rows only, so an app
+  // that names a platform set would make that set a required dependency the bundle cannot hold,
+  // and restoring it, even into the same environment, would fail with
+  // `backup_reference_target_missing` (phase3-sqlite-references.ts). The runtime already reads such
+  // a set under its owner (the tenant's default and the platform's default may name one), so only
+  // saving the choice on an app is refused here. It answers as a set that does not exist, decided
+  // from the owner alone before the set's state is judged, so a platform set that is a draft, has
+  // no activation or the wrong number of profiles answers exactly as a set that does not exist.
+  // See "What the backup side has to do" in docs/operations/platform-mapping-sets.md.
   if (input.scope === 'client' && adapter) {
     try {
       const owner = await adapter.queryOne<{ tenant_id: string }>(

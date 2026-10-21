@@ -1595,15 +1595,19 @@ paths:
       description: >-
         Create Client in the Clients area. The request body is JSON unless the detailed schema for
         this operation states otherwise.
-        When identity_mapping names a Mapping Set it is checked the way a default Mapping Set is: the
-        set must be one the tenant owns (a platform-owned set is not accepted for an app yet, and
-        answers as a set that does not exist), active, with an active activation that
-        applies and an active compiled snapshot (and, when fieldMappingVersionId is given, that
-        version), and must release into exactly one active OIDC Destination Profile. 404 when the
-        set does not exist or is not available to the tenant (another tenant's set answers the
-        same), 400 when it exists but cannot be used (not active, no active compiled snapshot, no
-        single active OIDC Destination Profile, or a platform set that holds what a platform set
-        may not), 503 when the Admin database cannot be read to check it.
+        identity_mapping is the app's own choice: a Mapping Set, or { "mode": "none" } (the app takes
+        no mapping, whatever the defaults say). Left null or absent, the app follows the tenant's
+        default Mapping Set, else the platform's, else no mapping applies; an activation's scope
+        never binds an app to a set. When identity_mapping names a Mapping Set it is checked the way
+        a default Mapping Set is: the set must be one the tenant owns (a platform-owned set is not
+        accepted for an app yet, because a tenant backup cannot hold the reference; it answers as a
+        set that does not exist, and the tenant's or the platform's default Mapping Set names it
+        instead), active, with an active activation that applies and an active compiled snapshot
+        (and, when fieldMappingVersionId is given, that version), and must release into exactly one
+        active OIDC Destination Profile. 404 when the set does not exist or is not available to the
+        tenant (another tenant's set, and a platform-owned set, answer the same), 400 when it exists
+        but cannot be used (not active, no active compiled snapshot, no single active OIDC
+        Destination Profile), 503 when the Admin database cannot be read to check it.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1647,15 +1651,19 @@ paths:
       description: >-
         Replace Client in the Clients area. The request body is JSON unless the detailed schema for
         this operation states otherwise. 404 also answers a client that does not exist.
-        When identity_mapping names a Mapping Set it is checked the way a default Mapping Set is: the
-        set must be one the tenant owns (a platform-owned set is not accepted for an app yet, and
-        answers as a set that does not exist), active, with an active activation that
-        applies and an active compiled snapshot (and, when fieldMappingVersionId is given, that
-        version), and must release into exactly one active OIDC Destination Profile. 404 when the
-        set does not exist or is not available to the tenant (another tenant's set answers the
-        same), 400 when it exists but cannot be used (not active, no active compiled snapshot, no
-        single active OIDC Destination Profile, or a platform set that holds what a platform set
-        may not), 503 when the Admin database cannot be read to check it.
+        identity_mapping is the app's own choice: a Mapping Set, or { "mode": "none" } (the app takes
+        no mapping, whatever the defaults say). Left null or absent, the app follows the tenant's
+        default Mapping Set, else the platform's, else no mapping applies; an activation's scope
+        never binds an app to a set. When identity_mapping names a Mapping Set it is checked the way
+        a default Mapping Set is: the set must be one the tenant owns (a platform-owned set is not
+        accepted for an app yet, because a tenant backup cannot hold the reference; it answers as a
+        set that does not exist, and the tenant's or the platform's default Mapping Set names it
+        instead), active, with an active activation that applies and an active compiled snapshot
+        (and, when fieldMappingVersionId is given, that version), and must release into exactly one
+        active OIDC Destination Profile. 404 when the set does not exist or is not available to the
+        tenant (another tenant's set, and a platform-owned set, answer the same), 400 when it exists
+        but cannot be used (not active, no active compiled snapshot, no single active OIDC
+        Destination Profile), 503 when the Admin database cannot be read to check it.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2170,7 +2178,7 @@ paths:
         both pass; serialising them would need a shared coordinator.
         For the identity-mapping category, identity_mapping.oidc_default_set_id names the Mapping Set
         that applies to apps of the scope that choose none of their own (unset: no default, so no
-        mapping applies; there is no environment variable; nothing reads it at runtime yet). The
+        mapping applies; there is no environment variable; apps that choose none of their own use it for the ID token, UserInfo and the consent screen, and a value that cannot be used stops them from signing in). The
         value is a Mapping Set ID (letters, digits and _ . : -, at most 200 characters, no
         surrounding whitespace) or, for a tenant, the reserved value none, which refuses the
         platform's default; a string only (the disabled marker, false and null are refused, and
@@ -2391,7 +2399,7 @@ paths:
         For the identity-mapping category, identity_mapping.oidc_default_set_id (the default for
         every tenant that has set no default of its own, and has not saved none) names the Mapping Set
         that applies to apps of the scope that choose none of their own (unset: no default, so no
-        mapping applies; there is no environment variable; nothing reads it at runtime yet). The
+        mapping applies; there is no environment variable; apps that choose none of their own use it for the ID token, UserInfo and the consent screen, and a value that cannot be used stops them from signing in). The
         value is a Mapping Set ID (letters, digits and _ . : -, at most 200 characters, no
         surrounding whitespace) or, for a tenant, the reserved value none, which refuses the
         platform's default; a string only (the disabled marker, false and null are refused, and
@@ -11196,8 +11204,14 @@ paths:
         An app of another tenant, and one that does not exist, answer 404. The selection reads no
         database; the name, owner and state of the sets it names are read from the Admin database
         in one query and are left out (`setFound` absent) when it cannot be read. The release of
-        claims does not use this selection yet. The endpoint is rate limited with the moderate
-        profile.
+        claims (ID token, UserInfo, the consent screen) uses this same selection. When nothing is
+        named (`no_default`) the answer also looks, in one more Admin database query, for the
+        tenant's active activations that the release once applied to an app naming no Mapping Set
+        and no longer does, and lists them in `warnings` (`implicit_activation_no_longer_applies`;
+        IDs and names only); if that cannot be read the answer is the same with
+        `warnings_unavailable: true`. An app whose selector names only a Destination Profile (the
+        older kind) is `failed` with `reason` `legacy_profile_only_selector`. The endpoint is
+        rate limited with the moderate profile.
       parameters:
         - name: client_id
           in: query
@@ -46916,6 +46930,15 @@ components:
             - PS256
             - null
     OIDCIdentityMappingSelector:
+      description: >-
+        The app's own choice of Mapping Set. Either a Mapping Set (`fieldMappingSetId`), or the
+        explicit opt-out `{ "mode": "none" }`: the app takes no mapping, whatever the tenant's and
+        the platform's default say. Null (or absent) is not a choice: the app follows the tenant's
+        default, else the platform's, else no mapping applies. The opt-out takes no other field.
+      oneOf:
+        - $ref: '#/components/schemas/OIDCIdentityMappingSetChoice'
+        - $ref: '#/components/schemas/OIDCIdentityMappingOptOut'
+    OIDCIdentityMappingSetChoice:
       type: object
       additionalProperties: false
       required:
@@ -46929,6 +46952,16 @@ components:
           type: string
         sourceProfileId:
           type: string
+    OIDCIdentityMappingOptOut:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+      properties:
+        mode:
+          type: string
+          enum:
+            - none
     AttributeReleaseConsentPolicy:
       type: object
       additionalProperties: false
@@ -56446,6 +56479,15 @@ components:
                 - client
                 - tenant_default
                 - platform_default
+            reason:
+              type: string
+              enum:
+                - legacy_profile_only_selector
+              description: >-
+                Given when the app's own choice names a Destination Profile (`destinationProfileId`)
+                and no Mapping Set and no opt-out: a selector of the older kind, which is not a
+                choice. The release fails for the app (400 `invalid_client`) rather than lose the
+                profile's gate in silence. Select a Mapping Set or save `{ "mode": "none" }`.
     BulkApplyRequest:
       type: object
       additionalProperties: false
@@ -56600,7 +56642,12 @@ components:
           description: >-
             Preview only. What a category's changes affect in the tenant, by category. For
             `identity-mapping`: `apps_total` and `apps_following_default` (the apps with no Mapping
-            Set of their own), or `available: false` and a `reason`.
+            Set of their own), `apps_with_unusable_choice` (apps whose selector names only a
+            Destination Profile, which fail rather than follow the default), and `warnings`: with
+            code `implicit_activation_no_longer_applies`, the tenant's own active activations
+            (`activationId`, `setId`, `setName`; nothing of their scope or claims) that once bound
+            apps naming no Mapping Set and no longer do. `warnings_unavailable: true` says the
+            Admin database could not be read for them. Or `available: false` and a `reason`.
           additionalProperties: true
     BulkApplyPreviewChange:
       type: object
@@ -56752,6 +56799,48 @@ components:
           description: The app's level, the tenant default and the platform default, in that order.
           items:
             $ref: '#/components/schemas/IdentityMappingEffectiveChainEntry'
+        warnings:
+          type: array
+          description: >-
+            Given with a selection of none because nothing is named (`no_default`); empty
+            otherwise. `implicit_activation_no_longer_applies`: the tenant has active activations
+            that fit an OIDC call (for an app, one that names it counts too), which the release
+            used to apply to an app naming no Mapping Set and no longer does. Name the Mapping Set
+            as the tenant's default (or the app's own) to keep what they did. Only this tenant's
+            rows are read, and only IDs and names are given.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - code
+              - activations
+            properties:
+              code:
+                type: string
+                enum:
+                  - implicit_activation_no_longer_applies
+              activations:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - activationId
+                    - setId
+                  properties:
+                    activationId:
+                      type: string
+                    setId:
+                      type: string
+                    setName:
+                      type: string
+        warnings_unavailable:
+          type: boolean
+          enum:
+            - true
+          description: >-
+            The Admin database could not be read to look for the activations, so `warnings` is
+            empty without the tenant having none.
     MappingSetInUseError:
       type: object
       additionalProperties: true

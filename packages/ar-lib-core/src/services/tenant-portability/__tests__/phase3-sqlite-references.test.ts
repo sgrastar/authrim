@@ -244,6 +244,29 @@ describe('Phase 3 installed SQL reference graph', () => {
     ]);
   });
 
+  it('requires no mapping record of an OAuth client that opts out of identity mapping', () => {
+    const identity = {
+      module: 'applications' as const,
+      collection: 'core.oauth_clients',
+      id: 'client',
+      tenantId: 'tenant-a',
+    };
+    const references = inspectPhase3SqliteReferences(
+      identity.collection,
+      row({
+        tenant_id: 'tenant-a',
+        client_id: 'client-a',
+        allowed_subject_token_clients: null,
+        identity_mapping: JSON.stringify({ mode: 'none' }),
+        logout_webhook_secret_encrypted: null,
+      }),
+      identity
+    );
+    expect(references.map(({ to }) => [to.collection, to.id])).toEqual([
+      ['core.tenants', '[["text","tenant-a"]]'],
+    ]);
+  });
+
   it('requires OIDC clients and groups referenced by application launchers', () => {
     const identity = {
       module: 'applications' as const,

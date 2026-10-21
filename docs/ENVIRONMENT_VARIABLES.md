@@ -140,18 +140,15 @@ these paths.
 
 ### Identity Mapping
 
-| Variable                          | Type    | Default | Description                                                                                       |
-| --------------------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `IDENTITY_MAPPING_SHADOW_COMPARE` | boolean | `false` | Compare each OIDC identity mapping resolution with the new Mapping Set selection; log differences |
+There is no environment variable for identity mapping. The Mapping Set that applies to OIDC apps
+that name none of their own is the setting `identity_mapping.oidc_default_set_id` (Settings API,
+`identity-mapping` category, platform and tenant scope): a Mapping Set ID means nothing outside the
+database it lives in, so it is not read from the environment. Left unset, no mapping applies.
 
-`IDENTITY_MAPPING_SHADOW_COMPARE` is the deployment default of the platform setting
-`identity_mapping.shadow_compare_enabled` (Settings API, `identity-mapping` category, platform
-scope; a value saved there overrides the variable). While it is on, every OIDC resolution (ID token,
-UserInfo, authorization) is also run through the new selection (the app's own choice, the tenant
-default, the platform default) and a difference from what the request used is logged as a warning
-with action `identity_mapping_resolution_diff`. Responses do not change. It is off by default because
-each resolution then costs a settings read and, when the new selection names a Mapping Set, an
-Admin database read: turn it on only in the environments where the comparison is wanted.
+The platform setting `identity_mapping.shadow_compare_enabled` and its variable
+`IDENTITY_MAPPING_SHADOW_COMPARE` are retired: the comparison it switched on had nothing left to
+compare against once the selection replaced the implicit lookup. A value still stored or set is
+ignored.
 
 ### Bulk Apply
 

@@ -773,6 +773,14 @@ describe('a preview', () => {
       applies: true,
       apps_total: 4,
       apps_following_default: 2,
+      apps_with_unusable_choice: 0,
+      // The tenant's set a1 has an activation of the whole tenant, which no longer applies.
+      warnings: [
+        {
+          code: 'implicit_activation_no_longer_applies',
+          activations: [{ activationId: 'act-a1', setId: 'set-a1', setName: 'Set a1' }],
+        },
+      ],
     });
     expect(resultFor(response.json, 'tenant-b').impact['identity-mapping']).toMatchObject({
       available: true,
@@ -785,6 +793,97 @@ describe('a preview', () => {
       reason: 'core_database_unavailable',
     });
     expect(JSON.stringify(response.json)).not.toMatch(/app-x/);
+  });
+
+  describe('the impact warns of an activation that no longer applies', () => {
+    const preview = (t: Awaited<ReturnType<typeof setup>>) =>
+      t.bulk(
+        t.admin,
+        request({
+          mode: 'preview',
+          tenant_ids: ['tenant-a', 'tenant-b'],
+          changes: [{ category: 'identity-mapping', set: { [MAPPING_KEY]: 'set-plat' } }],
+        })
+      );
+    const impactOf = (json: unknown, tenant: string) =>
+      resultFor(json as never, tenant).impact['identity-mapping'] as Record<string, any>;
+
+    it('names the tenant’s own activations only', async () => {
+      const t = await setup();
+
+      const { json } = await preview(t);
+
+      expect(impactOf(json, 'tenant-a').warnings).toEqual([
+        {
+          code: 'implicit_activation_no_longer_applies',
+          activations: [{ activationId: 'act-a1', setId: 'set-a1', setName: 'Set a1' }],
+        },
+      ]);
+      expect(impactOf(json, 'tenant-b').warnings).toEqual([
+        {
+          code: 'implicit_activation_no_longer_applies',
+          activations: [{ activationId: 'act-b1', setId: 'set-b1', setName: 'Set b1' }],
+        },
+      ]);
+      expect(JSON.stringify(impactOf(json, 'tenant-a'))).not.toMatch(/b1|plat/);
+    });
+
+    it('has no warning for a tenant without such an activation', async () => {
+      const t = await setup();
+      t.db
+        .prepare(
+          "UPDATE field_mapping_activations SET lifecycle_state = 'inactive' WHERE tenant_id = 'tenant-a'"
+        )
+        .run();
+
+      const { json } = await preview(t);
+
+      expect(impactOf(json, 'tenant-a').warnings).toEqual([]);
+      expect(impactOf(json, 'tenant-b').warnings).toHaveLength(1);
+    });
+
+    it('says it could not look when the Admin database cannot be read for it', async () => {
+      const t = await setup();
+      // The check of the default itself does not read the set's name; the warning does.
+      t.db.exec('ALTER TABLE field_mapping_sets DROP COLUMN display_name');
+
+      const { json } = await preview(t);
+
+      expect(impactOf(json, 'tenant-a')).toMatchObject({
+        available: true,
+        applies: true,
+        warnings: [],
+        warnings_unavailable: true,
+      });
+    });
+
+    it('counts an app with a selector of the older kind as neither following nor unaffected', async () => {
+      const t = await setup();
+      insertOAuthClient(t.cores['tenant-a'], { tenantId: 'tenant-a', clientId: 'app-1' });
+      insertOAuthClient(t.cores['tenant-a'], {
+        tenantId: 'tenant-a',
+        clientId: 'app-old',
+        identityMapping: { destinationProfileId: 'profile-a1' },
+      });
+      insertOAuthClient(t.cores['tenant-a'], {
+        tenantId: 'tenant-a',
+        clientId: 'app-old-snake',
+        identityMapping: { destination_profile_id: 'profile-a1' },
+      });
+      insertOAuthClient(t.cores['tenant-a'], {
+        tenantId: 'tenant-a',
+        clientId: 'app-with-set',
+        identityMapping: { fieldMappingSetId: 'set-a1', destinationProfileId: 'profile-a1' },
+      });
+
+      const { json } = await preview(t);
+
+      expect(impactOf(json, 'tenant-a')).toMatchObject({
+        apps_total: 4,
+        apps_following_default: 1,
+        apps_with_unusable_choice: 2,
+      });
+    });
   });
 
   it('gives the impact only where the change would be written, and only for categories with a provider', async () => {

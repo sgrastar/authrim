@@ -21,6 +21,8 @@ export interface AttributeReleaseConsentPolicy {
 }
 
 export interface ClientIdentityMappingFieldMappingSetSelector {
+	/** `none`: the client takes no mapping, whatever the tenant and platform defaults say. */
+	mode?: 'none';
 	fieldMappingSetId?: string;
 	fieldMappingVersionId?: string;
 	destinationNamespace?: string;

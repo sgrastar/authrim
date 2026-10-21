@@ -65,6 +65,8 @@ type AdminTokenEndpointAuthMethod =
   | 'private_key_jwt';
 
 interface AdminOIDCIdentityMappingSelector {
+  /** `none`: the app takes no mapping, whatever the tenant's and the platform's defaults say. */
+  mode?: 'none';
   fieldMappingSetId?: string;
   fieldMappingVersionId?: string;
   destinationNamespace?: string;
@@ -570,6 +572,39 @@ function validateOptionalIdentityMappingSelectorField(
 
   const source = value as Record<string, unknown>;
   const selector: AdminOIDCIdentityMappingSelector = {};
+  if (source.mode !== undefined && source.mode !== null) {
+    // The explicit opt-out: the whole choice. A Mapping Set beside it would be two answers.
+    if (source.mode !== 'none') {
+      return { ok: false, error: `${field}.mode must be "none"` };
+    }
+    const beside = [
+      'fieldMappingSetId',
+      'fieldMappingVersionId',
+      'destinationNamespace',
+      'sourceProfileId',
+      'destinationProfileId',
+      'policySetId',
+      'policyVersionId',
+    ].find((key) => {
+      const raw = source[key];
+      return raw !== undefined && raw !== null && !(typeof raw === 'string' && raw.trim() === '');
+    });
+    if (beside) {
+      return {
+        ok: false,
+        error: `${field}.mode "none" cannot be combined with ${field}.${beside}`,
+      };
+    }
+    return { ok: true, value: { mode: 'none' } };
+  }
+  // A selector of the older kind (a Destination Profile and no Mapping Set) is not a choice: the
+  // release fails for an app that holds one, so it is not saved, whatever the spelling.
+  if (source.destination_profile_id !== undefined && source.destination_profile_id !== null) {
+    return {
+      ok: false,
+      error: `${field}.destination_profile_id is not accepted; name a Mapping Set (fieldMappingSetId) or use { "mode": "none" }`,
+    };
+  }
   for (const key of [
     'fieldMappingSetId',
     'fieldMappingVersionId',
@@ -697,6 +732,8 @@ async function validateOIDCIdentityMappingSelector(
   selector: AdminOIDCIdentityMappingSelector | null | undefined
 ): Promise<IdentityMappingSelectorProblem | null> {
   if (selector === undefined || selector === null) return null;
+  // The opt-out names no Mapping Set, so there is nothing to check.
+  if (selector.mode === 'none') return null;
   if (!selector.fieldMappingSetId) {
     return {
       status: 400,
@@ -712,7 +749,7 @@ async function validateOIDCIdentityMappingSelector(
     // Left null: the shared check answers `admin_database_unavailable`.
   }
   // The same check as the tenant's and the platform's default Mapping Set. The platform's own sets
-  // may be chosen too (the order of the tiers allows an app to name one).
+  // may be chosen too: the release of claims reads a set under its owner.
   const result = await validateOidcMappingSetReference({
     adminAdapter,
     contextTenantId: tenantId,
