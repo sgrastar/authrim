@@ -255,6 +255,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 			`${A}/field-mapping/field-mapping-sets`,
 			`${A}/identity-mapping/usage`,
 			`${A}/identity-mapping/effective`,
+			`${A}/identity-mapping/sets`,
 			`${A}/field-mapping/templates`,
 			`${A}/field-mapping/preview`
 		]

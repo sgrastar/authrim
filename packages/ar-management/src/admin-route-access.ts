@@ -899,6 +899,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'identity field mapping'
   ),
+  ...byMethod(
+    '/api/admin/identity-mapping/sets',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping sets'
+  ),
+  ...byMethod(
+    '/api/admin/identity-mapping/sets/:id',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping set'
+  ),
   readOnly(
     '/api/admin/identity-mapping/usage',
     ADMIN_PERMISSIONS.SETTINGS_READ,
