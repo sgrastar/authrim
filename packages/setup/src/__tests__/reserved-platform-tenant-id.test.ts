@@ -168,11 +168,8 @@ describe('reserved platform tenant ID in setup', () => {
       JSON.stringify([{ success: true, results: [] }]),
       JSON.stringify([{ success: true, results: [] }]),
     ],
-    [
-      'a success followed by a lone empty list',
-      JSON.stringify([{ success: true, results: [] }]) + '\n[]',
-      '',
-    ],
+    // A lone `[]` next to a success is a diagnostic, not a second result (d1-query-output-parser
+    // .test.ts covers it): only values shaped like a D1 result count.
     [
       'one failed entry among successful ones',
       JSON.stringify([
