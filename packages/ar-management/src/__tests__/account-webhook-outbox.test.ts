@@ -50,6 +50,7 @@ beforeEach(() => {
     '002_guest_account_lifecycle.sql',
     '003_account_registration_state.sql',
     '005_account_webhook_outbox.sql',
+    '022_account_webhook_subject_lookup.sql',
   ]) {
     db.exec(
       renderPortableMigrationSql(
@@ -257,6 +258,135 @@ describe('transactional account webhook production and delivery', () => {
     expect(JSON.stringify(db.prepare('SELECT * FROM account_webhook_outbox').all())).not.toContain(
       'private-name'
     );
+  });
+  it('looks the changed subject up through an index instead of every active account', () => {
+    const triggers = db
+      .prepare(
+        `SELECT name, sql FROM sqlite_schema WHERE type = 'trigger'
+         AND (tbl_name IN ('profiles', 'profile_attribute_values', 'contact_points'))
+         AND name LIKE 'account_webhook_%'`
+      )
+      .all() as Array<{ name: string; sql: string }>;
+    expect(triggers).toHaveLength(9);
+    for (const { name, sql } of triggers) {
+      const statements = sql
+        .slice(sql.indexOf(' BEGIN') + ' BEGIN'.length, sql.lastIndexOf('END'))
+        .split(/;\s*\n/)
+        .map((statement) => statement.trim())
+        .filter(Boolean);
+      for (const statement of statements) {
+        const select = statement
+          .slice(statement.indexOf('SELECT'))
+          .replace(/;$/, '')
+          .replace(/\b(?:NEW|OLD)\.[a-z_]+/g, "'x'");
+        const plan = (
+          db.prepare(`EXPLAIN QUERY PLAN ${select}`).all() as Array<{ detail: string }>
+        ).map(({ detail }) => detail);
+        const accounts = plan.find((detail) => / a\b/.test(detail)) ?? '';
+        expect(accounts, `${name}: ${plan.join(' | ')}`).toMatch(
+          /USING (?:INDEX idx_identity_accounts_primary_subject|INDEX sqlite_autoindex_identity_accounts_1|INTEGER PRIMARY KEY)/
+        );
+      }
+    }
+  });
+  it('writes the same events as the triggers it replaced', () => {
+    const migrate = (target: SQLiteDatabase, files: string[]) => {
+      for (const file of files)
+        target.exec(
+          renderPortableMigrationSql(
+            readFileSync(
+              new URL(`../../../../migrations/core/d1/${file}`, import.meta.url),
+              'utf8'
+            ),
+            'sqlite'
+          )
+        );
+    };
+    const base = [
+      '001_0_4_0_core_baseline.sql',
+      '002_guest_account_lifecycle.sql',
+      '003_account_registration_state.sql',
+      '005_account_webhook_outbox.sql',
+    ];
+    const scenario = (target: SQLiteDatabase) => {
+      target.exec('PRAGMA foreign_keys = OFF');
+      const states = ['active', 'pending', 'disabled', 'active'];
+      for (let index = 0; index < 12; index++)
+        target
+          .prepare(
+            `INSERT INTO identity_accounts (id, tenant_id, legacy_user_id, account_type, lifecycle_state,
+               primary_subject_id, registration_state, created_at, updated_at, directory_publication_state)
+             VALUES (?, ?, ?, ?, ?, ?, 'registered', 1, 1, ?)`
+          )
+          .run(
+            `acc${index}`,
+            index < 10 ? 't' : 'other',
+            index === 3 ? null : `user${index}`,
+            index % 5 ? 'user' : 'service',
+            index === 7 ? 'deleted' : 'active',
+            index === 9 ? null : `s${index % 6}`,
+            states[index % 4]
+          );
+      for (let index = 0; index < 8; index++)
+        target
+          .prepare(
+            'INSERT INTO profiles (id, tenant_id, subject_id, profile_type, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 1)'
+          )
+          .run(`p${index}`, index < 7 ? 't' : 'other', `s${index % 6}`, `type${index}`);
+      for (let index = 0; index < 10; index++)
+        target
+          .prepare(
+            `INSERT INTO profile_attribute_values (id, tenant_id, profile_id, catalog_entry_id, value_type,
+               value_json, created_at, updated_at) VALUES (?, 't', ?, 'name', 'string', '"x"', 1, 1)`
+          )
+          .run(`v${index}`, `p${index % 9}`);
+      const contact = target.prepare(
+        `INSERT INTO contact_points (id, tenant_id, account_id, subject_id, contact_type, created_at, updated_at)
+         VALUES (?, 't', ?, ?, 'email', 1, 1)`
+      );
+      for (let index = 0; index < 12; index++)
+        contact.run(
+          `c${index}`,
+          index % 3 === 0 ? null : `acc${index % 10}`,
+          index % 4 ? `s${(index + 2) % 6}` : null
+        );
+      contact.run('c-both', 'acc1', 's1');
+      contact.run('c-shared', 'acc2', 's1');
+      target.exec("UPDATE profiles SET profile_type = profile_type || '!'");
+      target.exec('UPDATE profile_attribute_values SET value_json = \'"y"\'');
+      target.exec("UPDATE contact_points SET verification_state = 'verified'");
+      target.exec("DELETE FROM profile_attribute_values WHERE id IN ('v1', 'v2', 'v9')");
+      target.exec("DELETE FROM contact_points WHERE id IN ('c0', 'c1', 'c4', 'c-both')");
+      target.exec("DELETE FROM profiles WHERE id = 'p3'");
+      return target
+        .prepare(
+          `SELECT tenant_id, user_id, event_type, registration_state, changed_field
+           FROM account_webhook_outbox ORDER BY 1, 2, 3, 4, 5`
+        )
+        .all();
+    };
+    const replaced = new DatabaseSync(':memory:');
+    try {
+      migrate(replaced, base);
+      const expected = scenario(replaced);
+      expect(expected.length).toBeGreaterThan(20);
+      db.exec('DELETE FROM account_webhook_outbox');
+      expect(scenario(db)).toEqual(expected);
+    } finally {
+      replaced.close();
+    }
+  });
+  it('emits one contact event when the contact names the account and its subject', () => {
+    account();
+    db.exec(
+      "INSERT INTO identity_subjects (id,tenant_id,subject_type,created_at,updated_at) VALUES ('s','t','person',1,1)"
+    );
+    db.exec("UPDATE identity_accounts SET primary_subject_id = 's' WHERE tenant_id = 't'");
+    const before = events().length;
+    db.exec(
+      "INSERT INTO contact_points (id,tenant_id,account_id,subject_id,contact_type,created_at,updated_at) VALUES ('c','t','t:u','s','email',1,1)"
+    );
+    expect(events().length - before).toBe(1);
   });
   it('captures custom profile writes and deletes without leaking field values', () => {
     account();
