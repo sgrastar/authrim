@@ -3696,8 +3696,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               'Setting the initial log retention in D1...'
             );
             try {
-              await ensureInitialLogStorageSettings({ lock: currentLock });
-              logStorageSpinner.succeed('Log rows stay in D1 for 7 days, then move to R2');
+              const logStorage = await ensureInitialLogStorageSettings({ lock: currentLock });
+              logStorageSpinner.succeed(
+                logStorage === 'written'
+                  ? 'Log rows stay in D1 for 7 days, then move to R2'
+                  : 'Log storage settings already set; kept as they are'
+              );
             } catch (error) {
               // Archiving stays off (the code default) until the setting is changed.
               logStorageSpinner.warn(

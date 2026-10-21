@@ -5641,8 +5641,14 @@ export function createApiRoutes(): Hono {
                 );
               }
               try {
-                await ensureInitialLogStorageSettings({ lock: existingDeploymentLock });
-                addProgress('✅ Log rows stay in D1 for 7 days, then move to R2');
+                const logStorage = await ensureInitialLogStorageSettings({
+                  lock: existingDeploymentLock,
+                });
+                addProgress(
+                  logStorage === 'written'
+                    ? '✅ Log rows stay in D1 for 7 days, then move to R2'
+                    : '✅ Log storage settings already set; kept as they are'
+                );
               } catch (error) {
                 // Archiving stays off (the code default) until the setting is changed.
                 addProgress(`⚠️ Initial log retention not set: ${sanitizeError(error)}`);

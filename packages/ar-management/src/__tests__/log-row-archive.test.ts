@@ -19,7 +19,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
 }));
 
 import { encryptValue } from '@authrim/ar-lib-core/utils/pii-encryption';
-import { createLogRowArchiver, LOG_ROW_ARCHIVE_FORMAT } from '../log-row-archive';
+import { PHASE8_LOG_TIMESTAMP_COLUMNS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-log-window';
+import {
+  createLogRowArchiver,
+  LOG_ROW_ARCHIVE_FORMAT,
+  LOG_ROW_ARCHIVE_TABLES,
+} from '../log-row-archive';
 
 type SqlValue = string | number | bigint | null | Uint8Array;
 const DAY = 86_400_000;
@@ -209,6 +214,11 @@ describe('log row archive', () => {
   afterEach(() => {
     core.close();
     admin.close();
+  });
+
+  it('archives only tables whose event time is an integer in milliseconds or seconds', () => {
+    for (const table of LOG_ROW_ARCHIVE_TABLES)
+      expect(['ms', 's']).toContain(PHASE8_LOG_TIMESTAMP_COLUMNS[table.datasetId]?.unit);
   });
 
   it('moves whole rows older than the D1 retention to one chunk per table, in each unit', async () => {

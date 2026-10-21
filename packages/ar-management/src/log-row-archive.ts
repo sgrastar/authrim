@@ -125,10 +125,19 @@ function quote(name: string): string {
   return `"${name}"`;
 }
 
-function timestamp(table: LogRowArchiveTable) {
-  const column = PHASE8_LOG_TIMESTAMP_COLUMNS[table.datasetId] ?? invalid();
-  if (column.unit === 'iso8601') invalid();
-  return column as { column: string; unit: 'ms' | 's' };
+/** Event-time column of an archived table; only integer milliseconds or seconds are archived. */
+function timestamp(table: LogRowArchiveTable): { column: string; unit: 'ms' | 's' } {
+  const entry = PHASE8_LOG_TIMESTAMP_COLUMNS[table.datasetId] ?? invalid();
+  const { column, unit } = entry;
+  if (unit !== 'ms' && unit !== 's') return invalid();
+  quote(column);
+  return { column, unit };
+}
+
+/** A stable code for logs: error codes as thrown here, the error's name otherwise. */
+function errorCode(error: unknown): string {
+  if (!(error instanceof Error)) return 'Unknown';
+  return /^[a-z][a-z0-9_]{0,63}$/.test(error.message) ? error.message : error.name;
 }
 
 const toMs = (value: number, unit: 'ms' | 's') => (unit === 's' ? value * 1000 : value);
@@ -182,7 +191,12 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
         }>('SELECT name FROM pragma_table_info(?) ORDER BY cid', [table.table])
         .then((rows) => {
           const names = rows.map(({ name }) => name);
-          if (!names.includes('id') || !names.includes('tenant_id')) invalid();
+          if (
+            !names.includes('id') ||
+            !names.includes('tenant_id') ||
+            !names.includes(timestamp(table).column)
+          )
+            invalid();
           return names;
         });
       columnsCache.set(key, cached);
@@ -531,7 +545,7 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
           log.warn(`Log row archive ${scope} failed`, {
             table,
             bindingRef,
-            errorType: error instanceof Error ? error.message : 'Unknown',
+            errorType: errorCode(error),
           });
         };
 
