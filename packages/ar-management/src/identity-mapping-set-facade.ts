@@ -6,7 +6,7 @@
  *   GET    /api/admin/identity-mapping/sets/{id}     one set with its content, in the form of a PUT
  *   POST   /api/admin/identity-mapping/sets          create a set and give it content
  *   PUT    /api/admin/identity-mapping/sets/{id}     replace the content of a set
- *   DELETE /api/admin/identity-mapping/sets/{id}     delete a set
+ *   DELETE /api/admin/identity-mapping/sets/{id}     delete a set (switched off first, if it is on)
  *
  * A save runs the control plane's own steps in order, and nothing in them is judged again here:
  * validation (the checks the version create and the compile make, plus the release safety check
@@ -919,7 +919,12 @@ export async function adminIdentityMappingSetCreateHandler(c: AdminContext) {
   }
 }
 
-/** DELETE /api/admin/identity-mapping/sets/{id}: refused while the set is in use or switched on. */
+/**
+ * DELETE /api/admin/identity-mapping/sets/{id}: a set that is switched on is switched off and
+ * deleted in one batch. It is refused (409) while anything names the set, and when `If-Match`
+ * does not match the content version the caller read; a save or switch that lands between the
+ * read here and the batch fails the batch's own check (also 409) and deletes nothing.
+ */
 export async function adminIdentityMappingSetDeleteHandler(c: AdminContext) {
   try {
     const setId = validSetId(c);
@@ -931,6 +936,9 @@ export async function adminIdentityMappingSetDeleteHandler(c: AdminContext) {
       setId,
       'write'
     );
+    const state = await repository.findFieldMappingSetState(ownerTenantId, setId);
+    if (!state) throw notFound('field mapping set not found');
+    assertPrecondition({ ifMatch: c.req.header('If-Match'), ifNoneMatch: undefined }, state);
     refuseIfInUse(
       await checkMappingSetUnreferenced(c, { setId, ownerTenantId, action: 'deleted' })
     );
@@ -938,14 +946,21 @@ export async function adminIdentityMappingSetDeleteHandler(c: AdminContext) {
       MAPPING_SET_SAVE_STARTED,
       true
     );
-    const deleted = await repository.deleteFieldMappingSet(ownerTenantId, setId);
+    const deleted = await repository.deleteFieldMappingSetEndingActivation(ownerTenantId, setId, {
+      expectedCurrentVersionId: state.current_version_id,
+      expectedActiveVersionId: state.active_version_id,
+    });
     try {
       await createAuditLogFromContext(
         c as unknown as Parameters<typeof createAuditLogFromContext>[0],
         'identity_mapping.set.deleted',
         'field_mapping_set',
         setId,
-        { set_id: setId, owner: ownerLabel(ownerTenantId) }
+        {
+          set_id: setId,
+          owner: ownerLabel(ownerTenantId),
+          was_enabled: deleted.endedActiveVersionId !== null,
+        }
       );
     } catch {
       log.warn('The audit record of a Mapping Set deletion could not be written');

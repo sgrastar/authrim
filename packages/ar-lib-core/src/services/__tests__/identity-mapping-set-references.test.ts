@@ -353,7 +353,7 @@ describe('findMappingSetReferences', () => {
           contextTenantId: 'tenant-b',
           contextCoreAdapter: sqliteAdapter(w.cores.get('tenant-b') as DatabaseSync),
           listTenantIds: async () => ['tenant-a', 'tenant-b', 'tenant-c'],
-          maxTenants: 2,
+          limits: { tenantLimit: 2 },
         })
       );
       expect(scan.unscanned).toContainEqual({
@@ -428,6 +428,69 @@ describe('findMappingSetReferences', () => {
     ).toMatchObject({
       count: MAPPING_SET_REFERENCE_ROW_LIMIT,
       countIsLowerBound: true,
+    });
+  });
+
+  describe('limits that are given to the search', () => {
+    function addClients(w: ReturnType<typeof world>, tenantId: string, n: number) {
+      const core = w.cores.get(tenantId) as DatabaseSync;
+      for (let index = 0; index < n; index += 1) {
+        addClient(core, tenantId, `app-${tenantId}-${String(index).padStart(3, '0')}`, {
+          fieldMappingSetId: 'set-a',
+        });
+      }
+    }
+
+    it('cuts a place at the row limit it is given, not at the default', async () => {
+      const w = world();
+      addClients(w, 'tenant-a', 12);
+
+      const scan = await findMappingSetReferences(w.input({ limits: { rowLimit: 10 } }));
+
+      expect(scan.references).toHaveLength(10);
+      expect(scan.truncated).toBe(true);
+      const roomy = await findMappingSetReferences(w.input({ limits: { rowLimit: 12 } }));
+      expect(roomy.references).toHaveLength(12);
+      expect(roomy.truncated).toBe(false);
+    });
+
+    it('reads no more tenants at the same time than the concurrency it is given', async () => {
+      const w = world();
+      const tenants = ['t1', 't2', 't3', 't4', 't5', 't6'];
+      for (const id of tenants) w.cores.set(id, openCoreDatabase());
+      let running = 0;
+      let peak = 0;
+      const resolveCoreAdapter = async (tenantId: string) => {
+        running += 1;
+        peak = Math.max(peak, running);
+        await new Promise((done) => setTimeout(done, 5));
+        running -= 1;
+        return sqliteAdapter(w.cores.get(tenantId) as DatabaseSync);
+      };
+      const platform = {
+        setId: 'set-plat',
+        ownerTenantId: PLATFORM_MAPPING_TENANT_ID,
+        listTenantIds: async () => tenants,
+        resolveCoreAdapter,
+      };
+
+      await findMappingSetReferences(w.input({ ...platform, limits: { concurrency: 2 } }));
+      expect(peak).toBe(2);
+      peak = 0;
+      await findMappingSetReferences(w.input({ ...platform, limits: { concurrency: 6 } }));
+      expect(peak).toBeGreaterThan(2);
+    });
+
+    it('uses the default for a limit that is not a positive whole number (it goes into SQL)', async () => {
+      const w = world();
+      addClients(w, 'tenant-a', 3);
+      for (const rowLimit of [0, -1, 1.5, Number.NaN, '2; DROP TABLE oauth_clients']) {
+        const scan = await findMappingSetReferences(
+          w.input({ limits: { rowLimit: rowLimit as never } })
+        );
+        expect(scan.references, String(rowLimit)).toHaveLength(3);
+        expect(scan.unscanned, String(rowLimit)).toEqual([]);
+      }
     });
   });
 
@@ -579,7 +642,7 @@ describe('findMappingSetReferences', () => {
           setId: 'set-plat',
           ownerTenantId: PLATFORM_MAPPING_TENANT_ID,
           listTenantIds: list,
-          maxTenants: 7,
+          limits: { tenantLimit: 7 },
         })
       );
       expect(list).toHaveBeenCalledWith(8);

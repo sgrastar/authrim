@@ -1126,6 +1126,17 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'identity-mapping',
+      'number',
+      'value',
+      `
+    identity_mapping.reference_scan_tenant_limit
+    identity_mapping.reference_scan_row_limit
+    identity_mapping.reference_scan_concurrency
+    identity_mapping.reference_display_limit
+  `,
+    ],
+    [
       'bulk-apply',
       'number',
       'value',

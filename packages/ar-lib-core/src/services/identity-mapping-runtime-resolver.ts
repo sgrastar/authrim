@@ -18,6 +18,7 @@ import {
 } from './identity-mapping-owner';
 import {
   catalogReferenceResolver,
+  isDestinationOnlyTargetType,
   findConflictingSourceIds,
   mappingDestinationProfileIds,
   mappingReferenceCatalogEntryId,
@@ -375,7 +376,7 @@ export async function resolveRuntimeIdentityMappingBinding(
           ...ref,
           ...resolveCatalogReference(
             { namespace: ref.namespace, path: ref.path, catalogEntryId: ref.catalogEntryId },
-            { completePlace: ref.side === 'source' }
+            { completePlace: ref.side === 'source', destination: ref.side === 'destination' }
           ),
         }
       : ref;
@@ -935,12 +936,9 @@ function parseStringArray(value: unknown): string[] | undefined {
 }
 
 function normalizeTargetType(value: string): TargetType {
-  return value === 'custom' ||
-    value === 'derived' ||
-    value === 'destination-only' ||
-    value === 'review-only'
+  return value === 'custom' || value === 'derived' || value === 'review-only'
     ? value
-    : value === 'destination'
+    : isDestinationOnlyTargetType(value)
       ? 'destination-only'
       : 'canonical';
 }

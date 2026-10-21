@@ -20,6 +20,14 @@ const navItems = new Set(
 	)
 );
 
+/** The limits of the Mapping Set usage search: platform settings of the identity-mapping category. */
+const MAPPING_SCAN_KEYS = [
+	'identity_mapping.reference_scan_tenant_limit',
+	'identity_mapping.reference_scan_row_limit',
+	'identity_mapping.reference_scan_concurrency',
+	'identity_mapping.reference_display_limit'
+] as const;
+
 describe('where settings live', () => {
 	it('places only settings the API has', () => {
 		for (const key of [...placed, ...drafted]) {
@@ -238,7 +246,8 @@ describe('where settings live', () => {
 	it('lets only the platform and a tenant set the default Mapping Set, never an app', () => {
 		const category = 'identity-mapping';
 		expect(Object.keys(ALL_CATEGORY_META[category].settings)).toEqual([
-			'identity_mapping.oidc_default_set_id'
+			'identity_mapping.oidc_default_set_id',
+			...MAPPING_SCAN_KEYS
 		]);
 		expect(
 			ALL_CATEGORY_META[category].settings['identity_mapping.oidc_default_set_id'].envKey
@@ -251,6 +260,28 @@ describe('where settings live', () => {
 		expect([...placed, ...drafted], key).not.toContain(key);
 		expect(NOT_APPLIED.has(key), key).toBe(false);
 		expect(hasMessage(settingText(key).label)).toBe(false);
+	});
+
+	it('places the limits of the Mapping Set usage search once, as applied platform-only settings', () => {
+		for (const key of MAPPING_SCAN_KEYS) {
+			const meta = ALL_CATEGORY_META['identity-mapping'].settings[key];
+			expect(categoryOf(key)).toBe('identity-mapping');
+			// The search of the usage API and of the refusals reads them.
+			expect(meta.status).toBeUndefined();
+			expect(NOT_APPLIED.has(key)).toBe(false);
+			expect(meta.scopes).toEqual(['platform']);
+			expect(meta.envKey).toMatch(/^IDENTITY_MAPPING_REFERENCE_/);
+			expect(placed).not.toContain(key);
+			expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
+				{ page: 'plat-infra/scale', depth: 'search' }
+			]);
+			// Named in every language the console has.
+			expect(hasMessage(settingText(key).label)).toBe(true);
+			expect(settingText(key).description).toBeDefined();
+		}
+		expect(DRAFT_PAGES.find((page) => page.id === 'plat-infra/scale')).toMatchObject({
+			scope: 'platform'
+		});
 	});
 
 	it('places the bulk apply limits once, as applied platform-only settings', () => {

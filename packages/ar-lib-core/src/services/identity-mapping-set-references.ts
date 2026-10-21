@@ -25,17 +25,41 @@
 import type { DatabaseAdapter } from '../db/adapter';
 import { identityMappingResolutionReasonCode } from './identity-mapping-set-binding';
 import { PLATFORM_MAPPING_TENANT_ID } from './identity-mapping-owner';
+import {
+  IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT_DEFAULT,
+  IDENTITY_MAPPING_SCAN_CONCURRENCY_DEFAULT,
+  IDENTITY_MAPPING_SCAN_ROW_LIMIT_DEFAULT,
+  IDENTITY_MAPPING_SCAN_TENANT_LIMIT_DEFAULT,
+} from '../types/settings/identity-mapping';
 
 /** The setting that names the default Mapping Set, and the category it lives in. */
 const DEFAULT_SET_SETTING_PATH = '$."identity_mapping.oidc_default_set_id"';
 const IDENTITY_MAPPING_SETTINGS_CATEGORY = 'identity-mapping';
 
-/** Rows read for one place before it is cut off (the answer then says the count is a lower bound). */
-export const MAPPING_SET_REFERENCE_ROW_LIMIT = 500;
-/** Other tenants looked at for a platform set, before the rest are reported as not looked at. */
-export const MAPPING_SET_REFERENCE_TENANT_LIMIT = 200;
-/** Tenants whose Core databases are read at the same time. */
-const TENANT_SCAN_CONCURRENCY = 8;
+/**
+ * How far the search looks. The platform's settings (`identity_mapping.reference_*`, read by
+ * `resolveMappingSetReferenceLimits`) decide; these are the defaults, and what a caller that
+ * gives no limits gets.
+ */
+export interface MappingSetReferenceLimits {
+  /** Rows read for one place before it is cut off (the answer then says the count is a lower bound). */
+  rowLimit: number;
+  /** Other tenants looked at for a platform set, before the rest are reported as not looked at. */
+  tenantLimit: number;
+  /** Tenants whose Core databases are read at the same time. */
+  concurrency: number;
+  /** References listed in an answer (the count is always the whole). */
+  displayLimit: number;
+}
+
+export const DEFAULT_MAPPING_SET_REFERENCE_LIMITS: Readonly<MappingSetReferenceLimits> = {
+  rowLimit: IDENTITY_MAPPING_SCAN_ROW_LIMIT_DEFAULT,
+  tenantLimit: IDENTITY_MAPPING_SCAN_TENANT_LIMIT_DEFAULT,
+  concurrency: IDENTITY_MAPPING_SCAN_CONCURRENCY_DEFAULT,
+  displayLimit: IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT_DEFAULT,
+};
+export const MAPPING_SET_REFERENCE_ROW_LIMIT = DEFAULT_MAPPING_SET_REFERENCE_LIMITS.rowLimit;
+export const MAPPING_SET_REFERENCE_TENANT_LIMIT = DEFAULT_MAPPING_SET_REFERENCE_LIMITS.tenantLimit;
 
 export type MappingSetReferenceKind =
   | 'platform_default'
@@ -144,7 +168,24 @@ export interface FindMappingSetReferencesInput {
   settingsStore?: { get(key: string): Promise<string | null> } | null;
   /** Default `delete`. `change` leaves out what cannot be broken by switching a version off. */
   purpose?: MappingSetReferencePurpose;
-  maxTenants?: number;
+  /** The limits of the search; each one that is not given is the default. */
+  limits?: Partial<MappingSetReferenceLimits>;
+}
+
+/** The limits as the search uses them (they go into SQL): each a positive whole number, else the default. */
+function limitsOf(input: FindMappingSetReferencesInput): MappingSetReferenceLimits {
+  const pick = (key: keyof MappingSetReferenceLimits): number => {
+    const value = input.limits?.[key];
+    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+      ? value
+      : DEFAULT_MAPPING_SET_REFERENCE_LIMITS[key];
+  };
+  return {
+    rowLimit: pick('rowLimit'),
+    tenantLimit: pick('tenantLimit'),
+    concurrency: pick('concurrency'),
+    displayLimit: pick('displayLimit'),
+  };
 }
 
 function parseJsonObject(json: string | null): Record<string, unknown> {
@@ -185,7 +226,8 @@ export async function findMappingSetReferences(
   const references: MappingSetReference[] = [];
   const unscanned: UnscannedMappingSetScope[] = [];
   let truncated = false;
-  const limit = MAPPING_SET_REFERENCE_ROW_LIMIT;
+  const limits = limitsOf(input);
+  const limit = limits.rowLimit;
   const keep = (found: MappingSetReference[]) => {
     if (found.length > limit) truncated = true;
     references.push(...found.slice(0, limit));
@@ -327,10 +369,10 @@ export async function findMappingSetReferences(
   }
 
   // The apps, per tenant, in the tenant's Core database.
-  const tenantIds = await tenantsToScan(input, unscanned);
-  for (let start = 0; start < tenantIds.length; start += TENANT_SCAN_CONCURRENCY) {
-    const chunk = tenantIds.slice(start, start + TENANT_SCAN_CONCURRENCY);
-    const scans = await Promise.all(chunk.map((tenantId) => scanTenant(input, tenantId)));
+  const tenantIds = await tenantsToScan(input, limits, unscanned);
+  for (let start = 0; start < tenantIds.length; start += limits.concurrency) {
+    const chunk = tenantIds.slice(start, start + limits.concurrency);
+    const scans = await Promise.all(chunk.map((tenantId) => scanTenant(input, tenantId, limit)));
     for (const scan of scans) {
       keep(scan.references);
       if (scan.truncated) truncated = true;
@@ -344,6 +386,7 @@ export async function findMappingSetReferences(
 /** The tenants whose apps are looked at: the owner of a tenant's set, every tenant for the platform's. */
 async function tenantsToScan(
   input: FindMappingSetReferencesInput,
+  limits: MappingSetReferenceLimits,
   unscanned: UnscannedMappingSetScope[]
 ): Promise<string[]> {
   if (input.ownerTenantId !== PLATFORM_MAPPING_TENANT_ID) return [input.ownerTenantId];
@@ -356,7 +399,7 @@ async function tenantsToScan(
     unscanned.push({ area: 'tenant_directory', reason: 'tenant_directory_unavailable' });
     return [...ids];
   }
-  const max = input.maxTenants ?? MAPPING_SET_REFERENCE_TENANT_LIMIT;
+  const max = limits.tenantLimit;
   try {
     // One more than can be looked at, to tell whether there are more.
     for (const id of await input.listTenantIds(max + 1)) {
@@ -379,7 +422,8 @@ async function tenantsToScan(
 
 async function scanTenant(
   input: FindMappingSetReferencesInput,
-  tenantId: string
+  tenantId: string,
+  limit: number
 ): Promise<{
   references: MappingSetReference[];
   truncated: boolean;
@@ -387,7 +431,6 @@ async function scanTenant(
 }> {
   const references: MappingSetReference[] = [];
   const unscanned: UnscannedMappingSetScope[] = [];
-  const limit = MAPPING_SET_REFERENCE_ROW_LIMIT;
   let truncated = false;
 
   let core: DatabaseAdapter | null = null;
@@ -556,11 +599,9 @@ export interface SummarizeMappingSetReferencesOptions {
   viewerTenantId: string;
   /** Whether the viewer may see other tenants' references (global authority). */
   includeOtherTenants: boolean;
-  /** Default 20. */
+  /** Default 20 (`DEFAULT_MAPPING_SET_REFERENCE_LIMITS.displayLimit`). */
   itemLimit?: number;
 }
-
-const DEFAULT_ITEM_LIMIT = 20;
 
 /**
  * The references as a viewer may see them: their own tenant's (and the platform's own default) in
@@ -572,7 +613,7 @@ export function summarizeMappingSetReferences(
   scan: MappingSetReferenceScan,
   options: SummarizeMappingSetReferencesOptions
 ): MappingSetReferenceSummary {
-  const itemLimit = options.itemLimit ?? DEFAULT_ITEM_LIMIT;
+  const itemLimit = options.itemLimit ?? DEFAULT_MAPPING_SET_REFERENCE_LIMITS.displayLimit;
   const visibleTo = (tenantId: string | undefined) =>
     options.includeOtherTenants || tenantId === undefined || tenantId === options.viewerTenantId;
   // What a provider saved about its profile is for the check of a change, not for showing.

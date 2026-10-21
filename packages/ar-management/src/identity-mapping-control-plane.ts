@@ -3472,6 +3472,99 @@ export class IdentityMappingControlPlaneRepository {
   }
 
   /**
+   * Deletes a set that may be switched on, in one atomic batch: the set facade's DELETE, which asks
+   * for no separate "switch it off" step. The batch starts with a check that the set is still as
+   * the caller read it (the version in use, else the latest saved: the content version of the
+   * facade); when someone saved or switched it since, the check fails, nothing is deleted, and the
+   * answer is a conflict. Everything that belongs to the set goes in the same batch (the
+   * activations, the snapshots, the versions and their rules), so a request that is repeated finds
+   * either all of it or none. What names the set from elsewhere is judged by the caller.
+   */
+  async deleteFieldMappingSetEndingActivation(
+    tenantId: string,
+    fieldMappingSetId: string,
+    input: {
+      /** The set's current version when the caller read it; null: it had none. */
+      expectedCurrentVersionId: string | null;
+      /** The version in use when the caller read the set; null: it was switched off. */
+      expectedActiveVersionId: string | null;
+    }
+  ): Promise<{ id: string; tenantId: string; deleted: true; endedActiveVersionId: string | null }> {
+    const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
+    if (!fieldMappingSet) {
+      throw notFound('field mapping set not found');
+    }
+    const currentVersion = `COALESCE(
+        (SELECT field_mapping_version_id FROM field_mapping_activations
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = 'active'
+          ORDER BY activated_at DESC, created_at DESC, id DESC LIMIT 1),
+        (SELECT lv.id FROM field_mapping_versions lv
+          WHERE lv.tenant_id = ? AND lv.field_mapping_set_id = ?
+          ORDER BY (lv.lifecycle_state = 'draft') ASC, lv.created_at DESC, lv.rowid DESC LIMIT 1),
+        '')`;
+    const currentParams = [tenantId, fieldMappingSetId, tenantId, fieldMappingSetId];
+    const switchedOnBefore = input.expectedActiveVersionId === null ? 0 : 1;
+    // The version alone does not tell a set that was switched on since from one that was not (the
+    // version in use and the latest saved can be the same one), so the check holds whether the
+    // set is switched on as well.
+    const isSwitchedOn = `EXISTS(SELECT 1 FROM field_mapping_activations
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = 'active')`;
+    const guard = {
+      sql: `SELECT CASE WHEN ${currentVersion} = ? AND ${isSwitchedOn} = ?
+              THEN 0 ELSE abs(-9223372036854775807 - 1) END AS deletion_check`,
+      params: [
+        ...currentParams,
+        input.expectedCurrentVersionId ?? '',
+        tenantId,
+        fieldMappingSetId,
+        switchedOnBefore,
+      ],
+    };
+    try {
+      await this.adapter.batch([
+        guard,
+        ...this.fieldMappingVersionRowDeletes(tenantId, fieldMappingSetId, null),
+        {
+          sql: `DELETE FROM field_mapping_activations WHERE tenant_id = ? AND field_mapping_set_id = ?`,
+          params: [tenantId, fieldMappingSetId],
+        },
+        {
+          sql: `DELETE FROM field_mapping_versions WHERE tenant_id = ? AND field_mapping_set_id = ?`,
+          params: [tenantId, fieldMappingSetId],
+        },
+        {
+          sql: `DELETE FROM field_mapping_sets WHERE tenant_id = ? AND id = ?`,
+          params: [tenantId, fieldMappingSetId],
+        },
+      ]);
+    } catch (error) {
+      await this.settleFailedBatch(error, async () => {
+        const remaining = await this.adapter.queryOne<{
+          current: string;
+          present: number;
+          switched_on: number;
+        }>(
+          `SELECT ${currentVersion} AS current,
+                  (SELECT COUNT(*) FROM field_mapping_sets WHERE tenant_id = ? AND id = ?) AS present,
+                  ${isSwitchedOn} AS switched_on`,
+          [...currentParams, tenantId, fieldMappingSetId, tenantId, fieldMappingSetId]
+        );
+        if (!remaining || remaining.present === 0) return 'done';
+        return remaining.current !== (input.expectedCurrentVersionId ?? '') ||
+          Number(remaining.switched_on) !== switchedOnBefore
+          ? 'conflict'
+          : 'not_done';
+      });
+    }
+    return {
+      id: fieldMappingSetId,
+      tenantId,
+      deleted: true,
+      endedActiveVersionId: input.expectedActiveVersionId,
+    };
+  }
+
+  /**
    * The kind of each Destination Profile a mapping's edges release into, as the set facade
    * judges what a set can be switched on for. A profile is read from the owner's namespace or the
    * platform's; one that is not there is `null`. Keys are the references as the edges wrote them.

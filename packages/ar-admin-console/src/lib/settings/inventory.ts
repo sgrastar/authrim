@@ -731,6 +731,29 @@ place(
 	}
 );
 
+place(
+	'plat-infra/scale',
+	'Mapping Set usage search',
+	{
+		search: [
+			'identity_mapping.reference_scan_tenant_limit',
+			'identity_mapping.reference_scan_row_limit',
+			'identity_mapping.reference_scan_concurrency',
+			'identity_mapping.reference_display_limit'
+		]
+	},
+	{
+		'identity_mapping.reference_scan_tenant_limit':
+			'Platform setting only. How many tenants are read when looking for what uses a platform Mapping Set; more tenants than this and a deletion or switch-off is refused.',
+		'identity_mapping.reference_scan_row_limit':
+			'Platform setting only. Rows read from one place before it is cut off and the count is given as a lower bound.',
+		'identity_mapping.reference_scan_concurrency':
+			'Platform setting only. Tenants read at the same time.',
+		'identity_mapping.reference_display_limit':
+			'Platform setting only. References listed in an answer; the count is always the whole.'
+	}
+);
+
 // ---------------------------------------------------------------------------------------------
 // Not shown: deploy-time, in development, and duplicates
 

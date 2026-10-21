@@ -31,6 +31,27 @@ app cannot be given a platform set directly yet: the Admin API refuses the app's
 names one (it answers as a set that does not exist), until the backup side can carry that
 reference (see "What the backup side has to do" at the end of this page).
 
+## What a platform Mapping Set is checked for, in the three places that read it
+
+The same rules judge a platform set when its version is saved, compiled and activated, and the
+runtime reads it by the same resolution (`catalogReferenceResolver`), so none of them reads a
+reference differently from the others:
+
+- A source that names **only a catalog entry** (no namespace and no path) reads the place the
+  entry describes. Once that place is known it is judged like a place the author wrote: an entry
+  whose namespace is one only a tenant defines the keys of (`authrim.custom_claims`,
+  `authrim.custom_fields`, `authrim.attributes`, or a path into them) is refused when the version
+  is compiled and again when it is activated, though the entry is not marked `custom`. A
+  destination or a validation rule that names such an entry is refused the same way.
+- A **destination** keeps the claim name it is written under (a custom claim name differs from the
+  catalog entry's own path). Only its catalog entry ID is brought to the stable ID the runtime
+  catalog carries, whatever the claim is called. Before, an ID that was an entry's row ID stayed
+  as it was when the claim name differed from the entry's path, and the value was dropped when the
+  mapping was released.
+- An entry of the older taxonomy `destination` is `destination-only` for every check, as the
+  runtime reads it: it describes what is released, so it is never a source, and a source that
+  names only it completes to no place. Compile and activation read the stored word the same way.
+
 ## Backup and restore
 
 A platform Mapping Set is **not part of a tenant backup**. A tenant backup holds the rows of that

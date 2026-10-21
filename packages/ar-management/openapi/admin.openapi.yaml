@@ -2191,7 +2191,13 @@ paths:
         Profile; a platform-owned set must also hold only what a platform set may hold. 503
         temporarily_unavailable when the Admin database cannot be read to check it (nothing is
         saved). The category is not available for apps (400), and cannot be rolled back through the
-        settings history routes (400).
+        settings history routes (400). The category also holds platform-only limits of the search
+        for what names a Mapping Set (identity_mapping.reference_scan_tenant_limit 1 to 1000,
+        reference_scan_row_limit 10 to 5000, reference_scan_concurrency 1 to 16 and
+        reference_display_limit 1 to 100, whole numbers; defaults 200, 500, 8 and 20; a value
+        outside the range is refused with 400 on the platform and is not accepted for a tenant).
+        A value in the environment or the store that is outside the range is ignored and the
+        default is used.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2412,7 +2418,13 @@ paths:
         Profile; a platform-owned set must also hold only what a platform set may hold. 503
         temporarily_unavailable when the Admin database cannot be read to check it (nothing is
         saved). The category is not available for apps (400), and cannot be rolled back through the
-        settings history routes (400).
+        settings history routes (400). The category also holds platform-only limits of the search
+        for what names a Mapping Set (identity_mapping.reference_scan_tenant_limit 1 to 1000,
+        reference_scan_row_limit 10 to 5000, reference_scan_concurrency 1 to 16 and
+        reference_display_limit 1 to 100, whole numbers; defaults 200, 500, 8 and 20; a value
+        outside the range is refused with 400 on the platform and is not accepted for a tenant).
+        A value in the environment or the store that is outside the range is ignored and the
+        default is used.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -11163,7 +11175,11 @@ paths:
         only the calling tenant's databases are read, what the Admin database holds of other
         tenants is given as a count (`usage.otherTenants`, with `scanned` false), and
         `usage.unscanned` lists the other tenants as not looked at. Places that could not be
-        checked are listed in `usage.unscanned`, and `usage.scanComplete` is false. The endpoint
+        checked are listed in `usage.unscanned`, and `usage.scanComplete` is false. How far the
+        search looks is set by the platform (`identity_mapping.reference_scan_tenant_limit`,
+        `identity_mapping.reference_scan_row_limit`, `identity_mapping.reference_scan_concurrency`
+        and `identity_mapping.reference_display_limit` of the `identity-mapping` category; a place
+        with more rows than the limit is cut off and the count is a lower bound). The endpoint
         is rate limited with the strict profile.
       parameters:
         - name: set_id
@@ -11481,16 +11497,31 @@ paths:
       operationId: deleteApiAdminIdentityMappingSetsById
       summary: Delete a Mapping Set.
       description: >-
-        Deletes a Mapping Set with its versions, as `DELETE /api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}`
-        does: refused with 409 while the set is switched on (switch it off with `enabled: false`
-        first), refused with 409 (`reason` `referenced` or `scan_incomplete`, with `references`)
-        while a default, an app, a SAML provider, a credential profile or SCIM still names it. A
+        Deletes a Mapping Set with its versions. A set that is switched on is switched off and
+        deleted by the same request, in one atomic batch: there is no separate step of switching it
+        off first (the older `DELETE /api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}`
+        still refuses an active set). The request is refused with 409 (`reason` `referenced` or
+        `scan_incomplete`, with `references`) while a default, an app, a SAML provider, a
+        credential profile, a federation trust source or SCIM still names the set, or when where it
+        is used could not be checked everywhere; nothing is changed then. `If-Match` (optional)
+        carries the `content_version` (or `ETag`) read last; another value is refused with 409 and
+        nothing is deleted. Whether or not it is sent, the batch starts with a check that the set
+        is still as this request read it (the version in use, else the one saved last): a save or
+        a switch by someone else in between fails the check with 409 and deletes nothing. A
         platform set needs platform authority (403); a set another tenant owns, and one that does
-        not exist, answer 404. `Idempotency-Key` is required. One audit record
-        (`identity_mapping.set.deleted`). Rate limited with the strict profile.
+        not exist, answer 404 (a repeat without an `Idempotency-Key` match after the set is gone is
+        a 404; a repeat with the same key is answered with the stored answer). `Idempotency-Key`
+        is required. One audit record (`identity_mapping.set.deleted`, with whether the set was
+        switched on). Rate limited with the strict profile.
       parameters:
         - $ref: '#/components/parameters/MappingSetId'
         - $ref: '#/components/parameters/RequiredIdempotencyKey'
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+          description: The `content_version` (or `ETag`) of the set as it was read.
       responses:
         '200':
           $ref: '#/components/responses/MappingSetDeleted'
