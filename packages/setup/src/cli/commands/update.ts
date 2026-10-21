@@ -2004,6 +2004,15 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       } catch (error) {
         controlSpinner.fail('ar-control configuration refresh failed');
         console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+        if (
+          error instanceof Error &&
+          error.message.startsWith('control_generated_d1_binding_not_ready:')
+        )
+          console.error(
+            chalk.yellow(
+              `  Control requested a database that is not provisioned yet. Run \`authrim-setup control-provision --env ${env}\`, then run this update again.`
+            )
+          );
         throw error instanceof Error
           ? error
           : new Error('control_coordinator_refresh_failed', { cause: error });

@@ -52,14 +52,19 @@ describe('Phase 8 row transform', () => {
     const boundary = 100 * 86_400_000;
     const row = (createdAt: number) =>
       JSON.stringify({ id: ['text', 'id'], created_at: ['integer', String(createdAt)] });
-    await expect(filter(context('core.audit_log', row(93 * 86_400_000), boundary))).resolves.toBe(
-      true
-    );
     await expect(
-      filter(context('core.audit_log', row(93 * 86_400_000 - 1), boundary))
+      filter(context('admin.admin_audit_log', row(93 * 86_400_000), boundary))
+    ).resolves.toBe(true);
+    await expect(
+      filter(context('admin.admin_audit_log', row(93 * 86_400_000 - 1), boundary))
     ).resolves.toBe(false);
-    await expect(filter(context('core.audit_log', row(boundary)))).rejects.toThrow(
+    await expect(filter(context('admin.admin_audit_log', row(boundary)))).rejects.toThrow(
       'backup_phase8_log_boundary'
+    );
+    // core.audit_log stores seconds; the same instant must land on the same side of the window.
+    await expect(filter(context('core.audit_log', row(93 * 86_400), boundary))).resolves.toBe(true);
+    await expect(filter(context('core.audit_log', row(93 * 86_400 - 1), boundary))).resolves.toBe(
+      false
     );
   });
 

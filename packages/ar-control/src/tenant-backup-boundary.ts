@@ -1,5 +1,6 @@
 import {
   TENANT_BACKUP_BOUNDARY_DEADLINE_MS,
+  TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS,
   TenantBackupMutationAdmission,
   type TenantMutationBoundary,
 } from '@authrim/ar-lib-core/services/tenant-portability/mutation-admission';
@@ -145,7 +146,8 @@ async function admitBoundaryBatch(input: {
          AND created_at<=${clock} AND deadline_at>${clock}
          AND NOT EXISTS (SELECT 1 FROM tenant_backup_mutation_permits
            WHERE ((environment_id=? AND (tenant_id=? OR scope='environment'))
-             OR (?!='legacy' AND environment_id='legacy')) AND completed_at IS NULL)
+             OR (?!='legacy' AND environment_id='legacy')) AND completed_at IS NULL
+             AND created_at>${clock}-${TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS})
          RETURNING *`
       )
       .bind(
@@ -157,7 +159,8 @@ async function admitBoundaryBatch(input: {
         input.now,
         input.environmentId,
         input.tenantId,
-        input.environmentId
+        input.environmentId,
+        input.now
       ),
   ]);
   const held = results[3]?.results?.[0] as TenantMutationBoundary | undefined;
