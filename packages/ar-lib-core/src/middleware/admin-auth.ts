@@ -229,13 +229,14 @@ export function hasGlobalAdminRole(
  * control plane, platform logging, the database connections), and it is not read from `roles` or
  * `permissions`, which also hold what is given for one tenant only.
  *
- * `includeGlobalScopeMachine` also accepts a machine token whose tenant scope is global: its
- * permissions are all global ones, and the operation's own permission rule decides which of them
- * it needs.
+ * `machinePermission` also accepts a machine token that holds that permission for every tenant
+ * (see `hasGlobalMachinePermission`): a token with a global scope but without it is not a platform
+ * administrator, whatever else it holds. A gate that has no permission of its own to name asks for
+ * `admin:*`.
  */
 export function hasGlobalPlatformAuthority(
   authContext: AdminAuthContext | undefined,
-  includeGlobalScopeMachine = false
+  machinePermission?: string
 ): boolean {
   if (!authContext) {
     return false;
@@ -247,9 +248,7 @@ export function hasGlobalPlatformAuthority(
     return true;
   }
   return (
-    includeGlobalScopeMachine &&
-    authContext.authMethod === 'machine_access_token' &&
-    (authContext.tenantScope ?? []).includes('*')
+    machinePermission !== undefined && hasGlobalMachinePermission(authContext, machinePermission)
   );
 }
 

@@ -60,10 +60,30 @@ export function hasGlobalPlatformSettingsEdit(
   return checkRolePermission(adminAuth.globalRoles ?? [], category, 'platform', 'edit');
 }
 
+/**
+ * The roles a person holds for `tenantId`. `adminAuth.roles` adds up the global assignments and the
+ * ones for the tenant the request arrived on (`adminAuth.tenantId`), so they are the caller's roles
+ * for that tenant only; for any other tenant, only the global assignments (under a global tenant
+ * scope) hold. A tenant-only super_admin, or a global viewer who is a super_admin of one tenant,
+ * is therefore not a super_admin of the others.
+ */
+export function rolesForTenant(
+  adminAuth: AdminAuthContext,
+  tenantId: string | undefined
+): readonly string[] {
+  if (tenantId === undefined || tenantId === adminAuth.tenantId) return adminAuth.roles;
+  return (adminAuth.tenantScope ?? []).includes('*') ? (adminAuth.globalRoles ?? []) : [];
+}
+
+/**
+ * Whether the caller may view or edit a category of the tenant's settings. `tenantId` is the tenant
+ * the settings belong to; left out, it is the tenant the request arrived on.
+ */
 export function hasTenantSettingsPermission(
   adminAuth: AdminAuthContext | undefined,
   category: CategoryName,
-  action: 'view' | 'edit'
+  action: 'view' | 'edit',
+  tenantId?: string
 ): boolean {
   if (!adminAuth) return false;
   if (
@@ -85,7 +105,7 @@ export function hasTenantSettingsPermission(
         : ADMIN_PERMISSIONS.SETTINGS_READ;
     return hasAdminPermission(adminAuth.permissions ?? [], required);
   }
-  return checkRolePermission(adminAuth.roles, category, 'tenant', action);
+  return checkRolePermission([...rolesForTenant(adminAuth, tenantId)], category, 'tenant', action);
 }
 
 export function hasClientSettingsPermission(
@@ -127,7 +147,8 @@ export function isCategoryWritableAtScope(
 
 /**
  * Check if user can access a specific tenant's data
- * super_admin, system_admin and distributor_admin can access any tenant
+ * super_admin, system_admin and distributor_admin can access any tenant, as long as they hold the
+ * role for every tenant (a global assignment) or the tenant is the one the request arrived on
  * org_admin can only access their own tenant
  */
 export function canAccessTenant(
@@ -148,7 +169,9 @@ export function canAccessTenant(
     );
   }
 
-  const userRoles = adminAuth.roles;
+  // Only the roles held for this tenant count: for a tenant other than the request's, those of
+  // the global assignments.
+  const userRoles = rolesForTenant(adminAuth, tenantId);
 
   // super_admin, system_admin and distributor_admin can access any tenant
   if (

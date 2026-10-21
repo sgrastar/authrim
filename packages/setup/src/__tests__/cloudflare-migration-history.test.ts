@@ -227,6 +227,7 @@ describe('D1 migration history safety', () => {
             '[wrangler:notice] update available\n' +
             JSON.stringify([
               {
+                success: true,
                 results: [
                   {
                     filename: fixture.filename,
@@ -280,7 +281,11 @@ describe('D1 migration history safety', () => {
         };
       }
       if (sql === AUTHRIM_MIGRATION_HISTORY_SQL) {
-        return { exitCode: 0, stdout: JSON.stringify([{ results: [] }]), stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ success: true, results: [] }]),
+          stderr: '',
+        };
       }
       return { exitCode: 0, stdout: '', stderr: '' };
     });
@@ -561,7 +566,7 @@ describe('D1 migration history safety', () => {
       if (args.join(' ').includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
         return {
           exitCode: 0,
-          stdout: JSON.stringify([{ results: [] }]),
+          stdout: JSON.stringify([{ success: true, results: [] }]),
           stderr: '',
         };
       }
@@ -613,6 +618,7 @@ describe('D1 migration history safety', () => {
             exitCode: 0,
             stdout: JSON.stringify([
               {
+                success: true,
                 results: rows.map((row) => ({ ...row, applied_at: 1, execution_time_ms: 1 })),
               },
             ]),
@@ -811,6 +817,7 @@ describe('D1 migration history safety', () => {
           exitCode: 0,
           stdout: JSON.stringify([
             {
+              success: true,
               results: [
                 {
                   filename: fixture.filename,
@@ -871,6 +878,7 @@ describe('D1 migration history safety', () => {
           exitCode: 0,
           stdout: JSON.stringify([
             {
+              success: true,
               results: [
                 {
                   filename: '001_draft.sql',
@@ -936,7 +944,11 @@ describe('D1 migration history safety', () => {
     const fixture = createMigrationFixture();
     execaMock.mockImplementation(async (_command: string, args: string[]) => {
       if (args.join(' ').includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
-        return { exitCode: 0, stdout: JSON.stringify([{ results: [] }]), stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ success: true, results: [] }]),
+          stderr: '',
+        };
       }
       return { exitCode: 0, stdout: '', stderr: '' };
     });
@@ -987,7 +999,7 @@ describe('D1 migration history safety', () => {
     });
     execaMock.mockResolvedValue({
       exitCode: 0,
-      stdout: JSON.stringify([{ results: [] }]),
+      stdout: JSON.stringify([{ success: true, results: [] }]),
       stderr: '',
     });
 
@@ -1095,7 +1107,11 @@ describe('D1 migration history safety', () => {
     const progress: string[] = [];
     execaMock.mockImplementation(async (_command: string, args: string[]) => {
       if (args.join(' ').includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
-        return { exitCode: 0, stdout: JSON.stringify([{ results: [] }]), stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ success: true, results: [] }]),
+          stderr: '',
+        };
       }
       return { exitCode: 0, stdout: '', stderr: '' };
     });
@@ -1149,6 +1165,7 @@ describe('D1 migration history safety', () => {
           exitCode: 0,
           stdout: JSON.stringify([
             {
+              success: true,
               results: [
                 {
                   filename: '001_draft_schema.sql',
@@ -1215,6 +1232,7 @@ describe('D1 migration history safety', () => {
           exitCode: 0,
           stdout: JSON.stringify([
             {
+              success: true,
               results: [
                 {
                   filename: '001_status_draft.sql',
@@ -1259,6 +1277,7 @@ describe('D1 migration history safety', () => {
           exitCode: 0,
           stdout: JSON.stringify([
             {
+              success: true,
               results:
                 historyQueries === 1
                   ? []
@@ -1325,7 +1344,11 @@ describe('D1 migration history safety', () => {
     const executedFiles: string[] = [];
     execaMock.mockImplementation(async (_command: string, args: string[]) => {
       if (args.join(' ').includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
-        return { exitCode: 0, stdout: JSON.stringify([{ results: [] }]), stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ success: true, results: [] }]),
+          stderr: '',
+        };
       }
       const fileIndex = args.indexOf('--file');
       if (fileIndex >= 0) executedFiles.push(readFileSync(args[fileIndex + 1], 'utf-8'));

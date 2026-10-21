@@ -52,6 +52,8 @@ function app(tenantId = 'fapi2') {
       userId: 'admin-1',
       authMethod: 'session',
       roles: ['system_admin'],
+      // The roles are the ones held for the tenant the request arrived on.
+      tenantId,
     } as AdminAuthContext);
     await next();
   });

@@ -215,7 +215,7 @@ async function planCategory(
 
   // The caller's own authority over this tenant's category, as the PATCH route would judge it.
   if (
-    !hasTenantSettingsPermission(adminAuth, change.category as CategoryName, 'edit') ||
+    !hasTenantSettingsPermission(adminAuth, change.category as CategoryName, 'edit', tenantId) ||
     !canReachTenant(adminAuth, tenantId)
   ) {
     for (const entry of eligible) reject(entry, 'forbidden');

@@ -30,7 +30,13 @@ import {
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { writeAdminAuditLog } from '../../admin-shared';
-import { callerOutranks, callerOutranksGlobally } from './admin-role-authority';
+import {
+  callerOutranks,
+  callerOutranksGlobally,
+  loadAdminStanding,
+  mayActOnAdminAccount,
+  mayRemoveAssignment,
+} from './admin-role-authority';
 
 // Create router
 export const adminUsersRouter = new Hono<{
@@ -179,6 +185,29 @@ async function ensureNotRemovingLastPlatformAdmin(
     },
     409
   );
+}
+
+/**
+ * An account that holds a global assignment, or a role above the caller's own, is acted on with
+ * the permission and the hierarchy of the caller's global assignments. Acting on oneself keeps its
+ * own rules.
+ */
+async function requireAuthorityOverAccount(
+  c: AdminContext,
+  adapter: ReturnType<typeof getAdminAdapter>,
+  tenantId: string,
+  authContext: AdminAuthContext,
+  targetId: string,
+  permission: string
+): Promise<Response | null> {
+  if (targetId === authContext.userId) {
+    return null;
+  }
+  const standing = await loadAdminStanding(adapter, tenantId, targetId);
+  if (mayActOnAdminAccount(authContext, standing, permission)) {
+    return null;
+  }
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
 }
 
 /**
@@ -356,6 +385,18 @@ adminUsersRouter.patch('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const authorityResponse = await requireAuthorityOverAccount(
+      c,
+      adapter,
+      tenantId,
+      authContext,
+      id,
+      ADMIN_PERMISSIONS.ADMIN_USERS_WRITE
+    );
+    if (authorityResponse) {
+      return authorityResponse;
+    }
+
     const body = await c.req.json<{
       name?: string;
       email?: string;
@@ -420,6 +461,18 @@ adminUsersRouter.delete('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const authorityResponse = await requireAuthorityOverAccount(
+      c,
+      adapter,
+      tenantId,
+      authContext,
+      id,
+      ADMIN_PERMISSIONS.ADMIN_USERS_DELETE
+    );
+    if (authorityResponse) {
+      return authorityResponse;
+    }
+
     // Prevent self-deletion
     if (id === authContext.userId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
@@ -473,6 +526,18 @@ adminUsersRouter.post('/:id/suspend', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const authorityResponse = await requireAuthorityOverAccount(
+      c,
+      adapter,
+      tenantId,
+      authContext,
+      id,
+      ADMIN_PERMISSIONS.ADMIN_USERS_WRITE
+    );
+    if (authorityResponse) {
+      return authorityResponse;
+    }
+
     // Prevent self-suspension
     if (id === authContext.userId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
@@ -523,6 +588,18 @@ adminUsersRouter.post('/:id/activate', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const authorityResponse = await requireAuthorityOverAccount(
+      c,
+      adapter,
+      tenantId,
+      authContext,
+      id,
+      ADMIN_PERMISSIONS.ADMIN_USERS_WRITE
+    );
+    if (authorityResponse) {
+      return authorityResponse;
+    }
+
     await userRepo.activateAccount(id);
 
     // Create audit log
@@ -556,6 +633,18 @@ adminUsersRouter.post('/:id/unlock', async (c) => {
     const existing = await userRepo.findByTenantAndId(tenantId, id);
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const authorityResponse = await requireAuthorityOverAccount(
+      c,
+      adapter,
+      tenantId,
+      authContext,
+      id,
+      ADMIN_PERMISSIONS.ADMIN_USERS_WRITE
+    );
+    if (authorityResponse) {
+      return authorityResponse;
     }
 
     await userRepo.unlockAccount(id);
@@ -719,6 +808,10 @@ adminUsersRouter.delete('/:id/role-assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    if (!mayRemoveAssignment(authContext, assignment.scope_type, role.hierarchy_level)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
     if (isPlatformAdminRole(role.name)) {
       const activePlatformAdmins = await countActivePlatformAdmins(adapter, tenantId, role.id);
       if (activePlatformAdmins <= 1) {
@@ -786,6 +879,19 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
     const role = await roleRepo.getRole(roleId);
     if (!role) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    // This removes the role under every scope the user holds it in: each is judged as removing
+    // that assignment by its ID would be.
+    const held = (await roleAssignmentRepo.getAssignmentsByUser(id, true)).filter(
+      (assignment) => assignment.admin_role_id === roleId
+    );
+    if (
+      !held.every((assignment) =>
+        mayRemoveAssignment(authContext, assignment.scope_type, role.hierarchy_level)
+      )
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     if (isPlatformAdminRole(role.name)) {

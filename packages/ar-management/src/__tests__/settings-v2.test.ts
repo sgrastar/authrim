@@ -4891,6 +4891,7 @@ describe('Settings API v2', () => {
           authMethod: 'bearer',
           roles: ['org_admin'],
           org_id: 'tenant_123',
+          tenantId: 'tenant_123',
         },
       });
 
