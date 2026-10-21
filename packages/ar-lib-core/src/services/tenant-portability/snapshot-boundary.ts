@@ -120,9 +120,15 @@ export async function startTenantBackupSnapshotBoundary(input: {
     if (released.held_at !== boundaryUnixMs)
       throw new Error('backup_boundary_snapshot_timestamp_invalid');
     return released;
-  } catch {
+  } catch (error) {
     // A lost successful release response remains released; abort only changes active attempts.
     await receipts.abort(identity, now());
-    throw new Error('backup_snapshot_boundary_failed');
+    // The cause's code travels with the failure (it reaches the scheduler's log); anything else
+    // stays out of it.
+    const code =
+      error instanceof Error && /^[a-z][a-z0-9_]{0,63}$/.test(error.message) ? error.message : null;
+    throw new Error(
+      code ? `backup_snapshot_boundary_failed:${code}` : 'backup_snapshot_boundary_failed'
+    );
   }
 }

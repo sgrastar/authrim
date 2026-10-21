@@ -101,6 +101,7 @@ const resolveDeployLookupHmacStateMock = vi.hoisted(() =>
 const loadControlStagedSigningKeysMock = vi.hoisted(() => vi.fn());
 const projectControlGeneratedKeyStateMock = vi.hoisted(() => vi.fn());
 const listPendingControlOperatorOperationsMock = vi.hoisted(() => vi.fn());
+const getActiveReleaseRolloutHandoffStatusMock = vi.hoisted(() => vi.fn());
 const listPendingPluginControlOperatorOperationsMock = vi.hoisted(() => vi.fn());
 const listPendingPluginControlCleanupOperationsMock = vi.hoisted(() => vi.fn());
 const listPendingTenantDisasterRecoveryOperatorOperationsMock = vi.hoisted(() => vi.fn());
@@ -351,6 +352,10 @@ vi.mock('../core/control-token-bootstrap-orchestrator.js', async (importOriginal
   };
 });
 
+vi.mock('../core/release-rollout-handoff.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../core/release-rollout-handoff.js')>()),
+  getActiveReleaseRolloutHandoffStatus: getActiveReleaseRolloutHandoffStatusMock,
+}));
 vi.mock('../core/control-operator-operations.js', () => ({
   listPendingControlOperatorOperations: listPendingControlOperatorOperationsMock,
   listPendingPluginControlOperatorOperations: listPendingPluginControlOperatorOperationsMock,
@@ -1040,6 +1045,8 @@ describe('setup web worker update API', () => {
     loadControlStagedSigningKeysMock.mockReset();
     projectControlGeneratedKeyStateMock.mockReset();
     listPendingControlOperatorOperationsMock.mockReset();
+    getActiveReleaseRolloutHandoffStatusMock.mockReset();
+    getActiveReleaseRolloutHandoffStatusMock.mockResolvedValue(null);
     listPendingPluginControlOperatorOperationsMock.mockReset();
     listPendingPluginControlCleanupOperationsMock.mockReset();
     listPendingTenantDisasterRecoveryOperatorOperationsMock.mockReset();
@@ -4323,6 +4330,54 @@ describe('setup web worker update API', () => {
       operation,
     });
     expect(executeSetupControlOperatorWorkerBindingsMock).not.toHaveBeenCalled();
+  });
+
+  it('provisions a shard before a stopped update hands off to Control, only without a rollout', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    lock.releaseUpdate = {
+      targetVersion: lock.productVersion,
+      phase: 'control_handoff',
+      manifestChecksum: 'a'.repeat(64),
+      startedAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    const operation = {
+      operationId: 'provision-shard-1',
+      environmentId: env,
+      operationKind: 'provision_shard',
+      status: 'blocked',
+      currentStep: 'create_d1',
+    } as const;
+    listPendingControlOperatorOperationsMock.mockResolvedValue([operation]);
+    executeSetupControlOperatorCreateMock.mockResolvedValue({ state: 'waiting_retry' });
+    const execute = () =>
+      createApiRoutes().request('/control/pending-operations/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Token': generateSessionToken(),
+          Origin: 'http://localhost',
+        },
+        body: JSON.stringify({ environmentId: env, operationId: operation.operationId }),
+      });
+
+    getActiveReleaseRolloutHandoffStatusMock.mockResolvedValueOnce({ operationId: 'rollout-1' });
+    const withRollout = await execute();
+    expect(withRollout.status).toBe(409);
+    await expect(withRollout.json()).resolves.toMatchObject({
+      errorCode: 'control_provision_release_update_in_progress',
+    });
+    getActiveReleaseRolloutHandoffStatusMock.mockRejectedValueOnce(new Error('d1_unavailable'));
+    expect((await execute()).status).toBe(409);
+    expect(executeSetupControlOperatorCreateMock).not.toHaveBeenCalled();
+
+    const withoutRollout = await execute();
+    expect(withoutRollout.status, await withoutRollout.clone().text()).toBe(200);
+    expect(executeSetupControlOperatorCreateMock).toHaveBeenCalledOnce();
   });
 
   it('blocks Web Control execution while a release mutation is incomplete', async () => {
