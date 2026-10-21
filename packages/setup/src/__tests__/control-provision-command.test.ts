@@ -28,10 +28,14 @@ const mocks = vi.hoisted(() => ({
   listD1: vi.fn(),
   assertR2Use: vi.fn(),
   refreshWorkerArtifacts: vi.fn(),
+  activeRollout: vi.fn(),
   spinner: { start: vi.fn(), succeed: vi.fn(), warn: vi.fn(), fail: vi.fn() },
 }));
 
 vi.mock('ora', () => ({ default: vi.fn(() => mocks.spinner) }));
+vi.mock('../core/release-rollout-handoff.js', () => ({
+  getActiveReleaseRolloutHandoffStatus: mocks.activeRollout,
+}));
 vi.mock('../core/control-operator-operations.js', () => ({
   listPendingControlOperatorOperations: mocks.listPending,
   listPendingPluginControlOperatorOperations: mocks.listPendingPlugin,
@@ -161,6 +165,7 @@ describe('control-provision CLI command', () => {
     vi.clearAllMocks();
     mocks.spinner.start.mockReturnValue(mocks.spinner);
     mocks.listPending.mockResolvedValue([pending]);
+    mocks.activeRollout.mockResolvedValue(null);
     mocks.listPendingPlugin.mockResolvedValue([]);
     mocks.listPendingPluginCleanup.mockResolvedValue([]);
     mocks.listPendingTenantDr.mockResolvedValue([]);
@@ -422,6 +427,34 @@ describe('control-provision CLI command', () => {
       expect(mocks.refreshWorkerArtifacts).not.toHaveBeenCalled();
     }
   );
+
+  it('provisions a shard Control requested while an update waits before its Control handoff', async () => {
+    const stopped = {
+      releaseUpdate: {
+        targetVersion: '0.4.0',
+        phase: 'control_handoff',
+        manifestChecksum: 'c'.repeat(64),
+        startedAt: '2026-08-31T00:00:00.000Z',
+        updatedAt: '2026-08-31T00:00:01.000Z',
+        appliedTargets: [],
+        manualTargets: [],
+      },
+    };
+    await updateEnvironmentLock((lock) => ({ ...lock, ...stopped }));
+    // Control already holds the rollout the lock has not recorded: nothing runs.
+    mocks.activeRollout.mockResolvedValueOnce({ operationId: 'op_release_rollout_1' });
+    await expect(
+      controlProvisionCommand({ env: 'test', operationId: pending.operationId, yes: true })
+    ).rejects.toThrow('control_provision_release_update_in_progress');
+    expect(mocks.execute).not.toHaveBeenCalled();
+    // Without a rollout the shard's step runs.
+    await controlProvisionCommand({ env: 'test', operationId: pending.operationId, yes: true });
+    expect(mocks.execute).toHaveBeenCalledOnce();
+    expect(mocks.activeRollout).toHaveBeenLastCalledWith({
+      controlDatabaseId: expect.any(String),
+      environmentId: 'test',
+    });
+  });
 
   it('applies the pinned migration through the migration executor', async () => {
     const digest = 'b'.repeat(64);

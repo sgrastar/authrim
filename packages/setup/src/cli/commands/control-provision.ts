@@ -37,9 +37,11 @@ import { runEphemeralSetupMachineAccess } from '../../core/setup-machine-access-
 import { resolveIssuerUrl } from '../../core/url-config.js';
 import { refreshWorkerDeploymentArtifacts } from '../../core/worker-deployment-artifacts.js';
 import {
+  assertControlProvisionBeforeControlHandoff,
   assertControlProvisionMutationState,
   CONTROL_WORKER_BINDING_INTER_TARGET_DELAY_MS,
 } from '../../core/control-provision-policy.js';
+import { getActiveReleaseRolloutHandoffStatus } from '../../core/release-rollout-handoff.js';
 
 interface ControlProvisionCommandOptions {
   env?: string;
@@ -52,7 +54,11 @@ interface ControlProvisionCommandOptions {
   yes?: boolean;
 }
 
-async function loadLockedControlProvisionContext(baseDir: string, env: string) {
+async function loadLockedControlProvisionContext(
+  baseDir: string,
+  env: string,
+  options: { allowBeforeControlHandoff?: boolean } = {}
+) {
   const paths = getEnvironmentPaths({ baseDir, env });
   const loaded = await loadLockFileAuto(baseDir, env);
   const lock = loaded.lock;
@@ -62,7 +68,7 @@ async function loadLockedControlProvisionContext(baseDir: string, env: string) {
     throw new Error(`Control and Admin databases are not configured for ${env}`);
   }
   if (lock.env !== env) throw new Error('control_provision_lock_environment_mismatch');
-  assertControlProvisionMutationState(lock);
+  assertControlProvisionMutationState(lock, options);
   const config = existsSync(paths.config)
     ? AuthrimConfigSchema.parse(JSON.parse(await readFile(paths.config, 'utf-8')))
     : null;
@@ -84,6 +90,8 @@ async function withControlProvisionMutationLocks<T>(input: {
   env: string;
   operation: string;
   requiresDeployConfigLock: boolean;
+  /** Executing a pending operation may also run before a stopped update's Control handoff. */
+  allowBeforeControlHandoff?: boolean;
   action: (context: Awaited<ReturnType<typeof loadLockedControlProvisionContext>>) => Promise<T>;
 }): Promise<T> {
   const environmentLock = await acquireEnvironmentOperationForEnvironment({
@@ -101,7 +109,9 @@ async function withControlProvisionMutationLocks<T>(input: {
         operation: input.operation,
       });
     }
-    const context = await loadLockedControlProvisionContext(input.baseDir, input.env);
+    const context = await loadLockedControlProvisionContext(input.baseDir, input.env, {
+      allowBeforeControlHandoff: input.allowBeforeControlHandoff,
+    });
     if (JSON.stringify(context.lock) !== JSON.stringify(environmentLock.lock)) {
       throw new Error('environment_changed_while_waiting_for_control_provision_lock');
     }
@@ -360,6 +370,7 @@ export async function controlProvisionCommand(
     env,
     operation: `control-provision:${selected.operationId}`,
     requiresDeployConfigLock: true,
+    allowBeforeControlHandoff: true,
     action: async (locked) => {
       const currentPending = await listPendingControlProvisionOperations({
         controlDatabaseId: locked.controlDatabase.id,
@@ -381,6 +392,15 @@ export async function controlProvisionCommand(
       ) {
         throw new Error('control_operator_step_not_supported_by_this_setup_version');
       }
+      await assertControlProvisionBeforeControlHandoff({
+        lock: locked.lock,
+        operationKind: current.operationKind,
+        loadActiveRollout: () =>
+          getActiveReleaseRolloutHandoffStatus({
+            controlDatabaseId: locked.controlDatabase.id,
+            environmentId: env,
+          }),
+      });
 
       const spinner = ora('Executing canonical Control operation...').start();
       try {
