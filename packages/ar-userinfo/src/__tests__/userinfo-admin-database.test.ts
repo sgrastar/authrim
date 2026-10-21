@@ -137,6 +137,10 @@ vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () =>
   };
 });
 
+// Imported here, not inside a test: loading it through the mocks above transforms a large module
+// graph, which under parallel load takes longer than a test's timeout.
+import { userinfoHandler } from '../userinfo';
+
 function userRow() {
   return {
     id: 'user-123',
@@ -210,8 +214,13 @@ function settingsWith(defaults: { tenant?: string; platform?: string } = {}): KV
   } as unknown as KVNamespace;
 }
 
-async function userinfo(env: Partial<Env>) {
-  const { userinfoHandler } = await import('../userinfo');
+// Requests still running. A test that timed out leaves its request behind; it must finish before
+// the next test arranges its fixtures, or it reads them and records into them.
+const inFlight = new Set<Promise<unknown>>();
+
+/** Calls UserInfo for the test whose signal this is; once that test has timed out, calls nothing. */
+async function userinfo(signal: AbortSignal, env: Partial<Env>) {
+  signal.throwIfAborted();
   const c = {
     req: { header: (name: string) => (name === 'Authorization' ? 'Bearer t' : undefined) },
     env: { ISSUER_URL: 'https://op.example.com', ...env } as unknown as Env,
@@ -225,12 +234,22 @@ async function userinfo(env: Partial<Env>) {
       return undefined;
     }),
   } as any;
-  await userinfoHandler(c);
+  const request = userinfoHandler(c);
+  inFlight.add(request);
+  try {
+    await request;
+  } finally {
+    inFlight.delete(request);
+  }
   const [body, status] = vi.mocked(c.json).mock.calls[0];
   return { body: body as Record<string, unknown>, status: status ?? 200 };
 }
 
 function arrange() {
+  // A request that outlived the drain below would read this test's fixtures: fail here instead.
+  if (inFlight.size > 0) {
+    throw new Error('A request from an earlier test is still running');
+  }
   vi.clearAllMocks();
   mappingLookups.found = [];
   mappingLookups.setIds = [];
@@ -244,11 +263,17 @@ function arrange() {
   });
 }
 
+afterEach(async () => {
+  await Promise.allSettled(inFlight);
+});
+
 describe('UserInfo and the Admin database', () => {
   beforeEach(arrange);
 
-  it('reads the tenant default Mapping Set through DB_ADMIN and holds the claims to its Destination Profile', async () => {
-    const { body, status } = await userinfo({
+  it('reads the tenant default Mapping Set through DB_ADMIN and holds the claims to its Destination Profile', async ({
+    signal,
+  }) => {
+    const { body, status } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith({ tenant: 'set-tenant' }),
     });
@@ -261,13 +286,15 @@ describe('UserInfo and the Admin database', () => {
     expect(body).not.toHaveProperty('email');
   });
 
-  it('reads the Mapping Set the app names itself, whatever the defaults say', async () => {
+  it('reads the Mapping Set the app names itself, whatever the defaults say', async ({
+    signal,
+  }) => {
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-1',
       identity_mapping: { fieldMappingSetId: 'set-own' },
     });
 
-    const { status } = await userinfo({
+    const { status } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith({ tenant: 'set-tenant', platform: 'set-platform' }),
     });
@@ -276,8 +303,12 @@ describe('UserInfo and the Admin database', () => {
     expect(mappingLookups.setIds).toEqual(['set-own']);
   });
 
-  it('fails without DB_ADMIN when the selection names a set: it does not answer the claims unmapped', async () => {
-    const { body, status } = await userinfo({ SETTINGS: settingsWith({ tenant: 'set-tenant' }) });
+  it('fails without DB_ADMIN when the selection names a set: it does not answer the claims unmapped', async ({
+    signal,
+  }) => {
+    const { body, status } = await userinfo(signal, {
+      SETTINGS: settingsWith({ tenant: 'set-tenant' }),
+    });
 
     expect(status).toBe(500);
     expect(body).toEqual({
@@ -288,8 +319,8 @@ describe('UserInfo and the Admin database', () => {
     expect(JSON.stringify(body)).not.toContain('test@example.com');
   });
 
-  it('answers 400 for a default that names a set that cannot be used', async () => {
-    const { body, status } = await userinfo({
+  it('answers 400 for a default that names a set that cannot be used', async ({ signal }) => {
+    const { body, status } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: {
         get: async (key: string) =>
@@ -304,8 +335,10 @@ describe('UserInfo and the Admin database', () => {
     expect(mappingLookups.setIds).toEqual([]);
   });
 
-  it('answers 400 for a default whose Destination Profile is not an active OIDC profile', async () => {
-    const { body, status } = await userinfo({
+  it('answers 400 for a default whose Destination Profile is not an active OIDC profile', async ({
+    signal,
+  }) => {
+    const { body, status } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith({ tenant: 'set-bad-profile' }),
     });
@@ -314,13 +347,15 @@ describe('UserInfo and the Admin database', () => {
     expect(body).toMatchObject({ error: 'invalid_client_metadata' });
   });
 
-  it('answers 400 for an app whose selector is of the older kind (a Destination Profile, no Mapping Set)', async () => {
+  it('answers 400 for an app whose selector is of the older kind (a Destination Profile, no Mapping Set)', async ({
+    signal,
+  }) => {
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-1',
       identity_mapping: { destinationProfileId: 'profile-1' },
     });
 
-    const { body, status } = await userinfo({
+    const { body, status } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith({ tenant: 'set-tenant' }),
     });
@@ -332,8 +367,8 @@ describe('UserInfo and the Admin database', () => {
     expect(mappingLookups.setIds).toEqual([]);
   });
 
-  it('answers 500 when the settings cannot be read', async () => {
-    const { status } = await userinfo({
+  it('answers 500 when the settings cannot be read', async ({ signal }) => {
+    const { status } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: {
         get: async () => {
@@ -364,11 +399,11 @@ describe('UserInfo of an app with no Mapping Set, in a tenant with an activation
     profileFixture.selection = 'none';
   });
 
-  it.each([
+  it.for([
     ['with DB_ADMIN', { DB_ADMIN: fakeD1('admin') as never }],
     ['without DB_ADMIN', {}],
-  ])('answers every claim the scopes release, %s', async (_name, env) => {
-    const { body, status } = await userinfo({ ...env, SETTINGS: settingsWith() });
+  ] as const)('answers every claim the scopes release, %s', async ([_name, env], { signal }) => {
+    const { body, status } = await userinfo(signal, { ...env, SETTINGS: settingsWith() });
 
     expect(status).toBe(200);
     expect(body).toMatchObject({ sub: 'user-123', name: 'Test User', email: 'test@example.com' });
@@ -378,18 +413,20 @@ describe('UserInfo of an app with no Mapping Set, in a tenant with an activation
     expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it('answers the same with and without DB_ADMIN', async () => {
-    const withAdmin = await userinfo({
+  it('answers the same with and without DB_ADMIN', async ({ signal }) => {
+    const withAdmin = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith(),
     });
-    const withoutAdmin = await userinfo({ SETTINGS: settingsWith() });
+    const withoutAdmin = await userinfo(signal, { SETTINGS: settingsWith() });
 
     expect(withoutAdmin).toEqual(withAdmin);
   });
 
-  it('holds the response to the profile of the set the tenant names as its default: no optional claim before the user selects it', async () => {
-    const { body } = await userinfo({
+  it('holds the response to the profile of the set the tenant names as its default: no optional claim before the user selects it', async ({
+    signal,
+  }) => {
+    const { body } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith({ tenant: 'set-tenant' }),
     });
@@ -397,10 +434,10 @@ describe('UserInfo of an app with no Mapping Set, in a tenant with an activation
     expect(body).toEqual({ sub: 'user-123' });
   });
 
-  it('answers the claims once the user has selected the profile’s fields', async () => {
+  it('answers the claims once the user has selected the profile’s fields', async ({ signal }) => {
     profileFixture.selection = 'all';
 
-    const { body } = await userinfo({
+    const { body } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith({ tenant: 'set-tenant' }),
     });
@@ -408,13 +445,15 @@ describe('UserInfo of an app with no Mapping Set, in a tenant with an activation
     expect(body).toMatchObject({ sub: 'user-123', name: 'Test User', email: 'test@example.com' });
   });
 
-  it('is not held to any profile when the client opts out with { mode: "none" }, whatever the defaults say', async () => {
+  it('is not held to any profile when the client opts out with { mode: "none" }, whatever the defaults say', async ({
+    signal,
+  }) => {
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-1',
       identity_mapping: { mode: 'none' },
     });
 
-    const { body } = await userinfo({
+    const { body } = await userinfo(signal, {
       DB_ADMIN: fakeD1('admin') as never,
       SETTINGS: settingsWith({ tenant: 'set-tenant', platform: 'set-platform' }),
     });
