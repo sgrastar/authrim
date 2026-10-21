@@ -11,15 +11,10 @@ export default defineConfig({
 	envPrefix: ['VITE_', 'PUBLIC_'],
 	build: {
 		target: 'esnext',
-		minify: 'esbuild',
 		sourcemap: false,
 		// Keep CI focused on producing the deployable artifacts; compressed-size reporting does
 		// not affect their contents and is disproportionately expensive for the generated chunks.
 		reportCompressedSize: false,
-		chunkSizeWarningLimit: 1000,
-		rollupOptions: {
-			// Reduce parallelism to prevent EPIPE errors in CI
-			maxParallelFileOps: 2
-		}
+		chunkSizeWarningLimit: 1000
 	}
 });

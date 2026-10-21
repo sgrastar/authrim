@@ -2,7 +2,7 @@ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, mergeConfig } from 'vitest/config';
-import viteConfig from './vite.config';
+import viteConfig from './vite.config.ts';
 
 const dirname = fileURLToPath(new URL('.', import.meta.url));
 
