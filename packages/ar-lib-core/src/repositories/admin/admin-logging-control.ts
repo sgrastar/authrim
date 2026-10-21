@@ -8,6 +8,7 @@ import {
   type LogCatalogRepairObjectRow,
 } from '@authrim/ar-lib-logging/chunks';
 import type { DatabaseAdapter, TransactionContext } from '../../db/adapter';
+import { listCapturingTenantBackupTenantKeys } from '../../services/tenant-portability/r2-generation-retention';
 
 export interface AdminLoggingCriticalDestinationRow {
   id: string;
@@ -621,6 +622,30 @@ export class AdminLoggingControlRepository {
   }
 
   async applySafeCatalogRepairs(
+    findings: readonly LogCatalogRepairFinding[],
+    now: number
+  ): Promise<Awaited<ReturnType<typeof executeSafeLogCatalogRepairs>>> {
+    // Repairs that rewrite record index rows wait while the tenant's backup export captures them.
+    const capturing = await listCapturingTenantBackupTenantKeys(this.adapter);
+    const held = findings.filter(
+      (finding) =>
+        capturing.has(finding.tenantKey) &&
+        (finding.action === 'mark_orphan_candidate' || finding.action === 'delete_orphan_indexes')
+    );
+    const result = await this.executeSafeCatalogRepairs(
+      findings.filter((finding) => !held.includes(finding)),
+      now
+    );
+    return {
+      ...result,
+      skipped: [
+        ...result.skipped,
+        ...held.map((finding) => ({ finding, reason: 'backup_snapshot_active' as const })),
+      ],
+    };
+  }
+
+  private async executeSafeCatalogRepairs(
     findings: readonly LogCatalogRepairFinding[],
     now: number
   ): Promise<Awaited<ReturnType<typeof executeSafeLogCatalogRepairs>>> {

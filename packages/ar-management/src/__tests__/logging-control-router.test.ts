@@ -5350,6 +5350,84 @@ describe('logging control routers', () => {
     );
   });
 
+  it('holds index-rewriting catalog repairs of a tenant whose backup export is capturing', async () => {
+    const tenantKey = await deriveTenantKeyFromTenantId('tenant-a');
+    const pendingObject = {
+      id: 'obj_pending',
+      tenant_key: tenantKey,
+      log_type: 'audit',
+      plane: 'archive',
+      object_key: `logs/${tenantKey}/archive/audit/old.jsonl.gz`,
+      status: 'pending',
+      record_count: 1,
+      byte_count: 100,
+      checksum_sha256: null,
+      created_at: 0,
+      committed_at: null,
+    };
+    mockAdapter.query
+      .mockResolvedValueOnce([pendingObject])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ tenant_key: tenantKey }]);
+    const applied = await createApp([ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN]).request(
+      '/api/admin/admin-logging/catalog-repairs/apply-safe',
+      {
+        method: 'POST',
+        body: JSON.stringify({ limit: 10 }),
+        headers: { 'content-type': 'application/json' },
+      },
+      env
+    );
+    const body = (await applied.json()) as {
+      result: { applied_count: number; skipped_count: number };
+    };
+    expect(applied.status).toBe(200);
+    expect(body.result).toMatchObject({ applied_count: 0, skipped_count: 1 });
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'orphan_candidate'"),
+      expect.anything()
+    );
+  });
+
+  it('refuses a dangerous index deletion while the tenant backup export is capturing', async () => {
+    const tenantKey = await deriveTenantKeyFromTenantId('tenant-a');
+    const object = {
+      id: 'obj_danger',
+      tenant_key: tenantKey,
+      log_type: 'audit',
+      plane: 'archive',
+      object_key: `logs/${tenantKey}/archive/audit/bad.jsonl.gz`,
+      object_kind: 'chunk',
+      status: 'committed',
+      record_count: 3,
+      byte_count: 300,
+    };
+    for (const action of ['delete_object', 'purge_record_indexes']) {
+      mockAdapter.queryOne.mockResolvedValueOnce(object);
+      mockAdapter.query.mockResolvedValueOnce([{ tenant_key: tenantKey }]);
+      const response = await createApp([ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN]).request(
+        '/api/admin/admin-logging/catalog-repairs/dangerous/apply',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            action,
+            object_catalog_id: object.id,
+            confirmation: `CONFIRM ${action.toUpperCase()} obj_danger`,
+          }),
+          headers: { 'content-type': 'application/json' },
+        },
+        env
+      );
+      const body = (await response.json()) as { details: { fields: Array<{ code: string }> } };
+      expect(body.details.fields[0]?.code).toBe('backup_snapshot_active');
+    }
+    expect(mockAdapter.batch).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE log_chunk_record_index'),
+      expect.anything()
+    );
+  });
+
   it('previews and applies dangerous catalog repairs with typed confirmation', async () => {
     const tenantKey = await deriveTenantKeyFromTenantId('tenant-a');
     const object = {

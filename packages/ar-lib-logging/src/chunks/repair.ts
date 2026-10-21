@@ -77,7 +77,7 @@ export interface LogCatalogSafeRepairResult {
   applied: LogCatalogRepairFinding[];
   skipped: Array<{
     finding: LogCatalogRepairFinding;
-    reason: 'manual_review_required' | 'missing_object_catalog_id';
+    reason: 'manual_review_required' | 'missing_object_catalog_id' | 'backup_snapshot_active';
   }>;
 }
 

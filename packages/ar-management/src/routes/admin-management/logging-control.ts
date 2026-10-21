@@ -12,6 +12,7 @@ import {
   ensureDatabaseAdapter,
   getTenantIdFromContext,
   hasCapturingTenantBackupSnapshot,
+  listCapturingTenantBackupTenantKeys,
   hasAdminPermission,
   hasGlobalPlatformAuthority,
   loadChunkedSensitiveDetailJson,
@@ -12222,6 +12223,19 @@ adminLoggingRouter.post('/catalog-repairs/dangerous/apply', async (c) => {
 
     const adapter = getAdminAdapter(c);
     const now = Date.now();
+    if (
+      parsed.object &&
+      (parsed.action === 'delete_object' || parsed.action === 'purge_record_indexes') &&
+      (await listCapturingTenantBackupTenantKeys(adapter)).has(parsed.object.tenant_key)
+    ) {
+      return createAdminFieldErrorResponse(c, [
+        fieldError(
+          'object_catalog_id',
+          'backup_snapshot_active',
+          'Record indexes are retained while a tenant backup export of this tenant is active.'
+        ),
+      ]);
+    }
     if (parsed.action === 'delete_object' && parsed.object) {
       await retireDeletedLogObjectGeneration(adapter, {
         retirementId: `log-delete:${parsed.object.id}`,
