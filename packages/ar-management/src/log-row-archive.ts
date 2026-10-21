@@ -18,7 +18,10 @@ import {
 } from '@authrim/ar-lib-core';
 import { PHASE8_LOG_TIMESTAMP_COLUMNS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-log-window';
 import { exportPortableOperationalLogDetailRow } from '@authrim/ar-lib-core/services/tenant-portability/portable-operational-log-detail';
-import { retireDeletedLogObjectGeneration } from '@authrim/ar-lib-core/services/tenant-portability/r2-generation-retention';
+import {
+  listCapturingTenantBackupTenantKeys,
+  retireDeletedLogObjectGeneration,
+} from '@authrim/ar-lib-core/services/tenant-portability/r2-generation-retention';
 import {
   packedSqliteRowToJson,
   sqlitePackedRowExpression,
@@ -495,14 +498,17 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
 
   /** Retire chunks whose every row has expired; the R2 cleanup removes their bodies later. */
   const retireExpired = async (deadline: number) => {
+    // A tenant whose backup export is capturing keeps its catalog rows as they are until it ends.
+    const capturing = await listCapturingTenantBackupTenantKeys(admin());
     // A chunk whose rows are still being deleted from D1 is retired after its batch closes.
     const expired = await admin().query<{ id: string; tenant_key: string; object_key: string }>(
       `SELECT id, tenant_key, object_key FROM log_object_catalog
        WHERE source_table IS NOT NULL AND status = 'committed' AND never_expires = 0
          AND max_expires_at < ?
          AND id NOT IN (SELECT object_catalog_id FROM log_archive_batches WHERE state = 'pending')
+         AND tenant_key NOT IN (SELECT value FROM json_each(?))
        LIMIT ?`,
-      [now(), EXPIRED_PER_RUN]
+      [now(), JSON.stringify([...capturing]), EXPIRED_PER_RUN]
     );
     let retired = 0;
     for (const row of expired) {

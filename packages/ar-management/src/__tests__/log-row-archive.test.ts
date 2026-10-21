@@ -153,6 +153,7 @@ function adminDb(): DatabaseSync {
     db.exec(
       `CREATE TABLE ${table} (id TEXT NOT NULL PRIMARY KEY, tenant_id TEXT NOT NULL, created_at INTEGER NOT NULL)`
     );
+  db.exec(migration('admin/d1/013_tenant_backup_snapshot_storage.sql'));
   db.exec(migration('admin/d1/033_tenant_backup_r2_generation_retention.sql'));
   db.exec(migration('admin/d1/047_log_row_archive.sql'));
   return db;
@@ -794,6 +795,25 @@ describe('log row archive', () => {
     expect(admin.prepare('SELECT state FROM log_archive_batches').all()).toEqual([
       { state: 'done' },
     ]);
+  });
+
+  it('keeps the expired chunks of a tenant whose backup export is capturing until it ends', async () => {
+    const old = NOW - 100 * DAY;
+    core
+      .prepare('INSERT INTO event_log VALUES (?, ?, ?, ?, ?)')
+      .run('e1', 'tenant-a', 'x', old, NOW - DAY);
+    admin
+      .prepare(
+        "INSERT INTO tenant_backup_snapshots(id, tenant_id, state, tenant_key) VALUES ('snap', 'tenant-a', 'capturing', ?)"
+      )
+      .run(TENANT_KEY);
+    await run();
+    expect(catalog()).toMatchObject([{ status: 'committed', source_table: 'core.event_log' }]);
+
+    admin.prepare("UPDATE tenant_backup_snapshots SET state = 'sealed' WHERE id = 'snap'").run();
+    clock += 10 * 60 * 1000;
+    await run();
+    expect(catalog()).toMatchObject([{ status: 'deleted', source_table: 'core.event_log' }]);
   });
 
   it('retires chunks whose every row has expired', async () => {
