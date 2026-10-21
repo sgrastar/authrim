@@ -168,7 +168,7 @@ export async function applyTenantSettingsChange(
   }
 
   // Security Check 3: Validate user has EDIT permission for this category at tenant scope
-  if (!hasTenantSettingsPermission(adminAuth, category, 'edit')) {
+  if (!hasTenantSettingsPermission(adminAuth, category, 'edit', tenantId)) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to edit tenant settings', 403);
   }
 

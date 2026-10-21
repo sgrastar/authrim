@@ -27,6 +27,7 @@ const { repoMocks, mockAdminAdapter } = vi.hoisted(() => ({
   },
   mockAdminAdapter: {
     queryOne: vi.fn(),
+    query: vi.fn(),
   },
 }));
 
@@ -141,6 +142,9 @@ describe('adminUsersRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAdminAdapter.queryOne.mockResolvedValue({ count: 2 });
+    // What an account holds, for the authority over it: no assignments here.
+    mockAdminAdapter.query.mockResolvedValue([]);
+    repoMocks.getAssignmentsByUser.mockResolvedValue([]);
   });
 
   it('should reject updates to another admin without wildcard authority', async () => {

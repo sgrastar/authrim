@@ -182,8 +182,11 @@ function hasAnyPermission(authContext: AdminAuthContext, permissions: string[]):
 }
 
 // Platform logging reaches every tenant, so the authority has to come from a global assignment.
+// This gate names no permission of its own (each route checks its own before it), so a machine
+// token needs everything under `admin:` for every tenant: a global scope with a narrow permission
+// is not a platform administrator.
 function hasPlatformAuthority(authContext: AdminAuthContext): boolean {
-  return hasGlobalPlatformAuthority(authContext, true);
+  return hasGlobalPlatformAuthority(authContext, 'admin:*');
 }
 
 async function requirePlatformAuthority(c: AdminContext): Promise<Response | null> {

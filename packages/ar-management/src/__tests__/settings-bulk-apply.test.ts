@@ -397,31 +397,29 @@ describe('who may use the bulk apply', () => {
 
   it('asks again, for each tenant, for the right to edit its settings', async () => {
     const t = await setup();
-    // The entrance passes (the platform authority is held) but the tenant right is not.
+    // The entrance passes (the platform authority is held) but the right for the tenant the request
+    // arrived on is not (its roles are narrowed); another tenant is judged on the global roles, which
+    // are what the entrance read.
     const response = await t.bulk(t.admin, request(), { headers: { 'x-test-narrow': 'roles' } });
     expect(response.status).toBe(200);
-    for (const id of ['tenant-a', 'tenant-b']) {
-      expect(resultFor(response.json, id)).toMatchObject({
-        status: 'rejected',
-        changes: [{ status: 'rejected', reason: 'forbidden' }],
-      });
-    }
+    expect(resultFor(response.json, 'tenant-a')).toMatchObject({
+      status: 'rejected',
+      changes: [{ status: 'rejected', reason: 'forbidden' }],
+    });
     expect(await t.own('tenant-a', 'session', TTL)).toBeUndefined();
-    expect(await t.own('tenant-b', 'session', TTL)).toBeUndefined();
+    expect(resultFor(response.json, 'tenant-b').status).not.toBe('rejected');
   });
 
   it('does not show a tenant’s values to a caller who may not edit them, in a preview either', async () => {
     const t = await setup();
-    await t.seed('tenant-b', 'session', { [TTL]: 1800000 });
+    await t.seed('tenant-a', 'session', { [TTL]: 1800000 });
     const response = await t.bulk(t.admin, request({ mode: 'preview' }), {
       headers: { 'x-test-narrow': 'roles' },
     });
     expect(response.status).toBe(200);
-    for (const id of ['tenant-a', 'tenant-b']) {
-      expect(resultFor(response.json, id).changes).toEqual([
-        expect.objectContaining({ action: 'would_reject', reason: 'forbidden', current: null }),
-      ]);
-    }
+    expect(resultFor(response.json, 'tenant-a').changes).toEqual([
+      expect.objectContaining({ action: 'would_reject', reason: 'forbidden', current: null }),
+    ]);
     expect(JSON.stringify(response.json)).not.toContain('1800000');
   });
 
