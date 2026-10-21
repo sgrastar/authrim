@@ -73,7 +73,7 @@ export interface SetupOperatorExecutionResult {
   nextAttemptAt: number | null;
 }
 
-class SetupR2ReleaseArtifactStore implements ReleaseArtifactStore {
+export class SetupR2ReleaseArtifactStore implements ReleaseArtifactStore {
   constructor(
     private readonly bucketName: string,
     private readonly verifyBucketOwnership?: () => Promise<void>

@@ -144,6 +144,11 @@ import {
   formatReleaseRolloutProgress,
   waitForReleaseRolloutAwaitingSetup,
 } from '../../core/release-rollout-handoff.js';
+import { executeReleaseRolloutTargetsAsSetup } from '../../core/release-rollout-setup-executor.js';
+import {
+  SetupR2ReleaseArtifactStore,
+  createSetupOperatorD1Client,
+} from '../../core/control-operator-executor.js';
 import {
   buildWorkerHttpReadinessTargets,
   waitForWorkerDeploymentsReady,
@@ -380,6 +385,34 @@ export function splitReleaseSchemaTargetsForControlHandoff(
   };
 }
 
+/** Setup applies the release targets of a Control that has no D1 token of its own. */
+function setupReleaseTargetExecutor(input: {
+  lock: AuthrimLock;
+  env: string;
+  controlDatabaseId: string;
+  accountId?: string;
+}) {
+  return async (operationId: string, onTarget: (done: number, total: number) => void) => {
+    const migrationReleaseBucket = input.lock.r2?.MIGRATION_RELEASES;
+    if (!migrationReleaseBucket) throw new Error('migration_release_bucket_required');
+    const verifyOwnership = () =>
+      assertR2BucketOwnershipForUse({
+        ...migrationReleaseBucket,
+        environment: input.env,
+        binding: 'MIGRATION_RELEASES',
+      });
+    await verifyOwnership();
+    return executeReleaseRolloutTargetsAsSetup({
+      client: await createSetupOperatorD1Client({ expectedAccountId: input.accountId }),
+      controlDatabaseId: input.controlDatabaseId,
+      environmentId: input.env,
+      operationId,
+      artifactStore: new SetupR2ReleaseArtifactStore(migrationReleaseBucket.name, verifyOwnership),
+      onTarget,
+    });
+  };
+}
+
 async function awaitControlManagedReleaseRollout(input: {
   controlDatabaseId: string;
   environmentId: string;
@@ -393,6 +426,11 @@ async function awaitControlManagedReleaseRollout(input: {
   expectedTargets?: readonly ReleaseRolloutExpectedTarget[];
   lock: AuthrimLock;
   lockPath: string;
+  /** Applies the targets setup takes over from a Control without a migration executor. */
+  executeTargetsAsSetup?: (
+    operationId: string,
+    onTarget: (done: number, total: number) => void
+  ) => Promise<{ claimed: number; nextAttemptAt: number | null }>;
 }): Promise<{ lock: AuthrimLock; ready: boolean }> {
   const spinner = ora('Handing managed database migrations to Control...').start();
   try {
@@ -426,6 +464,12 @@ async function awaitControlManagedReleaseRollout(input: {
       onProgress: (status, context) => {
         spinner.text = formatReleaseRolloutProgress(status, context);
       },
+      executeTargetsAsSetup: input.executeTargetsAsSetup
+        ? () =>
+            input.executeTargetsAsSetup!(created.operationId, (done, total) => {
+              spinner.text = `Control has no migration executor; setup is applying managed databases (${done}/${total})`;
+            })
+        : undefined,
     });
     if (
       ready.phase !== 'awaiting_setup' &&
@@ -2166,6 +2210,12 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           expectedTargets: controlExpectedTargets,
           lock: workingLock,
           lockPath,
+          executeTargetsAsSetup: setupReleaseTargetExecutor({
+            lock: workingLock,
+            env,
+            controlDatabaseId: controlDatabase.id,
+            accountId: config.cloudflare?.accountId,
+          }),
         });
         workingLock = observation.lock;
         if (!observation.ready) {
@@ -2477,6 +2527,12 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         expectedTargets: controlExpectedTargets,
         lock: workingLock,
         lockPath,
+        executeTargetsAsSetup: setupReleaseTargetExecutor({
+          lock: workingLock,
+          env,
+          controlDatabaseId: controlDatabase.id,
+          accountId: config.cloudflare?.accountId,
+        }),
       });
       workingLock = observation.lock;
       controlRolloutReady = observation.ready;
