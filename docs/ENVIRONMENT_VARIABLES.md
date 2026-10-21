@@ -140,18 +140,42 @@ these paths.
 
 ### Identity Mapping
 
-| Variable                          | Type    | Default | Description                                                                                       |
-| --------------------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `IDENTITY_MAPPING_SHADOW_COMPARE` | boolean | `false` | Compare each OIDC identity mapping resolution with the new Mapping Set selection; log differences |
+The Mapping Set that applies to OIDC apps that name none of their own is the setting
+`identity_mapping.oidc_default_set_id` (Settings API, `identity-mapping` category, platform and
+tenant scope). It has no environment variable: a Mapping Set ID means nothing outside the database
+it lives in. Left unset, no mapping applies.
 
-`IDENTITY_MAPPING_SHADOW_COMPARE` is the deployment default of the platform setting
-`identity_mapping.shadow_compare_enabled` (Settings API, `identity-mapping` category, platform
-scope; a value saved there overrides the variable). While it is on, every OIDC resolution (ID token,
-UserInfo, authorization) is also run through the new selection (the app's own choice, the tenant
-default, the platform default) and a difference from what the request used is logged as a warning
-with action `identity_mapping_resolution_diff`. Responses do not change. It is off by default because
-each resolution then costs a settings read and, when the new selection names a Mapping Set, an
-Admin database read: turn it on only in the environments where the comparison is wanted.
+The limits of the search for the places that name a Mapping Set (the usage API, and the refusal to
+delete or switch off a set that is in use) are platform settings of the same category, each with a
+deployment default here. A value saved through the Settings API overrides the variable; a value
+outside the range, or that is not a whole number, is ignored and the built-in default applies.
+
+| Variable                                       | Type   | Default | Range     | Description                                                                        |
+| ---------------------------------------------- | ------ | ------- | --------- | ---------------------------------------------------------------------------------- |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_TENANT_LIMIT` | number | `200`   | 1 - 1000  | Tenants whose apps are read for a platform set; more are reported as not looked at |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_ROW_LIMIT`    | number | `500`   | 10 - 5000 | Rows read from one place before it is cut off (the count is then a lower bound)    |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_CONCURRENCY`  | number | `8`     | 1 - 16    | Tenants read at the same time                                                      |
+| `IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT`     | number | `20`    | 1 - 100   | References listed in an answer (the count is always the whole)                     |
+
+The platform setting `identity_mapping.shadow_compare_enabled` and its variable
+`IDENTITY_MAPPING_SHADOW_COMPARE` are retired: the comparison it switched on had nothing left to
+compare against once the selection replaced the implicit lookup. A value still stored or set is
+ignored.
+
+### Bulk Apply
+
+| Variable                             | Type   | Default | Description                                                                    |
+| ------------------------------------ | ------ | ------- | ------------------------------------------------------------------------------ |
+| `BULK_APPLY_MAX_TENANTS_PER_REQUEST` | number | `25`    | Most tenants one `POST /api/admin/settings/bulk-apply` request may name        |
+| `BULK_APPLY_MAX_KEYS_PER_REQUEST`    | number | `20`    | Most settings (keys set or cleared, over all categories) one request may carry |
+
+These are the deployment defaults of the platform settings `bulk_apply.max_tenants_per_request`
+and `bulk_apply.max_keys_per_request` (Settings API, `bulk-apply` category, platform scope; a value
+saved there overrides the variable). A value outside 1 to 100 is held to that range (a value that
+is not a number is ignored). Each tenant a request names costs several subrequests and some run
+time, so the limits keep one request inside what a Worker invocation can do; a larger job is sent
+in several requests. See the OpenAPI description of the endpoint for what the bulk apply gives and
+refuses.
 
 ### Introspection Settings
 

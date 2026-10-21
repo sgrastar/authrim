@@ -2576,7 +2576,7 @@ describe('hasGlobalPlatformAuthority', () => {
     expect(hasGlobalPlatformAuthority(context({ tenantScope: ['*'], ...overrides }))).toBe(false);
   });
 
-  it('takes a machine token with a global scope only when asked to', () => {
+  it('takes a machine token with a global scope only for the permission it holds', () => {
     const machine = context({
       authMethod: 'machine_access_token',
       tenantScope: ['*'],
@@ -2585,7 +2585,38 @@ describe('hasGlobalPlatformAuthority', () => {
     });
 
     expect(hasGlobalPlatformAuthority(machine)).toBe(false);
-    expect(hasGlobalPlatformAuthority(machine, true)).toBe(true);
+    expect(hasGlobalPlatformAuthority(machine, 'admin:control_plane:read')).toBe(true);
+    // A global scope is not enough: the permission the gate names is what counts.
+    expect(hasGlobalPlatformAuthority(machine, 'admin:control_plane:provision')).toBe(false);
+    expect(hasGlobalPlatformAuthority(machine, 'admin:*')).toBe(false);
+  });
+
+  it('does not take a machine token limited to some tenants, nor a person, for a permission', () => {
+    const limited = context({
+      authMethod: 'machine_access_token',
+      tenantScope: ['tenant-a'],
+      permissions: ['admin:control_plane:read'],
+      globalPermissions: [],
+    });
+    const person = context({
+      tenantScope: ['*'],
+      globalRoles: ['viewer'],
+      globalPermissions: ['admin:control_plane:read'],
+    });
+
+    expect(hasGlobalPlatformAuthority(limited, 'admin:control_plane:read')).toBe(false);
+    expect(hasGlobalPlatformAuthority(person, 'admin:control_plane:read')).toBe(false);
+  });
+
+  it('takes a machine token that holds everything under admin for the generic gate', () => {
+    const machine = context({
+      authMethod: 'machine_access_token',
+      tenantScope: ['*'],
+      permissions: ['admin:*'],
+      globalPermissions: ['admin:*'],
+    });
+
+    expect(hasGlobalPlatformAuthority(machine, 'admin:*')).toBe(true);
   });
 });
 

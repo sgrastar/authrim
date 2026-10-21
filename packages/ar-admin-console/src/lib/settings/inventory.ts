@@ -97,6 +97,13 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'settings/team', scope: 'tenant' },
 	{ id: 'plat-tenants/discovery', scope: 'platform' },
 	{
+		id: 'plat-tenants/bulk-apply',
+		title: 'Bulk apply',
+		proposed: true,
+		scope: 'platform',
+		note: 'Gives the same settings to several tenants: choose the settings and tenants, preview what changes, apply, and see the result for each tenant (POST /api/admin/settings/bulk-apply). The screen is built later; these are its limits.'
+	},
+	{
 		id: 'plat-infra/scale',
 		scope: 'platform',
 		note: 'Caches, retries and timeouts: technical tuning, found by search.'
@@ -627,17 +634,7 @@ place(
 	{ primary: ['identity_mapping.oidc_default_set_id'] },
 	{
 		'identity_mapping.oidc_default_set_id':
-			'In development: saved and checked, not applied yet. Unset means no mapping applies; a tenant value none means: do not use the platform default either. Should become a picker of active Mapping Sets, with the apps it would affect.'
-	}
-);
-
-place(
-	'access/mapping-sets',
-	'Selection comparison (platform)',
-	{ advanced: ['identity_mapping.shadow_compare_enabled'] },
-	{
-		'identity_mapping.shadow_compare_enabled':
-			'Platform setting only (a tenant cannot set it). Turn on where the comparison of the default Mapping Set selection with what requests use is wanted; differences are logged as warnings.'
+			'Applied to apps that name no Mapping Set of their own (ID token, UserInfo and the consent screen). Unset means no mapping applies; a tenant value none means: do not use the platform default either. A value that cannot be used stops those apps from signing in. Should become a picker of active Mapping Sets, with the apps it would affect.'
 	}
 );
 
@@ -720,6 +717,42 @@ place('plat-tenants/discovery', 'Discovery screen', {
 		'tenant-discovery-ui.subtitle_text'
 	]
 });
+place(
+	'plat-tenants/bulk-apply',
+	'Limits of one request',
+	{
+		advanced: ['bulk_apply.max_tenants_per_request', 'bulk_apply.max_keys_per_request']
+	},
+	{
+		'bulk_apply.max_tenants_per_request':
+			'Platform setting only. Each tenant costs several subrequests, so a request holds a few dozen at most; the screen sends larger jobs in several requests.',
+		'bulk_apply.max_keys_per_request':
+			'Platform setting only. Held between 1 and 100, with the number of tenants.'
+	}
+);
+
+place(
+	'plat-infra/scale',
+	'Mapping Set usage search',
+	{
+		search: [
+			'identity_mapping.reference_scan_tenant_limit',
+			'identity_mapping.reference_scan_row_limit',
+			'identity_mapping.reference_scan_concurrency',
+			'identity_mapping.reference_display_limit'
+		]
+	},
+	{
+		'identity_mapping.reference_scan_tenant_limit':
+			'Platform setting only. How many tenants are read when looking for what uses a platform Mapping Set; more tenants than this and a deletion or switch-off is refused.',
+		'identity_mapping.reference_scan_row_limit':
+			'Platform setting only. Rows read from one place before it is cut off and the count is given as a lower bound.',
+		'identity_mapping.reference_scan_concurrency':
+			'Platform setting only. Tenants read at the same time.',
+		'identity_mapping.reference_display_limit':
+			'Platform setting only. References listed in an answer; the count is always the whole.'
+	}
+);
 
 // ---------------------------------------------------------------------------------------------
 // Not shown: deploy-time, in development, and duplicates

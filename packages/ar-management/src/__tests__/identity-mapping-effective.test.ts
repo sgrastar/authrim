@@ -46,7 +46,7 @@ const PLATFORM_DOC = 'settings:platform:identity-mapping';
 
 const TENANT_VIEWER: Assignment[] = [{ role: 'role_viewer', scope: 'tenant' }];
 
-function setup(options: { unreadableSettings?: boolean } = {}) {
+function setup(options: { unreadableSettings?: boolean; implicitActivation?: boolean } = {}) {
   const store = new Map<string, string>();
   const namespace = {
     get: vi.fn(async (key: string) => {
@@ -95,6 +95,17 @@ function setup(options: { unreadableSettings?: boolean } = {}) {
     seedDestinationProfile(context.db, { owner, id: `profile-${id}` });
   }
 
+  // The seeded set of the tenant is active with an activation of the whole tenant: the shape that
+  // once bound apps naming no Mapping Set. Off unless a test is about it, so the answers of the
+  // tests that are not carry no warning.
+  if (!options.implicitActivation) {
+    context.db
+      .prepare(
+        "UPDATE field_mapping_activations SET lifecycle_state = 'inactive' WHERE tenant_id = ?"
+      )
+      .run(TENANT);
+  }
+
   const save = (document: string, values: Record<string, unknown>) =>
     store.set(document, JSON.stringify(values));
   const cookie = (assignments: Assignment[] = TENANT_SUPER_ADMIN) =>
@@ -124,6 +135,7 @@ describe('the tenant’s view (no client_id)', () => {
         { tier: 'tenant_default', state: 'unset' },
         { tier: 'platform_default', state: 'unset' },
       ],
+      warnings: [],
     });
   });
 
@@ -440,5 +452,141 @@ describe('who may ask', () => {
     const rule = ADMIN_ROUTE_ACCESS_RULES.find((candidate) => candidate.pattern === EFFECTIVE);
     expect(rule).toMatchObject({ permissions: ['admin:settings:read'] });
     expect(rule?.methods).toEqual(['GET']);
+  });
+});
+
+/**
+ * A tenant whose apps were bound by an activation of the whole tenant (the admin console sends
+ * `{ kind: 'tenant' }`) and that has named no default: nothing applies to them now, and the answer
+ * says so.
+ */
+describe('an activation that no longer applies', () => {
+  const WARNING = {
+    code: 'implicit_activation_no_longer_applies',
+    activations: [{ activationId: 'act-a', setId: 'set-a', setName: 'Set a' }],
+  };
+
+  it('is shown in the tenant’s view when nothing is named', async () => {
+    const t = setup({ implicitActivation: true });
+
+    const { status, json } = await t.get();
+
+    expect(status).toBe(200);
+    expect(json.selection).toEqual({ kind: 'none', reason: 'no_default' });
+    expect(json.warnings).toEqual([WARNING]);
+    expect(json).not.toHaveProperty('warnings_unavailable');
+  });
+
+  it('is shown for an app that names nothing, and gives IDs and names only', async () => {
+    const t = setup({ implicitActivation: true });
+    t.client('app-1');
+
+    const { json } = await t.get('?client_id=app-1');
+
+    expect(json.warnings).toEqual([WARNING]);
+    expect(Object.keys((json.warnings as any[])[0].activations[0]).sort()).toEqual([
+      'activationId',
+      'setId',
+      'setName',
+    ]);
+  });
+
+  it('shows nothing of another tenant’s or the platform’s activations', async () => {
+    const t = setup({ implicitActivation: true });
+    // The platform and another tenant have active activations of the whole tenant too.
+    const { json } = await t.get();
+
+    expect(JSON.stringify(json.warnings)).not.toMatch(/plat|other|tenant-b/);
+    expect(json.warnings).toEqual([WARNING]);
+  });
+
+  it('goes away once the tenant names a default, or opts out of the platform’s', async () => {
+    const t = setup({ implicitActivation: true });
+    expect((await t.get()).json.warnings).toEqual([WARNING]);
+
+    t.save(TENANT_DOC, { [KEY]: 'set-a' });
+    expect((await t.get()).json.warnings).toEqual([]);
+
+    t.save(TENANT_DOC, { [KEY]: 'none' });
+    expect((await t.get()).json.warnings).toEqual([]);
+  });
+
+  it('goes away once the platform names a default', async () => {
+    const t = setup({ implicitActivation: true });
+    t.save(PLATFORM_DOC, { [KEY]: 'set-plat' });
+
+    expect((await t.get()).json.warnings).toEqual([]);
+  });
+
+  it('is not shown for an app that names a set or opts out', async () => {
+    const t = setup({ implicitActivation: true });
+    t.client('app-set', { fieldMappingSetId: 'set-a' });
+    t.client('app-none', { mode: 'none' });
+
+    expect((await t.get('?client_id=app-set')).json.warnings).toEqual([]);
+    expect((await t.get('?client_id=app-none')).json.warnings).toEqual([]);
+  });
+
+  it('is not shown when the selection failed', async () => {
+    const t = setup({ implicitActivation: true });
+    t.client('app-old', { destinationProfileId: 'profile-a' });
+
+    const { json } = await t.get('?client_id=app-old');
+
+    expect(json.selection).toEqual({
+      kind: 'failed',
+      code: 'client_selector_invalid',
+      tier: 'client',
+      reason: 'legacy_profile_only_selector',
+    });
+    expect(json.warnings).toEqual([]);
+  });
+
+  it.each([
+    ['no activation', "UPDATE field_mapping_activations SET lifecycle_state = 'inactive'"],
+    [
+      'an activation without an active compiled snapshot',
+      "UPDATE compiled_mapping_snapshots SET lifecycle_state = 'superseded'",
+    ],
+    [
+      'an activation for SAML only',
+      `UPDATE field_mapping_activations SET activation_scope_json = '{"kind":"tenant","protocol":"saml"}'`,
+    ],
+    [
+      'an activation of another tenant’s scope',
+      `UPDATE field_mapping_activations SET activation_scope_json = '{"tenantId":"tenant-z"}'`,
+    ],
+  ])('is not shown with %s', async (_name, sql) => {
+    const t = setup({ implicitActivation: true });
+    t.db.prepare(sql).run();
+
+    expect((await t.get()).json.warnings).toEqual([]);
+  });
+
+  it('counts an activation that names the app only for that app', async () => {
+    const t = setup({ implicitActivation: true });
+    t.db
+      .prepare(
+        `UPDATE field_mapping_activations SET activation_scope_json = '{"clientId":"app-1"}'`
+      )
+      .run();
+    t.client('app-1');
+    t.client('app-2');
+
+    expect((await t.get()).json.warnings).toEqual([]);
+    expect((await t.get('?client_id=app-1')).json.warnings).toEqual([WARNING]);
+    expect((await t.get('?client_id=app-2')).json.warnings).toEqual([]);
+  });
+
+  it('answers 200 with warnings_unavailable when the Admin database cannot be read for it', async () => {
+    const t = setup({ implicitActivation: true });
+    t.db.exec('DROP TABLE compiled_mapping_snapshots');
+
+    const { status, json } = await t.get();
+
+    expect(status).toBe(200);
+    expect(json.selection).toEqual({ kind: 'none', reason: 'no_default' });
+    expect(json.warnings).toEqual([]);
+    expect(json.warnings_unavailable).toBe(true);
   });
 });

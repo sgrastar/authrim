@@ -8,7 +8,7 @@
  * - A selection that names a set fails with `admin_database_unavailable` when DB_ADMIN is not
  *   bound or cannot be read. There is no fallback to the Core database, which holds no mappings.
  *
- * Nothing in the release of claims calls this yet; the shadow comparison and the admin API do.
+ * `applyOIDCIdentityMapping` (the release of claims) and the consent screen call this;
  * `toOidcIdentityMappingRuntimeError` (oidc-identity-mapping.ts) turns its failures into the
  * errors the release answers with.
  */

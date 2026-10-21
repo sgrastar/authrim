@@ -20,6 +20,14 @@ const navItems = new Set(
 	)
 );
 
+/** The limits of the Mapping Set usage search: platform settings of the identity-mapping category. */
+const MAPPING_SCAN_KEYS = [
+	'identity_mapping.reference_scan_tenant_limit',
+	'identity_mapping.reference_scan_row_limit',
+	'identity_mapping.reference_scan_concurrency',
+	'identity_mapping.reference_display_limit'
+] as const;
+
 describe('where settings live', () => {
 	it('places only settings the API has', () => {
 		for (const key of [...placed, ...drafted]) {
@@ -218,13 +226,13 @@ describe('where settings live', () => {
 		}
 	});
 
-	it('places the default Mapping Set once, on the Mapping Sets page, as saved but not applied', () => {
+	it('places the default Mapping Set once, on the Mapping Sets page, as applied', () => {
 		const key = 'identity_mapping.oidc_default_set_id';
 		const meta = ALL_CATEGORY_META['identity-mapping'].settings[key];
 		expect(categoryOf(key)).toBe('identity-mapping');
-		// Nothing reads it at runtime yet.
-		expect(meta.status).toBe('in_development');
-		expect(NOT_APPLIED.get(key)).toBe('to-wire');
+		// The release of claims reads it (ID token, UserInfo and the consent screen).
+		expect(meta.status).toBeUndefined();
+		expect(NOT_APPLIED.has(key)).toBe(false);
 		expect(placed).not.toContain(key);
 		expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
 			{ page: 'access/mapping-sets', depth: 'primary' }
@@ -239,29 +247,67 @@ describe('where settings live', () => {
 		const category = 'identity-mapping';
 		expect(Object.keys(ALL_CATEGORY_META[category].settings)).toEqual([
 			'identity_mapping.oidc_default_set_id',
-			'identity_mapping.shadow_compare_enabled'
+			...MAPPING_SCAN_KEYS
 		]);
 		expect(
 			ALL_CATEGORY_META[category].settings['identity_mapping.oidc_default_set_id'].envKey
 		).toBe(undefined);
 	});
 
-	it('places the shadow comparison switch once, as an applied platform-only setting', () => {
+	it('no longer has the shadow comparison switch: the resolution it compared is gone', () => {
 		const key = 'identity_mapping.shadow_compare_enabled';
-		const meta = ALL_CATEGORY_META['identity-mapping'].settings[key];
-		expect(categoryOf(key)).toBe('identity-mapping');
-		// The comparison runs, so it is not "in development" and not listed as not applied.
-		expect(meta.status).toBeUndefined();
-		expect(NOT_APPLIED.has(key)).toBe(false);
-		expect(meta.scopes).toEqual(['platform']);
-		expect(meta.envKey).toBe('IDENTITY_MAPPING_SHADOW_COMPARE');
-		expect(placed).not.toContain(key);
-		expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
-			{ page: 'access/mapping-sets', depth: 'advanced' }
-		]);
-		// Named in every language the console has.
-		expect(hasMessage(settingText(key).label)).toBe(true);
-		expect(settingText(key).description).toBeDefined();
+		expect(everyKey, key).not.toContain(key);
+		expect([...placed, ...drafted], key).not.toContain(key);
+		expect(NOT_APPLIED.has(key), key).toBe(false);
+		expect(hasMessage(settingText(key).label)).toBe(false);
+	});
+
+	it('places the limits of the Mapping Set usage search once, as applied platform-only settings', () => {
+		for (const key of MAPPING_SCAN_KEYS) {
+			const meta = ALL_CATEGORY_META['identity-mapping'].settings[key];
+			expect(categoryOf(key)).toBe('identity-mapping');
+			// The search of the usage API and of the refusals reads them.
+			expect(meta.status).toBeUndefined();
+			expect(NOT_APPLIED.has(key)).toBe(false);
+			expect(meta.scopes).toEqual(['platform']);
+			expect(meta.envKey).toMatch(/^IDENTITY_MAPPING_REFERENCE_/);
+			expect(placed).not.toContain(key);
+			expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
+				{ page: 'plat-infra/scale', depth: 'search' }
+			]);
+			// Named in every language the console has.
+			expect(hasMessage(settingText(key).label)).toBe(true);
+			expect(settingText(key).description).toBeDefined();
+		}
+		expect(DRAFT_PAGES.find((page) => page.id === 'plat-infra/scale')).toMatchObject({
+			scope: 'platform'
+		});
+	});
+
+	it('places the bulk apply limits once, as applied platform-only settings', () => {
+		for (const [key, envKey] of [
+			['bulk_apply.max_tenants_per_request', 'BULK_APPLY_MAX_TENANTS_PER_REQUEST'],
+			['bulk_apply.max_keys_per_request', 'BULK_APPLY_MAX_KEYS_PER_REQUEST']
+		] as const) {
+			const meta = ALL_CATEGORY_META['bulk-apply'].settings[key];
+			expect(categoryOf(key)).toBe('bulk-apply');
+			// The limits are read by the bulk apply route, so they are not "in development".
+			expect(meta.status).toBeUndefined();
+			expect(NOT_APPLIED.has(key)).toBe(false);
+			expect(meta.scopes).toEqual(['platform']);
+			expect(meta.envKey).toBe(envKey);
+			expect(placed).not.toContain(key);
+			expect(DRAFT.filter((entry) => entry.key === key)).toMatchObject([
+				{ page: 'plat-tenants/bulk-apply', depth: 'advanced' }
+			]);
+			// Named in every language the console has.
+			expect(hasMessage(settingText(key).label)).toBe(true);
+			expect(settingText(key).description).toBeDefined();
+		}
+		expect(DRAFT_PAGES.find((page) => page.id === 'plat-tenants/bulk-apply')).toMatchObject({
+			scope: 'platform',
+			proposed: true
+		});
 	});
 
 	it('points every duplicate at a setting that exists', () => {

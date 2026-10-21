@@ -548,6 +548,22 @@ adminInvitationsRouter.delete('/:id', async (c) => {
 
   const adapter = getAdapter(c);
   const tenantId = getTenantIdFromContext(c);
+
+  // An invitation for a global assignment (a super_admin one always is) is revoked on the wildcard
+  // from a global assignment, as creating and resending it are.
+  const pending = await adapter.queryOne<{ scope_type: string; role_name: string | null }>(
+    `SELECT scope_type, admin_role_name AS role_name FROM admin_invitations
+      WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
+    [c.req.param('id'), tenantId]
+  );
+  if (!pending) return c.json({ error: 'invitation_not_found' }, 404);
+  if (
+    (pending.scope_type === 'global' || pending.role_name === 'super_admin') &&
+    !hasGlobalAdminPermission(auth, '*')
+  ) {
+    return c.json({ error: 'insufficient_permissions' }, 403);
+  }
+
   const result = await adapter.execute(
     "UPDATE admin_invitations SET status = 'revoked', pending_email_key = NULL, updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",
     [Date.now(), c.req.param('id'), tenantId]

@@ -8,6 +8,7 @@
 		type ClaimReleasePolicy,
 		type ClaimsParameterPolicy,
 		type Client,
+		type ClientIdentityMappingFieldMappingSetSelector,
 		type ClientUsage,
 		type UpdateClientInput
 	} from '$lib/api/admin-clients';
@@ -346,7 +347,11 @@
 			.join('\n');
 	}
 
-	function identityMappingFieldMappingLabel(fieldMappingSetId?: string | null): string {
+	function identityMappingFieldMappingLabel(
+		selector?: ClientIdentityMappingFieldMappingSetSelector | null
+	): string {
+		if (selector?.mode === 'none') return $LL.admin_client_detail_identity_mapping_policy_none();
+		const fieldMappingSetId = selector?.fieldMappingSetId;
 		if (!fieldMappingSetId) return $LL.admin_client_detail_identity_mapping_policy_default();
 		const fieldMappingSet = fieldMappingSets.find((item) => item.id === fieldMappingSetId);
 		return fieldMappingSet
@@ -381,7 +386,22 @@
 		}
 	}
 
+	/** The value of the Mapping Set select that stands for the opt-out { mode: 'none' }. */
+	const IDENTITY_MAPPING_NONE_OPTION = '__none__';
+
+	function identityMappingSelectValue(
+		selector?: ClientIdentityMappingFieldMappingSetSelector | null
+	): string {
+		return selector?.mode === 'none'
+			? IDENTITY_MAPPING_NONE_OPTION
+			: (selector?.fieldMappingSetId ?? '');
+	}
+
 	function setIdentityMappingFieldMappingSet(fieldMappingSetId: string) {
+		if (fieldMappingSetId === IDENTITY_MAPPING_NONE_OPTION) {
+			editForm.identity_mapping = { mode: 'none' };
+			return;
+		}
 		editForm.identity_mapping = fieldMappingSetId
 			? {
 					fieldMappingSetId,
@@ -479,8 +499,8 @@
 			Boolean(a.require_pkce) === Boolean(b.require_pkce) &&
 			(a.minimum_ial ?? '') === (b.minimum_ial ?? '') &&
 			Boolean(a.allow_claims_without_scope) === Boolean(b.allow_claims_without_scope) &&
-			(a.identity_mapping?.fieldMappingSetId ?? '') ===
-				(b.identity_mapping?.fieldMappingSetId ?? '') &&
+			identityMappingSelectValue(a.identity_mapping) ===
+				identityMappingSelectValue(b.identity_mapping) &&
 			attributeReleaseConsentValue(a.attribute_release_consent) ===
 				attributeReleaseConsentValue(b.attribute_release_consent) &&
 			(a.asc_enabled ?? true) === (b.asc_enabled ?? true) &&
@@ -929,12 +949,15 @@
 			asc_protected_request_required: client.asc_protected_request_required ?? true,
 			asc_sao_enabled: client.asc_sao_enabled ?? true,
 			asc_transformed_claims_enabled: client.asc_transformed_claims_enabled ?? true,
-			identity_mapping: client.identity_mapping?.fieldMappingSetId
-				? {
-						...(client.identity_mapping ?? {}),
-						destinationNamespace: client.identity_mapping.destinationNamespace ?? 'oidc.claim'
-					}
-				: null,
+			identity_mapping:
+				client.identity_mapping?.mode === 'none'
+					? { mode: 'none' }
+					: client.identity_mapping?.fieldMappingSetId
+						? {
+								...(client.identity_mapping ?? {}),
+								destinationNamespace: client.identity_mapping.destinationNamespace ?? 'oidc.claim'
+							}
+						: null,
 			attribute_release_consent: client.attribute_release_consent ?? null,
 			asc_allowed_transformed_claims: getEffectiveAscAllowedTransformedClaims(client)
 		};
@@ -2673,11 +2696,14 @@
 							{#if isEditing}
 								<select
 									class="form-select"
-									value={editForm.identity_mapping?.fieldMappingSetId ?? ''}
+									value={identityMappingSelectValue(editForm.identity_mapping)}
 									onchange={(event) => setIdentityMappingFieldMappingSet(event.currentTarget.value)}
 								>
 									<option value=""
 										>{$LL.admin_client_detail_identity_mapping_policy_default()}</option
+									>
+									<option value={IDENTITY_MAPPING_NONE_OPTION}
+										>{$LL.admin_client_detail_identity_mapping_policy_none()}</option
 									>
 									{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
 										<option value={fieldMappingSet.id}>
@@ -2690,7 +2716,7 @@
 								</p>
 							{:else}
 								<p class="display-text">
-									{identityMappingFieldMappingLabel(client.identity_mapping?.fieldMappingSetId)}
+									{identityMappingFieldMappingLabel(client.identity_mapping)}
 								</p>
 								<p class="form-hint">
 									{$LL.admin_client_detail_identity_mapping_policy_display_hint()}

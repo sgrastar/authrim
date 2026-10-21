@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
 import {
-  resetSwallowedIdentityMappingFailureThrottle,
+  IdentityMappingResolutionError,
+  IdentityMappingSelectionError,
+  OIDCIdentityMappingRuntimeError,
+  readClientIdentityMappingChoice,
   type DatabaseAdapter,
   type Env,
   type FlowRuntimeContract,
@@ -55,6 +58,7 @@ const mocks = vi.hoisted(() => {
     challengeStore,
     runtimeUsers,
     resolveRuntimeIdentityMappingBinding: vi.fn(),
+    resolveOidcIdentityMappingBinding: vi.fn(),
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
     readAuthorizationChallengeFreshness: vi.fn(),
@@ -92,6 +96,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     resolveRuntimeIdentityMappingBinding: mocks.resolveRuntimeIdentityMappingBinding,
+    resolveOidcIdentityMappingBinding: mocks.resolveOidcIdentityMappingBinding,
   };
 });
 
@@ -766,8 +771,61 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 /** The statements run inside the interaction's transactions since the last reset. */
 const txExecuteCalls: Array<[string, unknown[] | undefined]> = [];
 
+/**
+ * The selection and reading of the Mapping Set the app is bound to (tested in ar-lib-core): an app
+ * that names a Mapping Set is bound to it, with `destination_oidc_1` as its Destination Profile,
+ * and one that names none is bound to nothing.
+ */
+function oidcResolution(setId: string | null, destinationProfileId = 'destination_oidc_1') {
+  const chain = [
+    { tier: 'client', state: setId ? 'set' : 'unset' },
+    { tier: 'tenant_default', state: 'unset' },
+    { tier: 'platform_default', state: 'unset' },
+  ];
+  return setId
+    ? {
+        selection: { kind: 'bound', tier: 'client', setId, chain },
+        binding: {
+          fieldMappingSetId: setId,
+          destinationProfileId,
+          destinationProfileIds: [destinationProfileId],
+        },
+      }
+    : { selection: { kind: 'none', reason: 'no_default', chain }, binding: null };
+}
+
+/** The selection's reading of the app's own choice is the real one: what it rejects fails here too. */
+function failIfNotAChoice(clientSelector: unknown): void {
+  const choice = readClientIdentityMappingChoice(clientSelector);
+  if (choice.kind === 'invalid') {
+    throw new IdentityMappingSelectionError(
+      'client_selector_invalid',
+      'client',
+      undefined,
+      choice.reason
+    );
+  }
+}
+
+function namedSetId(clientSelector: unknown): string | null {
+  try {
+    const value =
+      typeof clientSelector === 'string' ? JSON.parse(clientSelector) : (clientSelector ?? {});
+    return typeof value?.fieldMappingSetId === 'string' ? value.fieldMappingSetId : null;
+  } catch {
+    return null;
+  }
+}
+
 function resetAdapter() {
   vi.clearAllMocks();
+  mocks.resolveOidcIdentityMappingBinding.mockReset();
+  mocks.resolveOidcIdentityMappingBinding.mockImplementation(
+    async (input: { clientSelector: unknown }) => {
+      failIfNotAChoice(input.clientSelector);
+      return oidcResolution(namedSetId(input.clientSelector));
+    }
+  );
   txExecuteCalls.length = 0;
   mocks.coreAdapter.query.mockReset();
   mocks.coreAdapter.queryOne.mockReset();
@@ -1875,7 +1933,7 @@ describe('LoginUI runtime Flow handlers', () => {
     mockStartQueries(consentRuntime);
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
       })
       .mockResolvedValueOnce({
         id: 'policy_registration',
@@ -1939,7 +1997,7 @@ describe('LoginUI runtime Flow handlers', () => {
     });
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
       })
       .mockResolvedValueOnce({
         id: 'policy_registration',
@@ -2019,7 +2077,7 @@ describe('LoginUI runtime Flow handlers', () => {
       mockStartQueries(consentRuntime);
       mocks.coreAdapter.queryOne
         .mockResolvedValueOnce({
-          identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+          identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
         })
         .mockResolvedValueOnce({
           id: 'policy_registration',
@@ -2096,7 +2154,7 @@ describe('LoginUI runtime Flow handlers', () => {
     mockStartQueries(consentRuntime);
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
       })
       .mockResolvedValueOnce(policy);
     mocks.coreAdapter.query.mockResolvedValueOnce([]);
@@ -2129,7 +2187,7 @@ describe('LoginUI runtime Flow handlers', () => {
     });
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
       })
       .mockResolvedValueOnce(policy)
       .mockResolvedValueOnce(policy);
@@ -2179,10 +2237,9 @@ describe('LoginUI runtime Flow handlers', () => {
         is_active: 1,
       });
     mocks.coreAdapter.query.mockResolvedValueOnce([]);
-    mocks.resolveRuntimeIdentityMappingBinding.mockResolvedValueOnce({
-      destinationProfileId: 'active_destination_profile',
-      destinationProfileIds: ['active_destination_profile'],
-    });
+    mocks.resolveOidcIdentityMappingBinding.mockResolvedValueOnce(
+      oidcResolution('mapping_set_1', 'active_destination_profile')
+    );
     mocks.adminAdapter.queryOne.mockResolvedValueOnce({
       profile_id: 'active_destination_profile',
       destination_type: 'oidc',
@@ -2206,20 +2263,23 @@ describe('LoginUI runtime Flow handlers', () => {
     const contract = data.contract as FlowRuntimeContract;
 
     expect(response.status).toBe(200);
-    expect(mocks.resolveRuntimeIdentityMappingBinding).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        protocol: 'oidc',
+    // The same selection and reading as the release: the app's row and the Worker's environment.
+    expect(mocks.resolveOidcIdentityMappingBinding).toHaveBeenCalledWith({
+      env: expect.objectContaining({ DB_ADMIN: mocks.adminAdapter }),
+      tenantId: 'tenant_test',
+      clientId: 'client_1',
+      clientSelector: JSON.stringify({
         fieldMappingSetId: 'mapping_set_1',
-      })
-    );
+        destinationProfileId: 'stale_destination_profile',
+      }),
+    });
     expect(contract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
       profile_id: 'active_destination_profile',
       profile_version_id: 'active_destination_profile_v2',
     });
   });
 
-  it("hydrates OIDC consent from the tenant's active activation when the app has no Mapping Set", async () => {
+  it("hydrates OIDC consent from the default Mapping Set the app's tenant names when the app names none", async () => {
     mockStartQueries(consentRuntime);
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({ identity_mapping: null })
@@ -2230,9 +2290,9 @@ describe('LoginUI runtime Flow handlers', () => {
         is_active: 1,
       });
     mocks.coreAdapter.query.mockResolvedValueOnce([]);
-    mocks.resolveRuntimeIdentityMappingBinding.mockResolvedValueOnce({
-      destinationProfileId: 'tenant_destination_profile',
-      destinationProfileIds: ['tenant_destination_profile'],
+    mocks.resolveOidcIdentityMappingBinding.mockResolvedValueOnce({
+      ...oidcResolution('tenant_default_set', 'tenant_destination_profile'),
+      selection: { kind: 'bound', tier: 'tenant_default', setId: 'tenant_default_set', chain: [] },
     });
     mocks.adminAdapter.queryOne.mockResolvedValueOnce({
       profile_id: 'tenant_destination_profile',
@@ -2256,13 +2316,9 @@ describe('LoginUI runtime Flow handlers', () => {
     const contract = data.contract as FlowRuntimeContract;
 
     expect(response.status).toBe(200);
-    // The same lookup the release makes: no Mapping Set named, the tenant's activation applies.
-    const lookup = mocks.resolveRuntimeIdentityMappingBinding.mock.calls[0][1] as Record<
-      string,
-      unknown
-    >;
-    expect(lookup).toMatchObject({ protocol: 'oidc', role: 'op', clientId: 'client_1' });
-    expect(lookup.fieldMappingSetId).toBeUndefined();
+    expect(mocks.resolveOidcIdentityMappingBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: 'client_1', clientSelector: null })
+    );
     expect(contract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
       profile_id: 'tenant_destination_profile',
       fields: [
@@ -2272,41 +2328,102 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
-  it('records, as an error, a tenant mapping it cannot read, and goes on with no fields to ask about', async () => {
-    resetSwallowedIdentityMappingFailureThrottle();
-    mockStartQueries(consentRuntime);
-    mocks.coreAdapter.queryOne
-      .mockResolvedValueOnce({ identity_mapping: null })
-      .mockResolvedValueOnce({
+  describe('an app that is bound to no Mapping Set', () => {
+    async function consentOf(clientRow: Record<string, unknown>, env: Partial<Env>) {
+      mockStartQueries(consentRuntime);
+      mocks.coreAdapter.queryOne.mockResolvedValueOnce(clientRow).mockResolvedValueOnce({
         id: 'policy_registration',
         display_name: 'Authorization consent',
         description: null,
         is_active: 1,
       });
-    mocks.coreAdapter.query.mockResolvedValueOnce([]);
-    mocks.resolveRuntimeIdentityMappingBinding.mockRejectedValueOnce(
-      new Error('no such table: field_mapping_activations')
+      mocks.coreAdapter.query.mockResolvedValueOnce([]);
+      const response = await loginRuntimeInteractionStartHandler(
+        createContext({
+          env,
+          body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'email'] },
+        })
+      );
+      const data = await readJson(response);
+      return {
+        response,
+        consent: (data.contract as FlowRuntimeContract | undefined)?.ui.steps[0]?.content
+          ?.destination_field_consent,
+      };
+    }
+
+    it.each([
+      ['has no choice of its own', { identity_mapping: null }],
+      ['opts out with { mode: "none" }', { identity_mapping: JSON.stringify({ mode: 'none' }) }],
+    ])(
+      'asks about no fields when it %s, with or without the Admin database',
+      async (_name, row) => {
+        for (const env of [{ DB_ADMIN: mocks.adminAdapter as never }, {}]) {
+          resetAdapter();
+          const { response, consent } = await consentOf(row, env);
+
+          expect(response.status).toBe(200);
+          expect(consent).toBeUndefined();
+          // No Destination Profile was looked up, and no activation was looked for by its scope.
+          expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
+          expect(mocks.resolveRuntimeIdentityMappingBinding).not.toHaveBeenCalled();
+        }
+      }
     );
 
-    const response = await loginRuntimeInteractionStartHandler(
-      createContext({
-        env: { DB_ADMIN: mocks.adminAdapter as never },
-        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'email'] },
-      })
-    );
-    const data = await readJson(response);
-    const contract = data.contract as FlowRuntimeContract;
+    it.each([{ destinationProfileId: 'destination_oidc_1' }, { destination_profile_id: 'p' }])(
+      'fails for a selector of the older kind (%j), with or without the Admin database',
+      async (legacy) => {
+        for (const env of [{ DB_ADMIN: mocks.adminAdapter as never }, {}]) {
+          resetAdapter();
 
-    // The behavior is unchanged: the request goes on, with no fields to ask the user about.
-    expect(response.status).toBe(200);
-    expect(contract.ui.steps[0]?.content?.destination_field_consent).toBeUndefined();
-    // What is new: the failure is visible, with no message and nothing of the user.
-    expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining('could not be resolved'), {
-      action: 'identity_mapping_resolution_swallowed',
-      clientId: 'client_1',
-      failure_kind: 'query_failed',
-      reason_code: 'no_such_table',
-      suppressed_since_last_log: 0,
+          await expect(
+            consentOf({ identity_mapping: JSON.stringify(legacy) }, env)
+          ).rejects.toBeInstanceOf(OIDCIdentityMappingRuntimeError);
+          // Its Destination Profile was not looked up: it holds no gate any more, and the screen
+          // is not shown without one.
+          expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
+        }
+      }
+    );
+
+    it('fails, and does not go on with no fields to ask about, when the Mapping Set it is bound to cannot be used', async () => {
+      mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(
+        new IdentityMappingResolutionError('set_missing', 'tenant_default', 'set_gone')
+      );
+
+      await expect(
+        consentOf({ identity_mapping: null }, { DB_ADMIN: mocks.adminAdapter as never })
+      ).rejects.toBeInstanceOf(OIDCIdentityMappingRuntimeError);
+    });
+
+    it('fails when the Admin database is not bound and the app is bound to a set', async () => {
+      mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(
+        new IdentityMappingResolutionError(
+          'admin_database_unavailable',
+          'client',
+          'set_1',
+          'admin_database_not_configured'
+        )
+      );
+
+      await expect(
+        consentOf({ identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }) }, {})
+      ).rejects.toMatchObject({ code: 'admin_database_unavailable' });
+    });
+
+    it('fails when a default is not a usable value or the settings cannot be read', async () => {
+      for (const error of [
+        new IdentityMappingSelectionError('default_setting_invalid', 'tenant_default', undefined),
+        new IdentityMappingSelectionError('settings_unreadable', undefined, undefined),
+      ]) {
+        resetAdapter();
+        mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(error);
+
+        await expect(
+          consentOf({ identity_mapping: null }, { DB_ADMIN: mocks.adminAdapter as never })
+        ).rejects.toBeDefined();
+      }
     });
   });
 
@@ -2350,7 +2467,7 @@ describe('LoginUI runtime Flow handlers', () => {
       mockStartQueries(consentRuntime);
       mocks.coreAdapter.queryOne
         .mockResolvedValueOnce({
-          identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+          identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
           ...client,
         })
         .mockResolvedValueOnce({
@@ -3354,6 +3471,8 @@ describe('LoginUI runtime Flow handlers', () => {
       },
     });
     mocks.coreAdapter.queryOne
+      // The app's row, read to select its Mapping Set (none: no Destination Profile fields).
+      .mockResolvedValueOnce({ identity_mapping: null })
       .mockResolvedValueOnce({
         id: 'policy_registration',
         display_name: 'Registration consent policy',
@@ -3450,7 +3569,7 @@ describe('LoginUI runtime Flow handlers', () => {
     });
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
         attribute_release_consent: JSON.stringify({ enabled: true, mode: 'every_time' }),
       })
       .mockResolvedValueOnce({
@@ -3580,7 +3699,7 @@ describe('LoginUI runtime Flow handlers', () => {
     });
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
         allow_claims_without_scope: 1,
       })
       .mockResolvedValueOnce({

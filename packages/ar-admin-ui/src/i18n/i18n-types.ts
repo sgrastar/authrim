@@ -2909,15 +2909,19 @@ type RootTranslation = {
 	 */
 	admin_client_detail_identity_mapping_policy: string
 	/**
-	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​/​ ​n​o​ ​c​l​i​e​n​t​ ​o​v​e​r​r​i​d​e
+	 * F​o​l​l​o​w​ ​t​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​(​n​o​ ​c​l​i​e​n​t​ ​o​v​e​r​r​i​d​e​)
 	 */
 	admin_client_detail_identity_mapping_policy_default: string
 	/**
-	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​u​s​e​d​ ​f​o​r​ ​O​I​D​C​ ​U​s​e​r​I​n​f​o​ ​a​n​d​ ​t​o​k​e​n​ ​c​l​a​i​m​s​ ​f​o​r​ ​t​h​i​s​ ​c​l​i​e​n​t​.
+	 * N​o​ ​m​a​p​p​i​n​g​ ​(​i​g​n​o​r​e​ ​t​h​e​ ​d​e​f​a​u​l​t​s​)
+	 */
+	admin_client_detail_identity_mapping_policy_none: string
+	/**
+	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​u​s​e​d​ ​f​o​r​ ​t​h​e​ ​I​D​ ​t​o​k​e​n​,​ ​U​s​e​r​I​n​f​o​ ​a​n​d​ ​c​o​n​s​e​n​t​ ​s​c​r​e​e​n​ ​o​f​ ​t​h​i​s​ ​c​l​i​e​n​t​.​ ​F​o​l​l​o​w​i​n​g​ ​t​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​u​s​e​s​ ​t​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​M​a​p​p​i​n​g​ ​S​e​t​,​ ​e​l​s​e​ ​t​h​e​ ​p​l​a​t​f​o​r​m​ ​d​e​f​a​u​l​t​,​ ​e​l​s​e​ ​n​o​ ​m​a​p​p​i​n​g​.​ ​A​ ​m​a​p​p​i​n​g​ ​i​s​ ​n​e​v​e​r​ ​a​p​p​l​i​e​d​ ​j​u​s​t​ ​b​e​c​a​u​s​e​ ​i​t​ ​i​s​ ​a​c​t​i​v​a​t​e​d​.
 	 */
 	admin_client_detail_identity_mapping_policy_hint: string
 	/**
-	 * C​l​i​e​n​t​ ​o​v​e​r​r​i​d​e​ ​f​o​r​ ​O​I​D​C​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​.​ ​E​m​p​t​y​ ​u​s​e​s​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​a​c​t​i​v​a​t​i​o​n​.
+	 * C​l​i​e​n​t​ ​o​v​e​r​r​i​d​e​ ​f​o​r​ ​O​I​D​C​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​.​ ​E​m​p​t​y​ ​f​o​l​l​o​w​s​ ​t​h​e​ ​t​e​n​a​n​t​ ​d​e​f​a​u​l​t​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​(​e​l​s​e​ ​t​h​e​ ​p​l​a​t​f​o​r​m​ ​d​e​f​a​u​l​t​,​ ​e​l​s​e​ ​n​o​n​e​)​.
 	 */
 	admin_client_detail_identity_mapping_policy_display_hint: string
 	/**
@@ -37023,15 +37027,19 @@ export type TranslationFunctions = {
 	 */
 	admin_client_detail_identity_mapping_policy: () => LocalizedString
 	/**
-	 * Tenant default / no client override
+	 * Follow the tenant default (no client override)
 	 */
 	admin_client_detail_identity_mapping_policy_default: () => LocalizedString
 	/**
-	 * Selects the active Field Mapping Set used for OIDC UserInfo and token claims for this client.
+	 * No mapping (ignore the defaults)
+	 */
+	admin_client_detail_identity_mapping_policy_none: () => LocalizedString
+	/**
+	 * Selects the active Field Mapping Set used for the ID token, UserInfo and consent screen of this client. Following the tenant default uses the tenant default Mapping Set, else the platform default, else no mapping. A mapping is never applied just because it is activated.
 	 */
 	admin_client_detail_identity_mapping_policy_hint: () => LocalizedString
 	/**
-	 * Client override for OIDC field mapping. Empty uses tenant default activation.
+	 * Client override for OIDC field mapping. Empty follows the tenant default Mapping Set (else the platform default, else none).
 	 */
 	admin_client_detail_identity_mapping_policy_display_hint: () => LocalizedString
 	/**
