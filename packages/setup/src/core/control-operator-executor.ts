@@ -305,12 +305,16 @@ async function claimCreate(input: {
                    started_at = COALESCE(started_at, ?), updated_at = ?
              WHERE operation_id = ? AND environment_id = ?
                AND operation_kind = 'provision_shard'
-               AND status = 'blocked' AND last_error_code = 'operator_action_required'
+               AND (
+                 (status = 'blocked' AND last_error_code = 'operator_action_required') OR
+                 (status = 'running' AND last_error_code IS NULL
+                   AND lock_expires_at IS NOT NULL AND lock_expires_at <= ?)
+               )
                AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                AND EXISTS (
                  SELECT 1 FROM control_operation_steps step
                   WHERE step.operation_id = candidate.operation_id
-                    AND step.step_key = 'create_d1' AND step.status = 'blocked'
+                    AND step.step_key = 'create_d1' AND step.status IN ('blocked', 'running')
                )
                AND (
                  SELECT COUNT(*) FROM control_operations active
@@ -334,6 +338,7 @@ async function claimCreate(input: {
         input.operation.operationId,
         input.operation.environmentId,
         input.now,
+        input.now,
       ],
     },
     {
@@ -341,7 +346,7 @@ async function claimCreate(input: {
                SET status = 'running', attempt_count = attempt_count + 1,
                    next_attempt_at = NULL, last_error_code = NULL, last_error_redacted = NULL,
                    started_at = COALESCE(started_at, ?), updated_at = ?
-             WHERE operation_id = ? AND step_key = 'create_d1' AND status = 'blocked'
+             WHERE operation_id = ? AND step_key = 'create_d1' AND status IN ('blocked', 'running')
                AND EXISTS (
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.environment_id = ?

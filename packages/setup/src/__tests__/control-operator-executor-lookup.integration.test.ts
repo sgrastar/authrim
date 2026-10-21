@@ -279,6 +279,39 @@ describe('setup operator on a lookup shard', () => {
     expect(stepStatus('create_d1')).toEqual({ status: 'succeeded' });
   });
 
+  it('takes over a create whose operator lease expired, and leaves a live one alone', async () => {
+    // The state a failed claim left behind: Control's rows say running under an old setup lease.
+    const leave = (expiresAt: string) =>
+      control.exec(`
+        UPDATE control_operations SET status = 'running', last_error_code = NULL,
+          lock_owner = 'setup:previous', lock_expires_at = ${expiresAt}, attempt_count = 1,
+          fencing_token = 1, updated_at = 12
+         WHERE operation_id = '${OPERATION}';
+        UPDATE control_operation_steps SET status = 'running', last_error_code = NULL, attempt_count = 1
+         WHERE operation_id = '${OPERATION}' AND step_key = 'create_d1';
+        UPDATE control_desired_resources SET provisioning_state = 'creating', create_started_at = 12
+         WHERE desired_resource_id = '${DESIRED}';
+      `);
+    leave('unixepoch() + 300');
+    expect(await pending()).toBeUndefined();
+
+    leave('50');
+    const operation = await pending();
+    expect(operation).toMatchObject({ status: 'running', currentStep: 'create_d1' });
+    const operator = client(control, lookup);
+    await create(operator);
+    expect(operator.created).toEqual([DATABASE_NAME]);
+    expect(shardStatus()).toEqual({ status: 'provisioning' });
+    expect(stepStatus('create_d1')).toEqual({ status: 'succeeded' });
+    expect(
+      control
+        .prepare(
+          'SELECT attempt_count, fencing_token FROM control_operations WHERE operation_id = ?'
+        )
+        .get(OPERATION)
+    ).toEqual({ attempt_count: 2, fencing_token: 2 });
+  });
+
   const create = async (operator: ReturnType<typeof client>) =>
     executeSetupControlOperatorCreate({
       controlDatabaseId: 'control-db',
