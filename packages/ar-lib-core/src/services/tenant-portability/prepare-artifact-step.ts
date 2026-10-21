@@ -13,6 +13,9 @@ import type { TenantBundleKeyEnvelope } from './bundle-key-envelope';
 
 type WriterInput = Parameters<typeof TenantBackupArtifactWriter.create>;
 
+/** The operation cursor is stored with this bound (operation-store). */
+const MAX_CURSOR_LENGTH = 16_384;
+
 /** Persist the encrypted manifest before advancing the operation to dataset export. */
 export async function runPrepareTenantBackupArtifactStep(input: {
   context: TenantBackupStepContext;
@@ -28,6 +31,14 @@ export async function runPrepareTenantBackupArtifactStep(input: {
   now(): number;
   /** Verify recorded snapshot ownership, retention and complete module coverage. */
   assertSources(): Promise<void>;
+  /**
+   * Stage module state that is listed after the write hold from the boundary snapshots, such as
+   * the R2 body plans. Called on every transition of this phase with its own position until done.
+   */
+  prepareResources?(
+    cursor: string | null,
+    boundaryUnixMs: number
+  ): Promise<{ cursor: string | null; done: boolean }>;
 }): Promise<TenantBackupStepResult> {
   const { operation, lease, signal } = input.context;
   signal.throwIfAborted();
@@ -56,10 +67,17 @@ export async function runPrepareTenantBackupArtifactStep(input: {
     inventoryDigest: string;
     releasedAt: number;
     participants: BackupBoundaryParticipant[];
+    /** Version 2 only: the module preparation position. */
+    resources?: string | null;
   };
   if (
-    Object.keys(cursor).length !== 5 ||
-    cursor.version !== 1 ||
+    !(
+      (cursor.version === 1 && Object.keys(cursor).length === 5) ||
+      (cursor.version === 2 &&
+        Object.keys(cursor).length === 6 &&
+        (cursor.resources === null ||
+          (typeof cursor.resources === 'string' && cursor.resources.length > 0)))
+    ) ||
     !/^[a-f0-9]{64}$/.test(cursor.boundaryId) ||
     cursor.inventoryDigest !== head.chain_digest ||
     !Number.isSafeInteger(cursor.releasedAt) ||
@@ -93,6 +111,25 @@ export async function runPrepareTenantBackupArtifactStep(input: {
     signal.throwIfAborted();
   };
   await guard();
+  if (input.prepareResources) {
+    // Re-run on every transition after the receipt and inventory checks above.
+    const prepared = await input.prepareResources(cursor.resources ?? null, cursor.releasedAt);
+    if (!prepared.done) {
+      if (typeof prepared.cursor !== 'string' || !prepared.cursor)
+        throw new Error('backup_artifact_preparation_cursor');
+      const next = JSON.stringify({
+        version: 2,
+        boundaryId: cursor.boundaryId,
+        inventoryDigest: cursor.inventoryDigest,
+        releasedAt: cursor.releasedAt,
+        participants: cursor.participants,
+        resources: prepared.cursor,
+      });
+      if (next.length > MAX_CURSOR_LENGTH) throw new Error('backup_artifact_preparation_cursor');
+      await guard();
+      return { phase: 'prepare_export_artifact', disposition: 'continue', cursor: next };
+    }
+  } else if (cursor.version !== 1) throw new Error('backup_artifact_preparation_cursor');
   encodeTenantBundleManifest(input.manifest, input.expected);
   const keyBundleId = Array.from(input.key.envelope.subarray(1, 17), (byte) =>
     byte.toString(16).padStart(2, '0')

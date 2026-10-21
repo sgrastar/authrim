@@ -77,6 +77,13 @@ export interface TenantBackupInstalledExportAdapter {
       readSession?: object;
     }
   ): Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
+  /**
+   * Stage non-SQL state listed after the write hold from the boundary snapshots (R2 body plans).
+   * Called during prepare_export_artifact with its own position until it reports done.
+   */
+  prepareArtifactResources?(
+    input: AdapterContext & { cursor: string | null; boundaryUnixMs: number }
+  ): Promise<{ cursor: string | null; done: boolean }>;
   /** Release one page of installed non-SQL snapshot state after ciphertext verification. */
   releaseAdditionalResources(input: AdapterContext): Promise<{ done: boolean }>;
   assertPublishable(input: AdapterContext & { inventoryDigest: string }): Promise<void>;
@@ -356,6 +363,16 @@ export async function runTenantBackupExportOperationStep(
           }),
         assertPublishable: async (inventoryDigest) =>
           adapter.assertPublishable({ ...(await adapterContext()), inventoryDigest }),
+        ...(adapter.prepareArtifactResources
+          ? {
+              prepareResources: async (cursor: string | null, boundaryUnixMs: number) =>
+                (adapter.prepareArtifactResources ?? fail)({
+                  ...(await adapterContext()),
+                  cursor,
+                  boundaryUnixMs,
+                }),
+            }
+          : {}),
       },
       now
     );

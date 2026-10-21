@@ -4,7 +4,6 @@ import {
   type EncryptedObjectArtifactEnvelope,
 } from '@authrim/ar-lib-core/services/object-artifact-crypto';
 import { isObjectClass, type ObjectClass } from '@authrim/ar-lib-core/services/object-catalog';
-import { encodePortableLogChunkRecords } from '@authrim/ar-lib-core/services/tenant-portability/portable-log-chunk';
 import { encodePortableSensitiveDetailRecord } from '@authrim/ar-lib-core/services/tenant-portability/portable-sensitive-detail';
 import {
   encodePortableR2ObjectChunk,
@@ -14,11 +13,7 @@ import {
   type PortableR2DatasetId,
 } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
 import { PORTABLE_TENANT_KEY } from '@authrim/ar-lib-core/services/tenant-portability/portable-tenant-key';
-import {
-  decodeLogRecordFromBlock,
-  decryptLogChunkBody,
-  deriveLogChunkEncryptionKey,
-} from '@authrim/ar-lib-logging/chunks';
+import { decryptLogChunkBody, deriveLogChunkEncryptionKey } from '@authrim/ar-lib-logging/chunks';
 import {
   LOG_CHUNK_COMPRESSION,
   LOG_PLANES,
@@ -29,6 +24,7 @@ import {
 import type { AdapterContext } from './tenant-backup-export-dispatcher';
 import {
   createDeferredEncryptedTenantBackupRecordSnapshotPort,
+  type DeferredEncryptedTenantBackupRecordSnapshotPort,
   type TenantBackupRecordSnapshotSummary,
 } from './tenant-backup-record-snapshot-port';
 
@@ -97,6 +93,12 @@ export interface RestoreHoldPayloadR2ObjectDescriptor extends BaseDescriptor {
   >;
 }
 
+/**
+ * A whole log chunk: the stored body is decrypted (when encrypted) and carried unchanged, so the
+ * record index rows of the chunk keep their block and record offsets on restore. Plans listed
+ * from the T0 snapshot also name the source encryption explicitly and the scope to re-encrypt
+ * under; older descriptors are always encrypted.
+ */
 export interface LogChunkR2ObjectDescriptor extends BaseDescriptor {
   sourceEncoding: 'log_chunk_v1';
   context: Readonly<
@@ -108,8 +110,10 @@ export interface LogChunkR2ObjectDescriptor extends BaseDescriptor {
       plane: LogPlane;
       chunkId: string;
       compression: LogChunkCompression;
-      encryptionScope: string;
-      keyVersion: number;
+      sourceEncrypted?: boolean;
+      targetEncryptionScope?: string;
+      encryptionScope?: string;
+      keyVersion?: number;
       [key: string]: unknown;
     }
   >;
@@ -317,25 +321,36 @@ function validateDescriptor(
     )
       invalid();
   }
-  if (
-    descriptor.sourceEncoding === 'log_chunk_v1' &&
-    (descriptor.context.catalogKind !== 'log_object' ||
-      !descriptor.context.tenantKey ||
-      !descriptor.context.chunkId ||
-      !descriptor.context.encryptionScope ||
-      !LOG_TYPES.includes(descriptor.context.logType) ||
-      !LOG_PLANES.includes(descriptor.context.plane) ||
-      !LOG_CHUNK_COMPRESSION.includes(descriptor.context.compression) ||
-      !Number.isSafeInteger(descriptor.context.keyVersion) ||
-      descriptor.context.keyVersion < 1 ||
+  if (descriptor.sourceEncoding === 'log_chunk_v1') {
+    const value = descriptor.context;
+    const encrypted = value.sourceEncrypted !== false;
+    if (
+      value.catalogKind !== 'log_object' ||
+      !SAFE_ID.test(value.tenantKey) ||
+      !SAFE_ID.test(value.chunkId) ||
+      !LOG_TYPES.includes(value.logType) ||
+      !LOG_PLANES.includes(value.plane) ||
+      !LOG_CHUNK_COMPRESSION.includes(value.compression) ||
+      (value.sourceEncrypted !== undefined && typeof value.sourceEncrypted !== 'boolean') ||
+      (value.targetEncryptionScope !== undefined &&
+        (typeof value.targetEncryptionScope !== 'string' ||
+          !value.targetEncryptionScope ||
+          value.targetEncryptionScope.length > 256)) ||
+      (value.sourceEncrypted !== undefined && value.targetEncryptionScope === undefined) ||
+      (encrypted &&
+        (!value.encryptionScope ||
+          !Number.isSafeInteger(value.keyVersion) ||
+          (value.keyVersion as number) < 1)) ||
+      (!encrypted && (value.encryptionScope !== undefined || value.keyVersion !== undefined)) ||
       descriptor.bucketBinding !==
-        (descriptor.context.plane === 'sensitive_detail'
+        (value.plane === 'sensitive_detail'
           ? 'SENSITIVE_DETAILS'
-          : descriptor.context.plane === 'diagnostic_detail'
+          : value.plane === 'diagnostic_detail'
             ? 'DIAGNOSTIC_LOGS'
-            : 'AUDIT_ARCHIVE'))
-  )
-    invalid();
+            : 'AUDIT_ARCHIVE')
+    )
+      invalid();
+  }
   if (descriptor.sourceEncoding === 'log_chunk_records_v1') {
     const value = descriptor.context;
     if (
@@ -374,25 +389,6 @@ function validateDescriptor(
   }
 }
 
-interface SourceLogIndexRow {
-  record_id: string;
-  surface: string | null;
-  line_number: number | null;
-  block_offset: number | null;
-  block_length: number | null;
-  record_offset: number | null;
-  record_length: number | null;
-  event_at: number;
-  index_profile: string;
-  indexed_fields: string | null;
-  created_at: number;
-}
-
-function nonNegativeInteger(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) invalid();
-  return value as number;
-}
-
 function sourceDatabase(
   context: AdapterContext,
   sourceFamily: 'core' | 'admin',
@@ -406,14 +402,6 @@ function sourceDatabase(
         );
   if (candidates.length !== 1) invalid();
   return candidates[0].database;
-}
-
-function sourceLogDatabase(context: AdapterContext, descriptor: LogChunkRecordsR2ObjectDescriptor) {
-  return sourceDatabase(
-    context,
-    descriptor.context.sourceFamily,
-    descriptor.context.sourceDatabaseId
-  );
 }
 
 async function assertDescriptorSnapshotActive(
@@ -430,98 +418,6 @@ async function assertDescriptorSnapshotActive(
     context.context.lease.tenantId,
   ]);
   if (!row || row.id !== capture.snapshotId) invalid();
-}
-
-async function portableLogRecords(
-  context: AdapterContext,
-  descriptor: LogChunkRecordsR2ObjectDescriptor,
-  body: Uint8Array
-): Promise<Uint8Array> {
-  const rows = await sourceLogDatabase(context, descriptor).query<SourceLogIndexRow>(
-    `SELECT record_id,surface,line_number,block_offset,block_length,record_offset,record_length,
-       event_at,index_profile,indexed_fields,created_at
-     FROM log_chunk_record_index
-     WHERE object_catalog_id=? AND tenant_key=? AND log_type=? AND plane=? AND chunk_id=?
-       AND status='committed' AND event_at<=? AND (? IS NULL OR event_at>=?)
-     ORDER BY event_at,record_id LIMIT 10001`,
-    [
-      descriptor.context.sourceRowId,
-      descriptor.context.tenantKey,
-      descriptor.context.logType,
-      descriptor.context.plane,
-      descriptor.context.chunkId,
-      descriptor.context.windowUntilInclusiveUnixMs,
-      descriptor.context.windowFromInclusiveUnixMs,
-      descriptor.context.windowFromInclusiveUnixMs,
-    ]
-  );
-  if (rows.length < 1 || rows.length > 10_000) invalid();
-  const records = [];
-  for (const [index, row] of rows.entries()) {
-    context.context.signal.throwIfAborted();
-    if (
-      !SAFE_ID.test(row.record_id) ||
-      (row.surface !== null && row.surface.length > 256) ||
-      !row.index_profile ||
-      row.index_profile.length > 128 ||
-      (row.indexed_fields !== null && new TextEncoder().encode(row.indexed_fields).length > 65_536)
-    )
-      invalid();
-    const lineNumber = row.line_number === null ? index : nonNegativeInteger(row.line_number);
-    const blockOffset = row.block_offset === null ? 0 : nonNegativeInteger(row.block_offset);
-    const blockLength =
-      row.block_length === null ? body.length : nonNegativeInteger(row.block_length);
-    const recordOffset = row.record_offset === null ? 0 : nonNegativeInteger(row.record_offset);
-    const recordLength = nonNegativeInteger(row.record_length);
-    if (
-      blockLength < 1 ||
-      recordLength < 1 ||
-      blockOffset + blockLength > body.length ||
-      (descriptor.context.compression === 'gzip_block' &&
-        (row.block_offset === null || row.block_length === null))
-    )
-      invalid();
-    let payload: unknown;
-    try {
-      payload = await decodeLogRecordFromBlock(
-        body,
-        {
-          blockIndex: 0,
-          compressedOffset: blockOffset,
-          compressedLength: blockLength,
-          uncompressedLength: blockLength,
-          firstLineNumber: lineNumber,
-          lastLineNumber: lineNumber,
-          recordCount: 1,
-        },
-        {
-          recordId: row.record_id,
-          lineNumber,
-          blockIndex: 0,
-          recordOffset,
-          recordLength,
-        },
-        descriptor.context.compression
-      );
-      if (row.indexed_fields !== null) JSON.parse(row.indexed_fields);
-    } catch {
-      return invalid();
-    }
-    records.push({
-      recordId: row.record_id,
-      eventAt: nonNegativeInteger(row.event_at),
-      surface: row.surface,
-      indexProfile: row.index_profile,
-      indexedFields: row.indexed_fields,
-      createdAt: nonNegativeInteger(row.created_at),
-      payload,
-    });
-  }
-  return encodePortableLogChunkRecords({
-    version: 1,
-    compression: descriptor.context.compression,
-    records,
-  });
 }
 
 async function decompressGzip(bytes: Uint8Array): Promise<Uint8Array> {
@@ -752,7 +648,9 @@ async function portablePlaintext(
     return portableSensitiveDetail(rootKey, descriptor, stored);
   const logDescriptor = descriptor;
   const encrypted =
-    logDescriptor.sourceEncoding === 'log_chunk_v1' || logDescriptor.context.sourceEncrypted;
+    logDescriptor.sourceEncoding === 'log_chunk_v1'
+      ? logDescriptor.context.sourceEncrypted !== false
+      : logDescriptor.context.sourceEncrypted;
   const decrypted = encrypted
     ? await decryptLogChunkBody({
         storedBody: stored,
@@ -773,9 +671,9 @@ async function portablePlaintext(
       })
     : { body: stored, compression: logDescriptor.context.compression };
   if (decrypted.compression !== logDescriptor.context.compression) invalid();
-  return logDescriptor.sourceEncoding === 'log_chunk_records_v1'
-    ? portableLogRecords(context, logDescriptor, decrypted.body)
-    : decrypted.body;
+  // Record-level selection read the live record index after the hold; whole chunks replaced it.
+  if (logDescriptor.sourceEncoding === 'log_chunk_records_v1') invalid();
+  return decrypted.body;
 }
 
 function orderedDescriptors(
@@ -964,7 +862,18 @@ function summarizeDescriptor(
   };
 }
 
-/** Capture referenced R2 bodies into immutable, environment-encrypted record snapshots. */
+/** Encode one descriptor as the plan the export preparation stages for a deferred R2 port. */
+export function encodeTenantBackupR2ObjectPlan(
+  descriptor: TenantBackupR2ObjectDescriptor,
+  datasetId: PortableR2DatasetId
+): Uint8Array {
+  return encodeDescriptorPlan(descriptor, datasetId);
+}
+
+/**
+ * Capture referenced R2 bodies into immutable, environment-encrypted record snapshots. The plans
+ * are staged by the export preparation from the T0 SQL snapshot (tenant-backup-r2-plan-builder).
+ */
 export function createTenantBackupR2ObjectSnapshotPorts(input: {
   env: Pick<
     Env,
@@ -977,27 +886,18 @@ export function createTenantBackupR2ObjectSnapshotPorts(input: {
     | 'OBJECT_ENCRYPTION_KEY_VERSION'
   >;
   assertSource(context: AdapterContext): Promise<void>;
-  list(
-    context: AdapterContext,
-    datasetId: PortableR2DatasetId
-  ): Promise<readonly TenantBackupR2ObjectDescriptor[]>;
-}) {
+}): {
+  artifactObjects: DeferredEncryptedTenantBackupRecordSnapshotPort;
+  logArchiveObjects: DeferredEncryptedTenantBackupRecordSnapshotPort;
+} {
   const snapshot = (datasetId: PortableR2DatasetId) =>
     createDeferredEncryptedTenantBackupRecordSnapshotPort({
       env: input.env,
       resourceId: `r2-bodies:${datasetId}`,
       assertSource: (context) => input.assertSource(context),
-      async *capturePlans(context) {
-        const tenantId = context.context.lease.tenantId;
-        const descriptors = orderedDescriptors(await input.list(context, datasetId), datasetId);
-        for (const descriptor of descriptors) {
-          context.context.signal.throwIfAborted();
-          if (descriptor.context.tenantId !== tenantId) invalid();
-          yield encodeDescriptorPlan(descriptor, datasetId);
-        }
-      },
       async *materializePlan(context, plan) {
         const descriptor = decodeDescriptorPlan(plan, datasetId);
+        if (descriptor.context.tenantId !== context.context.lease.tenantId) invalid();
         await assertDescriptorSnapshotActive(context, descriptor);
         yield* captureDataset(input.env, context, datasetId, async () => [descriptor]);
         await assertDescriptorSnapshotActive(context, descriptor);

@@ -32,7 +32,6 @@ import { loadPhase8InstalledSqlitePlan } from './tenant-backup-phase8-plan-loade
 import { createTenantBackupPiiLogTransformPort } from './tenant-backup-pii-log-port';
 import { createTenantBackupPluginConfigurationPorts } from './tenant-backup-plugin-configuration-port';
 import { createTenantBackupPublicAssetPorts } from './tenant-backup-public-assets-port';
-import { createTenantBackupR2CatalogLister } from './tenant-backup-r2-catalog-lister';
 import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-object-snapshot-port';
 import { createTenantBackupSamlPorts } from './tenant-backup-saml-port';
 import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-operation-dispatcher';
@@ -206,7 +205,6 @@ export async function createProductionTenantBackupExportAdapter(
   const r2Snapshots = createTenantBackupR2ObjectSnapshotPorts({
     env,
     assertSource: async () => {},
-    list: createTenantBackupR2CatalogLister({ tenantKey }),
   });
   const records: Phase5RecordSnapshotPort[] = [
     saml.saml,
@@ -403,16 +401,19 @@ export async function createProductionTenantBackupExportAdapter(
               TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID
             )
           );
-          for (const record of records)
-            await record.release(
-              adapterContext,
-              await tenantBackupRecordSnapshotIdForInventory(
-                cleanupContext.lease.tenantId,
-                cleanupContext.lease.operationId,
-                inventoryDigest,
-                record.resourceId
-              )
+          for (const record of records) {
+            const snapshotId = await tenantBackupRecordSnapshotIdForInventory(
+              cleanupContext.lease.tenantId,
+              cleanupContext.lease.operationId,
+              inventoryDigest,
+              record.resourceId
             );
+            // Staged R2 plan pages and bodies are deleted by prefix one page per call, so a
+            // cancellation also removes pages written before their index was published.
+            if (record.releasePage) {
+              if (!(await record.releasePage(adapterContext, snapshotId))) return { done: false };
+            } else await record.release(adapterContext, snapshotId);
+          }
           return { done: true };
         },
         async assertClean(cleanupContext) {

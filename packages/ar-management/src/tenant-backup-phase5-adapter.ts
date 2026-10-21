@@ -98,6 +98,8 @@ export interface Phase5RecordSnapshotPort {
     signal: AbortSignal
   ): Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
   release(context: AdapterContext, snapshotId: string): Promise<void>;
+  /** Release one bounded page of staged state; true once nothing is left. Preferred when set. */
+  releasePage?(context: AdapterContext, snapshotId: string): Promise<boolean>;
   assertReleased(context: AdapterContext, snapshotId: string): Promise<void>;
 }
 
@@ -149,6 +151,10 @@ interface InstalledSqliteExtension {
     policy: SqliteDatasetInspectionPolicy;
     port: Phase5RecordSnapshotPort;
   }[];
+  /** Stage record snapshot state that is listed from the boundary snapshots after the hold. */
+  prepareArtifactResources?(
+    input: AdapterContext & { cursor: string | null; boundaryUnixMs: number }
+  ): Promise<{ cursor: string | null; done: boolean }>;
 }
 
 async function digest(parts: readonly string[]): Promise<string> {
@@ -421,6 +427,9 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
           nextCursor: DONE_CURSOR,
         };
       },
+      ...(input.sqliteExtension?.prepareArtifactResources
+        ? { prepareArtifactResources: input.sqliteExtension.prepareArtifactResources }
+        : {}),
       async releaseAdditionalResources(context) {
         const result = await sqlExport.releaseAdditionalResources(context);
         if (!result.done) return result;
@@ -431,11 +440,12 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
           );
         for (const record of recordSnapshots) {
           const rule = tenantDatasetSelectionRule(record.dataset.kind, context.selection);
-          if (rule.action === 'selected' || rule.action === 'resolve_references')
-            await record.port.release(
-              context,
-              await tenantBackupRecordSnapshotId(context, record.port.resourceId)
-            );
+          if (rule.action !== 'selected' && rule.action !== 'resolve_references') continue;
+          const snapshotId = await tenantBackupRecordSnapshotId(context, record.port.resourceId);
+          // Large staged snapshots release one page per transition; the dispatcher calls again.
+          if (record.port.releasePage) {
+            if (!(await record.port.releasePage(context, snapshotId))) return { done: false };
+          } else await record.port.release(context, snapshotId);
         }
         return { done: true };
       },

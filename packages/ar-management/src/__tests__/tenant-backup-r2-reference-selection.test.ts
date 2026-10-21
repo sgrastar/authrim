@@ -28,7 +28,14 @@ function port(
 ): EncryptedTenantBackupRecordSnapshotPort {
   return {
     resourceId,
-    readSummaries: vi.fn(async () => summaries),
+    readSummaries: vi.fn(
+      async (
+        _context: unknown,
+        _snapshotId: string,
+        _boundary: number,
+        visit: (summary: TenantBackupRecordSnapshotSummary) => void
+      ) => summaries.forEach((summary) => visit(summary))
+    ),
   } as unknown as EncryptedTenantBackupRecordSnapshotPort;
 }
 

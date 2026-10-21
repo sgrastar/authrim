@@ -250,12 +250,10 @@ export function phase8LogDependencyRowInSelection(input: {
       (window.fromInclusiveUnixMs === null || until >= window.fromInclusiveUnixMs)
     );
   }
-  const timestamp = integer(
-    input.row,
-    input.datasetId.endsWith('.log_chunk_record_index') ? 'event_at' : 'created_at'
-  );
-  return (
-    timestamp <= window.untilInclusiveUnixMs &&
-    (window.fromInclusiveUnixMs === null || timestamp >= window.fromInclusiveUnixMs)
-  );
+  // Log chunks are carried whole when any of their events lies in the window. Their catalog and
+  // record index rows follow the chunk through the R2 reference closure, not their own times, so
+  // the restored index matches the restored body. Only committed index rows describe the body.
+  if (input.datasetId.endsWith('.log_chunk_record_index'))
+    return text(input.row, 'status') === 'committed';
+  return true;
 }

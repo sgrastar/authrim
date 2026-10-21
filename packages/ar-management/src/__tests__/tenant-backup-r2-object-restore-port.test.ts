@@ -515,6 +515,60 @@ describe('tenant backup R2 object restore port', () => {
     );
   });
 
+  it('encrypts a whole chunk that was plaintext at the source under the named target scope', async () => {
+    const plaintext = new TextEncoder().encode('{"audit":"plain"}\n');
+    const source = await chunk(plaintext, {
+      objectId: 'core:log-plain',
+      bucketBinding: 'AUDIT_ARCHIVE',
+      sourceEncoding: 'log_chunk_v1',
+      context: {
+        tenantId: 'tenant-a',
+        catalogKind: 'log_object',
+        tenantKey: PORTABLE_TENANT_KEY,
+        logType: 'audit',
+        plane: 'archive',
+        chunkId: 'chunk-plain',
+        compression: 'none',
+        sourceEncrypted: false,
+        targetEncryptionScope: 'tenant-log-archive',
+      },
+      customMetadata: { tenantKey: PORTABLE_TENANT_KEY },
+    });
+    const ports = createTenantBackupR2ObjectRestorePorts({
+      targetTenantKey: 'target-tenant-key',
+      env: {
+        AUDIT_ARCHIVE: target as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: target as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: '45'.repeat(32),
+        OBJECT_ENCRYPTION_KEY_VERSION: '3',
+      },
+      database: adapter,
+      finalizer,
+      now: () => now++,
+    });
+
+    await ports.importR2Chunk(context(), planDigest, 'logs.archive_object_bodies', source);
+    const expectedKey = 'tenant-restores/tenant-a/operation-a/logs/core:log-plain';
+    const decoded = await decryptLogChunkBody({
+      storedBody: target.objects.get(expectedKey)?.bytes ?? new Uint8Array(),
+      keyBytes: await deriveLogChunkEncryptionKey({
+        rootKeyHex: '45'.repeat(32),
+        tenantKey: 'target-tenant-key',
+        logType: 'audit',
+        plane: 'archive',
+        keyVersion: 3,
+      }),
+      tenantKey: 'target-tenant-key',
+      logType: 'audit',
+      plane: 'archive',
+      objectKey: expectedKey,
+      chunkId: 'chunk-plain',
+      expectedEncryptionScope: 'tenant-log-archive',
+      expectedKeyVersion: 3,
+    });
+    expect(decoded.body).toEqual(plaintext);
+  });
+
   it('rejects a log object that carries an environment-specific source tenant key', async () => {
     const source = await chunk(new TextEncoder().encode('{"audit":true}\n'), {
       objectId: 'admin:legacy-log-object',

@@ -575,6 +575,114 @@ export function sqliteSnapshotRowQuery(
     AND previous.record_key = (SELECT record_key FROM params) AND previous.present = 1${selectedPartitions ? ` AND previous.row_partition IN (${selectedPartitions})` : ''}`;
 }
 
+/**
+ * Bind snapshotId, tenantId and a JSON array of text values. Returns the live rows whose `column`
+ * holds one of the values, are owned at the boundary and carry no marker of this snapshot, as
+ * `record_key`, `row_type` and `row_hex` (packed body). Rows replaced after the boundary come
+ * from sqliteSnapshotPreimagePageQuery instead; read that AFTER this statement, so a row replaced
+ * between the two reads is returned by both with the same boundary value.
+ */
+export function sqliteSnapshotLiveLookupQuery(
+  schema: CaptureSchema,
+  column: string,
+  partitions?: readonly string[]
+): string {
+  sqliteSnapshotPageQuery(schema, 'packed', partitions);
+  if (!schema.columns.includes(column)) throw new Error('snapshot_unknown_lookup_column');
+  const selectedPartitions = partitions ? rowPartitionValues(partitions) : null;
+  const partitionColumn = schema.rowPartition?.column;
+  const body = sqlitePackedRowExpression(schema.columns, 'live');
+  return `WITH params(snapshot_id, tenant_id, lookup) AS (SELECT ?, ?, ?)
+  SELECT ${recordKey(schema, 'live')} AS record_key, typeof(${body}) AS row_type,
+    hex(${body}) AS row_hex
+  FROM tenant_backup_snapshots AS snapshot CROSS JOIN ${identifier(schema.table)} AS live
+  WHERE snapshot.id = (SELECT snapshot_id FROM params)
+    AND +snapshot.tenant_id = (SELECT tenant_id FROM params) AND +snapshot.state = 'capturing'
+    AND live.${identifier(column)} IN (SELECT value FROM json_each((SELECT lookup FROM params)))
+    AND ${ownedAtBoundary(schema, 'live', 'snapshot')}
+    ${selectedPartitions ? `AND live.${identifier(partitionColumn ?? '')} IN (${selectedPartitions})` : ''}
+    AND NOT EXISTS (
+      SELECT 1 FROM tenant_backup_preimages AS previous
+      WHERE previous.snapshot_id = snapshot.id AND previous.source_table = '${schema.table}'
+        AND previous.record_key = ${recordKey(schema, 'live')}
+    )`;
+}
+
+/**
+ * Bind snapshotId, tenantId, a JSON array of `column` values, then one value per `filters`
+ * entry. Groups the same live rows as sqliteSnapshotLiveLookupQuery that also equal every filter
+ * by `groupColumns`, returning those columns as g0..gN plus `row_count`, `min_value` and
+ * `max_value` of `rangeColumn`. Combine with the table's preimages read afterwards; the number of
+ * present preimages before and after tells whether a row changed in between.
+ */
+export function sqliteSnapshotLiveAggregateQuery(
+  schema: CaptureSchema,
+  column: string,
+  groupColumns: readonly string[],
+  filters: readonly string[],
+  rangeColumn: string,
+  partitions?: readonly string[]
+): string {
+  sqliteSnapshotPageQuery(schema, 'packed', partitions);
+  for (const name of [column, ...groupColumns, ...filters, rangeColumn])
+    if (!schema.columns.includes(name)) throw new Error('snapshot_unknown_lookup_column');
+  if (!groupColumns.length || new Set(groupColumns).size !== groupColumns.length)
+    throw new Error('snapshot_invalid_lookup_group');
+  const selectedPartitions = partitions ? rowPartitionValues(partitions) : null;
+  const partitionColumn = schema.rowPartition?.column;
+  const groups = groupColumns.map((name) => `live.${identifier(name)}`);
+  return `WITH params(snapshot_id, tenant_id, lookup) AS (SELECT ?, ?, ?)
+  SELECT ${groups.map((term, index) => `${term} AS g${index}`).join(', ')}, count(*) AS row_count,
+    min(live.${identifier(rangeColumn)}) AS min_value, max(live.${identifier(rangeColumn)}) AS max_value
+  FROM tenant_backup_snapshots AS snapshot CROSS JOIN ${identifier(schema.table)} AS live
+  WHERE snapshot.id = (SELECT snapshot_id FROM params)
+    AND +snapshot.tenant_id = (SELECT tenant_id FROM params) AND +snapshot.state = 'capturing'
+    AND live.${identifier(column)} IN (SELECT value FROM json_each((SELECT lookup FROM params)))
+    ${filters.map((name) => `AND live.${identifier(name)} = ?`).join('\n    ')}
+    AND ${ownedAtBoundary(schema, 'live', 'snapshot')}
+    ${selectedPartitions ? `AND live.${identifier(partitionColumn ?? '')} IN (${selectedPartitions})` : ''}
+    AND NOT EXISTS (
+      SELECT 1 FROM tenant_backup_preimages AS previous
+      WHERE previous.snapshot_id = snapshot.id AND previous.source_table = '${schema.table}'
+        AND previous.record_key = ${recordKey(schema, 'live')}
+    )
+  GROUP BY ${groups.join(', ')}`;
+}
+
+/** Bind snapshotId, tenantId. Number of present preimages of one table in a capturing snapshot. */
+export function sqliteSnapshotPreimageCountQuery(schema: CaptureSchema): string {
+  validateSchema(schema);
+  return `SELECT count(*) AS preimages FROM tenant_backup_snapshots AS snapshot
+  CROSS JOIN tenant_backup_preimages AS previous
+  WHERE snapshot.id = ? AND +snapshot.tenant_id = ? AND +snapshot.state = 'capturing'
+    AND previous.snapshot_id = snapshot.id AND previous.source_table = '${schema.table}'
+    AND previous.present = 1`;
+}
+
+/**
+ * Bind snapshotId, tenantId, afterKey ('' for the first page) and a limit. Returns the boundary
+ * values of one table's rows that changed after the boundary, in record_key text order, as
+ * `record_key`, `row_type` ('blob' packed or legacy 'text' JSON) and `row_hex`. Preimages are
+ * written only for rows the snapshot's tenant owned, so no ownership test is repeated here.
+ */
+export function sqliteSnapshotPreimagePageQuery(
+  schema: CaptureSchema,
+  partitions?: readonly string[]
+): string {
+  sqliteSnapshotPageQuery(schema, 'packed', partitions);
+  const selectedPartitions = partitions ? rowPartitionValues(partitions) : null;
+  return `WITH params(snapshot_id, tenant_id, after_key, page_limit) AS (SELECT ?, ?, ?, ?)
+  SELECT previous.record_key, typeof(previous.row_json) AS row_type,
+    hex(CAST(previous.row_json AS BLOB)) AS row_hex
+  FROM tenant_backup_snapshots AS snapshot CROSS JOIN tenant_backup_preimages AS previous
+  WHERE snapshot.id = (SELECT snapshot_id FROM params)
+    AND +snapshot.tenant_id = (SELECT tenant_id FROM params) AND +snapshot.state = 'capturing'
+    AND previous.snapshot_id = snapshot.id AND previous.source_table = '${schema.table}'
+    AND previous.present = 1 AND previous.record_key > (SELECT after_key FROM params)
+    ${selectedPartitions ? `AND previous.row_partition IN (${selectedPartitions})` : ''}
+  ORDER BY previous.record_key LIMIT (SELECT page_limit FROM params)`;
+}
+
 /** Cheap T0 existence probe used to materialize execution work without encoding row bodies. */
 export function sqliteSnapshotExistenceQuery(
   schema: CaptureSchema,

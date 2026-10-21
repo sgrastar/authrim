@@ -996,7 +996,56 @@ it('prepares one encrypted manifest after a released boundary and recovers witho
     runPrepareTenantBackupArtifactStep({ ...args, manifest: { ...manifest, boundaryUnixMs: 107 } })
   ).rejects.toThrow('preparation_boundary');
   expect(objects.size).toBe(0);
+  // Module state listed after the hold (R2 body plans) is staged first, one call per transition.
+  const calls: Array<[string | null, number]> = [];
+  const prepareResources = async (cursor: string | null, boundaryUnixMs: number) => {
+    calls.push([cursor, boundaryUnixMs]);
+    return cursor === null ? { cursor: 'slice-1', done: false } : { cursor: null, done: true };
+  };
+  const staged = await runPrepareTenantBackupArtifactStep({ ...args, prepareResources });
+  expect(staged.phase).toBe('prepare_export_artifact');
+  expect(JSON.parse(staged.cursor!)).toEqual({
+    version: 2,
+    boundaryId: identity.boundaryId,
+    inventoryDigest: head.chain_digest,
+    releasedAt: 104,
+    participants,
+    resources: 'slice-1',
+  });
+  expect(db.prepare('SELECT count(*) n FROM tenant_backup_artifact_attempts').get()?.n).toBe(1);
+  const resumed = {
+    ...args,
+    context: {
+      ...args.context,
+      operation: { ...args.context.operation, cursor_json: staged.cursor },
+    },
+  };
+  // A version 2 position belongs to an adapter that prepares resources.
+  await expect(runPrepareTenantBackupArtifactStep(resumed)).rejects.toThrow(
+    'backup_artifact_preparation_cursor'
+  );
+  for (const resources of ['', 7])
+    await expect(
+      runPrepareTenantBackupArtifactStep({
+        ...resumed,
+        prepareResources,
+        context: {
+          ...resumed.context,
+          operation: {
+            ...resumed.context.operation,
+            cursor_json: JSON.stringify({ ...JSON.parse(staged.cursor!), resources }),
+          },
+        },
+      })
+    ).rejects.toThrow('backup_artifact_preparation_cursor');
+  const prepared = await runPrepareTenantBackupArtifactStep({ ...resumed, prepareResources });
+  expect(prepared.phase).toBe('export_artifact');
+  expect(calls).toEqual([
+    [null, 104],
+    ['slice-1', 104],
+  ]);
   const first = await runPrepareTenantBackupArtifactStep(args);
+  expect(first).toEqual(prepared);
   expect(first.phase).toBe('export_artifact');
   expect(objects.size).toBe(0);
   const objectCount = objects.size;
