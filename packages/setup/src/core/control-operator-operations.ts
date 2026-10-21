@@ -410,7 +410,8 @@ export async function listPendingControlOperatorOperations(input: {
             AND operation.last_error_code IS NULL
             AND operation.lock_expires_at IS NOT NULL
             AND operation.lock_expires_at <= unixepoch()
-            AND migration.state = 'ready'
+            AND migration.provider_database_id IS NOT NULL
+            AND migration.state IN ('requested', 'applying', 'waiting_retry', 'ready')
             AND EXISTS (
               SELECT 1 FROM control_operation_steps migration_step
                WHERE migration_step.operation_id = operation.operation_id

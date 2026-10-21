@@ -82,7 +82,8 @@ const artifactStore: ReleaseArtifactStore = {
 /** The Cloudflare side of the setup operator: Control and the new lookup D1, both on SQLite. */
 function client(
   control: DatabaseSync,
-  lookup: DatabaseSync
+  lookup: DatabaseSync,
+  existing: string[] = []
 ): SetupOperatorD1Client & { created: string[] } {
   const target = (databaseId: string) => {
     if (databaseId === 'control-db') return control;
@@ -93,7 +94,11 @@ function client(
     uuid: string;
     name: string;
     read_replication: { mode: 'auto' | 'disabled' };
-  }> = [];
+  }> = existing.map((name) => ({
+    uuid: DATABASE_ID,
+    name,
+    read_replication: { mode: 'disabled' },
+  }));
   const created: string[] = [];
   return {
     created,
@@ -310,6 +315,59 @@ describe('setup operator on a lookup shard', () => {
         )
         .get(OPERATION)
     ).toEqual({ attempt_count: 2, fencing_token: 2 });
+  });
+
+  it('resumes from the create checkpoint read under the new lease, not from the listing', async () => {
+    // The previous operator issued the create, and its lease expired.
+    control.exec(`
+      UPDATE control_operations SET status = 'running', last_error_code = NULL,
+        lock_owner = 'setup:previous', lock_expires_at = 50, attempt_count = 1,
+        fencing_token = 1, updated_at = 12
+       WHERE operation_id = '${OPERATION}';
+      UPDATE control_operation_steps SET status = 'running', last_error_code = NULL
+       WHERE operation_id = '${OPERATION}' AND step_key = 'create_d1';
+      UPDATE control_desired_resources SET provisioning_state = 'creating',
+        provider_create_state = 'issued', create_started_at = 12
+       WHERE desired_resource_id = '${DESIRED}';
+    `);
+    const operation = await pending();
+    expect(operation).toMatchObject({ providerCreateState: 'issued' });
+    // The previous operator records the created D1 after the listing was read.
+    control
+      .prepare(
+        `UPDATE control_desired_resources SET provider_create_state = 'identified',
+           provider_resource_id = ?, provider_identity_checkpointed_at = 12
+         WHERE desired_resource_id = ?`
+      )
+      .run(DATABASE_ID, DESIRED);
+    const operator = client(control, lookup, [DATABASE_NAME]);
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: 'control-db',
+        operation: operation!,
+        client: operator,
+        now: () => 100,
+      })
+    ).resolves.toMatchObject({ operationId: OPERATION });
+    expect(operator.created).toEqual([]);
+    expect(stepStatus('create_d1')).toEqual({ status: 'succeeded' });
+  });
+
+  it('takes over a migration whose operator lease expired while applying', async () => {
+    const operator = client(control, lookup);
+    await create(operator);
+    control.exec(`
+      UPDATE control_operations SET status = 'running', last_error_code = NULL,
+        lock_owner = 'setup:previous', lock_expires_at = 50, updated_at = 150
+       WHERE operation_id = '${OPERATION}';
+      UPDATE control_operation_steps SET status = 'running', last_error_code = NULL
+       WHERE operation_id = '${OPERATION}' AND step_key = 'apply_migrations';
+      UPDATE control_tenant_database_migration_state SET state = 'applying'
+       WHERE desired_resource_id = '${DESIRED}';
+    `);
+    expect(await pending()).toMatchObject({ status: 'running', currentStep: 'apply_migrations' });
+    await expect(migrate(operator)).resolves.toMatchObject({ state: 'awaiting_worker_bindings' });
+    expect(stepStatus('apply_migrations')).toEqual({ status: 'succeeded' });
   });
 
   const create = async (operator: ReturnType<typeof client>) =>

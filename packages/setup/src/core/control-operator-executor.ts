@@ -15,6 +15,7 @@ import {
   type CloudflareWorkerDeployment,
   type CloudflareWorkerBinding,
   type CloudflareWorkerSettings,
+  type ControlProvisioningD1CreateCheckpoint,
   type ControlProvisioningFailureDecision,
   type ReleaseArtifactObject,
   type ReleaseArtifactStore,
@@ -33,6 +34,9 @@ import type {
 } from './control-operator-operations.js';
 
 const LEASE_SECONDS = 5 * 60;
+
+/** The provider id pattern the operation listing accepts for a create checkpoint. */
+const SAFE_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 /**
  * The shard row an operation provisions: lookup physical shards and tenant shards share the
@@ -294,7 +298,7 @@ async function claimCreate(input: {
   operation: PendingControlOperatorOperation;
   ownerId: string;
   now: number;
-}): Promise<SetupOperatorLease | null> {
+}): Promise<(SetupOperatorLease & { checkpoint: ControlProvisioningD1CreateCheckpoint }) | null> {
   const leaseExpiresAt = input.now + LEASE_SECONDS;
   const results = await input.client.queryD1Batch(input.controlDatabaseId, [
     {
@@ -405,7 +409,8 @@ async function claimCreate(input: {
       sql: `SELECT operation.status AS operation_status,
                    operation.lock_owner, operation.fencing_token,
                    step.status AS step_status,
-                   desired.provisioning_state, shard.status AS shard_status
+                   desired.provisioning_state, desired.provider_create_state,
+                   desired.provider_resource_id, shard.status AS shard_status
               FROM control_operations operation
               JOIN control_operation_steps step
                 ON step.operation_id = operation.operation_id AND step.step_key = 'create_d1'
@@ -451,6 +456,18 @@ async function claimCreate(input: {
   ) {
     throw new Error('control_operator_lease_reflection_mismatch');
   }
+  // A previous operator can still move the checkpoint until this lease replaces its own, so the
+  // create resumes from the state read under the new lease, not from the listing.
+  const createState = reflected.provider_create_state;
+  const providerResourceId = reflected.provider_resource_id ?? null;
+  if (
+    (createState !== 'not_started' && createState !== 'issued' && createState !== 'identified') ||
+    (createState === 'identified') !==
+      (typeof providerResourceId === 'string' && SAFE_PROVIDER_ID.test(providerResourceId)) ||
+    (createState !== 'identified' && providerResourceId !== null)
+  ) {
+    throw new Error('control_operator_create_checkpoint_invalid');
+  }
   return {
     operationId: row.operation_id,
     environmentId: row.environment_id,
@@ -459,6 +476,7 @@ async function claimCreate(input: {
     attemptCount: row.attempt_count,
     createdAt: row.created_at,
     retryBudgetStartedAt: row.retry_budget_started_at ?? row.created_at,
+    checkpoint: { state: createState, providerResourceId: providerResourceId as string | null },
   };
 }
 
@@ -3041,10 +3059,7 @@ export async function executeSetupControlOperatorCreate(input: {
           readReplicationMode: input.operation.readReplicationMode,
         },
         provider: client,
-        checkpoint: {
-          state: input.operation.providerCreateState,
-          providerResourceId: input.operation.providerResourceId,
-        },
+        checkpoint: lease.checkpoint,
         reserveCreate: () =>
           reserveCreate({
             client,
