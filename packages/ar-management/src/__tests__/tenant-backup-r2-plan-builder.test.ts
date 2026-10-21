@@ -469,6 +469,28 @@ describe('R2 plans listed from the T0 snapshot after the hold', () => {
     });
   });
 
+  it('leaves out a chunk whose record index was not committed yet at T0', async () => {
+    const day = 86_400_000;
+    chunk(core, 'inside', [BOUNDARY - day]);
+    // The writer committed the catalog row; the boundary came before its index commit.
+    chunk(core, 'split-commit', [BOUNDARY - day, BOUNDARY - day + 1]);
+    core
+      .prepare(
+        "UPDATE log_chunk_record_index SET status='pending' WHERE object_catalog_id='split-commit'"
+      )
+      .run();
+    startSnapshot(core, 'snap-core-db');
+    startSnapshot(admin, 'snap-admin-db');
+    core
+      .prepare(
+        "UPDATE log_chunk_record_index SET status='committed' WHERE object_catalog_id='split-commit'"
+      )
+      .run();
+
+    const { recorded } = await prepareAll(['logs.archive_object_bodies']);
+    expect(plans(recorded[0]).map((plan) => plan.context.sourceRowId)).toEqual(['inside']);
+  });
+
   it('pages more than 4,096 chunks deterministically across calls', async () => {
     core.exec('BEGIN');
     for (let index = 0; index < 4200; index++)

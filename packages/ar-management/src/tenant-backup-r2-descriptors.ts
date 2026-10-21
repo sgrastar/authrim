@@ -300,6 +300,11 @@ export function buildTenantBackupLogObjectDescriptors(
   const descriptors: TenantBackupR2ObjectDescriptor[] = [];
   for (const row of rows) {
     context.context.signal.throwIfAborted();
+    // The writer commits the catalog row and then, in a second statement, its record index rows
+    // (all at once). A boundary between the two, or a writer that stopped there until its retry,
+    // leaves no committed index row at T0: the records were not readable yet, so the chunk is
+    // left out like a pending one instead of failing every attempt at this boundary.
+    if (row.index_count === 0) continue;
     if (
       !SAFE_ID.test(row.id) ||
       !LOG_TYPES.includes(row.log_type as (typeof LOG_TYPES)[number]) ||

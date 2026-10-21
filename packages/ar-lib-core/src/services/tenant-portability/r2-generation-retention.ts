@@ -408,6 +408,21 @@ export async function hasCapturingTenantBackupSnapshot(
   );
 }
 
+/**
+ * Tenant keys with a backup snapshot capturing in this database. A change to one of their rows
+ * that existed at the boundary is journaled as a preimage, and every snapshot lookup of the table
+ * reads all of them, so bulk maintenance of those rows waits until the export ends.
+ */
+export async function listCapturingTenantBackupTenantKeys(
+  adapter: Pick<DatabaseAdapter, 'query'>
+): Promise<Set<string>> {
+  const rows = await adapter.query<{ tenant_key: string }>(
+    `SELECT DISTINCT tenant_key FROM tenant_backup_snapshots
+      WHERE state = 'capturing' AND tenant_key IS NOT NULL`
+  );
+  return new Set(rows.map((row) => row.tenant_key));
+}
+
 export async function listRetiredTenantBackupR2Generations(
   adapter: Pick<DatabaseAdapter, 'query'>,
   limit: number
