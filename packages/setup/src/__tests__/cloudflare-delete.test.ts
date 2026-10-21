@@ -51,10 +51,17 @@ describe('Cloudflare environment deletion helpers', () => {
   });
 
   it('parses generic D1 rows from wrangler JSON output', () => {
+    // Wrangler reports one entry per statement, each with `success`. An entry without it is not
+    // evidence that the query ran, so it is not read (see d1-query-output-parser.test.ts).
     const rows = parseD1RowsFromWranglerJson<{ state: string; count: number }>(
       JSON.stringify([
-        { results: [{ state: 'available', count: 2 }] },
-        { results: [{ state: 'assigned', count: 1 }] },
+        {
+          success: true,
+          results: [
+            { state: 'available', count: 2 },
+            { state: 'assigned', count: 1 },
+          ],
+        },
       ])
     );
 
