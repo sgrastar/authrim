@@ -231,6 +231,49 @@ export async function resolveLogoutTargetsFromSessionClientStore(
   return repository.hydrateLogoutTargetsFromSessionClients(sessionClients);
 }
 
+/** How many ended sessions are removed from the store at once. */
+const PURGE_CONCURRENCY = 10;
+
+/**
+ * Remove what the store holds for ended sessions: each session's client records and the oidc sid
+ * aliases pointing at it. Call only after those sessions' relying parties have been told (the
+ * logout notices read the records), from the same work after the response. Never throws: what a
+ * failed removal leaves is removed by the store's expiry.
+ */
+export async function purgeEndedSessionsFromSessionClientStore(
+  env: SessionClientStoreEnv,
+  tenantId: string,
+  sessionIds: string[]
+): Promise<void> {
+  const store = env.SESSION_CLIENT_STORE;
+  if (!store) {
+    return;
+  }
+  const unique = [...new Set(sessionIds)];
+  for (let offset = 0; offset < unique.length; offset += PURGE_CONCURRENCY) {
+    await Promise.all(
+      unique.slice(offset, offset + PURGE_CONCURRENCY).map(async (sessionId) => {
+        try {
+          const stub = store.get(store.idFromName(sessionClientStoreName(tenantId, sessionId)));
+          const { oidcSids } = await stub.deleteSessionRpc({ tenantId, sessionId });
+          await Promise.all(
+            oidcSids.map((oidcSid) =>
+              store
+                .get(store.idFromName(oidcSidAliasStoreName(tenantId, oidcSid)))
+                .deleteOidcSidAliasRpc({ tenantId, oidcSid, sessionId })
+            )
+          );
+        } catch (error) {
+          log.warn('Failed to remove ended session from SessionClientStore', {
+            sessionId,
+            error: error instanceof Error ? error.message : 'unknown_error',
+          });
+        }
+      })
+    );
+  }
+}
+
 export async function resolveLegacyLogoutTargetsFromOidcSidStore(
   env: SessionClientStoreEnv,
   tenantId: string,

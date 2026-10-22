@@ -445,10 +445,16 @@ export interface LogoutWebhookPayload {
   /** Event type (always 'user.logout') */
   event: 'user.logout';
 
-  /** Subject (user ID) - optional based on config */
+  /**
+   * Subject: the sub the client's ID token carried (as in its logout token), never the user's
+   * internal id. Left out when none was recorded or when the config leaves it out.
+   */
   sub?: string;
 
-  /** Session ID - optional based on config */
+  /**
+   * Session ID of the client (its ID token's sid). Optional based on config; sent anyway when
+   * there is no sub, so that the notice always says which session ended.
+   */
   sid?: string;
 
   /** Issued at timestamp (Unix seconds) */
@@ -506,6 +512,9 @@ export interface SessionClientWithWebhook {
 
   /** RP-specific OIDC sid; never the internal OP session key */
   oidc_sid?: string;
+
+  /** The sub the client's ID token carried: the webhook's `sub` (never the user's internal id) */
+  oidc_sub?: string;
 
   /** Client name (for logging) */
   client_name: string | null;

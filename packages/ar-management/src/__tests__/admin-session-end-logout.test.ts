@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   tenantAdapter: { queryOne: vi.fn(), execute: vi.fn(), query: vi.fn(), batch: vi.fn() },
   backchannelFanout: vi.fn(),
+  purgeEndedSessions: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -55,8 +56,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
     createAuditLogFromContext: mocks.contextAudit,
     createAuditLog: mocks.audit,
-    buildCanonicalTenantIssuerUrl: vi.fn(
-      async (_env: unknown, _tenantId: string, fallback: string) => fallback
+    // The shared lookup of the tenant's canonical issuer (its own tests are in ar-lib-core):
+    // the configured issuer unless a test says the tenant has a primary domain or the lookup fails.
+    resolveLogoutIssuer: vi.fn(
+      async (env: Parameters<typeof actual.buildIssuerUrl>[0], tenantId: string) =>
+        actual.buildIssuerUrl(env, tenantId)
     ),
     resolveLogoutTargetsFromSessionClientStore: mocks.resolveTargets,
     resolveLogoutConfig: mocks.resolveLogoutConfig,
@@ -66,6 +70,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.tenantAdapter),
     emitRuntimeLogRecords: vi.fn(async () => ({ tenantKey: 'tk', targetResults: [] })),
     sendBackchannelLogoutFanout: mocks.backchannelFanout,
+    purgeEndedSessionsFromSessionClientStore: mocks.purgeEndedSessions,
   };
 });
 
@@ -79,7 +84,7 @@ vi.mock('../admin-shared', async (importOriginal) => {
 });
 
 import {
-  buildCanonicalTenantIssuerUrl,
+  resolveLogoutIssuer,
   DEFAULT_LOGOUT_CONFIG,
   DEFAULT_LOGOUT_WEBHOOK_CONFIG,
   SessionRevocationStore,
@@ -396,6 +401,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
       );
     mocks.audit.mockResolvedValue(undefined);
     mocks.contextAudit.mockResolvedValue(undefined);
+    mocks.purgeEndedSessions.mockReset().mockResolvedValue(undefined);
     mocks.resolveLogoutConfig.mockResolvedValue(config());
     mocks.resolveLogoutWebhookConfig.mockResolvedValue(DEFAULT_LOGOUT_WEBHOOK_CONFIG);
     mocks.resolveTargets.mockImplementation(
@@ -559,7 +565,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
 
   it("signs with the tenant's canonical issuer, not the admin request's host", async () => {
     const env = createEnv();
-    vi.mocked(buildCanonicalTenantIssuerUrl).mockResolvedValueOnce('https://login.example.com');
+    vi.mocked(resolveLogoutIssuer).mockResolvedValueOnce('https://login.example.com');
     await signIn(env, 'session-1', [['client-a', RP_A]]);
     const sent = captureDownstream();
 
@@ -633,7 +639,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
 
   it('retries instead of signing with another issuer when the tenant issuer cannot be read', async () => {
     const env = createEnv();
-    vi.mocked(buildCanonicalTenantIssuerUrl).mockRejectedValueOnce(new Error('lookup failed'));
+    vi.mocked(resolveLogoutIssuer).mockRejectedValueOnce(new Error('lookup failed'));
     await signIn(env, 'session-1', [['client-a', RP_A]]);
     const sent = captureDownstream();
 
@@ -642,12 +648,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
     await settle(pending);
     expect(sent).toHaveLength(0);
     expect([...env.DB_ADMIN.jobs.values()][0].status).toBe('pending');
-    expect(vi.mocked(buildCanonicalTenantIssuerUrl)).toHaveBeenCalledWith(
-      expect.anything(),
-      'tenant-a',
-      OP_ISSUER,
-      { strict: true }
-    );
+    expect(vi.mocked(resolveLogoutIssuer)).toHaveBeenCalledWith(expect.anything(), 'tenant-a');
   });
 
   it('retries a job the fan-out could not send (no signing key)', async () => {
@@ -705,6 +706,62 @@ describe('admin actions that end sessions notify downstream relying parties', ()
       status: 'pending',
       error_message: expect.stringContaining('session_end_logout_sessions_not_sent'),
     });
+  });
+
+  it('removes the ended sessions from the SessionClientStore once their relying parties are told', async () => {
+    const env = createEnv();
+    await signIn(env, 'session-1', [['client-a', RP_A]]);
+    const sent = captureDownstream();
+
+    const { c, pending } = context(env);
+    await adminUserRevokeAllSessionsHandler(c);
+    await settle(pending);
+
+    expect(sent).toHaveLength(1);
+    expect([...env.DB_ADMIN.jobs.values()][0].status).toBe('completed');
+    expect(mocks.purgeEndedSessions).toHaveBeenCalledWith(env, 'tenant-a', ['session-1']);
+    // The targets were read and sent before the removal.
+    expect(mocks.resolveTargets.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.purgeEndedSessions.mock.invocationCallOrder[0]
+    );
+    expect(mocks.backchannelFanout.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.purgeEndedSessions.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('keeps the records of a job to be retried, and removes them when the retry has sent', async () => {
+    const env = createEnv();
+    mocks.backchannelFanout.mockResolvedValueOnce({ succeeded: 0, failed: 0, sessionErrors: 1 });
+    await signIn(env, 'session-1', [['client-a', RP_A]]);
+    const sent = captureDownstream();
+
+    const { c, pending } = context(env);
+    await adminUserRevokeAllSessionsHandler(c);
+    await settle(pending);
+    const [job] = [...env.DB_ADMIN.jobs.values()];
+    expect(job.status).toBe('pending');
+    // The retry reads the targets again: they must still be there.
+    expect(mocks.purgeEndedSessions).not.toHaveBeenCalled();
+
+    await processGenericAdminJobNow(env as never, mocks.logger, 'tenant-a', job.id);
+    expect(sent.map((s) => s.url)).toEqual([RP_A]);
+    expect(job.status).toBe('completed');
+    expect(mocks.purgeEndedSessions).toHaveBeenCalledOnce();
+    expect(mocks.purgeEndedSessions).toHaveBeenCalledWith(env, 'tenant-a', ['session-1']);
+  });
+
+  it('keeps the records when the logout settings could not be read', async () => {
+    const env = createEnv();
+    mocks.resolveLogoutConfig.mockRejectedValueOnce(new Error('settings unavailable'));
+    await signIn(env, 'session-1', [['client-a', RP_A]]);
+    captureDownstream();
+
+    const { c, pending } = context(env);
+    await adminUserRevokeAllSessionsHandler(c);
+    await settle(pending);
+
+    expect([...env.DB_ADMIN.jobs.values()][0].status).toBe('pending');
+    expect(mocks.purgeEndedSessions).not.toHaveBeenCalled();
   });
 
   it('records in the audit a job that failed for the last time', async () => {

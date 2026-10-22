@@ -32,6 +32,7 @@ const {
   produceNotificationDelivery,
   resolveCustomClaimRuntimeSources,
   writeCanonicalAccountAuthoritative,
+  getSessionStoreForNewSession,
 } = vi.hoisted(() => ({
   mockPostgresAdapterFactory: vi.fn(),
   canonicalRuntimeUsers: new Map<string, any>(),
@@ -66,6 +67,7 @@ const {
   produceNotificationDelivery: vi.fn(),
   resolveCustomClaimRuntimeSources: vi.fn(),
   writeCanonicalAccountAuthoritative: vi.fn(async (_input?: any) => ({ userId: 'user-written' })),
+  getSessionStoreForNewSession: vi.fn(),
 }));
 
 vi.mock('../account-authoritative-write', () => ({ writeCanonicalAccountAuthoritative }));
@@ -309,6 +311,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveOtpAccountCoreDataContextByIdentifierFromHono:
       resolveOtpAccountCoreDataContextByIdentifier,
     resolveAccountDataContextFromHono: resolveAccountDataContext,
+    getSessionStoreForNewSession,
     PostgresAdapter: vi.fn().mockImplementation(function MockPostgresAdapter(config: unknown) {
       const adapter = mockPostgresAdapterFactory(config);
       if (!adapter) {
@@ -586,6 +589,7 @@ import {
   adminClientRegenerateSecretHandler,
   adminSessionGetHandler,
   adminTestEmailCodeHandler,
+  adminTestSessionCreateHandler,
   adminUserConsentsListHandler,
   adminUserConsentRevokeHandler,
 } from '../admin';
@@ -2460,6 +2464,58 @@ describe('Admin API Handlers', () => {
           ]),
         })
       );
+    });
+  });
+
+  describe('adminTestSessionCreateHandler', () => {
+    const THIRTY_DAYS_S = 30 * 24 * 60 * 60;
+
+    async function createTestSession(body: Record<string, unknown>) {
+      const userId = 'test-session-user';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        email: 'test-session@example.com',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      const createSessionRpc = vi.fn().mockResolvedValue({});
+      getSessionStoreForNewSession.mockResolvedValueOnce({
+        stub: { createSessionRpc },
+        sessionId: '0_session_test',
+      });
+      const c = createMockContext({ method: 'POST', body: { user_id: userId, ...body } });
+      const response = await adminTestSessionCreateHandler(c);
+      return { response, createSessionRpc };
+    }
+
+    it('cuts a lifetime above the longest any session may last (30 days) to it', async () => {
+      const { response, createSessionRpc } = await createTestSession({
+        ttl_seconds: 40 * 24 * 60 * 60,
+      });
+
+      expect(response.status).toBe(201);
+      expect(createSessionRpc).toHaveBeenCalledWith(
+        '0_session_test',
+        'test-session-user',
+        THIRTY_DAYS_S,
+        expect.anything(),
+        'default'
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        cookie_value: expect.stringContaining(`Max-Age=${THIRTY_DAYS_S}`),
+      });
+    });
+
+    it('keeps a shorter lifetime and the one-hour default', async () => {
+      const shorter = await createTestSession({ ttl_seconds: 600 });
+      expect(shorter.createSessionRpc.mock.calls[0][2]).toBe(600);
+
+      const defaulted = await createTestSession({});
+      expect(defaulted.createSessionRpc.mock.calls[0][2]).toBe(3600);
     });
   });
 

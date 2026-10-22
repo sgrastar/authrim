@@ -595,7 +595,7 @@ describe('releaseSAMLAttributesWithInstitution', () => {
       });
     });
 
-    it('withholds them when the settings cannot be read, and leaves them alone for a tenant that registered nothing', async () => {
+    it('withholds them when the settings cannot be read, and for a tenant that registered nothing', async () => {
       withSubject({ homeDomain: 'rival.example' });
       const parts = { edges: [edge('e1', 'homeDomain', target(OID_SCHAC))] };
 
@@ -608,7 +608,15 @@ describe('releaseSAMLAttributesWithInstitution', () => {
 
       mocks.settingsError = null;
       mocks.settings = {};
-      expect(await released(parts)).toEqual({ [OID_SCHAC]: ['rival.example'] });
+      const unregistered = await release(parts, () => undefined);
+      expect(unregistered.attributes).toEqual([]);
+      expect(unregistered.withheldScopedValues).toEqual([
+        expect.objectContaining({
+          attribute: 'schacHomeOrganization',
+          reason: 'institution_not_registered',
+        }),
+      ]);
+      expect(JSON.stringify(unregistered.withheldScopedValues)).not.toContain('rival');
     });
   });
 
