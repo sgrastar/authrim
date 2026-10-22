@@ -115,13 +115,19 @@ it('advances an export through verified cleanup stages before marking it cancell
   expect(adapter.assertClean).toHaveBeenCalledTimes(1);
 });
 
-it('starts import cleanup at validation and waits for adapter-owned staging', async () => {
+it('prepares import cleanup first and waits for adapter-owned staging', async () => {
   const operationId = await createCancelled('import');
-  const adapter = installedAdapter();
+  const adapter = {
+    ...installedAdapter(),
+    prepareImportCleanup: vi
+      .fn()
+      .mockResolvedValueOnce({ done: false })
+      .mockResolvedValueOnce({ done: true }),
+  };
   vi.mocked(adapter.cleanupStagingPage)
     .mockResolvedValueOnce({ done: false })
     .mockResolvedValueOnce({ done: true });
-  for (let slices = 0; slices < 4; slices += 1) {
+  for (let slices = 0; slices < 6; slices += 1) {
     now += 1;
     await executeTenantBackupSlice(
       store,
@@ -143,6 +149,7 @@ it('starts import cleanup at validation and waits for adapter-owned staging', as
   }
   expect((await store.get('tenant-a', operationId))?.state).toBe('cancelled');
   expect(adapter.abortBoundary).not.toHaveBeenCalled();
+  expect(adapter.prepareImportCleanup).toHaveBeenCalledTimes(2);
   expect(adapter.cleanupStagingPage).toHaveBeenCalledTimes(2);
 });
 
