@@ -1179,7 +1179,8 @@ async function applyTenantD1JITPlan(
     }
   }
   if (rolesAssigned.length === 0 && input.plan.defaultRoleId) {
-    const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : 'global';
+    // A global role has an empty target, as the admin API and the role readers expect.
+    const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : '';
     const scopeType = orgsJoined.length > 0 ? 'org' : 'global';
     const assigned = await assignScopedRoleToUser(
       account.coreDb,
@@ -1867,8 +1868,7 @@ async function createUserWithJITProvisioning(
 
   // Step 7: Assign default role if no roles were assigned
   if (result.roles_assigned.length === 0 && params.jitConfig.default_role_id) {
-    const defaultScopeTarget =
-      result.orgs_joined.length > 0 ? `org:${result.orgs_joined[0]}` : 'global';
+    const defaultScopeTarget = result.orgs_joined.length > 0 ? `org:${result.orgs_joined[0]}` : '';
     const defaultScopeType = result.orgs_joined.length > 0 ? 'org' : 'global';
 
     const assignResult = await assignScopedRoleToUser(

@@ -63,14 +63,14 @@ describe('JIT role assignments in the real schema', () => {
       'user-1',
       'role-1',
       'global',
-      'global',
+      '',
       'tenant-a'
     );
 
     expect(result).toMatchObject({ success: true });
     expect(
       db.prepare('SELECT subject_id, scope_type, scope_target FROM role_assignments').all()
-    ).toEqual([{ subject_id: 'user-1', scope_type: 'global', scope_target: 'global' }]);
+    ).toEqual([{ subject_id: 'user-1', scope_type: 'global', scope_target: '' }]);
   });
 
   it("gives nothing from another tenant's role", async () => {

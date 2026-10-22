@@ -616,7 +616,7 @@ describe('JIT Provisioning Integration', () => {
       );
       // Only the default role, at global scope.
       expect(result.roles_assigned).toEqual([
-        { role_id: 'role_end_user', scope_type: 'global', scope_target: 'global' },
+        { role_id: 'role_end_user', scope_type: 'global', scope_target: '' },
       ]);
     });
 
