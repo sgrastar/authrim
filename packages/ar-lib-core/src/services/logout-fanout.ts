@@ -25,12 +25,38 @@ import type {
 } from '../types/logout';
 import type { SessionClientWithDetails } from '../repositories/core/session-client';
 import { createLogger, type Logger } from '../utils/logger';
+import { buildIssuerUrl } from '../utils/issuer';
+import { buildCanonicalTenantIssuerUrl } from './tenant-vanity-domain-resolver';
 import { decryptValue } from '../utils/pii-encryption';
 import {
   createBackchannelLogoutOrchestrator,
   type BackchannelRetryOptions,
 } from './backchannel-logout-sender';
 import { createLogoutWebhookOrchestrator } from './logout-webhook-sender';
+
+/**
+ * The issuer the logout tokens and webhooks of a tenant carry: the tenant's canonical one (its
+ * primary domain, else the configured one), never one made from the host of the request that
+ * ended the session. A relying party checks the logout token's iss against the issuer of its ID
+ * tokens, and the host of a request (an upstream notice, a user's browser) is not the tenant's to
+ * vouch for.
+ *
+ * Strict: when the primary domain cannot be read, or no issuer is configured, this throws instead
+ * of signing with another issuer, and the caller handles it as it handles any failure before
+ * sending.
+ */
+export async function resolveLogoutIssuer(
+  env: Parameters<typeof buildCanonicalTenantIssuerUrl>[0],
+  tenantId: string
+): Promise<string> {
+  const issuer = await buildCanonicalTenantIssuerUrl(env, tenantId, buildIssuerUrl(env, tenantId), {
+    strict: true,
+  });
+  if (!issuer) {
+    throw new Error('logout_issuer_unavailable');
+  }
+  return issuer;
+}
 
 /** An ended session and the relying parties to tell. */
 export interface LogoutFanoutSession {
@@ -270,7 +296,7 @@ export async function sendLogoutWebhookFanout(
     await forEachConcurrently(
       params.sessions,
       MAX_CONCURRENT_SESSIONS,
-      async ({ sessionId, userId, webhookClients }) => {
+      async ({ sessionId, webhookClients }) => {
         if (webhookClients.length === 0) {
           return;
         }
@@ -283,7 +309,7 @@ export async function sendLogoutWebhookFanout(
 
         const results = await orchestrator.sendToAll(
           webhookClients,
-          { issuer: params.issuer, userId, sessionId },
+          { issuer: params.issuer, sessionId },
           params.config,
           decryptSecret
         );

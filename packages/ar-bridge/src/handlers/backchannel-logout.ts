@@ -32,6 +32,7 @@ import {
   resolveLogoutConfig,
   resolveLogoutWebhookConfig,
   resolveLogoutTargetsFromSessionClientStore,
+  resolveLogoutIssuer,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
   DEFAULT_LOGOUT_CONFIG,
@@ -304,6 +305,8 @@ function scheduleDownstreamLogout(
     return;
   }
   try {
+    // Only for deriving the sid of an old session-client record, as when it was issued; the
+    // logout tokens and webhooks carry the tenant's canonical issuer (notifyDownstream).
     const issuer = buildRequestIssuerUrl(c.req.raw, c.env, params.tenantId);
     const repository = createAuthContextFromHono(c, params.tenantId).repositories.sessionClient;
     waitUntil(notifyDownstream(c.env, log, { ...params, issuer, repository }));
@@ -328,6 +331,7 @@ async function notifyDownstream(
     providerId: string;
     upstreamFlowId: string;
     sessions: EndedSession[];
+    /** The issuer an old session-client record's sid was derived with (the request's). */
     issuer: string;
     repository: SessionClientRepository;
   }
@@ -336,7 +340,11 @@ async function notifyDownstream(
   const startedAt = Date.now();
   const { tenantId, providerId, upstreamFlowId } = params;
   try {
-    const [logoutConfig, webhookConfig, sessions] = await Promise.all([
+    const [logoutIssuer, logoutConfig, webhookConfig, sessions] = await Promise.all([
+      // The tenant's canonical issuer, never one made from the host the upstream notice came in
+      // on. When it cannot be resolved nothing is sent (there is no other issuer to sign with);
+      // the failure is logged below, as for any failure of this notice.
+      resolveLogoutIssuer(env, tenantId),
       resolveLogoutConfig(env, tenantId).catch((error) => {
         log.warn('Logout settings could not be read', {
           error: error instanceof Error ? error.message : String(error),
@@ -410,7 +418,7 @@ async function notifyDownstream(
     const [backchannel, webhook] = await Promise.all([
       sendBackchannelLogoutFanout(env, {
         tenantId,
-        issuer: params.issuer,
+        issuer: logoutIssuer,
         sessions,
         config: logoutConfig.backchannel,
         startedAt,
@@ -436,7 +444,7 @@ async function notifyDownstream(
         },
       }),
       sendLogoutWebhookFanout(env, {
-        issuer: params.issuer,
+        issuer: logoutIssuer,
         sessions,
         config: webhookConfig,
         log,

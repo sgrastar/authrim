@@ -17,6 +17,8 @@ import type { LogoutConfig, SessionClientWithDetails } from '@authrim/ar-lib-cor
 const UPSTREAM_ISSUER = 'https://upstream.example.com';
 const UPSTREAM_CLIENT_ID = 'authrim-at-upstream';
 const OP_ISSUER = 'https://op.example.com';
+// The tenant's canonical issuer: not the host the upstream notice came in on (OP_ISSUER).
+const CANONICAL_ISSUER = 'https://login.tenant-a.example';
 const SESSION_ID = '7_session_upstream_user';
 const RP_A = 'https://rp-a.example.com/backchannel-logout';
 const RP_B = 'https://rp-b.example.com/backchannel-logout';
@@ -31,6 +33,7 @@ const {
   mockCreateAuditLog,
   mockResolveLogoutConfig,
   mockResolveLogoutWebhookConfig,
+  mockResolveLogoutIssuer,
   mockSafeFetchJson,
   mockDiagnosticAuthDecision,
 } = vi.hoisted(() => ({
@@ -42,6 +45,7 @@ const {
     vi.fn<(env: unknown, entry: { action: string; metadata: string }) => Promise<void>>(),
   mockResolveLogoutConfig: vi.fn(),
   mockResolveLogoutWebhookConfig: vi.fn(),
+  mockResolveLogoutIssuer: vi.fn(),
   mockSafeFetchJson: vi.fn(),
   mockDiagnosticAuthDecision: vi.fn(),
 }));
@@ -84,6 +88,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveLogoutTargetsFromSessionClientStore: mockResolveTargets,
     resolveLogoutConfig: mockResolveLogoutConfig,
     resolveLogoutWebhookConfig: mockResolveLogoutWebhookConfig,
+    resolveLogoutIssuer: mockResolveLogoutIssuer,
     createAuditLog: mockCreateAuditLog,
   };
 });
@@ -213,7 +218,7 @@ function buildContext(logoutToken: string) {
   return { c, settings, pending };
 }
 
-type Sent = { url: string; token: string };
+type Sent = { url: string; token: string; body: string };
 type FetchInput = Parameters<typeof fetch>[0];
 
 function urlOf(input: FetchInput): string {
@@ -226,7 +231,11 @@ function captureDownstream(statusFor: (url: string) => number = () => 200) {
   globalThis.fetch = vi.fn(async (input: FetchInput, init?: Parameters<typeof fetch>[1]) => {
     const url = urlOf(input);
     const body = new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
-    sent.push({ url, token: body.get('logout_token') ?? '' });
+    sent.push({
+      url,
+      token: body.get('logout_token') ?? '',
+      body: typeof init?.body === 'string' ? init.body : '',
+    });
     return new Response(null, { status: statusFor(url) });
   }) as typeof fetch;
   return sent;
@@ -236,7 +245,7 @@ async function verifyDownstream(token: string) {
   const { payload, protectedHeader } = await jose.jwtVerify(
     token,
     await jose.importJWK(op.publicJwk, 'RS256'),
-    { issuer: OP_ISSUER, algorithms: ['RS256'] }
+    { issuer: CANONICAL_ISSUER, algorithms: ['RS256'] }
   );
   return { payload, protectedHeader };
 }
@@ -286,6 +295,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     mockCreateAuditLog.mockResolvedValue(undefined);
     mockResolveLogoutConfig.mockResolvedValue(config());
     mockResolveLogoutWebhookConfig.mockResolvedValue(DEFAULT_LOGOUT_WEBHOOK_CONFIG);
+    mockResolveLogoutIssuer.mockResolvedValue(CANONICAL_ISSUER);
   });
 
   it('sends each downstream client its own logout token with that client sid and sub', async () => {
@@ -313,7 +323,10 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
       });
       expect(payload.nonce).toBeUndefined();
     }
-    // The targets are read for the session that was ended, with the OP issuer.
+    // The tokens are signed for the tenant's canonical issuer, whatever host the notice came in on.
+    expect(mockResolveLogoutIssuer).toHaveBeenCalledWith(c.env, 'tenant-a');
+    // The targets are read for the session that was ended, with the issuer the request is on
+    // (it derives the sid of an old record as it was when issued).
     expect(mockResolveTargets).toHaveBeenCalledWith(
       c.env,
       'tenant-a',
@@ -526,6 +539,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
           session_id: SESSION_ID,
           client_id: 'rp-c',
           oidc_sid: 'sid-for-rp-c',
+          oidc_sub: 'sub-for-rp-c',
           client_name: 'rp-c',
           logout_webhook_uri: RP_C_WEBHOOK,
           logout_webhook_secret_encrypted: (
@@ -541,6 +555,35 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
 
     expect(response.status).toBe(200);
     expect(sent.map((s) => s.url).sort()).toEqual([RP_A, RP_C_WEBHOOK]);
+    // The webhook names the tenant's canonical issuer and the sub the client's ID token carried,
+    // never the user's internal id.
+    const webhook = JSON.parse(sent.find((s) => s.url === RP_C_WEBHOOK)!.body);
+    expect(webhook).toMatchObject({
+      event: 'user.logout',
+      client_id: 'rp-c',
+      issuer: CANONICAL_ISSUER,
+      sub: 'sub-for-rp-c',
+      sid: 'sid-for-rp-c',
+    });
+    expect(JSON.stringify(webhook)).not.toContain('user-1');
+  });
+
+  it('sends nothing downstream when the tenant issuer cannot be resolved, and still answers the upstream', async () => {
+    mockResolveLogoutIssuer.mockRejectedValue(new Error('lookup failed'));
+    mockResolveLogoutWebhookConfig.mockResolvedValue({
+      ...DEFAULT_LOGOUT_WEBHOOK_CONFIG,
+      enabled: true,
+    });
+    const sent = captureDownstream();
+    const { c, pending } = buildContext(await upstreamLogoutToken());
+
+    const response = await handleBackchannelLogout(c as never);
+    await Promise.all(pending);
+
+    expect(response.status).toBe(200);
+    expect(mockSessionInvalidate).toHaveBeenCalledWith(SESSION_ID);
+    // No other issuer is made up from the request's host.
+    expect(sent).toEqual([]);
   });
 
   it('keeps notifying the other sessions when one session fails, and waits for them', async () => {

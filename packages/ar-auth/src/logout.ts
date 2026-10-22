@@ -38,6 +38,7 @@ import {
   resolveLogoutTargetsFromSessionClientStore,
   resolveSessionIdFromOidcSidStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
+  resolveLogoutIssuer,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
   resolveLogoutConfig,
@@ -664,34 +665,55 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Get logout config for both backchannel and frontchannel
     const logoutConfig = await getLogoutConfig(c.env, getTenantIdFromContext(c));
 
-    if (deletedSessions.length > 0 && c.executionCtx) {
-      // The retry budget counts from when this work starts: loading keys uses it too.
+    // The logout tokens and webhooks carry the tenant's canonical issuer, not one made from the
+    // host this request came in on. The lookup starts here and the sending, after the response,
+    // waits for it; when it fails nothing is sent (there is no other issuer to sign with) and the error is logged.
+    const logoutIssuer =
+      deletedSessions.length > 0 && c.executionCtx
+        ? resolveLogoutIssuer(c.env, tenantId).catch((error) => {
+            log.error(
+              'Downstream logout not sent: the tenant issuer could not be resolved',
+              { action: 'Logout' },
+              error as Error
+            );
+            return null;
+          })
+        : null;
+
+    if (logoutIssuer && c.executionCtx) {
       c.executionCtx.waitUntil(
-        sendBackchannelLogoutFanout(c.env, {
-          tenantId,
-          issuer,
-          sessions: sessionsToNotify,
-          config: logoutConfig.backchannel,
-          log,
-          // A final failure with on_failure 'error' (alert) is written to the audit log.
-          onAlert: async (details) => {
-            await createAuditLog(c.env, {
-              tenantId,
-              userId: details.userId,
-              action: 'backchannel_logout.failed',
-              resource: 'session',
-              resourceId: details.sessionId,
-              // Sent from the server after the response: no client request applies.
-              ipAddress: '',
-              userAgent: '',
-              metadata: JSON.stringify({
-                client_id: details.clientId,
-                attempts: details.attempts,
-              }),
-              severity: 'warning',
-            });
-          },
-        })
+        (async () => {
+          // The retry budget counts from when this work starts: loading keys uses it too.
+          const startedAt = Date.now();
+          const tokenIssuer = await logoutIssuer;
+          if (!tokenIssuer) return;
+          await sendBackchannelLogoutFanout(c.env, {
+            tenantId,
+            issuer: tokenIssuer,
+            sessions: sessionsToNotify,
+            config: logoutConfig.backchannel,
+            startedAt,
+            log,
+            // A final failure with on_failure 'error' (alert) is written to the audit log.
+            onAlert: async (details) => {
+              await createAuditLog(c.env, {
+                tenantId,
+                userId: details.userId,
+                action: 'backchannel_logout.failed',
+                resource: 'session',
+                resourceId: details.sessionId,
+                // Sent from the server after the response: no client request applies.
+                ipAddress: '',
+                userAgent: '',
+                metadata: JSON.stringify({
+                  client_id: details.clientId,
+                  attempts: details.attempts,
+                }),
+                severity: 'warning',
+              });
+            },
+          });
+        })()
       );
     }
 
@@ -700,12 +722,14 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // Use waitUntil() to send webhook notifications without blocking the response
     // This is an Authrim extension for clients that don't support OIDC Back-Channel Logout
-    if (deletedSessions.length > 0 && c.executionCtx) {
+    if (logoutIssuer && c.executionCtx) {
       c.executionCtx.waitUntil(
         (async () => {
           const webhookConfig = await getLogoutWebhookConfig(c.env, tenantId);
+          const webhookIssuer = await logoutIssuer;
+          if (!webhookIssuer) return;
           await sendLogoutWebhookFanout(c.env, {
-            issuer,
+            issuer: webhookIssuer,
             sessions: sessionsToNotify,
             config: webhookConfig,
             log,
