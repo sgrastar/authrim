@@ -4,6 +4,8 @@ import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import { applyInvitationAssignments } from '../invitation-auth-core';
 import { joinOrganization } from '../org-domain-resolver';
+import { resolveScopedRoles } from '../../utils/rbac-claims';
+import { evaluatePermissionsForScope } from '../../utils/policy-embedding';
 
 const NOW = 1_800_000_000;
 
@@ -36,7 +38,7 @@ describe('invitation assignments in the real schema', () => {
     ).run(NOW, NOW);
     db.prepare(
       `INSERT INTO roles (id, tenant_id, name, permissions_json, created_at, role_type, is_system)
-       VALUES ('role-1', 'tenant-a', 'member', '[]', ?, 'custom', 0)`
+       VALUES ('role-1', 'tenant-a', 'member', '["documents:read"]', ?, 'custom', 0)`
     ).run(NOW);
     db.prepare(
       `INSERT INTO organizations (id, tenant_id, name, created_at, updated_at)
@@ -70,7 +72,7 @@ describe('invitation assignments in the real schema', () => {
         )
         .all()
     ).toEqual([
-      { subject_id: 'user-1', role_id: 'role-1', scope_type: 'tenant', scope_target: 'tenant-a' },
+      { subject_id: 'user-1', role_id: 'role-1', scope_type: 'global', scope_target: '' },
     ]);
     expect(
       db
@@ -80,6 +82,24 @@ describe('invitation assignments in the real schema', () => {
         )
         .all()
     ).toEqual([{ subject_id: 'user-1', org_id: 'org-1', membership_type: 'member' }]);
+  });
+
+  it('gives a role that token issuance and policy embedding read as tenant-wide', async () => {
+    await applyInvitationAssignments(adapter, {
+      userId: 'user-1',
+      tenantId: 'tenant-a',
+      roleId: 'role-1',
+      orgId: null,
+    });
+
+    expect(await resolveScopedRoles(adapter, 'user-1', 'tenant-a')).toEqual([
+      { name: 'member', scope: 'global' },
+    ]);
+    expect(
+      await evaluatePermissionsForScope(adapter, 'user-1', 'openid documents:read', {
+        tenantId: 'tenant-a',
+      })
+    ).toEqual(['documents:read']);
   });
 
   it("gives nothing from another tenant's role or organisation", async () => {
