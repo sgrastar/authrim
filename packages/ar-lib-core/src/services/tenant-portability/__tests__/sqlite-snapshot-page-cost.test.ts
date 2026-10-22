@@ -140,14 +140,15 @@ it.each(
     const perRow = new Map<number, number>();
     for (const rows of [500, 1000, 2000, 8000])
       perRow.set(rows, await exportRowsRead(schema, rows, writes));
-    // ~21-30 rows per exported row at every size: ~21-26 for live rows, whose bodies are read by
-    // key after the merge, and ~29.5 when only preimages remain before another tenant's rows.
-    // The previous text-order paging query alone read ~13, 23, 44 and 170. Filtering omitted rows
-    // before the page limit grew ~30x for 8x the rows once every row was rewritten, and filtering
-    // other tenants' rows grew 22.6 to 97.4 in the last case.
+    // ~19-24 rows per exported row at every size: ~19-23 for live rows, whose bodies are read by
+    // key after the merge, and ~24 when only preimages remain before another tenant's rows.
+    // Materializing each page's live scan and reading it again for the scan end, the page and
+    // the progress row read ~21-30. The previous text-order paging query alone read ~13, 23, 44
+    // and 170. Filtering omitted rows before the page limit grew ~30x for 8x the rows once every
+    // row was rewritten, and filtering other tenants' rows grew 22.6 to 97.4 in the last case.
     const baseline = perRow.get(500) ?? 0;
     for (const value of perRow.values()) {
-      expect(value).toBeLessThan(32);
+      expect(value).toBeLessThan(26);
       expect(value).toBeLessThan(baseline * 1.25);
     }
   },
@@ -207,9 +208,12 @@ it('pins the live scan of a tenant-ordered table to its index after ANALYZE', as
   const live = plan.results
     .map((row) => row.detail)
     .filter((detail) => /^(SCAN|SEARCH) live\b/.test(detail));
-  expect(live).toEqual([
-    'SEARCH live USING COVERING INDEX members_tenant_order (tenant_id=?)',
+  // Three walks per page form (to the scan end, from the far end, for the selected rows), first
+  // and later page, all through the tenant order index. Only the body lookup uses the primary key.
+  expect(live).toHaveLength(7);
+  expect([...new Set(live)].sort()).toEqual([
     'SEARCH live USING COVERING INDEX members_tenant_order (tenant_id=? AND id>?)',
+    'SEARCH live USING COVERING INDEX members_tenant_order (tenant_id=?)',
     'SEARCH live USING INDEX sqlite_autoindex_members_1 (id=?)',
   ]);
 }, 60_000);
@@ -217,10 +221,13 @@ it('pins the live scan of a tenant-ordered table to its index after ANALYZE', as
 it('reads a small tenant of a shared table in proportion to the tenant', async () => {
   const small = await smallTenantRowsRead(orderedMembers, 20_000);
   const large = await smallTenantRowsRead(orderedMembers, 80_000);
-  // ~28 reads per exported row (2,842 for 100 rows) at both table sizes.
+  // ~24 reads per exported row (2,381 for 100 rows) at both table sizes.
   expect(small).toBeLessThan(100 * 32);
   expect(large).toBeLessThan(small * 1.1);
   // Without the index the walk covers the table's whole primary key range, other tenants' rows
-  // flagged in bounded scans: 653,357 reads, ~8 per table row.
-  expect(await smallTenantRowsRead(members, 80_000)).toBeGreaterThan(80_000);
+  // flagged in bounded scans: 168,590 reads, ~2 per table row (one walk to the scan end, one for
+  // the selected rows). Materializing the scan and reading it again read 653,357, ~8 per row.
+  const plain = await smallTenantRowsRead(members, 80_000);
+  expect(plain).toBeGreaterThan(80_000);
+  expect(plain).toBeLessThan(80_000 * 2.5);
 }, 120_000);

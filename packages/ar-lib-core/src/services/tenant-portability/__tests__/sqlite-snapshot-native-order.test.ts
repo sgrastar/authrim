@@ -82,7 +82,8 @@ describe('SQLite snapshot native primary key paging', () => {
   }
 
   it.each([
-    [items, ['SCAN live', 'SEARCH live USING INTEGER PRIMARY KEY (rowid>?)']],
+    // The first page also walks a range: from the smallest key.
+    [items, ['SEARCH live USING INTEGER PRIMARY KEY (rowid>?)']],
     [
       ledger,
       [
@@ -94,7 +95,9 @@ describe('SQLite snapshot native primary key paging', () => {
     [
       entries,
       [
-        'SCAN live USING INDEX sqlite_autoindex_entries_1',
+        'SEARCH live USING COVERING INDEX sqlite_autoindex_entries_1 (bucket>?)',
+        'SEARCH live USING INDEX sqlite_autoindex_entries_1 (bucket>?)',
+        'SEARCH live USING COVERING INDEX sqlite_autoindex_entries_1 ((bucket,n)>(?,?))',
         'SEARCH live USING INDEX sqlite_autoindex_entries_1 ((bucket,n)>(?,?))',
       ],
     ],
@@ -116,6 +119,8 @@ describe('SQLite snapshot native primary key paging', () => {
     const rows = plan(schema);
     const details = rows.map((row) => row.detail);
     expect(details).toEqual(expect.arrayContaining([...live]));
+    // No walk reads the whole table or a whole index.
+    expect(details.filter((detail) => /^SCAN live\b/.test(detail))).toEqual([]);
     const preimages = details.filter((detail) =>
       detail.startsWith('SEARCH previous USING INDEX tenant_backup_preimages_native_order')
     );
