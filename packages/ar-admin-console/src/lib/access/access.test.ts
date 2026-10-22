@@ -55,6 +55,20 @@ describe('settings, as the settings API decides it for a person', () => {
 		expect(settingsLevel(platform, 'client', 'tenant')).toBe('none');
 	});
 
+	it('shows the institution of a tenant to its own admins as read-only, and lets the platform change it', () => {
+		// The tenant admin edits other tenant settings, but the scopes and names of the institution
+		// are the platform's to set (the API refuses the tenant's own super_admin as well).
+		expect(settingsLevel(tenant, 'session', 'tenant')).toBe('edit');
+		expect(settingsLevel(tenant, 'institution', 'tenant')).toBe('view');
+		expect(settingsLevel(viewer, 'institution', 'tenant')).toBe('view');
+		expect(settingsLevel(support, 'institution', 'tenant')).toBe('none');
+		expect(settingsLevel(platform, 'institution', 'tenant')).toBe('edit');
+		const tenantSuperAdmin = { platform: false, roles: ['super_admin'], permissions: ['*'] };
+		expect(settingsLevel(tenantSuperAdmin, 'institution', 'tenant')).toBe('view');
+		// It is a tenant category only.
+		expect(settingsLevel(platform, 'institution', 'platform')).toBe('none');
+	});
+
 	it('takes the most of several parts', () => {
 		expect(widest(['none', 'view'])).toBe('view');
 		expect(widest(['view', 'edit', 'none'])).toBe('edit');

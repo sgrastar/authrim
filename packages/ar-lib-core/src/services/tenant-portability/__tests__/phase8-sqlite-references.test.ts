@@ -62,6 +62,27 @@ const identity = {
 };
 
 describe('Phase 8 SQL references', () => {
+  it('restores the organisation types of a bundle captured before core migration 024', async () => {
+    const policy = createPhase8SqliteInspectionPolicies(planned(), {
+      tenantKey: 'tenant-key-a',
+      validateAdminEnvelope: vi.fn(),
+      validatePhase8Envelope: vi.fn(),
+      resolveAdminReference: vi.fn(async (_context, source) => `target-${source}`),
+      resolvePluginReference: vi.fn(async (_context, _source, plugin) => `target-${plugin}`),
+      restoreHold: restoreHold(),
+    }).find(({ dataset }) => dataset.id === 'core.organizations');
+    expect(policy?.restoreTransform?.id).toBe('phase3-organization-type-v1');
+    const source = JSON.stringify({
+      id: text('org-a'),
+      tenant_id: text('tenant-a'),
+      org_type: text('team'),
+    });
+    for (const mode of ['write', 'defer', 'verify'] as const)
+      expect(
+        JSON.parse(await policy!.restoreTransform!.transform({} as never, source, mode)).org_type
+      ).toEqual(text('department'));
+  });
+
   it('builds an exact cumulative plan and preserves the physical restore graph', () => {
     const policies = createPhase8SqliteInspectionPolicies(planned(), {
       tenantKey: 'tenant-key-a',

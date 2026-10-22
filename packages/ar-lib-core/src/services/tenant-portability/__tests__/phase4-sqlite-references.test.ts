@@ -223,4 +223,11 @@ describe('Phase 4 installed SQL reference graph', () => {
       'backup_phase4_plan_incomplete'
     );
   });
+
+  it('keeps the Phase 3 organisation type restore in the cumulative plan', () => {
+    const policy = createPhase4SqliteInspectionPolicies(cumulativePlan()).find(
+      ({ dataset }) => dataset.id === 'core.organizations'
+    );
+    expect(policy?.restoreTransform?.id).toBe('phase3-organization-type-v1');
+  });
 });

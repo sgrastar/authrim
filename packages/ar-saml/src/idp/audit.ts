@@ -2,8 +2,10 @@ import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { createAuditLog, scheduleAuditLog } from '@authrim/ar-lib-core';
 import type { MissingRequiredSAMLAttribute } from './attributes';
+import type { SAMLWithheldScopedValues } from './institution-scope';
 
 export const SAML_POLICY_FAILED_AUDIT_EVENT = 'saml.policy.failed';
+export const SAML_ATTRIBUTE_WITHHELD_AUDIT_EVENT = 'saml.attribute.withheld';
 
 export type SAMLPolicyFailureKind =
   | 'required_attribute_missing'
@@ -99,6 +101,55 @@ export function scheduleSAMLPolicyFailureAudit(
       missingAttributes: input.missingAttributes,
       policyDetails: input.policyDetails,
     }),
+    severity: 'warning',
+  });
+
+  scheduleAuditLog(c.executionCtx, auditPromise);
+}
+
+/** What the record of withheld scoped values holds: codes, names of attributes, scopes and counts. */
+export function buildSAMLAttributeWithheldAuditMetadata(input: {
+  spEntityId: string;
+  authnRequestId?: string;
+  withheld: readonly SAMLWithheldScopedValues[];
+}): string {
+  return JSON.stringify({
+    protocol: 'saml',
+    sp_entity_id: input.spEntityId,
+    ...(input.authnRequestId ? { request_id: input.authnRequestId } : {}),
+    withheld: input.withheld.map((entry) => ({
+      attribute: entry.attribute,
+      name: entry.name,
+      reason: entry.reason,
+      ...(entry.scope ? { scope: entry.scope } : {}),
+      count: entry.count,
+    })),
+  });
+}
+
+/**
+ * Records that scoped attribute values were not released (see institution-scope.ts). Nothing of the
+ * values is recorded, only the attribute, the reason, and the scope they named.
+ */
+export function scheduleSAMLAttributeWithheldAudit(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    spEntityId: string;
+    authnRequestId?: string;
+    withheld: readonly SAMLWithheldScopedValues[];
+  }
+): void {
+  if (input.withheld.length === 0) return;
+  const auditPromise = createAuditLog(c.env, {
+    tenantId: input.tenantId,
+    userId: 'saml-idp',
+    action: SAML_ATTRIBUTE_WITHHELD_AUDIT_EVENT,
+    resource: 'saml_service_provider',
+    resourceId: input.spEntityId,
+    ipAddress: getRequestIp(c),
+    userAgent: c.req.header('User-Agent') || 'unknown',
+    metadata: buildSAMLAttributeWithheldAuditMetadata(input),
     severity: 'warning',
   });
 

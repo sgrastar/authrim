@@ -199,6 +199,15 @@ export const jaSettings = {
 		'ログアウト要求のバインディングの既定です。メタデータが両方を示している場合や、指定がない場合に使います。legacy プロファイルのように、プロファイルが決めているときはそちらを優先します。',
 	'set.k.federation.saml_slo_binding.HTTP-POST': 'HTTP-POST',
 	'set.k.federation.saml_slo_binding.HTTP-Redirect': 'HTTP-Redirect',
+	'set.section.samlInstitution': '機関',
+	'set.section.samlInstitution.desc':
+		'このテナントが表す機関です。利用者の識別子を発行するドメイン（スコープ）と、機関の名前を設定します。変更できるのはプラットフォームだけで、テナントの管理者は閲覧のみです。設定するまで、SAML のアサーションとメタデータは変わりません。',
+	'set.k.institution.scopes': 'スコープ',
+	'set.k.institution.scopes.desc':
+		'ドメイン名をカンマで区切って指定します。先頭が既定です（例: example.ac.jp,med.example.ac.jp）。小文字で、ワイルドカードは使えず、20 件までです。設定すると、SAML のアサーションに載る eduPersonScopedAffiliation と eduPersonPrincipalName は、これらのドメインのものだけになります。別のドメインの値は送らず、監査ログに記録します。ドメインのない値には既定のドメインを付けます。メタデータにも載り（shibmd:Scope）、サービスプロバイダーには既定のドメインを schacHomeOrganization として渡せます。サービスプロバイダーはメタデータを最長 1 日保持するため、使われている間は変更を避けてください。OIDC には影響しません。',
+	'set.k.institution.display_names': '名前',
+	'set.k.institution.display_names.desc':
+		'機関の名前を言語ごとに JSON テキストで指定します。ja と en は必須です（例: {"ja": "例大学", "en": "Example University"}）。設定すると、SAML のメタデータの機関名になり、サービスプロバイダーには英語の名前を組織名（o）として渡せます。OIDC には影響しません。',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',

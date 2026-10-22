@@ -83,6 +83,7 @@ import {
   checkRolePermission,
   hasClientSettingsPermission,
   hasGlobalPlatformSettingsEdit,
+  hasPlatformAuthorityForTenantEdit,
   hasTenantSettingsPermission,
   isCategoryAllowedAtScope,
   isCategoryWritableAtScope,
@@ -1290,6 +1291,15 @@ settingsV2.get('/settings/meta/:category/scope', async (c) => {
     } else if (userRoles.includes('system_admin')) {
       // system_admin always has access
       permission = perms.editRoles.length > 0 ? 'edit' : 'view';
+    }
+
+    // A category only the platform may change for a tenant is read-only to the tenant's own admins.
+    if (
+      scope === 'tenant' &&
+      permission === 'edit' &&
+      !hasPlatformAuthorityForTenantEdit(adminAuth, category)
+    ) {
+      permission = 'view';
     }
 
     // Only include scopes the user can access

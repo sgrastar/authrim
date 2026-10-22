@@ -5,6 +5,7 @@
 import {
   ADMIN_PERMISSIONS,
   CATEGORY_SCOPE_CONFIG,
+  categoryTenantEditRequiresPlatformAuthority,
   getScopedCategoryMeta,
   hasAdminPermission,
   hasGlobalMachinePermission,
@@ -76,6 +77,20 @@ export function rolesForTenant(
 }
 
 /**
+ * Whether the caller may change a tenant's settings of a category that only the platform may change
+ * (see `tenantEditRequiresPlatformAuthority`): platform authority, never an agent. True for a
+ * category that has no such rule, so this is the one place the rule is added to the role check.
+ */
+export function hasPlatformAuthorityForTenantEdit(
+  adminAuth: AdminAuthContext | undefined,
+  category: CategoryName
+): boolean {
+  if (!categoryTenantEditRequiresPlatformAuthority(category)) return true;
+  if (!adminAuth || adminAuth.actorType === 'agent') return false;
+  return hasGlobalPlatformSettingsEdit(adminAuth, category);
+}
+
+/**
  * Whether the caller may view or edit a category of the tenant's settings. `tenantId` is the tenant
  * the settings belong to; left out, it is the tenant the request arrived on.
  */
@@ -86,6 +101,7 @@ export function hasTenantSettingsPermission(
   tenantId?: string
 ): boolean {
   if (!adminAuth) return false;
+  if (action === 'edit' && !hasPlatformAuthorityForTenantEdit(adminAuth, category)) return false;
   if (
     adminAuth.actorType === 'agent' ||
     adminAuth.actorType === 'machine' ||

@@ -8,6 +8,8 @@
  * - Default values with secure defaults
  */
 
+import type { OrganizationType } from './rbac';
+
 // =============================================================================
 // JIT Provisioning Configuration
 // =============================================================================
@@ -220,7 +222,7 @@ export interface OrgAutoCreationConfig {
   /** Default template for auto-created organizations */
   default_org_template: {
     /** Organization type */
-    org_type: 'distributor' | 'enterprise' | 'department';
+    org_type: OrganizationType;
     /** Subscription plan */
     plan: 'free' | 'starter' | 'professional' | 'enterprise';
     /** Active status */

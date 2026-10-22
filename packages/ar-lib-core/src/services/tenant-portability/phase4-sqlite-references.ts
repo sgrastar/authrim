@@ -5,6 +5,7 @@ import {
   phase3SqliteDeferredColumns,
   phase3SqliteRestoreDependencies,
   phase3SqliteRestoreOverrides,
+  phase3SqliteRestoreTransform,
   phase3SqliteVerificationIgnoredColumns,
   type Phase3SqliteReferenceRule,
 } from './phase3-sqlite-references.js';
@@ -349,6 +350,14 @@ export function phase4SqliteRestoreOverrides(
   return undefined;
 }
 
+export function phase4SqliteRestoreTransform(
+  datasetId: string
+): SqliteDatasetInspectionPolicy['restoreTransform'] {
+  if (phase3Ids.has(datasetId)) return phase3SqliteRestoreTransform(datasetId);
+  if (!phase4Ids.has(datasetId)) throw new Error('backup_phase4_reference_dataset');
+  return undefined;
+}
+
 export function phase4SqliteVerificationIgnoredColumns(datasetId: string): readonly string[] {
   if (phase3Ids.has(datasetId)) return phase3SqliteVerificationIgnoredColumns(datasetId);
   if (!phase4Ids.has(datasetId)) throw new Error('backup_phase4_reference_dataset');
@@ -388,6 +397,7 @@ export function createPhase4SqliteInspectionPolicies(
       : [];
     const restoreOverrides = phase4SqliteRestoreOverrides(entry.dataset.id);
     const verificationIgnoredColumns = phase4SqliteVerificationIgnoredColumns(entry.dataset.id);
+    const restoreTransform = phase4SqliteRestoreTransform(entry.dataset.id);
     return {
       dataset: structuredClone(entry.dataset),
       schema: structuredClone(entry.capture),
@@ -395,6 +405,7 @@ export function createPhase4SqliteInspectionPolicies(
       ...(deferredColumns.length ? { deferredColumns } : {}),
       ...(restoreOverrides ? { restoreOverrides } : {}),
       ...(verificationIgnoredColumns.length ? { verificationIgnoredColumns } : {}),
+      ...(restoreTransform ? { restoreTransform } : {}),
       ...(entry.partitions ? { partitions: [...entry.partitions] } : {}),
       inspectRow: async (row, identity) =>
         inspectPhase4SqliteReferences(entry.dataset.id, row, identity),

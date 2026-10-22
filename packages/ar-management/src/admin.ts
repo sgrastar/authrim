@@ -7,6 +7,8 @@ import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { getCanonicalAccountStatus, transitionAccountLifecycle } from './account-status';
 import { withdrawOAuthClientConsent } from './oauth-client-consent-withdrawal';
+import { adminActorIdFromContext, startAdminSessionEndLogout } from './admin-session-end';
+import { endedSessionsOf, type EndedSession } from './session-end-logout';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   invalidateConsentCache,
@@ -481,19 +483,37 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     const expiresAt = body.duration_hours ? nowTs + body.duration_hours * 3600 : null;
 
     const lifecycleOperationId = crypto.randomUUID();
-    const lifecycle = await transitionAccountLifecycle(c.env, adapter, {
-      tenantId,
-      userId,
-      lifecycle: 'suspended',
-      status: 'suspended',
-      metadataPatch: {
-        suspended_at: nowTs,
-        suspended_until: expiresAt,
-      },
-      versionMs: lifecycleVersionMs,
-      operationId: lifecycleOperationId,
-      revokeSessions: true,
-    });
+    // Sessions this transition ended: their relying parties are told after the response, also
+    // when a later step fails or the account turns out superseded.
+    const ended: EndedSession[] = [];
+    let lifecycle: Awaited<ReturnType<typeof transitionAccountLifecycle>>;
+    try {
+      lifecycle = await transitionAccountLifecycle(c.env, adapter, {
+        tenantId,
+        userId,
+        lifecycle: 'suspended',
+        status: 'suspended',
+        metadataPatch: {
+          suspended_at: nowTs,
+          suspended_until: expiresAt,
+        },
+        versionMs: lifecycleVersionMs,
+        operationId: lifecycleOperationId,
+        revokeSessions: true,
+        onSessionsEnded: (sessionIds) => ended.push(...endedSessionsOf(userId, sessionIds)),
+      });
+    } finally {
+      await startAdminSessionEndLogout(c, {
+        tenantId,
+        sessions: ended,
+        trigger: {
+          action: 'user.suspend',
+          operationId: lifecycleOperationId,
+          actorId: adminActorIdFromContext(c),
+        },
+        log,
+      });
+    }
     if (lifecycle === 'superseded') {
       // Another status change of a newer (or the same) version got there first.
       return c.json(
@@ -670,19 +690,37 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
     const lifecycleOperationId = crypto.randomUUID();
-    const lifecycle = await transitionAccountLifecycle(c.env, adapter, {
-      tenantId,
-      userId,
-      lifecycle: 'locked',
-      status: 'locked',
-      metadataPatch: {
-        locked_at: nowTs,
-        locked_until: unlockAtTs,
-      },
-      versionMs: lifecycleVersionMs,
-      operationId: lifecycleOperationId,
-      revokeSessions: true,
-    });
+    // Sessions this transition ended: their relying parties are told after the response, also
+    // when a later step fails or the account turns out superseded.
+    const ended: EndedSession[] = [];
+    let lifecycle: Awaited<ReturnType<typeof transitionAccountLifecycle>>;
+    try {
+      lifecycle = await transitionAccountLifecycle(c.env, adapter, {
+        tenantId,
+        userId,
+        lifecycle: 'locked',
+        status: 'locked',
+        metadataPatch: {
+          locked_at: nowTs,
+          locked_until: unlockAtTs,
+        },
+        versionMs: lifecycleVersionMs,
+        operationId: lifecycleOperationId,
+        revokeSessions: true,
+        onSessionsEnded: (sessionIds) => ended.push(...endedSessionsOf(userId, sessionIds)),
+      });
+    } finally {
+      await startAdminSessionEndLogout(c, {
+        tenantId,
+        sessions: ended,
+        trigger: {
+          action: 'user.lock',
+          operationId: lifecycleOperationId,
+          actorId: adminActorIdFromContext(c),
+        },
+        log,
+      });
+    }
     if (lifecycle === 'superseded') {
       // Another status change of a newer (or the same) version got there first.
       return c.json(
