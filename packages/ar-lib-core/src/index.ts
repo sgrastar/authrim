@@ -27,6 +27,7 @@ export * from './services/external-plugin-gate';
 export * from './services/assurance';
 export * from './services/assurance-session';
 export * from './services/identity-assurance';
+export * from './services/tenant-institution';
 export * from './services/identity-assurance-enforcement';
 export * from './services/assurance-claims';
 export * from './services/organisation-assurance';

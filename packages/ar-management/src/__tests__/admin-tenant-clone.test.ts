@@ -376,6 +376,22 @@ describe('admin tenant clone', () => {
       'dcr.default_resource': 'https://api.example.com/',
     });
 
+    // The scopes and names say which institution the source speaks for: the copy is another
+    // tenant, which would otherwise be released under (and publish) the source's scopes.
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'institution',
+          JSON.stringify({
+            'institution.scopes': 'source.ac.jp',
+            'institution.display_names': '{"ja":"元","en":"Source"}',
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({});
+
     expect(
       JSON.parse(
         sanitizeCopiedSettingsValue(

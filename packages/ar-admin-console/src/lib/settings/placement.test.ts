@@ -310,6 +310,27 @@ describe('where settings live', () => {
 		});
 	});
 
+	it('places the institution scopes and names once, on the Enterprise SSO page, as applied tenant-only settings', () => {
+		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'enterprise');
+		for (const key of ['institution.scopes', 'institution.display_names']) {
+			const meta = ALL_CATEGORY_META.institution.settings[key];
+			expect(categoryOf(key)).toBe('institution');
+			// The SAML IdP reads them, so they are not "in development".
+			expect(meta.status).toBeUndefined();
+			expect(NOT_APPLIED.has(key)).toBe(false);
+			expect(meta.scopes).toEqual(['tenant']);
+			// Not from the environment: they are the institution’s own.
+			expect(meta.envKey).toBeUndefined();
+			expect(drafted).not.toContain(key);
+			expect(
+				page?.sections.flatMap((section) => section.settings).filter((s) => s.key === key)
+			).toEqual([{ key, depth: 'primary' }]);
+			// Named in every language the console has.
+			expect(hasMessage(settingText(key).label)).toBe(true);
+			expect(settingText(key).description).toBeDefined();
+		}
+	});
+
 	it('points every duplicate at a setting that exists', () => {
 		for (const entry of DRAFT.filter((e) => e.duplicateOf)) {
 			expect(everyKey, entry.key).toContain(entry.duplicateOf);

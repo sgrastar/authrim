@@ -940,12 +940,42 @@ describe('field mapping flow data adapter', () => {
 			);
 		});
 
+		it('offers the home organization and the organization name as sources a destination can release', () => {
+			const [destination] = buildIdentityMappingDestinationSamples(input);
+			const targets = destination.nodes.filter((node) => node.role === 'target');
+
+			expect(targets).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						label: 'Home Organization (schacHomeOrganization)',
+						valueMultiplicity: 'single',
+						fieldRef: expect.objectContaining({
+							namespace: 'authrim.profile',
+							path: 'schac_home_organization',
+							catalogEntryId: 'system.identity.schac_home_organization'
+						})
+					}),
+					expect.objectContaining({
+						label: 'Organization Name (o)',
+						valueMultiplicity: 'single',
+						fieldRef: expect.objectContaining({
+							namespace: 'authrim.profile',
+							path: 'organization_name',
+							catalogEntryId: 'system.identity.organization_name'
+						})
+					})
+				])
+			);
+		});
+
 		it('does not offer them as targets of an inbound mapping', () => {
 			const [source] = buildIdentityMappingSourceSamples(input);
 			const targets = source.nodes.filter((node) => node.role === 'target');
 
 			expect(targets.some((node) => node.fieldRef?.path === 'assurance_ial')).toBe(false);
 			expect(targets.some((node) => node.fieldRef?.path === 'edu_person_assurance')).toBe(false);
+			expect(targets.some((node) => node.fieldRef?.path === 'schac_home_organization')).toBe(false);
+			expect(targets.some((node) => node.fieldRef?.path === 'organization_name')).toBe(false);
 			// The rest of the system sources stay as they were.
 			expect(targets.some((node) => node.fieldRef?.path === 'account_id')).toBe(true);
 			expect(targets.some((node) => node.fieldRef?.path === 'email')).toBe(true);

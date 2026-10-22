@@ -21,6 +21,7 @@ import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
+import { hasPlatformAuthorityForTenantEdit } from './settings-authorization';
 import {
   createAuthContextFromHono,
   createSettingsHistoryManager,
@@ -419,7 +420,10 @@ export async function rollbackSettings(c: SettingsContext) {
   const adminAuth = c.get('adminAuth');
   const userRoles = adminAuth?.roles || [];
 
-  if (!checkRolePermission(userRoles, category as CategoryName, 'tenant', 'edit')) {
+  if (
+    !checkRolePermission(userRoles, category as CategoryName, 'tenant', 'edit') ||
+    !hasPlatformAuthorityForTenantEdit(adminAuth, category as CategoryName)
+  ) {
     return c.json(
       { error: 'forbidden', error_description: 'Insufficient permissions to rollback settings' },
       403
