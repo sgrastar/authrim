@@ -43,6 +43,7 @@ function recordToSessionClient(record: SessionClientRecord): SessionClient {
     session_id: record.session_id,
     client_id: record.client_id,
     ...(record.oidc_sid ? { oidc_sid: record.oidc_sid } : {}),
+    ...(record.oidc_sub ? { oidc_sub: record.oidc_sub } : {}),
     first_token_at: record.first_token_at,
     last_token_at: record.last_token_at,
     last_seen_at: record.last_seen_at,
@@ -64,6 +65,7 @@ export async function registerSessionClientInStore(
     sessionId: input.session_id,
     clientId: input.client_id,
     oidcSid: input.oidc_sid,
+    ...(input.oidc_sub ? { oidcSub: input.oidc_sub } : {}),
   });
 
   if (input.oidc_sid && env.SESSION_CLIENT_STORE) {
@@ -153,6 +155,7 @@ async function repairClientForRawSession(
         session_id: sessionId,
         client_id: record.client_id,
         oidc_sid: oidcSid,
+        ...(record.oidc_sub ? { oidc_sub: record.oidc_sub } : {}),
       })) ?? repaired
     );
   } catch (error) {

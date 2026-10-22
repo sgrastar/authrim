@@ -3000,6 +3000,32 @@ describe('Authorization Handler', () => {
         );
       });
 
+      it('records the mapped sub with the session-client, for the logout token', async () => {
+        const registerClientRpc = vi.fn(async (input: Record<string, unknown>) => ({
+          id: 'sc-1',
+          tenant_id: input.tenantId,
+          session_id: input.sessionId,
+          client_id: input.clientId,
+          first_token_at: 1,
+          last_token_at: 1,
+          last_seen_at: null,
+        }));
+        env.SESSION_CLIENT_STORE = {
+          idFromName: vi.fn((name: string) => ({ toString: () => name })),
+          get: vi.fn(() => ({
+            registerClientRpc,
+            registerOidcSidAliasRpc: vi.fn(async () => undefined),
+          })),
+        } as unknown as Env['SESSION_CLIENT_STORE'];
+
+        const fragment = await authorizeFor('id_token token', { mapping: pairwise });
+
+        expect(decodeJwt(fragment.get('id_token')!).sub).toBe(PAIRWISE_SUB);
+        expect(registerClientRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ clientId: 'test-client', oidcSub: PAIRWISE_SUB })
+        );
+      });
+
       it('issues no account reference, and still the mapped sub, without the key to seal one', async () => {
         const fragment = await authorizeFor('code id_token', { rootKey: false, mapping: pairwise });
 

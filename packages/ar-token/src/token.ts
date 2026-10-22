@@ -3637,6 +3637,9 @@ async function handleAuthorizationCodeGrant(
         session_id: authCodeData.sessionId,
         client_id: client_id,
         oidc_sid: authCodeData.sid,
+        // The sub the ID token above carries for this app (after its identity mapping), so the
+        // logout token names the user as the app knows them.
+        ...(typeof idTokenClaims.sub === 'string' ? { oidc_sub: idTokenClaims.sub } : {}),
       };
       const storeRegistrationPromise = registerSessionClientInStore(
         c.env,

@@ -15,6 +15,8 @@ export interface SessionClientRecord {
   session_id: string;
   client_id: string;
   oidc_sid?: string;
+  /** The sub the client's ID token carried (its identity mapping may issue a per-client one). */
+  oidc_sub?: string;
   first_token_at: number;
   last_token_at: number;
   last_seen_at: number | null;
@@ -25,6 +27,8 @@ export interface RegisterSessionClientRequest {
   sessionId: string;
   clientId: string;
   oidcSid?: string;
+  /** The sub of the ID token just issued to the client, when one was. */
+  oidcSub?: string;
   now?: number;
 }
 
@@ -76,6 +80,7 @@ export class SessionClientStore extends DurableObject<Env> {
           ...existing,
           last_token_at: now,
           ...(input.oidcSid ? { oidc_sid: normalizeRequired(input.oidcSid, 'oidc_sid') } : {}),
+          ...(input.oidcSub ? { oidc_sub: input.oidcSub } : {}),
         };
         await txn.put(key, updated);
         return updated;
@@ -87,6 +92,7 @@ export class SessionClientStore extends DurableObject<Env> {
         session_id: sessionId,
         client_id: clientId,
         ...(input.oidcSid ? { oidc_sid: normalizeRequired(input.oidcSid, 'oidc_sid') } : {}),
+        ...(input.oidcSub ? { oidc_sub: input.oidcSub } : {}),
         first_token_at: now,
         last_token_at: now,
         last_seen_at: null,

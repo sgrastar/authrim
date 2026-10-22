@@ -508,6 +508,28 @@ type LogoutParams = {
   kid: string;
 };
 
+/**
+ * Which session and subject claims a client's logout token carries.
+ *
+ * Its sub is the one the client's ID token carried (recorded with the session-client), which the
+ * RP matches against (OIDC Back-Channel Logout 1.0 §2.6): an identity mapping may have given the
+ * client a pairwise or persistent sub, so the user's id is never sent. Without a recorded sub the
+ * token names the session by its sid alone, which every RP must accept.
+ */
+function logoutTokenSubjectClaims(
+  target: { oidcSub?: string; oidcSid?: string; sessionRequired: boolean },
+  config: BackchannelLogoutConfig
+): Pick<CreateLogoutTokenParams, 'userId' | 'sessionId' | 'includeSub' | 'includeSid'> {
+  const subject = config.include_sub_claim ? target.oidcSub : undefined;
+  const includeSid = config.include_sid_claim || target.sessionRequired || !subject;
+  return {
+    userId: subject,
+    sessionId: includeSid ? target.oidcSid : undefined,
+    includeSub: Boolean(subject),
+    includeSid,
+  };
+}
+
 /** Sign a new logout token for a client and send it. */
 async function sendOnce(
   client: SessionClientWithDetails,
@@ -518,14 +540,15 @@ async function sendOnce(
     {
       issuer: params.issuer,
       clientId: client.client_id,
-      userId: config.include_sub_claim ? params.userId : undefined,
-      sessionId:
-        config.include_sid_claim || client.backchannel_logout_session_required
-          ? client.oidc_sid
-          : undefined,
+      ...logoutTokenSubjectClaims(
+        {
+          oidcSub: client.oidc_sub,
+          oidcSid: client.oidc_sid,
+          sessionRequired: client.backchannel_logout_session_required,
+        },
+        config
+      ),
       expirationSeconds: config.logout_token_exp_seconds,
-      includeSub: config.include_sub_claim,
-      includeSid: config.include_sid_claim || client.backchannel_logout_session_required,
     },
     params.privateKey,
     params.kid
@@ -896,8 +919,16 @@ export function createBackchannelLogoutOrchestrator(
  */
 export interface ProcessRetryParams {
   clientId: string;
+  /** The session's own id: names its pending lock, and is never sent to the client. */
   sessionId: string;
+  /** The user's id, for the alert only: the logout token's sub is `oidcSub`. */
   userId: string;
+  /** The sub the client's ID token carried (the session-client's `oidc_sub`). */
+  oidcSub?: string;
+  /** The sid the client knows the session by (the session-client's `oidc_sid`). */
+  oidcSid?: string;
+  /** The client's backchannel_logout_session_required. */
+  sessionRequired?: boolean;
   issuer: string;
   attempt: number;
   privateKey: CryptoKey;
@@ -990,11 +1021,15 @@ export async function processRetry(params: ProcessRetryParams): Promise<LogoutSe
       {
         issuer: params.issuer,
         clientId: params.clientId,
-        userId: params.config.include_sub_claim ? params.userId : undefined,
-        sessionId: params.config.include_sid_claim ? params.sessionId : undefined,
+        ...logoutTokenSubjectClaims(
+          {
+            oidcSub: params.oidcSub,
+            oidcSid: params.oidcSid,
+            sessionRequired: params.sessionRequired ?? false,
+          },
+          params.config
+        ),
         expirationSeconds: params.config.logout_token_exp_seconds,
-        includeSub: params.config.include_sub_claim,
-        includeSid: params.config.include_sid_claim,
       },
       params.privateKey,
       params.kid
