@@ -52,6 +52,7 @@ import {
   transitionAccountAuthenticationState,
   readAccountAuthenticationState,
   produceNotificationDelivery,
+  SESSION_MAX_TTL_DEFINITION,
   type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
 import {
@@ -2083,7 +2084,13 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       ttl_seconds?: number;
     }>();
 
-    const { user_id, ttl_seconds = 3600 } = body;
+    const { user_id } = body;
+    // A test session lasts no longer than any session can (the highest session.max_ttl): what is
+    // kept for a session's lifetime, such as the relying parties it signed in to, relies on it.
+    const ttl_seconds = Math.min(
+      body.ttl_seconds ?? 3600,
+      Math.floor(SESSION_MAX_TTL_DEFINITION.maxMs / 1000)
+    );
 
     if (!user_id) {
       return c.json(

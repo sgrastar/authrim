@@ -33,6 +33,7 @@ const {
   mockResolveLogoutWebhookConfig,
   mockSafeFetchJson,
   mockDiagnosticAuthDecision,
+  mockPurgeEndedSessions,
 } = vi.hoisted(() => ({
   mockListExternalProviderSessions: vi.fn(),
   mockSessionGet: vi.fn(),
@@ -44,6 +45,7 @@ const {
   mockResolveLogoutWebhookConfig: vi.fn(),
   mockSafeFetchJson: vi.fn(),
   mockDiagnosticAuthDecision: vi.fn(),
+  mockPurgeEndedSessions: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -82,6 +84,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     createAuthContextFromHono: vi.fn(() => ({ repositories: { sessionClient: {} } })),
     resolveLogoutTargetsFromSessionClientStore: mockResolveTargets,
+    purgeEndedSessionsFromSessionClientStore: mockPurgeEndedSessions,
     resolveLogoutConfig: mockResolveLogoutConfig,
     resolveLogoutWebhookConfig: mockResolveLogoutWebhookConfig,
     createAuditLog: mockCreateAuditLog,
@@ -286,6 +289,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     mockCreateAuditLog.mockResolvedValue(undefined);
     mockResolveLogoutConfig.mockResolvedValue(config());
     mockResolveLogoutWebhookConfig.mockResolvedValue(DEFAULT_LOGOUT_WEBHOOK_CONFIG);
+    mockPurgeEndedSessions.mockResolvedValue(undefined);
   });
 
   it('sends each downstream client its own logout token with that client sid and sub', async () => {
@@ -363,6 +367,45 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     release();
     await Promise.all(pending);
     expect(sent.sort()).toEqual([RP_A, RP_B]);
+  });
+
+  it('removes the ended sessions from the SessionClientStore only after the downstream sends finish', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const sent: string[] = [];
+    globalThis.fetch = vi.fn(async (input: FetchInput) => {
+      sent.push(urlOf(input));
+      await gate;
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    const { c, pending } = buildContext(await upstreamLogoutToken());
+
+    await handleBackchannelLogout(c as never);
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    // The sends are under way: the records they were read from must still be there.
+    expect(mockPurgeEndedSessions).not.toHaveBeenCalled();
+
+    release();
+    await Promise.all(pending);
+    expect(mockPurgeEndedSessions).toHaveBeenCalledWith(c.env, 'tenant-a', [SESSION_ID]);
+    expect(mockResolveTargets.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPurgeEndedSessions.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('keeps the downstream sends when the removal fails', async () => {
+    const sent = captureDownstream();
+    mockPurgeEndedSessions.mockRejectedValueOnce(new Error('storage unavailable'));
+    const { c, pending } = buildContext(await upstreamLogoutToken());
+
+    const response = await handleBackchannelLogout(c as never);
+    await expect(Promise.all(pending)).resolves.toBeDefined();
+
+    expect(response.status).toBe(200);
+    expect(sent.map((s) => s.url).sort()).toEqual([RP_A, RP_B]);
+    expect(mockPurgeEndedSessions).toHaveBeenCalled();
   });
 
   it('records a downstream rejection for the admin failure list', async () => {
