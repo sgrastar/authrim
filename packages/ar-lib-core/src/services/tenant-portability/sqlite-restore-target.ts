@@ -124,6 +124,45 @@ const TARGET_RUNTIME_COLUMNS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
+ * Trusted ownership of one policy's rows by the restored tenant. `alias` names the row being
+ * checked; a tenantKey owner never falls back to the tenant ID.
+ */
+function restoreOwnershipPredicate(
+  policy: SqliteDatasetInspectionPolicy,
+  tenantId: string,
+  alias = 'backup_row'
+): { sql: string; params: string[] } {
+  const { schema } = policy;
+  const tenantKey = policy.restoreTenantKey ?? policy.tenantKey;
+  const ownership = (value: typeof schema): BackupRowOwnership => {
+    if ('parent' in value)
+      return {
+        kind: 'parent',
+        table: value.parent.schema.table,
+        keys: value.parent.schema.primaryKey.map((parent, index) => ({
+          parent,
+          child: value.parent.childColumns[index],
+        })),
+        ownership: ownership(value.parent.schema),
+      };
+    return value.scopeTypeColumn
+      ? { kind: 'scope', typeColumn: value.scopeTypeColumn, idColumn: value.tenantColumn }
+      : {
+          kind: 'tenant',
+          column: value.tenantColumn,
+          identity: value.tenantIdentity ?? 'tenantId',
+        };
+  };
+  const direct = 'parent' in schema ? schema.parent.schema : schema;
+  if (direct.tenantIdentity === 'tenantKey' && !tenantKey) throw error();
+  return backupOwnershipPredicate(
+    ownership(schema),
+    { tenantId, tenantKey: tenantKey ?? tenantId },
+    alias
+  );
+}
+
+/**
  * Fence a recorded unpublished target before provider cleanup. A missing local receipt means the
  * provisioned database was never opened; the coordinator must still delete that physical resource.
  */
@@ -363,6 +402,14 @@ export class SqliteRestoreTarget {
       throw error();
     await this.assertLive();
     const statements = [];
+    const seedKeys = new Map<
+      string,
+      {
+        table: string;
+        owner: { sql: string; params: unknown[] };
+        keys: { sql: string; params: unknown[] }[];
+      }
+    >();
     for (const dataset of datasets) {
       if (!dataset.rowJsons.length) throw error();
       for (const original of dataset.rowJsons) {
@@ -407,9 +454,27 @@ export class SqliteRestoreTarget {
         // A target-owned seed may preserve every non-key column. There is nothing to mutate in that
         // case; the dataset readback phase still requires the installed target row to exist.
         if (replaceSeed && !nonKeyColumns.length) continue;
+        const seedOwner = replaceSeed
+          ? restoreOwnershipPredicate(
+              currentPolicy,
+              this.identity.tenantId,
+              currentPolicy.schema.table
+            )
+          : null;
+        if (seedOwner) {
+          const group = seedKeys.get(currentPolicy.dataset.id) ?? {
+            table: currentPolicy.schema.table,
+            owner: seedOwner,
+            keys: [],
+          };
+          group.keys.push({ sql: predicate, params: keyInsert.params });
+          seedKeys.set(currentPolicy.dataset.id, group);
+        }
         statements.push(
-          replaceSeed
+          seedOwner
             ? {
+                // An installed seed row is replaced only while the restored tenant owns it. The
+                // check above stops the restore first; this guard still holds under a race.
                 sql: `${insertSelect}${
                   preserved.size
                     ? ` AND EXISTS (SELECT 1 FROM "${currentPolicy.schema.table}" WHERE ${predicate})`
@@ -418,11 +483,12 @@ export class SqliteRestoreTarget {
                   .map((column) => `"${column}"`)
                   .join(', ')}) DO UPDATE SET ${nonKeyColumns
                   .map((column) => `"${column}"=excluded."${column}"`)
-                  .join(', ')}`,
+                  .join(', ')} WHERE ${seedOwner.sql}`,
                 params: [
                   ...insert.params,
                   ...this.guard(),
                   ...(preserved.size ? keyInsert.params : []),
+                  ...seedOwner.params,
                 ],
               }
             : {
@@ -432,6 +498,8 @@ export class SqliteRestoreTarget {
         );
       }
     }
+    for (const { table, owner, keys } of seedKeys.values())
+      await this.assertSeedKeysOwned(table, keys, owner);
     await this.authorize();
     const results = this.database.batch
       ? await this.database.batch(statements)
@@ -688,12 +756,15 @@ export class SqliteRestoreTarget {
     const predicate = policy.schema.primaryKey
       .map((column, index) => `"${column}" IS ${keyExpressions[index]}`)
       .join(' AND ');
+    // The key alone may name another tenant's row; only the restored tenant's row is completed.
+    const owner = restoreOwnershipPredicate(policy, this.identity.tenantId, policy.schema.table);
     await this.assertLive();
     const result = await this.database.execute(
-      `UPDATE "${policy.schema.table}" SET ${assignments.join(', ')} WHERE ${this.guardSql()} AND ${predicate}`,
-      [...values.params, ...this.guard(), ...key.params]
+      `UPDATE "${policy.schema.table}" SET ${assignments.join(', ')} WHERE ${this.guardSql()} AND ${predicate} AND ${owner.sql}`,
+      [...values.params, ...this.guard(), ...key.params, ...owner.params]
     );
-    if (!result.success || result.rowsAffected !== 1) throw error();
+    // D1 counts trigger changes as well, so the readback below decides whether the row was set.
+    if (!result.success) throw error();
     if (!(await this.rowMatches(policy, restoredRowJson))) throw error();
   }
 
@@ -737,9 +808,12 @@ export class SqliteRestoreTarget {
       )
     );
     const keyExpressions = key.sql.slice(key.sql.indexOf(' VALUES (') + 9, -1).split(', ');
-    const predicate = policy.schema.primaryKey
+    const owner = restoreOwnershipPredicate(policy, this.identity.tenantId, policy.schema.table);
+    // Reads and writes stay on the restored tenant's row even if another tenant holds the key.
+    const predicate = `${policy.schema.primaryKey
       .map((keyColumn, index) => `"${keyColumn}" IS ${keyExpressions[index]}`)
-      .join(' AND ');
+      .join(' AND ')} AND ${owner.sql}`;
+    const keyParams = [...key.params, ...owner.params];
     const read = async () => {
       await this.assertLive();
       return this.database.queryOne<{ value_type: string; value: unknown }>(
@@ -747,7 +821,7 @@ export class SqliteRestoreTarget {
         CASE WHEN typeof("${column}")='integer' THEN CAST("${column}" AS TEXT)
              ELSE "${column}" END AS value
         FROM "${policy.schema.table}" WHERE ${this.guardSql()} AND ${predicate}`,
-        [...this.guard(), ...key.params]
+        [...this.guard(), ...keyParams]
       );
     };
     const decodeStored = (current: { value_type: string; value: unknown }): SqliteSidecarValue => {
@@ -785,7 +859,7 @@ export class SqliteRestoreTarget {
       `UPDATE "${policy.schema.table}" SET "${column}"=${targetExpression}
       WHERE ${this.guardSql()} AND ${predicate}
       AND typeof("${column}")=? AND "${column}" IS ${expectedExpression}`,
-      [...target.params, ...this.guard(), ...key.params, placeholder[0], ...expected.params]
+      [...target.params, ...this.guard(), ...keyParams, placeholder[0], ...expected.params]
     );
     if (!result.success) throw error();
     current = await read();
@@ -824,6 +898,37 @@ export class SqliteRestoreTarget {
       await inspector.dispose();
     }
     return { policy, manifest };
+  }
+
+  /**
+   * Refuse a seed key that another tenant's row already holds. Seed tables may key rows by `id`
+   * alone, so the conflict update would otherwise move that row to the restored tenant. Row counts
+   * cannot show this: D1 also counts the changes made by the table's triggers.
+   */
+  private async assertSeedKeysOwned(
+    table: string,
+    keys: readonly { sql: string; params: unknown[] }[],
+    owner: { sql: string; params: unknown[] }
+  ): Promise<void> {
+    // Keys share one bounded query, so a large seed page costs a few reads rather than one per row.
+    for (let offset = 0; offset < keys.length; ) {
+      const group: { sql: string; params: unknown[] }[] = [];
+      let parameters = owner.params.length;
+      while (
+        offset < keys.length &&
+        (!group.length || parameters + keys[offset].params.length <= VERIFY_GROUP_PARAMETERS)
+      ) {
+        parameters += keys[offset].params.length;
+        group.push(keys[offset++]);
+      }
+      const foreign = await this.database.queryOne(
+        `SELECT 1 AS foreign_row FROM "${table}" WHERE (${group
+          .map(({ sql }) => `(${sql})`)
+          .join(' OR ')}) AND CASE WHEN ${owner.sql} THEN 0 ELSE 1 END = 1 LIMIT 1`,
+        [...group.flatMap(({ params }) => params), ...owner.params]
+      );
+      if (foreign) throw error();
+    }
   }
 
   private async checkRow(
@@ -871,10 +976,14 @@ export class SqliteRestoreTarget {
         (column) =>
           !policy.schema.primaryKey.includes(column) && !targetOwnedSeedColumns.has(column)
       );
+      const seedOwner =
+        replaceSeed && nonKeyColumns.length
+          ? restoreOwnershipPredicate(policy, this.identity.tenantId, policy.schema.table)
+          : null;
       const sql =
         replaceSeed && !nonKeyColumns.length
           ? null
-          : replaceSeed
+          : seedOwner
             ? `${insertSelect}${
                 targetOwnedSeedColumns.size
                   ? ` AND EXISTS (SELECT 1 FROM "${policy.schema.table}" WHERE ${predicate})`
@@ -883,14 +992,21 @@ export class SqliteRestoreTarget {
                 .map((column) => `"${column}"`)
                 .join(', ')}) DO UPDATE SET ${nonKeyColumns
                 .map((column) => `"${column}"=excluded."${column}"`)
-                .join(', ')}`
+                .join(', ')} WHERE ${seedOwner.sql}`
             : `${insertSelect} AND NOT EXISTS (SELECT 1 FROM "${policy.schema.table}" WHERE ${predicate})`;
       if (sql) {
+        if (seedOwner)
+          await this.assertSeedKeysOwned(
+            policy.schema.table,
+            [{ sql: predicate, params: keyInsert.params }],
+            seedOwner
+          );
         await this.assertLive();
         const result = await this.database.execute(sql, [
           ...insert.params,
           ...this.guard(),
           ...(!replaceSeed || targetOwnedSeedColumns.size ? keyInsert.params : []),
+          ...(seedOwner?.params ?? []),
         ]);
         if (!result.success) throw error();
       }
