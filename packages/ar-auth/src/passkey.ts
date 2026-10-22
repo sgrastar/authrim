@@ -45,6 +45,7 @@ import {
   advancePasskeyAuthenticationState,
   isAccountAuthenticationDeniedError,
   resolveAccountDataContextFromHono,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
   buildCanonicalProfileRuntimeUserFields,
@@ -58,6 +59,7 @@ import {
 } from './authentication-method-settings';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import {
+  isDeletedDestinationRouteError,
   publishTenantD1PasskeyRoute,
   provisionTenantD1EmailAccount,
   resolvePasskeyProvisioningResumeUserId,
@@ -369,10 +371,26 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       ...customFieldValidation.values,
     });
 
+    // The address of an account deleted within the tenant's retention period, where the tenant
+    // blocks re-registration: answered as an address that has an account, after the same lookups
+    // (a lookup that fails on a route cached from before the deletion is passed over for it). A
+    // resumed provisioning already passed the check.
+    const registration = resumedUserId
+      ? 'allowed'
+      : await checkEmailRegistration(c.env, { tenantId, email: normalizedEmail });
+    // A check that could not be made fails every address alike, in use or not.
+    if (registration === 'unavailable') {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const blocked = registration === 'blocked';
+
     // Check if user exists in the canonical runtime user store.
     const tenantD1 = usesTenantD1AccountStorage(c);
     const accountRoute = normalizedEmail
-      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
+      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail).catch((error: unknown) => {
+          if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
+          throw error;
+        })
       : 'not_required';
     let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
       ? accountRoute === 'resolved'
@@ -382,7 +400,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     let user: { id: string; email: string | null; name: string | null } | null = null;
 
     const runtimeUser = normalizedEmail ? await runtimeUsers?.findByEmail(normalizedEmail) : null;
-    if (runtimeUser) {
+    if (runtimeUser || blocked) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 

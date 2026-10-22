@@ -5,7 +5,6 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
   CanonicalSensitiveValueResolver,
-  TombstoneRepository,
   GuestLifecycleRepository,
   resolveAccountRegistrationState,
   invalidateUserCache,
@@ -39,6 +38,8 @@ import {
   resolveTenantPolicyInitialAssurance,
   type CanonicalRuntimeUserProjection,
   type InitialAssuranceEvidence,
+  checkEmailRegistration,
+  type PiiAccessLog,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import {
@@ -77,6 +78,19 @@ import {
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import {
+  ADMIN_USER_PII_FIELDS,
+  createAdminPiiAccessLog,
+  noteAdminPiiRead,
+  requestPiiStore,
+  scheduleAdminPiiAccessLog,
+} from './admin-pii-access-log';
+import {
+  prepareAccountTombstone,
+  TombstoneRetentionDaysInvalidError,
+  writeAccountTombstone,
+  type PreparedAccountTombstone,
+} from './account-tombstone-write';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
 import { adminActorIdFromContext, withAdminSessionEndLogout } from './admin-session-end';
 import { transitionEndingSessions } from './session-end-logout';
@@ -434,7 +448,8 @@ async function crossShardAdminUsersList(
     verified?: string;
     piiStatus?: string;
     lifecycleState?: string;
-  }
+  },
+  accessLog: PiiAccessLog
 ) {
   const exactSearch = Boolean(input.search);
   const page = exactSearch
@@ -451,12 +466,13 @@ async function crossShardAdminUsersList(
         cursor: input.cursor,
         accountType: 'user',
       });
-  const projected = await mapAdminUsersConcurrent(page.items, 4, (item) =>
-    projectCrossShardAdminUser(c.env, input.tenantId, item)
-  );
-  const users = exactSearch
+  const projected = await mapAdminUsersConcurrent(page.items, 4, async (item) => ({
+    item,
+    user: await projectCrossShardAdminUser(c.env, input.tenantId, item),
+  }));
+  const returned = exactSearch
     ? projected.filter(
-        (user) =>
+        ({ user }) =>
           (input.verified === undefined ||
             Boolean(user.email_verified) === (input.verified === 'true')) &&
           (input.piiStatus === undefined ||
@@ -464,6 +480,19 @@ async function crossShardAdminUsersList(
           (input.lifecycleState === undefined || user.lifecycle_state === input.lifecycleState)
       )
     : projected;
+  for (const { item, user } of returned) {
+    noteAdminPiiRead(
+      accessLog,
+      {
+        key: item.piiBindingRef,
+        adapter: accountRouteAdapter(c.env, item.piiBindingRef, 'pii'),
+      },
+      user.id,
+      user,
+      ADMIN_USER_PII_FIELDS
+    );
+  }
+  const users = returned.map(({ user }) => user);
   return {
     users,
     pagination: {
@@ -796,6 +825,7 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
     const piiStatus = c.req.query('pii_status');
     const lifecycleState = c.req.query('lifecycle_state');
     const cursor = c.req.query('cursor');
+    const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.users.list');
     if (usesTenantD1Storage(c)) {
       if (
         !search &&
@@ -809,8 +839,9 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
           400
         );
       }
-      return c.json(
-        await crossShardAdminUsersList(c, {
+      const body = await crossShardAdminUsersList(
+        c,
+        {
           tenantId,
           limit,
           cursor,
@@ -818,8 +849,11 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
           verified,
           piiStatus,
           lifecycleState,
-        })
+        },
+        accessLog
       );
+      scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+      return c.json(body);
     }
     const offset = (page - 1) * limit;
     const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
@@ -907,6 +941,15 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
           )
         )
     );
+
+    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+    if (piiAdapter) {
+      const store = requestPiiStore(c, piiAdapter);
+      for (const user of formattedUsers) {
+        noteAdminPiiRead(accessLog, store, user.id, user, ADMIN_USER_PII_FIELDS);
+      }
+      scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+    }
 
     return c.json({
       users: formattedUsers,
@@ -1064,6 +1107,19 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       activated_at: toMilliseconds(credential.activated_at),
       last_used_at: toMilliseconds(credential.last_used_at),
     }));
+
+    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+    if (piiAdapter) {
+      const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.users.get');
+      noteAdminPiiRead(
+        accessLog,
+        requestPiiStore(c, piiAdapter),
+        formattedUser.id,
+        formattedUser,
+        ADMIN_USER_PII_FIELDS
+      );
+      scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+    }
 
     return c.json({
       user: formattedUser,
@@ -1291,6 +1347,32 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           error_description: 'The default identity assurance level is unavailable; try again',
         },
         503
+      );
+    }
+
+    // An address of an account deleted within the retention period, where the tenant blocks
+    // re-registration: refused as an address already in use is, without saying it was deleted.
+    const registration = await checkEmailRegistration(c.env, {
+      tenantId,
+      email: normalizedEmail,
+    });
+    if (registration === 'unavailable') {
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Account creation is temporarily unavailable; try again',
+        },
+        503
+      );
+    }
+    if (registration === 'blocked') {
+      return c.json(
+        {
+          error: 'conflict',
+          error_description: 'Unable to create user with the provided information',
+        },
+        409
       );
     }
 
@@ -1814,6 +1896,12 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
           409
         );
       }
+      // A retry after the projection was erased has no address left; its tombstone, if any, was
+      // written by the first attempt.
+      const tombstoneInput = await prepareAccountTombstone(c.env, {
+        tenantId,
+        email: projection?.email,
+      });
       // The sessions the deletion ends: their relying parties are told after the response (each
       // logout token carries the sub recorded with its session-client, not one read from the
       // account being removed), also when a later step fails.
@@ -1843,21 +1931,14 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
             core,
             pii,
           });
-          const tombstones = new TombstoneRepository(pii);
-          if (!(await tombstones.findByUserId(tenantId, userId, pii))) {
-            await tombstones.createTombstone(
-              {
-                id: userId,
-                tenant_id: tenantId,
-                email_blind_index: null,
-                deleted_by: 'admin',
-                deletion_reason: 'admin_action',
-                retention_days: 90,
-                metadata: { source: 'admin_api' },
-              },
-              pii
-            );
-          }
+          await writeAccountTombstone(pii, {
+            tenantId,
+            userId,
+            prepared: tombstoneInput,
+            deletedBy: 'admin',
+            reason: 'admin_action',
+            metadata: { source: 'admin_api' },
+          });
           await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId, core });
           await new CanonicalRuntimeUserWriter(
             new CanonicalIdentityRepository(core, tenantId),
@@ -1919,6 +2000,10 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const tombstoneInput = await prepareAccountTombstone(c.env, {
+      tenantId,
+      email: projection.email,
+    });
     // As above: the sessions the deletion ends are told after the response.
     const deletingOperationId = crypto.randomUUID();
     await withAdminSessionEndLogout(
@@ -1943,21 +2028,17 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
 
         const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
         if (piiAdapter) {
-          await new TombstoneRepository(piiAdapter).createTombstone(
-            {
-              id: userId,
-              tenant_id: tenantId,
-              email_blind_index: null,
-              deleted_by: 'admin',
-              deletion_reason: 'admin_action',
-              retention_days: 90,
-              metadata: {
-                source: 'admin_api',
-                timestamp: new Date().toISOString(),
-              },
+          await writeAccountTombstone(piiAdapter, {
+            tenantId,
+            userId,
+            prepared: tombstoneInput,
+            deletedBy: 'admin',
+            reason: 'admin_action',
+            metadata: {
+              source: 'admin_api',
+              timestamp: new Date().toISOString(),
             },
-            piiAdapter
-          );
+          });
         }
 
         await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
@@ -2074,6 +2155,31 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
         },
         400
       );
+    }
+
+    // Setting another address: refused, as an address in use is, when it belongs to an account
+    // deleted within the retention period and the tenant blocks re-registration.
+    if (body.email.trim().toLowerCase() !== projection.email?.trim().toLowerCase()) {
+      const registration = await checkEmailRegistration(c.env, { tenantId, email: body.email });
+      if (registration === 'unavailable') {
+        c.header('Retry-After', '5');
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The email address cannot be checked now; try again',
+          },
+          503
+        );
+      }
+      if (registration === 'blocked') {
+        return c.json(
+          {
+            error: 'conflict',
+            error_description: 'Unable to update user with the provided information',
+          },
+          409
+        );
+      }
     }
 
     const addressJson = buildAddressJsonFromAdminBody(body);
@@ -2206,24 +2312,37 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const deletionReason = body.reason ?? 'user_request';
-    const retentionDays = body.retention_days ?? 90;
-
-    await new TombstoneRepository(accountPii).createTombstone(
-      {
-        id: userId,
-        tenant_id: tenantId,
-        email_blind_index: null,
-        deleted_by: 'admin',
-        deletion_reason: deletionReason,
-        retention_days: retentionDays,
-        metadata: {
-          source: 'admin_api_pii_deletion',
-          timestamp: new Date().toISOString(),
-          user_active: true,
+    let tombstoneInput: PreparedAccountTombstone;
+    try {
+      tombstoneInput = await prepareAccountTombstone(c.env, {
+        tenantId,
+        email: projection.email,
+        retentionDays: body.retention_days,
+      });
+    } catch (error) {
+      if (!(error instanceof TombstoneRetentionDaysInvalidError)) throw error;
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'retention_days must be a whole number of days from 1 to 3650',
         },
+        400
+      );
+    }
+    const retentionDays = tombstoneInput.retentionDays;
+
+    await writeAccountTombstone(accountPii, {
+      tenantId,
+      userId,
+      prepared: tombstoneInput,
+      deletedBy: 'admin',
+      reason: deletionReason,
+      metadata: {
+        source: 'admin_api_pii_deletion',
+        timestamp: new Date().toISOString(),
+        user_active: true,
       },
-      accountPii
-    );
+    });
 
     await createCanonicalRuntimeUserWriter(
       c,

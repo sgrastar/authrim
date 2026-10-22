@@ -379,7 +379,22 @@ async function resolveCoreAccountDestination(
       if (
         metadata?.binding_ref !== candidate.bindingRef ||
         metadata.data_role !== 'tenant_core/users' ||
-        metadata.residency_partition !== candidate.residencyPartition ||
+        metadata.residency_partition !== candidate.residencyPartition
+      ) {
+        return false;
+      }
+      // The shard is the one routed to; only the account there is gone or no longer active.
+      if (
+        account.value === null ||
+        (account.value.id === base.accountId &&
+          Number(account.value.account_route_generation) ===
+            base.membership.accountRouteGeneration &&
+          (account.value.lifecycle_state !== 'active' ||
+            account.value.directory_publication_state !== 'active'))
+      ) {
+        return 'account_inactive';
+      }
+      if (
         account.value?.id !== base.accountId ||
         account.value.lifecycle_state !== 'active' ||
         account.value.directory_publication_state !== 'active' ||
@@ -448,7 +463,9 @@ export async function resolveAccountDataContextByIdentifier(
   }
 ): Promise<AccountDataContext> {
   const base = await resolveAccountRouteBaseByIdentifier(env, input);
-  const [coreResolution, pii] = await Promise.all([
+  // Both are checked; a failure of the PII destination is reported before the core's, so that an
+  // inactive account is reported only where both destinations are the ones routed to.
+  const [coreSettled, piiSettled] = await Promise.allSettled([
     resolveCoreAccountDestination(base, input.tenantId),
     base.resolver.resolveTargetAndRevalidate({
       membership: base.membership,
@@ -468,6 +485,10 @@ export async function resolveAccountDataContextByIdentifier(
       },
     }),
   ]);
+  if (piiSettled.status === 'rejected') throw piiSettled.reason;
+  if (coreSettled.status === 'rejected') throw coreSettled.reason;
+  const coreResolution = coreSettled.value;
+  const pii = piiSettled.value;
   const { target: core, account: accountRow } = coreResolution;
   const { membership, accountId } = base;
   const userCacheScope: UserCacheScope = {

@@ -100,6 +100,7 @@ import {
   CREDENTIALS_SETTINGS_META,
   resolveEmailCodeTtlSeconds,
   resolveEmailSendLimit,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
   applyInvitationAssignments,
@@ -152,6 +153,7 @@ import {
   createAuthorizationRequestContinuation,
 } from './authorization-continuation';
 import {
+  isDeletedDestinationRouteError,
   publishTenantD1PasskeyRoute,
   provisionTenantD1EmailAccount,
   resolvePasskeyProvisioningResumeUserId,
@@ -2068,11 +2070,26 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const normalizedEmail =
       typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
     const routedAccountStorage = usesRoutedAccountStorage(c);
+    // The address of an account deleted within the tenant's retention period, where the tenant
+    // blocks re-registration: answered as an address that has an account, after the same lookups
+    // (a lookup that fails on a route cached from before the deletion is passed over for it). A
+    // resumed provisioning already passed the check.
+    const registration = resumedUserId
+      ? 'allowed'
+      : await checkEmailRegistration(c.env, { tenantId, email: normalizedEmail });
+    // A check that could not be made fails every address alike, in use or not.
+    if (registration === 'unavailable') {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const blocked = registration === 'blocked';
     // Passkey signup is discoverable and does not use email to identify the
     // account. Email is only used when the caller supplies it as optional
     // profile data or as an existing-account lookup hint.
     const accountRoute = normalizedEmail
-      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
+      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail).catch((error: unknown) => {
+          if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
+          throw error;
+        })
       : 'not_required';
     let runtimeUsers: CanonicalRuntimeUserStore | null = routedAccountStorage
       ? accountRoute === 'resolved'
@@ -2082,7 +2099,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
     if (normalizedEmail) {
       const existingUser = await runtimeUsers?.findByEmail(normalizedEmail);
-      if (existingUser) {
+      if (existingUser || blocked) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
       }
     }
@@ -3286,6 +3303,20 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         action: 'direct_email_code_send_suppressed',
         reason: 'human_verification',
         usage: turnstileAction,
+      });
+    }
+
+    // A recently deleted account's address where the tenant blocks re-registration: nothing is
+    // created or sent, and the reply is the usual one.
+    if (
+      !user &&
+      !suppressEmailCodeSend &&
+      (await checkEmailRegistration(c.env, { tenantId, email: normalizedEmail })) !== 'allowed'
+    ) {
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send because re-registration is not allowed', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'reregistration_not_allowed',
       });
     }
 

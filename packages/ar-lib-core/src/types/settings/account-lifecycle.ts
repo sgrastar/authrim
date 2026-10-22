@@ -5,6 +5,8 @@ export interface AccountLifecycleSettings {
   'account-lifecycle.guest.deletion_after_days': number;
   'account-lifecycle.guest.upgrade_enabled': boolean;
   'account-lifecycle.guest.upgrade_hold_minutes': number;
+  'account-lifecycle.deletion.tombstone_retention_days': number;
+  'account-lifecycle.deletion.block_reregistration': boolean;
 }
 
 export const ACCOUNT_LIFECYCLE_DEFAULTS: AccountLifecycleSettings = {
@@ -12,6 +14,8 @@ export const ACCOUNT_LIFECYCLE_DEFAULTS: AccountLifecycleSettings = {
   'account-lifecycle.guest.deletion_after_days': 30,
   'account-lifecycle.guest.upgrade_enabled': true,
   'account-lifecycle.guest.upgrade_hold_minutes': 10,
+  'account-lifecycle.deletion.tombstone_retention_days': 90,
+  'account-lifecycle.deletion.block_reregistration': false,
 };
 
 export const ACCOUNT_LIFECYCLE_SETTINGS_META: Record<keyof AccountLifecycleSettings, SettingMeta> =
@@ -59,11 +63,35 @@ export const ACCOUNT_LIFECYCLE_SETTINGS_META: Record<keyof AccountLifecycleSetti
       unit: 'minutes',
       visibility: 'page',
     },
+    'account-lifecycle.deletion.tombstone_retention_days': {
+      key: 'account-lifecycle.deletion.tombstone_retention_days',
+      type: 'number',
+      default: 90,
+      envKey: 'ACCOUNT_TOMBSTONE_RETENTION_DAYS',
+      label: 'Deletion record retention',
+      description:
+        'How long the record of a deleted account (when, by whom, why, and a keyed fingerprint of its email) is kept. Applies to accounts deleted from now on; each record keeps the deadline it was made with.',
+      min: 1,
+      max: 3650,
+      integer: true,
+      unit: 'days',
+      visibility: 'page',
+    },
+    'account-lifecycle.deletion.block_reregistration': {
+      key: 'account-lifecycle.deletion.block_reregistration',
+      type: 'boolean',
+      default: false,
+      envKey: 'ACCOUNT_TOMBSTONE_BLOCK_REREGISTRATION',
+      label: 'Block re-registration after deletion',
+      description:
+        'Refuse sign-up and administrator account creation with the email of an account deleted within the retention period. The refusal looks like any other unavailable sign-up and does not say the address was deleted.',
+      visibility: 'page',
+    },
   };
 
 export const ACCOUNT_LIFECYCLE_CATEGORY_META: CategoryMeta = {
   category: 'account-lifecycle',
   label: 'Account lifecycle',
-  description: 'Human guest retention and registration policy',
+  description: 'Human guest retention, registration policy and deleted account records',
   settings: ACCOUNT_LIFECYCLE_SETTINGS_META,
 };

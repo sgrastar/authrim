@@ -11,15 +11,18 @@
  * - GET /api/admin/tombstones/stats: Get tombstone statistics
  * - POST /api/admin/tombstones/cleanup: Delete expired tombstones
  * - DELETE /api/admin/tombstones/:id: Force delete a tombstone
+ * - POST /api/admin/tombstones/email-check: Whether an address was deleted (within retention)
  *
  * @see docs/architecture/pii-separation.md
  */
 
 import type { Context } from 'hono';
 import {
+  createAuditLogFromContext,
   createErrorResponse,
   AR_ERROR_CODES,
   ensureDatabaseAdapter,
+  findActiveEmailTombstone,
   getLogger,
   getTenantIdFromContext,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
@@ -552,29 +555,45 @@ export async function deletePlatformTombstone(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * Check if email is in tombstone (for registration prevention)
+ * POST /api/admin/tombstones/email-check
  *
- * This is an internal utility, not exposed as an endpoint.
- * Used by user registration flow.
+ * "Was this address deleted?": whether the tenant has a deletion record within its retention
+ * for an address, made again from the address given (in the body, never the URL). The answer
+ * carries when it was deleted and until when the record is kept, not which account it was.
+ * Each check is written to the admin audit log, without the address.
  */
-export async function isEmailInTombstone(
-  db: DatabaseSource,
-  emailBlindIndex: string,
-  tenantId: string
-): Promise<boolean> {
-  const now = Date.now();
-  const adapter = ensureDatabaseAdapter(db, 'admin-tombstones');
+export async function checkTombstoneEmail(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('TombstonesAPI');
+  const tenantId = getTenantIdFromContext(c);
+  let email: unknown;
+  try {
+    email = (await c.req.json<{ email?: unknown }>())?.email;
+  } catch {
+    email = undefined;
+  }
+  if (typeof email !== 'string' || email.trim() === '' || email.length > 320) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'email' },
+    });
+  }
 
   try {
-    const result = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_pii_tombstone WHERE tenant_id = ? AND email_blind_index = ? AND retention_until > ?',
-      [tenantId, emailBlindIndex, now]
+    const tombstone = await findActiveEmailTombstone(c.env, { tenantId, email });
+    await createAuditLogFromContext(c, 'tombstone.email_checked', 'tombstone', 'email', {
+      deleted: tombstone !== null,
+    });
+    return c.json(
+      tombstone
+        ? {
+            deleted: true,
+            deleted_at: new Date(tombstone.deleted_at).toISOString(),
+            retention_until: new Date(tombstone.retention_until).toISOString(),
+          }
+        : { deleted: false }
     );
-
-    return result !== null;
-  } catch {
-    // If table doesn't exist, email is not in tombstone
-    return false;
+  } catch (error) {
+    log.error('checkTombstoneEmail error', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
 

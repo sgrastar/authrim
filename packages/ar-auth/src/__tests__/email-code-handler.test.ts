@@ -38,11 +38,21 @@ const mocks = vi.hoisted(() => ({
   findCanonicalAccountAuthenticationState: vi.fn(),
 }));
 
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual =
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
+    checkEmailRegistration: async (...args: unknown[]) =>
+      registrationCheck.override ??
+      (actual as typeof import('@authrim/ar-lib-core')).checkEmailRegistration(
+        ...(args as Parameters<typeof import('@authrim/ar-lib-core').checkEmailRegistration>)
+      ),
     withGroupInputWrite: <T>(
       db: import('@authrim/ar-lib-core').DatabaseAdapter,
       tenant: string,
@@ -655,6 +665,38 @@ describe('email code handlers through HTTP', () => {
           )
         );
         expect(suppressed).toEqual(sent);
+      });
+
+      it('is the usual reply for a recently deleted address, with nothing created, sent or audited', async () => {
+        mocks.findByEmail.mockResolvedValue(null);
+        const sent = await publicShape(
+          await post(
+            '/send',
+            { email: 'new@example.com' },
+            { SETTINGS: methodSettings(both), ...secret }
+          )
+        );
+        vi.clearAllMocks();
+        mocks.findByEmail.mockResolvedValue(null);
+        for (const outcome of ['blocked', 'unavailable'] as const) {
+          registrationCheck.override = outcome;
+          try {
+            const refused = await publicShape(
+              await post(
+                '/send',
+                { email: 'deleted@example.com' },
+                { SETTINGS: methodSettings(both), ...secret }
+              )
+            );
+            expect(refused).toEqual(sent);
+          } finally {
+            registrationCheck.override = null;
+          }
+        }
+        expect(mocks.syncUser).not.toHaveBeenCalled();
+        expect(mocks.notifierSend).not.toHaveBeenCalled();
+        // No audit entry links the address, or its hash, to the deleted account.
+        expect(mocks.createAuditLog).not.toHaveBeenCalled();
       });
 
       it('does not hold the reply back for a slow mail provider', async () => {

@@ -30,6 +30,7 @@ export const SECRET_NAMES = [
   'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   'LOOKUP_HMAC_KEY_SLOT_A',
   'LOOKUP_HMAC_KEY_SLOT_B',
+  'TOMBSTONE_HMAC_KEYRING',
   'CLOUDFLARE_API_TOKEN',
   'CLOUDFLARE_D1_API_TOKEN',
   'CLOUDFLARE_WORKERS_API_TOKEN',
@@ -75,6 +76,7 @@ export const SECRET_KEY_FILES: Partial<Record<SecretName, string>> = {
   CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS: 'control_smoke_verify.jwks.json',
   LOOKUP_HMAC_KEY_SLOT_A: 'lookup_hmac_key_slot_a.txt',
   LOOKUP_HMAC_KEY_SLOT_B: 'lookup_hmac_key_slot_b.txt',
+  TOMBSTONE_HMAC_KEYRING: 'tombstone_hmac_keyring.json',
   CLOUDFLARE_API_TOKEN: 'cloudflare_api_token.txt',
   RESEND_API_KEY: 'resend_api_key.txt',
   DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'downstream_grant_introspection_client_id.txt',
@@ -127,6 +129,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'LOOKUP_HMAC_KEY_SLOT_A',
     'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+    'TOMBSTONE_HMAC_KEYRING',
   ],
   'ar-token': [
     'PUBLIC_JWK_JSON',
@@ -162,6 +165,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'LOOKUP_HMAC_KEY_SLOT_A',
     'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+    'TOMBSTONE_HMAC_KEYRING',
   ],
   'ar-agent-access': [
     'AGENT_ELEVATION_ENCRYPTION_KEY',
@@ -186,6 +190,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'OBJECT_ENCRYPTION_ROOT_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+    'TOMBSTONE_HMAC_KEYRING',
   ],
   'ar-bridge': [
     'RP_TOKEN_ENCRYPTION_KEY',
@@ -194,6 +199,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'LOOKUP_HMAC_KEY_SLOT_A',
     'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+    'TOMBSTONE_HMAC_KEYRING',
   ],
   'ar-vc': [
     'LOOKUP_HMAC_KEY_SLOT_A',

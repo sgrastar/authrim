@@ -39,6 +39,7 @@ import {
   jitSettingValuesWellTyped,
   resolveEffectiveSettings,
   updateProfileOnLogin,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
   ExternalIdPError,
@@ -534,6 +535,20 @@ export async function handleIdentity(
       throw new ExternalIdPError(
         ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
         'A verified email is required for automatic account creation.',
+        { providerName: provider.name }
+      );
+    }
+
+    // The address of an account deleted within the retention period, where the tenant blocks
+    // re-registration: refused as any other policy denial, without saying it was deleted.
+    const registration = await checkEmailRegistration(env, { tenantId, email: userInfo.email });
+    if (registration === 'unavailable') {
+      throw new Error('external_idp_reregistration_check_unavailable');
+    }
+    if (registration === 'blocked') {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.POLICY_ACCESS_DENIED,
+        'Access denied by policy.',
         { providerName: provider.name }
       );
     }

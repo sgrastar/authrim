@@ -95,10 +95,20 @@ const {
   };
 });
 
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    checkEmailRegistration: async (...args: unknown[]) =>
+      registrationCheck.override ??
+      (actual as typeof import('@authrim/ar-lib-core')).checkEmailRegistration(
+        ...(args as Parameters<typeof import('@authrim/ar-lib-core').checkEmailRegistration>)
+      ),
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,
     getSessionStoreForNewSession: mockGetSessionStoreForNewSession,
     getTenantIdFromContext: mockGetTenantIdFromContext,
@@ -481,6 +491,19 @@ describe('TOTP login handlers', () => {
       });
 
       expect(response.status).toBe(409);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses a recently deleted address at sign-up start as an address in use', async () => {
+      registrationCheck.override = 'blocked';
+      try {
+        const response = await post('/api/auth/totp/signup/options', {
+          email: 'deleted@example.com',
+        });
+        expect(response.status).toBe(409);
+      } finally {
+        registrationCheck.override = null;
+      }
       expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
     });
 
@@ -963,6 +986,60 @@ describe('TOTP login handlers', () => {
     expect(response.status).toBe(429);
     expect(mockChallengeStore.getChallengeRpc).not.toHaveBeenCalled();
     expect(mockTotpRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses, at activation, an address deleted after the sign-up started', async () => {
+    const app = createApp();
+    const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
+    const profile: TotpProfile = { algorithm: 'SHA1', digits: 6, period: 30, window: 1 };
+    const code = await generateTotpCode(
+      secret,
+      profile,
+      getTotpTimeStep(Date.now(), profile.period)
+    );
+    mockChallengeStore.getChallengeRpc.mockResolvedValue({
+      userId: 'user-signup-002',
+      challenge: 'signup-challenge',
+      metadata: {
+        credential_id: 'totp-signup-002',
+        email: 'deleted@example.com',
+        label: 'Authenticator app',
+        secret_encrypted: encrypted.encrypted,
+        secret_key_version: 1,
+        ...profile,
+        custom_fields: {},
+      },
+    });
+    mockRuntimeUserStore.findById.mockResolvedValue(null);
+    mockRuntimeUserStore.findByEmail.mockResolvedValue(null);
+
+    registrationCheck.override = 'blocked';
+    let response: Response;
+    try {
+      response = await resolveConstantTimeResponse(
+        app.request(
+          '/api/auth/totp/signup/activate',
+          {
+            method: 'POST',
+            body: JSON.stringify({ challenge_id: 'signup-challenge', code }),
+            headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.11' },
+          },
+          createEnv({
+            'settings:tenant:default:authentication-methods': {
+              'authentication-methods.totp.signup_enabled': true,
+            },
+          }),
+          { waitUntil: vi.fn() } as unknown as ExecutionContext
+        )
+      );
+    } finally {
+      registrationCheck.override = null;
+    }
+
+    expect(response.status).toBe(409);
+    expect(mockRuntimeUserStore.syncUser).not.toHaveBeenCalled();
+    expect(mockTotpRepo.activate).not.toHaveBeenCalled();
   });
 
   it('activates a TOTP signup credential and creates a session with backup codes', async () => {

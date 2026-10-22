@@ -14,6 +14,7 @@ import {
   type LookupHmacRotation,
   type PendingLookupHmacRotation,
   lookupHmacVerificationTargetCount,
+  observeGenerationAfterDwell,
 } from '../cli/commands/lookup-hmac-rotate.js';
 
 const sourceSecret = 'source-secret';
@@ -307,5 +308,53 @@ describe('Lookup HMAC rotation command state', () => {
         'generation'
       )
     ).toThrow('lookup_hmac_verification_status_invalid');
+  });
+});
+
+describe('leaving dual-write', () => {
+  const dwell = () =>
+    new Error(
+      'lookup_hmac_admin_api_failed:409:CONTROL_PLANE_LOOKUP_HMAC_DUAL_WRITE_DWELL_INCOMPLETE'
+    );
+
+  it('asks again while Control keeps dual-write for Worker caches', async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const observed = await observeGenerationAfterDwell(
+      async () => {
+        calls += 1;
+        if (calls < 3) throw dwell();
+        return 'dual_read';
+      },
+      async (ms) => {
+        waits.push(ms);
+      }
+    );
+    expect(observed).toBe('dual_read');
+    expect(waits).toEqual([15_000, 15_000]);
+  });
+
+  it('gives up after a bounded number of tries, and does not retry other failures', async () => {
+    await expect(
+      observeGenerationAfterDwell(
+        async () => {
+          throw dwell();
+        },
+        async () => undefined
+      )
+    ).rejects.toThrow('DUAL_WRITE_DWELL_INCOMPLETE');
+    let calls = 0;
+    await expect(
+      observeGenerationAfterDwell(
+        async () => {
+          calls += 1;
+          throw new Error(
+            'lookup_hmac_admin_api_failed:409:CONTROL_PLANE_LOOKUP_HMAC_ROTATION_CONFLICT'
+          );
+        },
+        async () => undefined
+      )
+    ).rejects.toThrow('ROTATION_CONFLICT');
+    expect(calls).toBe(1);
   });
 });

@@ -33,6 +33,7 @@ import {
   resolveAccountDataContextFromHono,
   verifyTotpCode,
   type AuthEventData,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import { resolveSessionTtl } from './session-ttl';
 import {
@@ -46,6 +47,7 @@ import {
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
 import {
+  isDeletedDestinationRouteError,
   provisionTenantD1EmailAccount,
   resolveTenantD1EmailAccountRoute,
   usesTenantD1AccountStorage,
@@ -406,11 +408,25 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const accountRoute = await resolveTenantD1EmailAccountRoute(c, email);
+    // A recently deleted account's address where the tenant blocks re-registration: answered as
+    // an address that has an account, after the same lookups (a lookup that fails on a route
+    // cached from before the deletion is passed over for it); checked again at activation.
+    const registration = await checkEmailRegistration(c.env, { tenantId, email });
+    // A check that could not be made fails every address alike, in use or not.
+    if (registration === 'unavailable') {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const blocked = registration === 'blocked';
+    const accountRoute = await resolveTenantD1EmailAccountRoute(c, email).catch(
+      (error: unknown) => {
+        if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
+        throw error;
+      }
+    );
     const runtimeUsers =
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     const existingUser = await runtimeUsers?.findByEmail(email, { includeInactive: true });
-    if (existingUser) {
+    if (existingUser || blocked) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
@@ -565,9 +581,22 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
       });
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
+    // Checked again (the address may have been deleted since the sign-up started), and answered as
+    // an address in use, after the same steps (a lookup that fails on a route cached from before
+    // the deletion is passed over for it).
+    const registration = await checkEmailRegistration(c.env, { tenantId, email: signupEmail });
+    if (registration === 'unavailable') {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const blocked = registration === 'blocked';
     activationStage = 'account_route';
     const tenantD1 = usesTenantD1AccountStorage(c);
-    const accountRoute = await resolveTenantD1EmailAccountRoute(c, signupEmail);
+    const accountRoute = await resolveTenantD1EmailAccountRoute(c, signupEmail).catch(
+      (error: unknown) => {
+        if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
+        throw error;
+      }
+    );
     let runtimeUsers: CanonicalRuntimeUserStore | null =
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     let runtimeUser = await runtimeUsers?.findById(userId, { includeInactive: true });
@@ -592,7 +621,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     const existingByEmail = await runtimeUsers?.findByEmail(signupEmail, {
       includeInactive: true,
     });
-    if (existingByEmail && existingByEmail.id !== userId) {
+    if ((existingByEmail && existingByEmail.id !== userId) || blocked) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
     if (!runtimeUser || runtimeUser.active !== 1) {

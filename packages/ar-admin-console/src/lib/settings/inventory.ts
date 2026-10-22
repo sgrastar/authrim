@@ -448,6 +448,12 @@ place('users/lifecycle', 'Guest accounts', {
 		'account-lifecycle.guest.upgrade_hold_minutes'
 	]
 });
+place('users/lifecycle', 'Deleted accounts', {
+	primary: [
+		'account-lifecycle.deletion.tombstone_retention_days',
+		'account-lifecycle.deletion.block_reregistration'
+	]
+});
 place('users/support', 'Approvals', {
 	primary: ['support_ops.allow_self_approval', 'support_ops.duty_separation']
 });

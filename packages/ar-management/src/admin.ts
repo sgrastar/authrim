@@ -91,6 +91,7 @@ import {
 } from './account-directory-removal-producer';
 import { timeManagementRequestDiagnosticOperation } from './request-diagnostics';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { prepareAccountTombstone, writeAccountTombstone } from './account-tombstone-write';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
@@ -1165,7 +1166,11 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       | { adminId?: string; userId?: string }
       | undefined;
     const deletedBy = adminAuth?.adminId ?? adminAuth?.userId ?? 'unknown';
-    let retentionUntil = nowTs + 90 * 24 * 60 * 60;
+    // Decided before the deletion changes anything: the email's keyed fingerprint (taken while
+    // the address is still there) and the tenant's retention for the record.
+    const tombstoneInput = await prepareAccountTombstone(c.env, { tenantId, email: user.email });
+    // Milliseconds, as tombstones keep it.
+    let retentionUntil = nowTs * 1000 + tombstoneInput.retentionDays * 24 * 60 * 60 * 1000;
     let tombstoneId: string | null = null;
 
     // The sessions the anonymization ends: their relying parties are told after the response (each
@@ -1206,35 +1211,20 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
 
         if (hasPIIDatabase(c)) {
           const piiCtx = removalPiiContext;
-          const existingTombstone = await piiCtx.piiRepositories.tombstone.findByUserId(
+          const tombstone = await writeAccountTombstone(piiCtx.defaultPiiAdapter, {
             tenantId,
             userId,
-            piiCtx.defaultPiiAdapter
-          );
-
-          if (!existingTombstone) {
-            const tombstone = await piiCtx.piiRepositories.tombstone.createTombstone(
-              {
-                id: userId,
-                tenant_id: tenantId,
-                email_blind_index: null,
-                deleted_by: deletedBy,
-                deletion_reason: body.reason_code,
-                retention_days: 90,
-                metadata: {
-                  source: 'admin_user_anonymize',
-                  request_confirmed: true,
-                  user_id_hash: userIdHash,
-                },
-              },
-              piiCtx.defaultPiiAdapter
-            );
-            tombstoneId = tombstone.id;
-            retentionUntil = tombstone.retention_until;
-          } else {
-            tombstoneId = existingTombstone.id;
-            retentionUntil = existingTombstone.retention_until;
-          }
+            prepared: tombstoneInput,
+            deletedBy,
+            reason: body.reason_code,
+            metadata: {
+              source: 'admin_user_anonymize',
+              request_confirmed: true,
+              user_id_hash: userIdHash,
+            },
+          });
+          tombstoneId = tombstone.id;
+          retentionUntil = tombstone.retention_until;
           await eraseAccountPiiAfterDirectoryRemovalPrepared(
             piiCtx.defaultPiiAdapter,
             { tenantId, userId, core: authCtx.coreAdapter },
@@ -1298,7 +1288,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
       reason_code: body.reason_code,
       tombstone_id: tombstoneIdHash,
-      retention_until: new Date(retentionUntil * 1000).toISOString(),
+      retention_until: new Date(retentionUntil).toISOString(),
     });
 
     log.info('User anonymized', {
@@ -1320,7 +1310,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       tombstone_id: tombstoneId,
       reason_code: body.reason_code,
       deleted_at: new Date(nowTs * 1000).toISOString(),
-      retention_until: new Date(retentionUntil * 1000).toISOString(),
+      retention_until: new Date(retentionUntil).toISOString(),
       message: 'User data has been permanently deleted',
     });
   } catch (error) {
