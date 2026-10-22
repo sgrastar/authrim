@@ -7,9 +7,17 @@ const mocks = vi.hoisted(() => ({
   },
   findActiveInvitationByToken: vi.fn(),
   hasRemainingInvitationUses: vi.fn(),
-  consumeInvitationUse: vi.fn(),
-  applyInvitationAssignments: vi.fn(),
-  findUserById: vi.fn(),
+  invitationHasUsesLeft: vi.fn(),
+  resolveEffectiveSettings: vi.fn(),
+  store: {
+    storeChallengeRpc: vi.fn(),
+    getChallengeRpc: vi.fn(),
+    consumeChallengeRpc: vi.fn(),
+    deleteChallengeRpc: vi.fn(),
+  },
+  getChallengeStoreByChallengeId: vi.fn(),
+  produceNotificationDelivery: vi.fn(),
+  incrementRpc: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
 }));
@@ -20,24 +28,38 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     resolveOptionalCoreAdapterFromHono: vi.fn(() => mocks.adapter),
-    createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
-    CanonicalRuntimeUserStore: class {
-      findById = mocks.findUserById;
-    },
+    resolveEffectiveSettings: mocks.resolveEffectiveSettings,
+    resolveEmailSendLimit: vi.fn(async () => ({ windowSeconds: 900, maxRequests: 3 })),
+    getChallengeStoreByChallengeId: mocks.getChallengeStoreByChallengeId,
+    produceNotificationDelivery: mocks.produceNotificationDelivery,
     getLogger: vi.fn(() => ({
       module: () => ({ warn: mocks.warn, error: mocks.error }),
     })),
   };
 });
 
-vi.mock('@authrim/ar-lib-core/services/invitation-auth-core', () => ({
-  findActiveInvitationByToken: mocks.findActiveInvitationByToken,
-  hasRemainingInvitationUses: mocks.hasRemainingInvitationUses,
-  consumeInvitationUse: mocks.consumeInvitationUse,
-  applyInvitationAssignments: mocks.applyInvitationAssignments,
+vi.mock('@authrim/ar-lib-core/services/invitation-auth-core', async () => {
+  const actual = await vi.importActual<
+    typeof import('@authrim/ar-lib-core/services/invitation-auth-core')
+  >('@authrim/ar-lib-core/services/invitation-auth-core');
+  return {
+    ...actual,
+    findActiveInvitationByToken: mocks.findActiveInvitationByToken,
+    hasRemainingInvitationUses: mocks.hasRemainingInvitationUses,
+    invitationHasUsesLeft: mocks.invitationHasUsesLeft,
+  };
+});
+
+vi.mock('../utils/email-code-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../utils/email-code-utils')>()),
+  generateEmailCode: () => '123456',
 }));
 
-import { useInvitationHandler, validateInvitationHandler } from '../invitation-handlers';
+import {
+  sendInvitationEmailCodeHandler,
+  validateInvitationHandler,
+  verifyInvitationEmailCodeHandler,
+} from '../invitation-handlers';
 
 const token = 'a'.repeat(32);
 const invitation = {
@@ -55,8 +77,29 @@ const invitation = {
 function createApp() {
   const app = new Hono();
   app.get('/validate', validateInvitationHandler);
-  app.post('/use', useInvitationHandler);
+  app.post('/email-verification/send', sendInvitationEmailCodeHandler);
+  app.post('/email-verification/verify', verifyInvitationEmailCodeHandler);
   return app;
+}
+
+const env = {
+  OTP_HMAC_SECRET: 'otp-test-secret',
+  RATE_LIMITER: {
+    idFromName: vi.fn(() => 'limiter'),
+    get: vi.fn(() => ({ incrementRpc: mocks.incrementRpc })),
+  },
+};
+
+function post(path: string, body: unknown) {
+  return createApp().request(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    env
+  );
 }
 
 describe('public invitation handlers', () => {
@@ -64,16 +107,15 @@ describe('public invitation handlers', () => {
     vi.clearAllMocks();
     mocks.findActiveInvitationByToken.mockResolvedValue(invitation);
     mocks.hasRemainingInvitationUses.mockReturnValue(true);
+    mocks.invitationHasUsesLeft.mockResolvedValue(true);
     mocks.adapter.queryOne.mockResolvedValue({ id: 'tenant-1', name: 'Tenant One' });
-    mocks.findUserById.mockResolvedValue({
-      id: 'user-1',
-      email: 'invited@example.com',
-    });
-    mocks.consumeInvitationUse.mockResolvedValue(true);
-    mocks.applyInvitationAssignments.mockResolvedValue({
-      roleAssignment: { success: true },
-      orgMembership: { success: true },
-    });
+    mocks.resolveEffectiveSettings.mockResolvedValue({});
+    mocks.getChallengeStoreByChallengeId.mockResolvedValue(mocks.store);
+    mocks.store.storeChallengeRpc.mockResolvedValue(undefined);
+    mocks.store.consumeChallengeRpc.mockResolvedValue({});
+    mocks.store.deleteChallengeRpc.mockResolvedValue(undefined);
+    mocks.produceNotificationDelivery.mockResolvedValue({ delivery: 'delivered' });
+    mocks.incrementRpc.mockResolvedValue({ allowed: true });
   });
 
   describe('GET /validate', () => {
@@ -98,6 +140,7 @@ describe('public invitation handlers', () => {
         tenant_id: 'tenant-1',
         tenant_name: 'Tenant One',
         invited_email: 'Invited@Example.com',
+        email_verification_required: false,
         expires_at: 2_000_000_000,
       });
       expect(mocks.findActiveInvitationByToken).toHaveBeenCalledWith(
@@ -106,6 +149,34 @@ describe('public invitation handlers', () => {
         expect.any(Number)
       );
     });
+
+    it.each([
+      ['required', 'Invited@Example.com', true],
+      ['optional', 'Invited@Example.com', false],
+      ['required', null, false],
+    ])(
+      'says whether the invited email must be proved (policy %s, invited email %s)',
+      async (policy, invitedEmail, required) => {
+        mocks.findActiveInvitationByToken.mockResolvedValue({
+          ...invitation,
+          invited_email: invitedEmail,
+        });
+        mocks.resolveEffectiveSettings.mockResolvedValue({
+          'authentication-methods.invitation.email_verification': policy,
+        });
+
+        const response = await createApp().request(`/validate?token=${token}`, undefined, env);
+
+        expect(await response.json()).toMatchObject({ email_verification_required: required });
+        if (invitedEmail) {
+          expect(mocks.resolveEffectiveSettings).toHaveBeenCalledWith(
+            env,
+            'authentication-methods',
+            { tenantId: 'tenant-1' }
+          );
+        }
+      }
+    );
 
     it('does not disclose a missing invitation', async () => {
       mocks.findActiveInvitationByToken.mockResolvedValueOnce(null);
@@ -117,7 +188,7 @@ describe('public invitation handlers', () => {
     });
 
     it('does not disclose an exhausted invitation', async () => {
-      mocks.hasRemainingInvitationUses.mockReturnValueOnce(false);
+      mocks.invitationHasUsesLeft.mockResolvedValueOnce(false);
 
       const response = await createApp().request(`/validate?token=${token}`, undefined, {});
 
@@ -147,111 +218,167 @@ describe('public invitation handlers', () => {
     });
   });
 
-  describe('POST /use', () => {
-    it.each([{}, { token }, { user_id: 'user-1' }])(
-      'requires both the token and user ID: %j',
-      async (body) => {
-        const response = await createApp().request(
-          '/use',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-          },
-          {}
-        );
-
-        expect(response.status).toBe(400);
-        expect(mocks.findActiveInvitationByToken).not.toHaveBeenCalled();
-      }
-    );
-
-    it('rejects a user outside the invitation tenant before consuming it', async () => {
-      mocks.findUserById.mockResolvedValueOnce(null);
-
-      const response = await useInvitation();
-
-      expect(response.status).toBe(404);
-      expect(mocks.consumeInvitationUse).not.toHaveBeenCalled();
-    });
-
-    it.each([null, 'different@example.com'])(
-      'rejects an email-restricted invitation when the canonical email is %s',
-      async (email) => {
-        mocks.findUserById.mockResolvedValueOnce({ id: 'user-1', email });
-
-        const response = await useInvitation();
-
-        expect(response.status).toBe(400);
-        expect(mocks.consumeInvitationUse).not.toHaveBeenCalled();
-      }
-    );
-
-    it('accepts an invited email case-insensitively and applies assignments', async () => {
-      const response = await useInvitation();
+  describe('POST /email-verification/send', () => {
+    it('sends a code only to the email the invitation names', async () => {
+      const response = await post('/email-verification/send', {
+        token,
+        email: 'attacker@example.com',
+      });
+      const body = (await response.json()) as Record<string, unknown>;
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ success: true });
-      expect(mocks.consumeInvitationUse).toHaveBeenCalledWith(
-        mocks.adapter,
-        'invitation-1',
-        'tenant-1',
-        expect.any(Number)
+      expect(body).toMatchObject({
+        verification_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        expires_in: 600,
+        masked_email: 'i***@example.com',
+      });
+      expect(mocks.store.storeChallengeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: `invitation_email_code:${body.verification_id}`,
+          tenantId: 'tenant-1',
+          type: 'invitation_email_code',
+          email: 'invited@example.com',
+          metadata: expect.objectContaining({ invitation_id: 'invitation-1' }),
+        })
       );
-      expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(mocks.adapter, {
-        userId: 'user-1',
+      expect(mocks.produceNotificationDelivery).toHaveBeenCalledWith(
+        env,
+        expect.objectContaining({
+          payload: expect.objectContaining({ to: 'invited@example.com' }),
+        })
+      );
+      expect(mocks.incrementRpc).toHaveBeenCalledWith('invitation:invitation-1', {
+        windowSeconds: 900,
+        maxRequests: 3,
+      });
+    });
+
+    it.each([
+      ['an invitation that names no email', { ...invitation, invited_email: null }],
+      ['an unknown invitation', null],
+    ])('sends nothing for %s', async (_label, found) => {
+      mocks.findActiveInvitationByToken.mockResolvedValue(found);
+
+      const response = await post('/email-verification/send', { token });
+
+      expect(response.status).toBe(404);
+      expect(mocks.produceNotificationDelivery).not.toHaveBeenCalled();
+    });
+
+    it('stops sending once the invitation reaches its send limit', async () => {
+      mocks.incrementRpc.mockResolvedValue({ allowed: false, retryAfter: 60 });
+
+      const response = await post('/email-verification/send', { token });
+
+      expect(response.status).toBe(429);
+      expect(mocks.store.storeChallengeRpc).not.toHaveBeenCalled();
+      expect(mocks.produceNotificationDelivery).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /email-verification/verify', () => {
+    const verificationId = '11111111-2222-3333-4444-555555555555';
+
+    async function storedCode(overrides: Record<string, unknown> = {}) {
+      const { hashEmailCode } = await import('../utils/email-code-utils');
+      const issuedAt = Date.now();
+      return {
         tenantId: 'tenant-1',
-        roleId: 'role-1',
-        orgId: 'org-1',
+        type: 'invitation_email_code',
+        email: 'invited@example.com',
+        challenge: await hashEmailCode(
+          '123456',
+          'invited@example.com',
+          verificationId,
+          issuedAt,
+          'otp-test-secret'
+        ),
+        metadata: { invitation_id: 'invitation-1', issued_at: issuedAt },
+        ...overrides,
+      };
+    }
+
+    it('exchanges the right code for a proof bound to the invitation and its email', async () => {
+      mocks.store.getChallengeRpc.mockResolvedValue(await storedCode());
+
+      const response = await post('/email-verification/verify', {
+        token,
+        verification_id: verificationId,
+        code: '123456',
       });
-    });
-
-    it('rejects a concurrent final-use race without applying assignments', async () => {
-      mocks.consumeInvitationUse.mockResolvedValueOnce(false);
-
-      const response = await useInvitation();
-
-      expect(response.status).toBe(404);
-      expect(mocks.applyInvitationAssignments).not.toHaveBeenCalled();
-    });
-
-    it('keeps a consumed invitation successful when optional assignments fail', async () => {
-      mocks.applyInvitationAssignments.mockResolvedValueOnce({
-        roleAssignment: { success: false, error: 'role missing' },
-        orgMembership: { success: false, error: 'org missing' },
-      });
-
-      const response = await useInvitation();
+      const body = (await response.json()) as Record<string, unknown>;
 
       expect(response.status).toBe(200);
-      expect(mocks.warn).toHaveBeenCalledTimes(2);
+      expect(body.invitation_email_proof).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(mocks.store.consumeChallengeRpc).toHaveBeenCalledWith({
+        id: `invitation_email_code:${verificationId}`,
+        tenantId: 'tenant-1',
+        type: 'invitation_email_code',
+      });
+      expect(mocks.store.storeChallengeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: `invitation_email_proof:${body.invitation_email_proof}`,
+          tenantId: 'tenant-1',
+          type: 'invitation_email_proof',
+          email: 'invited@example.com',
+          ttl: 900,
+          metadata: { invitation_id: 'invitation-1' },
+        })
+      );
     });
 
-    it('returns an internal error for malformed JSON', async () => {
-      const response = await createApp().request(
-        '/use',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{',
-        },
-        {}
-      );
+    it.each([
+      ['a wrong code', {}, '654321'],
+      ['a code of another invitation', { metadata: { invitation_id: 'other' } }, '123456'],
+      ["another tenant's code", { tenantId: 'tenant-2' }, '123456'],
+      ['another kind of challenge', { type: 'direct_email_code' }, '123456'],
+    ])('issues no proof for %s', async (_label, overrides, code) => {
+      const stored = await storedCode();
+      mocks.store.getChallengeRpc.mockResolvedValue({
+        ...stored,
+        ...overrides,
+        metadata: { ...stored.metadata, ...(overrides as { metadata?: object }).metadata },
+      });
 
-      expect(response.status).toBe(500);
-      expect(mocks.error).toHaveBeenCalled();
+      const response = await post('/email-verification/verify', {
+        token,
+        verification_id: verificationId,
+        code,
+      });
+
+      expect(response.status).toBe(400);
+      expect(mocks.store.consumeChallengeRpc).not.toHaveBeenCalled();
+      expect(mocks.store.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('ends the code after five wrong attempts', async () => {
+      mocks.incrementRpc.mockResolvedValue({ allowed: false, retryAfter: 600 });
+
+      const response = await post('/email-verification/verify', {
+        token,
+        verification_id: verificationId,
+        code: '123456',
+      });
+
+      expect(response.status).toBe(429);
+      expect(mocks.incrementRpc).toHaveBeenCalledWith(`verify:${verificationId}`, {
+        windowSeconds: 600,
+        maxRequests: 5,
+      });
+      expect(mocks.store.deleteChallengeRpc).toHaveBeenCalledWith(
+        `invitation_email_code:${verificationId}`
+      );
+      expect(mocks.store.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ token, verification_id: 'not-a-uuid', code: '123456' }],
+      [{ token, verification_id: verificationId, code: '12345' }],
+    ])('rejects a malformed request %j', async (body) => {
+      const response = await post('/email-verification/verify', body);
+
+      expect(response.status).toBe(400);
+      expect(mocks.findActiveInvitationByToken).not.toHaveBeenCalled();
     });
   });
 });
-
-function useInvitation() {
-  return createApp().request(
-    '/use',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, user_id: 'user-1' }),
-    },
-    {}
-  );
-}

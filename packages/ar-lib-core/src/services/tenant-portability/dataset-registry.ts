@@ -68,7 +68,7 @@ const TABLE_GROUPS: Partial<
       plugin_account_metadata_mutations plugin_hook_outbox profile_attribute_values
       profiles provisioning_assignment_ownership relationships role_assignments
       service_group_inputs service_group_manual service_group_write_boundaries structured_attribute_values subject_account_links
-      subject_org_membership tenant_invitations totp_backup_codes totp_credentials
+      subject_org_membership tenant_invitation_redemptions tenant_invitations totp_backup_codes totp_credentials
       user_consent_records user_custom_fields user_roles
       user_verified_attributes users users_core value_provenance
       webhook_deliveries

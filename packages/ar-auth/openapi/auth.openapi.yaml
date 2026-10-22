@@ -1696,27 +1696,6 @@ paths:
           $ref: '#/components/responses/DirectTokenCompatibility'
       requestBody:
         $ref: '#/components/requestBodies/DirectToken'
-  /api/v1/invitations/use:
-    post:
-      tags:
-        - Invitations
-      operationId: postApiV1InvitationsUse
-      summary: Consume an invitation after signup.
-      description:
-        Marks an invitation token as used for a verified user in the invited tenant and applies
-        configured role or organization assignments.
-      responses:
-        '200':
-          $ref: '#/components/responses/InvitationUse'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/InvitationUse'
-      security: []
   /api/v1/invitations/validate:
     get:
       tags:
@@ -1743,6 +1722,109 @@ paths:
           schema:
             type: string
             minLength: 32
+  /api/v1/invitations/email-verification/send:
+    post:
+      tags:
+        - Invitations
+      operationId: postApiV1InvitationsEmailVerificationSend
+      summary: Send a code to the email an invitation names.
+      description:
+        Sends a one-time code to the invited email of an active invitation (never to an address
+        the request gives), so a passkey or authenticator-app signup can prove it controls that
+        email when the tenant requires it (authentication-methods.invitation.email_verification).
+        Limited per invitation like other email sends.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  minLength: 32
+      responses:
+        '200':
+          description: The code was sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - verification_id
+                  - expires_in
+                  - masked_email
+                properties:
+                  verification_id:
+                    type: string
+                  expires_in:
+                    type: integer
+                    example: 600
+                  masked_email:
+                    type: string
+                    example: i***@example.com
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+      security: []
+  /api/v1/invitations/email-verification/verify:
+    post:
+      tags:
+        - Invitations
+      operationId: postApiV1InvitationsEmailVerificationVerify
+      summary: Exchange the invited email's code for a proof.
+      description:
+        Checks the code sent to the invited email (five attempts per code) and returns a proof,
+        valid for 15 minutes, that passkey and authenticator-app signup starts take as
+        invitation_email_proof.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - token
+                - verification_id
+                - code
+              properties:
+                token:
+                  type: string
+                  minLength: 32
+                verification_id:
+                  type: string
+                code:
+                  type: string
+                  pattern: '^\d{6}$'
+      responses:
+        '200':
+          description: The code was right.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - invitation_email_proof
+                  - expires_in
+                properties:
+                  invitation_email_proof:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{43}$'
+                  expires_in:
+                    type: integer
+                    example: 900
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+      security: []
   /api/v1/registration-fields:
     get:
       tags:
@@ -2665,15 +2747,6 @@ components:
             direct_auth_artifact: direct_auth_code_123
             client_id: client_123
             code_verifier: rfc7636-code-verifier
-    InvitationUse:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InvitationUseRequest'
-          example:
-            token: invite_123
-            user_id: user_123
     SetupInitialize:
       required: true
       content:
@@ -3212,18 +3285,6 @@ components:
           example:
             error: legacy_endpoint_not_supported
             error_description: This endpoint is no longer supported.
-    InvitationUse:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InvitationUseResponse'
-          example:
-            success: true
-            invitation_id: inv_123
-            tenant_id: tenant_123
-            role_assigned: true
-            organization_assigned: false
     SetupInitialize:
       description: Successful JSON response.
       content:
@@ -3876,6 +3937,17 @@ components:
           type: string
         authorization_challenge_id:
           type: string
+        invite_token:
+          type: string
+          minLength: 1
+          description:
+            Tenant invitation token. Checked, and one use reserved for this signup, before the
+            options are returned; applied to the account activation creates.
+        invitation_email_proof:
+          type: string
+          description:
+            Proof of the invited email from /api/v1/invitations/email-verification/verify, needed
+            when the tenant requires the email an invitation names to be proved.
     TotpSignupActivateRequest:
       type: object
       additionalProperties: false
@@ -4951,6 +5023,18 @@ components:
         resume_user_id:
           type: string
           description: Internal Login UI continuation value paired with provisioning_token.
+        invite_token:
+          type: string
+          minLength: 1
+          description:
+            Tenant invitation token. Checked before the account is created (active, of this tenant,
+            and for the email it names, if any) and one use reserved for this signup; its role or
+            organization is assigned to the new account when signup/finish registers the passkey.
+        invitation_email_proof:
+          type: string
+          description:
+            Proof of the invited email from /api/v1/invitations/email-verification/verify, needed
+            when the tenant requires the email an invitation names to be proved.
       required:
         - client_id
         - code_challenge
@@ -5273,38 +5357,6 @@ components:
         code_verifier:
           type: string
           example: rfc7636-code-verifier
-    InvitationUseRequest:
-      type: object
-      properties:
-        token:
-          type: string
-          example: invite_123
-        user_id:
-          type: string
-          example: user_123
-      required:
-        - token
-        - user_id
-    InvitationUseResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        invitation_id:
-          type: string
-          example: inv_123
-        tenant_id:
-          type: string
-          example: tenant_123
-        role_assigned:
-          type: boolean
-          example: true
-        organization_assigned:
-          type: boolean
-          example: false
-      required:
-        - success
     SetupInitializeRequest:
       type: object
       properties:
@@ -5990,6 +6042,11 @@ components:
             - string
             - 'null'
           format: email
+        email_verification_required:
+          type: boolean
+          description:
+            True when the invitation names an email and the tenant requires that email proved, so a
+            passkey or authenticator-app signup must first use /api/v1/invitations/email-verification.
           example: user@example.com
         expires_at:
           type: integer

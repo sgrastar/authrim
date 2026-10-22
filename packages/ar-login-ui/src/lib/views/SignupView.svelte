@@ -50,6 +50,8 @@
 		totp?: boolean;
 		/** The external provider whose sign-up is starting. */
 		externalIdp?: string | null;
+		/** The invitation email code is being checked or sent again. */
+		invitationEmailCode?: boolean;
 	};
 </script>
 
@@ -69,11 +71,13 @@
 		EmailVerificationView,
 		ExternalProviderButton,
 		HumanVerificationView,
+		InvitationEmailCodeView,
 		RuntimeScreenState,
 		RuntimeStepView
 	} from './auth-entry-types';
 	import ExternalProviderStack from './parts/ExternalProviderStack.svelte';
 	import HumanVerification from './parts/HumanVerification.svelte';
+	import InvitationEmailCodePanel from './parts/InvitationEmailCodePanel.svelte';
 	import RuntimeFallbackPanel from './parts/RuntimeFallbackPanel.svelte';
 
 	type RuntimeAuthAction = Parameters<
@@ -107,6 +111,8 @@
 		emailError?: string;
 		customFieldErrors?: Record<string, string>;
 		totpSetup?: TotpSetupView | null;
+		/** The invitation's email-code step, while a passkey or authenticator-app signup waits on it. */
+		invitationEmailCode?: InvitationEmailCodeView | null;
 		externalProviders?: ExternalProviderButton[];
 		emailVerification?: EmailVerificationView;
 		humanVerification: HumanVerificationView;
@@ -118,6 +124,7 @@
 		email?: string;
 		customFieldValues?: Record<string, string>;
 		totpCode?: string;
+		invitationCode?: string;
 		turnstileToken?: string;
 		consentDecisions?: Record<string, boolean>;
 		onSubmit?: (event: SubmitEvent) => void;
@@ -144,6 +151,9 @@
 		/** Leave the backup codes and finish signing up. */
 		onTotpDone?: () => void;
 		onExternalProvider?: (providerId: string) => void;
+		onInvitationCodeVerify?: () => void;
+		onInvitationCodeResend?: () => void;
+		onInvitationCodeCancel?: () => void;
 	};
 
 	let {
@@ -174,6 +184,7 @@
 		emailError = '',
 		customFieldErrors = {},
 		totpSetup = null,
+		invitationEmailCode = null,
 		externalProviders = [],
 		emailVerification = { enabled: false, nonce: null },
 		humanVerification,
@@ -183,6 +194,7 @@
 		email = $bindable(''),
 		customFieldValues = $bindable({}),
 		totpCode = $bindable(''),
+		invitationCode = $bindable(''),
 		turnstileToken = $bindable(''),
 		consentDecisions = $bindable({}),
 		onSubmit,
@@ -204,8 +216,14 @@
 		onTotpActivate,
 		onTotpCancel,
 		onTotpDone,
-		onExternalProvider
+		onExternalProvider,
+		onInvitationCodeVerify,
+		onInvitationCodeResend,
+		onInvitationCodeCancel
 	}: Props = $props();
+
+	// While the invitation's code step is open, the methods (classic or runtime) wait behind it.
+	const showMethods = $derived(legacyMethods && !invitationEmailCode);
 
 	const emailVerificationTokenAutocomplete = 'email-verification-token' as never;
 
@@ -295,7 +313,20 @@
 				</div>
 			{/if}
 
-			{#if runtimeStep}
+			<!-- The invitation's code step, in either layout; the methods wait behind it. -->
+			{#if invitationEmailCode}
+				<InvitationEmailCodePanel
+					view={invitationEmailCode}
+					bind:code={invitationCode}
+					loading={loading.invitationEmailCode}
+					{busy}
+					onVerify={onInvitationCodeVerify}
+					onResend={onInvitationCodeResend}
+					onCancel={onInvitationCodeCancel}
+				/>
+			{/if}
+
+			{#if runtimeStep && !invitationEmailCode}
 				{#if runtimeStep.screen}
 					<div class="runtime-screen-step mb-4">
 						<RuntimeScreen
@@ -483,7 +514,7 @@
 			{/if}
 
 			<!-- Passkey Button -->
-			{#if legacyMethods && methods.passkey}
+			{#if showMethods && methods.passkey}
 				<Button
 					variant="primary"
 					class="w-full mb-3"
@@ -511,7 +542,7 @@
 			{/if}
 
 			<!-- Email Code Button -->
-			{#if legacyMethods && methods.emailCode}
+			{#if showMethods && methods.emailCode}
 				<Button
 					variant="secondary"
 					class="w-full"
@@ -532,7 +563,7 @@
 			{/if}
 
 			<!-- TOTP Button and Setup -->
-			{#if methods.totp && (legacyMethods || totpSetup)}
+			{#if methods.totp && (showMethods || totpSetup)}
 				{#if methods.passkey || methods.emailCode}
 					<div class="auth-divider">
 						<div class="auth-divider__line"></div>
@@ -596,7 +627,7 @@
 							</div>
 						{/if}
 					</div>
-				{:else if legacyMethods}
+				{:else if showMethods}
 					<Button
 						variant="secondary"
 						class="w-full"
@@ -617,7 +648,7 @@
 			{/if}
 
 			<!-- External Login Section -->
-			{#if legacyMethods && methods.external}
+			{#if showMethods && methods.external}
 				<ExternalProviderStack
 					providers={externalProviders}
 					loadingId={loading.externalIdp}

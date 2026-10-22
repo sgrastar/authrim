@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { UpstreamProvider, UserInfo, TokenResponse } from '../types';
+import { ExternalIdPErrorCode } from '../types';
 
 // Create hoisted mocks that can be configured in tests
 const {
@@ -902,6 +903,84 @@ describe('Identity Stitching Service', () => {
     });
 
     describe('JIT Provisioning', () => {
+      describe('for a sign-in started from an invitation', () => {
+        // Every other email-verification gate off, so only the invitation's own rule decides.
+        const envWithoutOtherEmailChecks = () => {
+          const env = createMockEnv({ ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL: 'false' });
+          (env.SETTINGS.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
+            key === 'settings:tenant:default:external-idp'
+              ? JSON.stringify({ 'external_idp.jit_require_verified_email': false })
+              : null
+          );
+          return env;
+        };
+        const provider = { ...mockProvider, requireEmailVerified: false };
+
+        beforeEach(() => {
+          vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+          vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValue('new-linked-id');
+        });
+
+        it('creates no account for another email than the invitation names', async () => {
+          await expect(
+            handleIdentity(envWithoutOtherEmailChecks() as never, {
+              provider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+              invitation: { invitedEmail: 'invited@example.com', requireVerifiedEmail: false },
+            })
+          ).rejects.toMatchObject({ code: ExternalIdPErrorCode.INVITATION_EMAIL_MISMATCH });
+          expect(mockProvisionExternalIdpAccount).not.toHaveBeenCalled();
+        });
+
+        it('creates the account for the invited email, in any case', async () => {
+          const result = await handleIdentity(envWithoutOtherEmailChecks() as never, {
+            provider,
+            userInfo: { ...mockUserInfo, email: 'Test@Example.com' },
+            tokens: mockTokens,
+            tenantId: 'default',
+            invitation: { invitedEmail: 'test@example.com', requireVerifiedEmail: true },
+          });
+
+          expect(result.isNewUser).toBe(true);
+        });
+
+        it.each([
+          ['an unverified', false],
+          ['an unstated', undefined],
+        ])(
+          'creates no account for %s invited email when the tenant requires it verified',
+          async (_label, emailVerified) => {
+            await expect(
+              handleIdentity(envWithoutOtherEmailChecks() as never, {
+                provider,
+                userInfo: { ...mockUserInfo, email_verified: emailVerified },
+                tokens: mockTokens,
+                tenantId: 'default',
+                invitation: { invitedEmail: 'test@example.com', requireVerifiedEmail: true },
+              })
+            ).rejects.toMatchObject({
+              code: ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
+              message: 'This invitation needs an email your provider has verified.',
+            });
+            expect(mockProvisionExternalIdpAccount).not.toHaveBeenCalled();
+          }
+        );
+
+        it('accepts an unverified invited email when the tenant does not require it', async () => {
+          const result = await handleIdentity(envWithoutOtherEmailChecks() as never, {
+            provider,
+            userInfo: { ...mockUserInfo, email_verified: false },
+            tokens: mockTokens,
+            tenantId: 'default',
+            invitation: { invitedEmail: 'test@example.com', requireVerifiedEmail: false },
+          });
+
+          expect(result.isNewUser).toBe(true);
+        });
+      });
+
       it('should create new user when JIT enabled and no existing user', async () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);

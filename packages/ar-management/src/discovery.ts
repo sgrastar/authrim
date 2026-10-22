@@ -20,6 +20,7 @@ import {
   type ResolvedLookupAlias,
 } from '@authrim/ar-lib-core';
 import { getLogger, getTenantSettingsDocument } from '@authrim/ar-lib-core';
+import { invitationHasUsesLeft } from '@authrim/ar-lib-core/services/invitation-auth-core';
 import { SignJWT, jwtVerify } from 'jose';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
@@ -1094,7 +1095,11 @@ async function resolveInvitationDiscovery(
     throw new Error('tenant_alias_destination_revalidation_failed');
   }
 
-  if (invitation.max_uses !== -1 && invitation.use_count >= invitation.max_uses) {
+  // Uses left, counting reservations that expired unapplied as returned (an abandoned sign-up
+  // must not leave the link dead until another sign-up starts).
+  if (
+    !(await invitationHasUsesLeft(adapter, { ...invitation, role_id: null, org_id: null }, now))
+  ) {
     return null;
   }
 

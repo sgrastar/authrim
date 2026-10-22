@@ -246,7 +246,7 @@ export async function joinOrganization(
 
     // Check if already a member
     const existingMember = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM org_memberships WHERE tenant_id = ? AND user_id = ? AND org_id = ?',
+      'SELECT id FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ? AND org_id = ?',
       [tenantId, userId, orgId]
     );
 
@@ -261,7 +261,7 @@ export async function joinOrganization(
 
     // Create membership
     await adapter.execute(
-      `INSERT INTO org_memberships (id, tenant_id, user_id, org_id, membership_type, created_at, updated_at)
+      `INSERT INTO subject_org_membership (id, tenant_id, subject_id, org_id, membership_type, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [membershipId, tenantId, userId, orgId, membershipType, now, now]
     );
