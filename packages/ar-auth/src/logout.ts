@@ -104,6 +104,25 @@ function escapeLogoutHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * The page a confirmed logout answers with: it moves on to `redirectUrl` at once (a meta refresh,
+ * which needs no script), with a link for a browser that does not follow it. The refresh takes
+ * the rest of its content as the URL, so the escaped URL needs no quoting.
+ */
+export function renderLogoutContinuationPage(redirectUrl: string): string {
+  const url = escapeLogoutHtml(redirectUrl);
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=${url}"><title>Signed out</title></head>
+<body>
+  <main>
+    <h1>Signed out</h1>
+    <p><a href="${url}">Continue</a></p>
+  </main>
+</body>
+</html>`;
+}
+
 function renderLogoutConfirmationForm(
   confirmationToken: string,
   params: {
@@ -1039,17 +1058,24 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Step 6: Redirect to post-logout URI (no frontchannel clients)
-    // IMPORTANT: Hono's c.redirect() creates a new Response that doesn't include
-    // headers set via setCookie(). We need to manually add the Set-Cookie header
-    // to ensure the session cookie is properly cleared in the browser.
-    const response = c.redirect(redirectUrl, 302);
-
-    // Clone the response and add the Set-Cookie headers (need append for multiple cookies)
+    // Step 6: Send the browser on to the post-logout URI (no frontchannel clients)
+    // This answers the confirmation form's POST, and browsers apply that page's form-action
+    // ('self') to the redirects that follow a form submission: a 302 to the RP (or to a logged-out
+    // or error page served from another origin) would be aborted. A same-origin page that moves
+    // on by itself ends the form submission here, as the frontchannel page above does.
+    // The response is built by hand: Set-Cookie headers set via setCookie() are not carried over
+    // to a Response made here, so the cookies are cleared explicitly below.
     // SameSite is determined dynamically based on origin configuration
     const sessionSameSiteRedirect = getSessionCookieSameSite(c.env);
     const browserStateSameSiteRedirect = getBrowserStateCookieSameSite(c.env);
-    const headers = new Headers(response.headers);
+    const headers = new Headers({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy':
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    });
     headers.append(
       'Set-Cookie',
       `${GUEST_RESUME_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
@@ -1067,8 +1093,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       `${LOGOUT_CONFIRMATION_COOKIE_NAME}=; Path=/logout; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
     );
 
-    return new Response(response.body, {
-      status: response.status,
+    return new Response(renderLogoutContinuationPage(redirectUrl), {
+      status: 200,
       headers,
     });
   } catch (error) {
