@@ -321,8 +321,8 @@ function createApp(options?: {
               actorId:
                 typeof options?.delegatedActorClaims?.sub === 'string'
                   ? options.delegatedActorClaims.sub
-                  : 'actor-1',
-              claims: options?.delegatedActorClaims ?? { sub: 'actor-1' },
+                  : 'user-1',
+              claims: options?.delegatedActorClaims ?? { sub: 'user-1' },
             },
       async updateProfile({ subjectUserId, update }) {
         if (options?.updateProfileImpl) {
@@ -377,6 +377,7 @@ const sampleProfileForTest = {
 
 async function issueDelegatedWriteReceipt(input: {
   env: Env;
+  actorId?: string;
   subjectUserId: string;
   idempotencyKey: string;
   bodyInput: Record<string, unknown>;
@@ -391,7 +392,7 @@ async function issueDelegatedWriteReceipt(input: {
   );
   const requirement = await issueStepUpToken(input.env, {
     tenantId: 'tenant-a',
-    actorId: 'actor-1',
+    actorId: input.actorId ?? 'user-1',
     subjectId: input.subjectUserId,
     operationHash,
     idempotencyKey: input.idempotencyKey,
@@ -781,7 +782,7 @@ describe('protected customer profile route', () => {
       name: 'Alice Updated',
       locale: 'ja-JP',
     });
-    expect(payload.actor).toEqual({ id: 'actor-1' });
+    expect(payload.actor).toEqual({ id: 'user-1' });
     expect(payload.subject).toEqual({ id: 'user-1' });
     expect(payload.audit).toEqual(audit);
 
@@ -1060,11 +1061,15 @@ describe('protected customer profile route', () => {
     const input = { name: 'Updated' };
     const receipt = await issueDelegatedWriteReceipt({
       env,
+      actorId: 'user-404',
       subjectUserId: 'user-404',
       idempotencyKey: 'missing-profile',
       bodyInput: input,
     });
-    const response = await createApp({ updateProfileImpl: async () => null }).request(
+    const response = await createApp({
+      delegatedActorClaims: { sub: 'user-404' },
+      updateProfileImpl: async () => null,
+    }).request(
       'http://localhost/api/protected/customer-profiles/users/user-404',
       {
         method: 'PATCH',
@@ -1106,7 +1111,7 @@ describe('protected customer profile route', () => {
   it('rejects token_use elevation credentials as delegated actor tokens', async () => {
     const { env } = createDelegatedWriteEnv();
     const response = await createApp({
-      delegatedActorClaims: { sub: 'actor-1', token_use: 'elevation_grant_subject' },
+      delegatedActorClaims: { sub: 'user-1', token_use: 'elevation_grant_subject' },
     }).request(
       'http://localhost/api/protected/customer-profiles/users/user-1',
       {
