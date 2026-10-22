@@ -200,6 +200,15 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 		'Das Standard-Binding für Abmeldeanfragen, verwendet, wenn die Metadaten beide anbieten oder keines nennen. Ein Anbieterprofil mit eigenem Binding (das Profil legacy) behält es.',
 	'set.k.federation.saml_slo_binding.HTTP-POST': 'HTTP-POST',
 	'set.k.federation.saml_slo_binding.HTTP-Redirect': 'HTTP-Redirect',
+	'set.section.samlInstitution': 'Einrichtung',
+	'set.section.samlInstitution.desc':
+		'Die Einrichtung, für die dieser Mandant steht: die Domains, unter denen seine Kennungen ausgestellt werden, und ihr Name. Nur die Plattform kann sie ändern; Administratoren des Mandanten können sie lesen. Solange nichts gesetzt ist, ändern sich SAML-Assertions und Metadaten nicht.',
+	'set.k.institution.scopes': 'Scopes',
+	'set.k.institution.scopes.desc':
+		'Domainnamen, durch Kommas getrennt; der erste ist der Standard (zum Beispiel example.ac.jp,med.example.ac.jp). Kleingeschrieben, ohne Platzhalter, höchstens 20. Sobald gesetzt, enthalten SAML-Assertions eduPersonScopedAffiliation und eduPersonPrincipalName nur unter diesen Domains: Ein Wert unter einer anderen Domain wird weggelassen und im Auditlog festgehalten, ein Wert ohne Domain erhält den Standard. Die Metadaten führen sie auf (shibmd:Scope), und einem Dienstanbieter kann der Standard als schacHomeOrganization mitgegeben werden. Ändern Sie sie nicht, solange Dienstanbieter sich auf die alten verlassen: Sie behalten die Metadaten bis zu einen Tag. OIDC ist nicht betroffen.',
+	'set.k.institution.display_names': 'Namen',
+	'set.k.institution.display_names.desc':
+		'Der Name der Einrichtung in jeder Sprache, als JSON-Text mit mindestens ja und en (zum Beispiel {"ja": "例大学", "en": "Example University"}). Sobald gesetzt, benennen die SAML-Metadaten die Einrichtung damit, und einem Dienstanbieter kann der englische Name als Organisationsname (o) mitgegeben werden. OIDC ist nicht betroffen.',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',

@@ -61,14 +61,13 @@ function decode(row: TargetRow): TenantBackupRestoreCleanupTarget {
 }
 
 /**
- * Clean one restore-plan target and persist proof only after the installed adapter confirms that
- * its exact physical resource is absent. Provisioned resources missing from the plan are handled
- * by the adapter's broader operation inventory cleanup.
+ * Clean one page of one restore-plan target. Proof is persisted only after the installed adapter
+ * reports that target done, i.e. it confirmed that nothing the import left there remains.
  */
 export async function cleanupTenantBackupRestoreTargetPage(input: {
   database: Database;
   context: TenantBackupStepContext;
-  cleanup(target: Readonly<TenantBackupRestoreCleanupTarget>): Promise<void>;
+  cleanup(target: Readonly<TenantBackupRestoreCleanupTarget>): Promise<{ done: boolean }>;
   now?: () => number;
 }): Promise<{ done: boolean }> {
   const now = input.now ?? Date.now;
@@ -107,8 +106,9 @@ export async function cleanupTenantBackupRestoreTargetPage(input: {
     return { done: true };
   }
   const target = Object.freeze(decode(row));
-  await input.cleanup(target);
+  const cleaned = await input.cleanup(target);
   input.context.signal.throwIfAborted();
+  if (cleaned.done !== true) return { done: false };
   const saved = await input.database.queryOne<{ payload_digest: string }>(
     `INSERT INTO tenant_backup_restore_cleanup_receipts
     (operation_id,tenant_id,item_ordinal,item_id,payload_digest,cleaned_at)

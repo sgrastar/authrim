@@ -195,6 +195,15 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 		'الارتباط الافتراضي لطلبات تسجيل الخروج، ويُستخدم عندما تعرض البيانات الوصفية الاثنين أو لا تذكر أيًا منهما. المزود ذو الملف الشخصي الذي يحدد ارتباطه (الملف legacy) يحتفظ به.',
 	'set.k.federation.saml_slo_binding.HTTP-POST': 'HTTP-POST',
 	'set.k.federation.saml_slo_binding.HTTP-Redirect': 'HTTP-Redirect',
+	'set.section.samlInstitution': 'المؤسسة',
+	'set.section.samlInstitution.desc':
+		'المؤسسة التي يمثلها هذا المستأجر: النطاقات التي تُصدر المعرّفات تحتها، واسمها. المنصة وحدها تستطيع تغييرها، ويمكن لمسؤولي المستأجر قراءتها فقط. ما لم تُضبط، لا يتغير شيء في تأكيدات SAML ولا في بياناتها الوصفية.',
+	'set.k.institution.scopes': 'النطاقات (Scopes)',
+	'set.k.institution.scopes.desc':
+		'أسماء نطاقات تفصل بينها فواصل، والأول هو الافتراضي (مثل example.ac.jp,med.example.ac.jp). بأحرف صغيرة، دون أحرف بدل، وبحد أقصى 20. بعد ضبطها، تحمل تأكيدات SAML القيمتين eduPersonScopedAffiliation وeduPersonPrincipalName تحت هذه النطاقات فقط: تُحذف القيمة التابعة لنطاق آخر وتُسجَّل في سجل التدقيق، وتحصل القيمة التي بلا نطاق على النطاق الافتراضي. تعرضها البيانات الوصفية (shibmd:Scope)، ويمكن تمرير النطاق الافتراضي إلى مزود خدمة بوصفه schacHomeOrganization. تجنّب تغييرها ما دام مزودو الخدمة يعتمدون على القديمة، فهم يحتفظون بالبيانات الوصفية لمدة تصل إلى يوم. لا يتأثر OIDC.',
+	'set.k.institution.display_names': 'الأسماء',
+	'set.k.institution.display_names.desc':
+		'اسم المؤسسة بكل لغة، كنص JSON يتضمن ja وen على الأقل (مثل {"ja": "例大学", "en": "Example University"}). بعد ضبطه، تسمّي البيانات الوصفية لـ SAML المؤسسة به، ويمكن تمرير الاسم الإنجليزي إلى مزود خدمة بوصفه اسم المنظمة (o). لا يتأثر OIDC.',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',

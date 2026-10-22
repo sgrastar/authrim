@@ -404,10 +404,13 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-control': [],
   'ar-plugin-runner': [],
   'ar-discovery': [],
+  // SESSION_CLIENT_STORE: implicit/hybrid /authorize records the client in the session, and
+  // RP-Initiated Logout reads the store to send Back-Channel, Front-Channel and webhook logouts.
   'ar-auth': [
     'KEY_MANAGER',
     'SESSION_STORE',
     'SESSION_REVOCATION_STORE',
+    'SESSION_CLIENT_STORE',
     'AUTH_CODE_STORE',
     'CHALLENGE_STORE',
     'RATE_LIMITER',
@@ -415,10 +418,13 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'FLOW_STATE_STORE',
     'DPOP_JTI_STORE',
   ],
+  // SESSION_CLIENT_STORE: the authorization code exchange records the client in the session,
+  // so a later logout knows to notify it.
   'ar-token': [
     'KEY_MANAGER',
     'SESSION_STORE',
     'SESSION_REVOCATION_STORE',
+    'SESSION_CLIENT_STORE',
     'AUTH_CODE_STORE',
     'REFRESH_TOKEN_ROTATOR',
     'RATE_LIMITER',

@@ -30,7 +30,7 @@ export interface TenantBackupOperation {
   last_error_code: string | null;
   /**
    * The permanent failure that stopped the operation. Cleanup then finishes it as 'failed'; an
-   * import that already wrote to its restore targets keeps retrying and only shows the reason.
+   * import past its last cleanable phase keeps retrying and only shows the reason.
    */
   failure_reason?: TenantBackupPermanentFailure | null;
 }
@@ -51,10 +51,7 @@ export function isTenantBackupPermanentFailure(code: string): code is TenantBack
   return (TENANT_BACKUP_PERMANENT_FAILURES as readonly string[]).includes(code);
 }
 
-/**
- * Import phases before anything is written to a restore target. Cleanup of an import past them
- * has to remove restored tenant data, which the installed cleanup cannot do yet.
- */
+/** Import phases before anything is written to a restore target. */
 export const TENANT_BACKUP_IMPORT_PRE_WRITE_PHASES = [
   'prepare',
   'decode_input',
@@ -65,16 +62,33 @@ export const TENANT_BACKUP_IMPORT_PRE_WRITE_PHASES = [
   'finalize_input_validation',
 ] as const;
 
+/**
+ * Import phases that cleanup can undo: until the SQL restore ends it has written only to its SQL
+ * restore targets, which cleanup discards with the restored tenant. From `restore_other_stores` on
+ * it also writes KV, R2, Durable Objects and keys, and later activates the tenant; an import there
+ * can be neither cancelled nor cleaned up after a permanent failure.
+ */
+export const TENANT_BACKUP_IMPORT_CLEANABLE_PHASES = [
+  ...TENANT_BACKUP_IMPORT_PRE_WRITE_PHASES,
+  'prepare_restore_plan',
+  'await_restore_approval',
+  'start_sqlite_restore_sequence',
+  'apply_sqlite_dataset',
+  'apply_sqlite_dataset_deferred',
+  'verify_sqlite_dataset',
+  'advance_restore_dataset',
+] as const;
+
 /** Whether a permanent failure in this operation's current phase can be cleaned up. */
 export function canCleanUpTenantBackupFailure(
   operation: Pick<TenantBackupOperation, 'kind' | 'phase'>
 ): boolean {
   return (
     operation.kind === 'export' ||
-    (TENANT_BACKUP_IMPORT_PRE_WRITE_PHASES as readonly string[]).includes(operation.phase)
+    (TENANT_BACKUP_IMPORT_CLEANABLE_PHASES as readonly string[]).includes(operation.phase)
   );
 }
-const PRE_WRITE_PHASES_SQL = TENANT_BACKUP_IMPORT_PRE_WRITE_PHASES.map(
+const CLEANABLE_PHASES_SQL = TENANT_BACKUP_IMPORT_CLEANABLE_PHASES.map(
   (phase) => `'${phase}'`
 ).join(',');
 export interface TenantBackupLease {
@@ -331,7 +345,7 @@ export class TenantBackupOperationStore {
   /**
    * Give up on a running operation that can never succeed: record why and hand it to the same
    * cleanup a cancellation gets, so partial artifacts, spills and staging are removed. Only an
-   * export or an import that has not written to a restore target qualifies.
+   * export or an import in a cleanable phase qualifies.
    */
   async failPermanently(
     lease: TenantBackupLease,
@@ -348,7 +362,7 @@ export class TenantBackupOperationStore {
       SET state='cancelling',phase='cleanup',cursor_json=NULL,failure_reason=?,failure_count=0,
       last_error_code=NULL,next_attempt_at=0,lease_owner=NULL,lease_expires_at=NULL,
       fencing_token=fencing_token+1,revision=revision+1,updated_at=?
-      WHERE tenant_id=? AND id=? AND state='running' AND (kind='export' OR phase IN (${PRE_WRITE_PHASES_SQL}))
+      WHERE tenant_id=? AND id=? AND state='running' AND (kind='export' OR phase IN (${CLEANABLE_PHASES_SQL}))
       AND lease_owner=? AND fencing_token=? AND revision=? AND lease_expires_at>? AND updated_at<=? RETURNING *`,
       [
         reason,
@@ -434,7 +448,10 @@ export class TenantBackupOperationStore {
     );
   }
 
-  /** Persist cancellation and invalidate the old worker immediately. Cleanup gets a later lease. */
+  /**
+   * Persist cancellation and invalidate the old worker immediately. Cleanup gets a later lease. An
+   * import is cancellable only in a cleanable phase and before it is ready.
+   */
   async requestCancel(
     tenantId: string,
     operationId: string,
@@ -446,7 +463,9 @@ export class TenantBackupOperationStore {
     return this.database.queryOne(
       `UPDATE tenant_backup_operations
       SET next_attempt_at=0,failure_count=0,last_error_code=NULL,failure_reason=NULL,state='cancelling',phase='cleanup',cursor_json=NULL,lease_owner=NULL,lease_expires_at=NULL,fencing_token=fencing_token+1,revision=revision+1,updated_at=?
-      WHERE tenant_id=? AND id=? AND state IN ('queued','running','waiting','ready') AND updated_at<=? RETURNING *`,
+      WHERE tenant_id=? AND id=? AND state IN ('queued','running','waiting','ready')
+      AND (kind='export' OR (state<>'ready' AND phase IN (${CLEANABLE_PHASES_SQL})))
+      AND updated_at<=? RETURNING *`,
       [now, tenantId, operationId, now]
     );
   }

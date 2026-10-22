@@ -286,22 +286,31 @@ describe('worker capability manifests', () => {
     }
   });
 
-  it('binds the session-client store to the Workers that end sessions outside a user logout', async () => {
-    // Without the binding the logout targets of an ended session cannot be read, so an upstream
-    // back-channel logout (Bridge) or an admin suspend / lock / session revocation (Management)
-    // tells no relying party.
-    const components = ['ar-bridge', 'ar-management'] as const;
+  it('binds the session-client store to every Worker that records or reads logout targets', async () => {
+    // Without the binding, session-client registration is a silent no-op and logout finds no
+    // relying party to notify, so Back-Channel, Front-Channel and webhook logout send nothing.
+    // Bridge (upstream back-channel logout) and Management (admin suspend / lock / session
+    // revocation) read the logout targets of the sessions they end.
+    const requiredComponents = ['ar-auth', 'ar-token', 'ar-bridge', 'ar-management'];
     const manifests = await loadWorkerCapabilityManifests({
       baseDir: ROOT_DIR,
-      components: [...components],
+      components: CORE_WORKER_COMPONENTS,
     });
+    const declaring = manifests.filter((compiled) =>
+      compiled.manifest.bindings.some((binding) => binding.name === 'SESSION_CLIENT_STORE')
+    );
+    expect(declaring.map((compiled) => compiled.component)).toEqual(
+      expect.arrayContaining(requiredComponents)
+    );
+
     const config = deploymentConfig('logouttest');
-    for (const compiled of manifests) {
+    for (const compiled of declaring) {
       expect(compiled.manifest.bindings, compiled.component).toContainEqual({
         name: 'SESSION_CLIENT_STORE',
         kind: 'durable_object_namespace',
         required: true,
       });
+      if (compiled.component === 'ar-lib-core') continue;
       const generated = generateWranglerConfig(compiled.component, config, maximalResourceIds());
       expect(generated.durable_objects?.bindings, compiled.component).toContainEqual({
         name: 'SESSION_CLIENT_STORE',
