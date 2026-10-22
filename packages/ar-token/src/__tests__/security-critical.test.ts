@@ -564,6 +564,17 @@ function resetAllMocks() {
 
 // ============================================================================
 
+/**
+ * RBAC reads get the tenant metadata database (role and organisation definitions) and the
+ * subject's account database (its assignments), never the account database as both.
+ */
+function tenantRBACDatabases(account: DatabaseAdapter) {
+  return expect.objectContaining({
+    account,
+    metadata: expect.toSatisfy((metadata: unknown) => Boolean(metadata) && metadata !== account),
+  });
+}
+
 function createRuntimeCoreAdapter(): DatabaseAdapter {
   return {
     query: vi.fn().mockResolvedValue([]),
@@ -889,17 +900,17 @@ describe('Security-Critical Tests', () => {
 
       expect(response.status).toBe(200);
       expect(mocks.mockGetAccessTokenRBACClaims).toHaveBeenCalledWith(
-        runtimeCoreAdapter,
+        tenantRBACDatabases(runtimeCoreAdapter),
         authCodeData.userId,
         expect.any(Object)
       );
       expect(mocks.mockGetIDTokenRBACClaims).toHaveBeenCalledWith(
-        runtimeCoreAdapter,
+        tenantRBACDatabases(runtimeCoreAdapter),
         authCodeData.userId,
         expect.any(Object)
       );
       expect(mocks.mockEvaluatePermissionEmbeddingForScope).toHaveBeenCalledWith(
-        runtimeCoreAdapter,
+        tenantRBACDatabases(runtimeCoreAdapter),
         authCodeData.userId,
         authCodeData.scope,
         expect.any(Object)
@@ -1112,17 +1123,17 @@ describe('Security-Critical Tests', () => {
 
       expect(response.status).toBe(200);
       expect(mocks.mockGetAccessTokenRBACClaims).toHaveBeenCalledWith(
-        runtimeCoreAdapter,
+        tenantRBACDatabases(runtimeCoreAdapter),
         refreshTokenPayload.sub,
         expect.any(Object)
       );
       expect(mocks.mockGetIDTokenRBACClaims).toHaveBeenCalledWith(
-        runtimeCoreAdapter,
+        tenantRBACDatabases(runtimeCoreAdapter),
         refreshTokenPayload.sub,
         expect.any(Object)
       );
       expect(mocks.mockEvaluatePermissionEmbeddingForScope).toHaveBeenCalledWith(
-        runtimeCoreAdapter,
+        tenantRBACDatabases(runtimeCoreAdapter),
         refreshTokenPayload.sub,
         refreshTokenPayload.scope,
         expect.any(Object)

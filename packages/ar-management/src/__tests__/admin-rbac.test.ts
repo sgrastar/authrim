@@ -339,11 +339,14 @@ describe('admin-rbac schema alignment', () => {
 
   it('adds organization members with membership_type and tenant-scoped guards', async () => {
     const coreAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT id FROM organizations WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['org-1', 'default']);
-          return { id: 'org-1' };
+      query: (sql, params) => {
+        if (sql.includes('FROM organizations') && sql.includes('id IN (?)')) {
+          expect(params).toEqual(['default', 'org-1']);
+          return [{ id: 'org-1' }];
         }
+        return [];
+      },
+      queryOne: (sql, params) => {
         if (sql.includes('SELECT subject_id FROM subject_org_membership')) {
           expect(params).toEqual(['default', 'org-1', 'user-1']);
           return null;
@@ -367,6 +370,8 @@ describe('admin-rbac schema alignment', () => {
 
     const res = await adminOrganizationMemberAddHandler(c);
     expect(res.status).toBe(201);
+    // The membership is written in the member's account database.
+    expect(mocked.resolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-1');
 
     const executeCalls = (coreAdapter.execute as any).mock.calls as Array<[string, unknown[]]>;
     expect(executeCalls).toContainEqual([
@@ -444,7 +449,11 @@ describe('admin-rbac schema alignment', () => {
   it('removes a role assignment of the user only, audits it and drops cached claims', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql) =>
-        sql.includes('FROM role_assignments ra') ? { id: 'ra-1', hierarchy_level: 10 } : null,
+        sql.includes('FROM role_assignments')
+          ? { id: 'ra-1', role_id: 'role-1' }
+          : sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
+            ? { id: 'role-1', hierarchy_level: 10 }
+            : null,
     });
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
     const rebacCache = { list: vi.fn(), delete: vi.fn() };
@@ -476,8 +485,8 @@ describe('admin-rbac schema alignment', () => {
   it('rejects assigning a role at the caller hierarchy level', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT * FROM roles WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['role-peer', 'default']);
+        if (sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')) {
+          expect(params).toEqual(['default', 'role-peer']);
           return {
             id: 'role-peer',
             name: 'peer',
@@ -511,11 +520,41 @@ describe('admin-rbac schema alignment', () => {
     expect(coreAdapter.execute).not.toHaveBeenCalled();
   });
 
+  it.each([0, false])('rejects assigning a role that is not assignable (%s)', async (flag) => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
+          ? { id: 'role-fixed', name: 'fixed', hierarchy_level: 10, is_assignable: flag }
+          : null,
+    });
+
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+
+    const c = createMockContext({
+      params: { id: 'user-1' },
+      body: { role_id: 'role-fixed' },
+    });
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles: ['admin'],
+      permissions: ['admin:roles:write'],
+      hierarchyLevel: 50,
+    });
+
+    const res = await adminUserRoleAssignHandler(c);
+
+    expect(res.status).toBe(403);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
   it('allows assigning a lower hierarchy role', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT * FROM roles WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['role-lower', 'default']);
+        if (sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')) {
+          expect(params).toEqual(['default', 'role-lower']);
           return {
             id: 'role-lower',
             name: 'lower',

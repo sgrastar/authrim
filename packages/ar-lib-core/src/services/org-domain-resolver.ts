@@ -16,6 +16,7 @@ import { ensureDatabaseAdapter } from '../db';
 import type { OrgDomainMapping, OrgDomainMappingRow } from '../types/policy-rules';
 import type { JITProvisioningConfig } from '../types/jit-config';
 import { createLogger } from '../utils/logger';
+import { findTenantOrganization, type TenantRBACDatabases } from './tenant-rbac';
 
 const log = createLogger().module('ORG-DOMAIN-RESOLVER');
 
@@ -210,7 +211,10 @@ function rowToResolvedOrg(row: OrgDomainMappingRow): ResolvedOrganization {
 /**
  * Join a user to an organization
  *
- * @param db - Database source
+ * The organisation is a tenant setting (metadata database); the membership is the user's account
+ * data (account database). See services/tenant-rbac.ts.
+ *
+ * @param dbs - The tenant's metadata and the user's account database
  * @param userId - User ID to add
  * @param orgId - Organization ID to join
  * @param tenantId - Tenant ID for isolation
@@ -218,22 +222,19 @@ function rowToResolvedOrg(row: OrgDomainMappingRow): ResolvedOrganization {
  * @returns Join result
  */
 export async function joinOrganization(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   userId: string,
   orgId: string,
   tenantId: string,
   membershipType: MembershipType = 'member'
 ): Promise<OrgJoinResult> {
-  const adapter = getAdapter(db);
+  const adapter = getAdapter(dbs.account);
   const membershipId = `mem_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
   try {
     // Check if organization exists
-    const orgCheck = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
-      [orgId, tenantId]
-    );
+    const orgCheck = await findTenantOrganization(dbs.metadata, tenantId, orgId);
 
     if (!orgCheck) {
       return {
@@ -285,14 +286,14 @@ export async function joinOrganization(
 /**
  * Join a user to multiple organizations
  *
- * @param db - Database source
+ * @param dbs - The tenant's metadata and the user's account database
  * @param userId - User ID to add
  * @param orgs - Array of organizations to join
  * @param tenantId - Tenant ID for isolation
  * @returns Array of join results
  */
 export async function joinOrganizations(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   userId: string,
   orgs: ResolvedOrganization[],
   tenantId: string
@@ -300,7 +301,7 @@ export async function joinOrganizations(
   const results: OrgJoinResult[] = [];
 
   for (const org of orgs) {
-    const result = await joinOrganization(db, userId, org.org_id, tenantId, org.membership_type);
+    const result = await joinOrganization(dbs, userId, org.org_id, tenantId, org.membership_type);
     results.push(result);
   }
 

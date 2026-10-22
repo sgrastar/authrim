@@ -119,6 +119,10 @@
             {
               "path": "026_external_idp_auth_state_invitation.sql",
               "checksum": "65fb32122c4d5f632a410cfa866d42d1f8471bc1d0996f235430b9fbd272b317"
+            },
+            {
+              "path": "027_rbac_assignments_cross_database_references.sql",
+              "checksum": "f20e2fb8f00dc6221154a8dd3b7b2b13b363d71c647dc8b2a025027bc876a94c"
             }
           ]
         },
@@ -692,6 +696,10 @@
         {
           "path": "026_external_idp_auth_state_invitation.sql",
           "checksum": "65fb32122c4d5f632a410cfa866d42d1f8471bc1d0996f235430b9fbd272b317"
+        },
+        {
+          "path": "027_rbac_assignments_cross_database_references.sql",
+          "checksum": "f20e2fb8f00dc6221154a8dd3b7b2b13b363d71c647dc8b2a025027bc876a94c"
         }
       ]
     },

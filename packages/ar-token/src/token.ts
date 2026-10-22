@@ -5,6 +5,7 @@ import type {
   Env,
   PollRpcResult,
   RefreshTokenLifetimePolicy,
+  TenantRBACDatabases,
 } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
@@ -831,6 +832,21 @@ function oauthError(
     },
     status
   );
+}
+
+/**
+ * The databases a subject's RBAC claims are read from: role and organisation definitions from the
+ * tenant metadata database, the subject's assignments from its account database (resolved into
+ * `authCtx` first).
+ */
+function tokenRBACDatabases(
+  c: Context<{ Bindings: Env }>,
+  authCtx: { tenantId: string; coreAdapter: DatabaseAdapter }
+): TenantRBACDatabases {
+  return {
+    metadata: createAuthContextFromHono(c, authCtx.tenantId).coreAdapter,
+    account: authCtx.coreAdapter,
+  };
 }
 
 async function resolveTrustedSubjectAccountRoute(
@@ -2772,12 +2788,12 @@ async function handleAuthorizationCodeGrant(
       'token_rbac_claims',
       () =>
         Promise.all([
-          getAccessTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
+          getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), authCodeData.sub, {
             cache: c.env.REBAC_CACHE,
             claimsConfig: tenantRBACClaimsConfig.accessToken,
             tenantId,
           }),
-          getIDTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
+          getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), authCodeData.sub, {
             cache: c.env.REBAC_CACHE,
             claimsConfig: tenantRBACClaimsConfig.idToken,
             tenantId,
@@ -2795,7 +2811,7 @@ async function handleAuthorizationCodeGrant(
   try {
     if (policyEmbeddingEnabled && authCodeData.scope) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
-        authCtx.coreAdapter,
+        tokenRBACDatabases(c, authCtx),
         authCodeData.sub,
         authCodeData.scope,
         {
@@ -2818,7 +2834,7 @@ async function handleAuthorizationCodeGrant(
     if (idLevelPermissionsEnabled) {
       const limits = await getEmbeddingLimits(c.env, getTenantIdFromContext(c));
       const allIdPerms = await evaluateIdLevelPermissions(
-        authCtx.coreAdapter,
+        tokenRBACDatabases(c, authCtx),
         authCodeData.sub,
         tenantId,
         { cache: c.env.REBAC_CACHE }
@@ -2845,9 +2861,13 @@ async function handleAuthorizationCodeGrant(
   try {
     if (customClaimsEnabled) {
       const limits = await getEmbeddingLimits(c.env, getTenantIdFromContext(c));
-      const evaluator = createTokenClaimEvaluator(authCtx.coreAdapter, c.env.REBAC_CACHE, {
-        maxCustomClaims: limits.max_custom_claims,
-      });
+      const evaluator = createTokenClaimEvaluator(
+        createAuthContextFromHono(c, authCtx.tenantId).coreAdapter,
+        c.env.REBAC_CACHE,
+        {
+          maxCustomClaims: limits.max_custom_claims,
+        }
+      );
 
       // Build evaluation context
       const claimContext: TokenClaimEvaluationContext = {
@@ -4145,12 +4165,12 @@ async function handleRefreshTokenGrant(
   const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
+      getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId,
       }),
-      getIDTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
+      getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId,
@@ -4168,7 +4188,7 @@ async function handleRefreshTokenGrant(
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
     if (policyEmbeddingEnabled && grantedScope) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
-        authCtx.coreAdapter,
+        tokenRBACDatabases(c, authCtx),
         refreshTokenData.sub,
         grantedScope,
         {
@@ -5366,12 +5386,12 @@ async function handleDeviceCodeGrant(
   const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, authCtx.tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
+      getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
-      getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
+      getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
@@ -5389,7 +5409,7 @@ async function handleDeviceCodeGrant(
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
-        authCtx.coreAdapter,
+        tokenRBACDatabases(c, authCtx),
         metadata.sub,
         metadata.scope,
         {
@@ -6050,12 +6070,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, authCtx.tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
+      getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
-      getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
+      getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub!, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
@@ -6073,7 +6093,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
-        authCtx.coreAdapter,
+        tokenRBACDatabases(c, authCtx),
         metadata.sub,
         metadata.scope,
         {

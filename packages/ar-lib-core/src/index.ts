@@ -425,6 +425,7 @@ export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';
 export * from './services/logout-fanout';
 export * from './services/invitation-auth-core';
+export * from './services/tenant-rbac';
 export * from './services/policy-resolver';
 export * from './services/custom-claims';
 export * from './services/custom-claim-schema-history';

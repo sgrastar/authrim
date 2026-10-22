@@ -21,6 +21,9 @@ import {
   resolveOrgByDomainHash,
   resolveAllOrgsByDomainHash,
   joinOrganization,
+  findTenantRole,
+  singleDatabaseRBAC,
+  type TenantRBACDatabases,
   assignRoleToUser,
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
@@ -1128,22 +1131,22 @@ async function applyTenantD1JITPlan(
     validation: input.plan.customClaimValidation,
   });
 
+  // Organisations and roles are defined in the tenant metadata database; the user's memberships
+  // and assignments go to its account database.
+  const rbac: TenantRBACDatabases = {
+    metadata: (await resolveTenantMetadataContext(env, input.tenantId)).coreDb,
+    account: account.coreDb,
+  };
   const orgsJoined: string[] = [];
   for (const orgId of input.plan.organizationIds) {
-    const joined = await joinOrganization(
-      account.coreDb,
-      input.userId,
-      orgId,
-      input.tenantId,
-      'member'
-    );
+    const joined = await joinOrganization(rbac, input.userId, orgId, input.tenantId, 'member');
     if (joined.success) orgsJoined.push(orgId);
   }
 
   const rolesAssigned: JITProvisioningResult['roles_assigned'] = [];
   for (const role of input.plan.roleAssignments) {
     const assigned = await assignRoleToUserInternal(
-      account.coreDb,
+      rbac,
       input.userId,
       role.roleId,
       role.scopeType,
@@ -1162,7 +1165,7 @@ async function applyTenantD1JITPlan(
     const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : 'global';
     const scopeType = orgsJoined.length > 0 ? 'org' : 'global';
     const assigned = await assignRoleToUserInternal(
-      account.coreDb,
+      rbac,
       input.userId,
       input.plan.defaultRoleId,
       scopeType,
@@ -1792,7 +1795,7 @@ async function createUserWithJITProvisioning(
   // Actually join the organizations
   for (const orgId of orgsToJoin) {
     const joinResult = await joinOrganization(
-      coreSource,
+      singleDatabaseRBAC(coreSource),
       id,
       orgId,
       params.tenantId,
@@ -1818,7 +1821,7 @@ async function createUserWithJITProvisioning(
     }
 
     const assignResult = await assignRoleToUserInternal(
-      coreSource,
+      singleDatabaseRBAC(coreSource),
       id,
       roleAssignment.role_id,
       roleAssignment.scope_type,
@@ -1842,7 +1845,7 @@ async function createUserWithJITProvisioning(
     const defaultScopeType = result.orgs_joined.length > 0 ? 'org' : 'global';
 
     const assignResult = await assignRoleToUserInternal(
-      coreSource,
+      singleDatabaseRBAC(coreSource),
       id,
       params.jitConfig.default_role_id,
       defaultScopeType,
@@ -1873,10 +1876,11 @@ async function createUserWithJITProvisioning(
 }
 
 /**
- * Assign role to user (internal helper)
+ * Assign role to user (internal helper). The role is a tenant setting (metadata database); the
+ * assignment is the user's account data (account database).
  */
 async function assignRoleToUserInternal(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   userId: string,
   roleId: string,
   scopeType: string,
@@ -1887,13 +1891,10 @@ async function assignRoleToUserInternal(
   const now = Math.floor(Date.now() / 1000);
 
   try {
-    const coreAdapter = ensureDatabaseAdapter(db, 'identity-stitching-role-assignment');
+    const coreAdapter = ensureDatabaseAdapter(dbs.account, 'identity-stitching-role-assignment');
 
     // Check if role exists
-    const roleCheck = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM roles WHERE id = ? AND tenant_id = ?',
-      [roleId, tenantId]
-    );
+    const roleCheck = await findTenantRole(dbs.metadata, tenantId, { id: roleId });
 
     if (!roleCheck) {
       // SECURITY: Do not expose role ID to prevent enumeration

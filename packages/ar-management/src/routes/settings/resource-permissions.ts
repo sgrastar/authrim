@@ -21,6 +21,7 @@ import {
   type ResourcePermissionInput,
   type ResourcePermissionSubjectType,
   hasIdLevelPermission,
+  resolveAccountCoreDataContext,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
@@ -437,14 +438,25 @@ export async function checkResourcePermission(c: Context) {
   const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    const allowed = await hasIdLevelPermission(
-      coreAdapter,
-      body.subject_id,
-      body.resource_type,
-      body.resource_id,
-      body.action,
-      tenantId
-    );
+    // Grants are in the tenant metadata database; the subject's roles, in its account database.
+    // A subject without an account has no permission.
+    const account = await resolveAccountCoreDataContext(c.env, {
+      tenantId,
+      accountId: body.subject_id,
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message === 'account_data_route_not_found') return null;
+      throw error;
+    });
+    const allowed = account
+      ? await hasIdLevelPermission(
+          { metadata: coreAdapter, account: account.coreDb },
+          body.subject_id,
+          body.resource_type,
+          body.resource_id,
+          body.action,
+          tenantId
+        )
+      : false;
 
     return c.json({
       allowed,

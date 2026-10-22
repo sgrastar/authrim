@@ -6,6 +6,7 @@ import { applyInvitationAssignments } from '../invitation-auth-core';
 import { joinOrganization } from '../org-domain-resolver';
 import { resolveScopedRoles } from '../../utils/rbac-claims';
 import { evaluatePermissionsForScope } from '../../utils/policy-embedding';
+import { singleDatabaseRBAC } from '../tenant-rbac';
 
 const NOW = 1_800_000_000;
 
@@ -47,13 +48,13 @@ describe('invitation assignments in the real schema', () => {
   });
 
   it('gives the role and the organisation to the user, once', async () => {
-    const first = await applyInvitationAssignments(adapter, {
+    const first = await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
       userId: 'user-1',
       tenantId: 'tenant-a',
       roleId: 'role-1',
       orgId: 'org-1',
     });
-    const second = await applyInvitationAssignments(adapter, {
+    const second = await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
       userId: 'user-1',
       tenantId: 'tenant-a',
       roleId: 'role-1',
@@ -85,25 +86,30 @@ describe('invitation assignments in the real schema', () => {
   });
 
   it('gives a role that token issuance and policy embedding read as tenant-wide', async () => {
-    await applyInvitationAssignments(adapter, {
+    await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
       userId: 'user-1',
       tenantId: 'tenant-a',
       roleId: 'role-1',
       orgId: null,
     });
 
-    expect(await resolveScopedRoles(adapter, 'user-1', 'tenant-a')).toEqual([
+    expect(await resolveScopedRoles(singleDatabaseRBAC(adapter), 'user-1', 'tenant-a')).toEqual([
       { name: 'member', scope: 'global' },
     ]);
     expect(
-      await evaluatePermissionsForScope(adapter, 'user-1', 'openid documents:read', {
-        tenantId: 'tenant-a',
-      })
+      await evaluatePermissionsForScope(
+        singleDatabaseRBAC(adapter),
+        'user-1',
+        'openid documents:read',
+        {
+          tenantId: 'tenant-a',
+        }
+      )
     ).toEqual(['documents:read']);
   });
 
   it("gives nothing from another tenant's role or organisation", async () => {
-    const result = await applyInvitationAssignments(adapter, {
+    const result = await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
       userId: 'user-1',
       tenantId: 'tenant-b',
       roleId: 'role-1',
@@ -117,7 +123,13 @@ describe('invitation assignments in the real schema', () => {
   });
 
   it('joins an organisation with the given membership type (external IdP domain rules)', async () => {
-    const joined = await joinOrganization(adapter, 'user-1', 'org-1', 'tenant-a', 'admin');
+    const joined = await joinOrganization(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'org-1',
+      'tenant-a',
+      'admin'
+    );
 
     expect(joined).toMatchObject({ success: true, org_id: 'org-1' });
     expect(

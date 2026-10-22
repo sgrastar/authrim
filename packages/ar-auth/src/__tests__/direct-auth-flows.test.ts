@@ -2543,12 +2543,16 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         now: expect.any(Number),
       });
       expect(mocks.applyInvitationAssignments).toHaveBeenCalledTimes(1);
-      expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(mocks.coreAdapter, {
-        userId: 'user_new',
-        tenantId: 'tenant_test',
-        roleId: 'role_member',
-        orgId: null,
-      });
+      // The role is defined where the invitation is; assigned in the account's database.
+      expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(
+        { metadata: mocks.coreAdapter, account: mocks.coreAdapter },
+        {
+          userId: 'user_new',
+          tenantId: 'tenant_test',
+          roleId: 'role_member',
+          orgId: null,
+        }
+      );
       // Claimed before anything is assigned, and assigned before the artifact is issued so the
       // first tokens can carry the role.
       expect(mocks.claimInvitationReservation.mock.invocationCallOrder[0]).toBeLessThan(
@@ -2615,7 +2619,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           expect.objectContaining({ userId: 'user_new' })
         );
         expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(
-          accountAdapter,
+          { metadata: mocks.coreAdapter, account: accountAdapter },
           expect.objectContaining({ userId: 'user_new', roleId: 'role_member' })
         );
       } finally {
@@ -5708,12 +5712,15 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         userId: 'user_existing',
         now: expect.any(Number),
       });
-      expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(mocks.coreAdapter, {
-        userId: 'user_existing',
-        tenantId: 'tenant_test',
-        roleId: null,
-        orgId: 'org_1',
-      });
+      expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(
+        { metadata: mocks.coreAdapter, account: mocks.coreAdapter },
+        {
+          userId: 'user_existing',
+          tenantId: 'tenant_test',
+          roleId: null,
+          orgId: 'org_1',
+        }
+      );
       // A failed optional assignment is logged; the sign-in still completes.
       expect(mocks.warn).toHaveBeenCalledWith(
         'Failed to assign organization from invitation',
@@ -5764,7 +5771,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         expect.objectContaining({ userId: 'user_existing' })
       );
       expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(
-        { adapter: 'tenant-core' },
+        { metadata: mocks.coreAdapter, account: { adapter: 'tenant-core' } },
         expect.objectContaining({ userId: 'user_existing', orgId: 'org_1' })
       );
     });

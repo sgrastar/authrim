@@ -19,6 +19,13 @@ import type {
 import type { RelationshipType, PermissionLevel, OrganizationType, PlanType } from '../types/rbac';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
+import {
+  isSet,
+  resolveSubjectOrganizations,
+  resolveSubjectRoles,
+  type ResolvedSubjectOrganization,
+  type TenantRBACDatabases,
+} from '../services/tenant-rbac';
 
 // =============================================================================
 // Consent RBAC Data Retrieval
@@ -42,31 +49,19 @@ export interface ConsentRBACData {
  * Fetches all organization memberships, primary org, and role assignments
  * for displaying on the consent screen.
  *
- * @param db - Database source
+ * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
  * @returns Consent RBAC data
  */
 export async function getConsentRBACData(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   subjectId: string,
   tenantId: string
 ): Promise<ConsentRBACData> {
-  const adapter = ensureDatabaseAdapter(db, 'consent-rbac');
-  const now = Math.floor(Date.now() / 1000);
   // Fetch organizations and roles in parallel
   const [orgs, roles] = await Promise.all([
-    resolveAllOrganizationsWithPlan(db, subjectId, tenantId),
-    adapter.query<{ name: string }>(
-      `SELECT DISTINCT r.name
-       FROM role_assignments ra
-       JOIN roles r ON ra.role_id = r.id
-       WHERE ra.subject_id = ?
-         AND ra.tenant_id = ?
-         AND r.tenant_id = ?
-         AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-       ORDER BY r.name ASC`,
-      [subjectId, tenantId, tenantId, now]
-    ),
+    resolveAllOrganizationsWithPlan(dbs, subjectId, tenantId),
+    resolveSubjectRoles(dbs, tenantId, subjectId),
   ]);
 
   // Find primary organization
@@ -75,7 +70,17 @@ export async function getConsentRBACData(
   return {
     organizations: orgs,
     primary_org: primaryOrg,
-    roles: roles.map((r) => r.name),
+    roles: [...new Set(roles.map(({ role }) => role.name))],
+  };
+}
+
+function consentOrgInfo({ organization, membership }: ResolvedSubjectOrganization): ConsentOrgInfo {
+  return {
+    id: organization.id,
+    name: organization.name,
+    type: organization.org_type as OrganizationType,
+    is_primary: isSet(membership.is_primary),
+    plan: organization.plan as PlanType,
   };
 }
 
@@ -85,41 +90,18 @@ export async function getConsentRBACData(
  * Extended version of resolveAllOrganizations that includes plan info
  * needed for consent screen display.
  *
- * @param db - Database source
+ * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
  * @returns Array of organization info with plan
  */
 async function resolveAllOrganizationsWithPlan(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   subjectId: string,
   tenantId: string
 ): Promise<ConsentOrgInfo[]> {
-  const adapter = ensureDatabaseAdapter(db, 'consent-rbac-orgs');
-  const rows = await adapter.query<{
-    id: string;
-    name: string;
-    org_type: string;
-    plan: string;
-    is_primary: number;
-  }>(
-    `SELECT o.id, o.name, o.org_type, o.plan, m.is_primary
-       FROM organizations o
-       JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE m.subject_id = ?
-         AND m.tenant_id = ?
-         AND o.tenant_id = ?
-         AND o.is_active = 1
-       ORDER BY m.is_primary DESC, o.name ASC`,
-    [subjectId, tenantId, tenantId]
+  return (await resolveSubjectOrganizations(dbs, tenantId, subjectId, { activeOnly: true })).map(
+    consentOrgInfo
   );
-
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    type: r.org_type as OrganizationType,
-    is_primary: r.is_primary === 1,
-    plan: r.plan as PlanType,
-  }));
 }
 
 // =============================================================================
@@ -145,35 +127,20 @@ export interface OrgAccessValidationResult {
  * 1. The organization exists and is active
  * 2. The user is a member of the organization
  *
- * @param db - Database source
+ * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
  * @param orgId - Target organization ID
  * @returns Validation result
  */
 export async function validateConsentOrgAccess(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   subjectId: string,
   orgId: string,
   tenantId: string
 ): Promise<OrgAccessValidationResult> {
-  const adapter = ensureDatabaseAdapter(db, 'consent-rbac-org-access');
-  const result = await adapter.queryOne<{
-    id: string;
-    name: string;
-    org_type: string;
-    plan: string;
-    is_primary: number;
-  }>(
-    `SELECT o.id, o.name, o.org_type, o.plan, m.is_primary
-       FROM organizations o
-       JOIN subject_org_membership m ON o.id = m.org_id
-       WHERE o.id = ?
-         AND o.tenant_id = ?
-         AND m.tenant_id = ?
-         AND m.subject_id = ?
-         AND o.is_active = 1`,
-    [orgId, tenantId, tenantId, subjectId]
-  );
+  const result = (
+    await resolveSubjectOrganizations(dbs, tenantId, subjectId, { activeOnly: true })
+  ).find(({ organization }) => organization.id === orgId);
 
   if (!result) {
     return {
@@ -184,13 +151,7 @@ export async function validateConsentOrgAccess(
 
   return {
     valid: true,
-    organization: {
-      id: result.id,
-      name: result.name,
-      type: result.org_type as OrganizationType,
-      is_primary: result.is_primary === 1,
-      plan: result.plan as PlanType,
-    },
+    organization: consentOrgInfo(result),
   };
 }
 
@@ -426,35 +387,27 @@ export function parseConsentFeatureFlags(
  * 1. Global scope (apply to all orgs)
  * 2. Org-scoped with the target organization
  *
- * @param db - Database source
+ * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
  * @param orgId - Target organization ID
  * @returns Array of role names
  */
 export async function getRolesInOrganization(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   subjectId: string,
   orgId: string,
   tenantId: string
 ): Promise<string[]> {
-  const now = Math.floor(Date.now() / 1000);
-  const adapter = ensureDatabaseAdapter(db, 'consent-rbac-org-roles');
-
-  const rows = await adapter.query<{ name: string }>(
-    `SELECT DISTINCT r.name
-       FROM role_assignments ra
-       JOIN roles r ON ra.role_id = r.id
-       WHERE ra.subject_id = ?
-         AND ra.tenant_id = ?
-         AND r.tenant_id = ?
-         AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-         AND (
-           ra.scope_type = 'global'
-           OR (ra.scope_type = 'org' AND ra.scope_target = ?)
-         )
-       ORDER BY r.name ASC`,
-    [subjectId, tenantId, tenantId, now, `org:${orgId}`]
-  );
-
-  return rows.map((r) => r.name);
+  const roles = await resolveSubjectRoles(dbs, tenantId, subjectId);
+  return [
+    ...new Set(
+      roles
+        .filter(
+          ({ assignment }) =>
+            assignment.scope_type === 'global' ||
+            (assignment.scope_type === 'org' && assignment.scope_target === `org:${orgId}`)
+        )
+        .map(({ role }) => role.name)
+    ),
+  ];
 }
