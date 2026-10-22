@@ -1476,7 +1476,12 @@ app.get('/api/v1/invitations/validate', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
-app.post('/api/v1/invitations/email-verification/:step{send|verify}', async (c) => {
+app.post('/api/v1/invitations/email-verification/send', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/api/v1/invitations/email-verification/verify', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
