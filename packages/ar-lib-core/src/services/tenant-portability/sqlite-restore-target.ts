@@ -289,8 +289,11 @@ export class SqliteRestoreTarget {
     );
     target.guard();
     await input.authorize();
+    // A shared database (Admin) keeps one receipt per tenant; another tenant's receipt there is
+    // not this target's. A dedicated database still admits only one receipt in all.
     const existing = await input.database.queryOne<{ id: string }>(
-      'SELECT id FROM tenant_backup_restore_targets LIMIT 1'
+      'SELECT id FROM tenant_backup_restore_targets WHERE tenant_id=? LIMIT 1',
+      [identity.tenantId]
     );
     if (!existing) {
       if (mode !== 'write') throw error();

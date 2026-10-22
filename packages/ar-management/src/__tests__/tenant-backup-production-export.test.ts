@@ -322,8 +322,13 @@ it('installs the production import targets, activation, and runtime-route verifi
     };
   };
   await expect(input.ports.import.planRestoreTargets(context, [])).resolves.toEqual([]);
-  await expect(input.ports.cleanup.cleanupAdditionalPage(context)).resolves.toEqual({ done: true });
-  await expect(input.ports.cleanup.assertClean(context)).resolves.toBeUndefined();
+  // Import cleanup is the restore-target discard, which reads its record from Admin.
+  await expect(input.ports.cleanup.cleanupAdditionalPage(context)).rejects.toThrow(
+    'DB_ADMIN is not configured'
+  );
+  await expect(input.ports.cleanup.assertClean(context)).rejects.toThrow(
+    'DB_ADMIN is not configured'
+  );
   await input.ports.import.prepareActivation(context);
   await input.ports.import.activate(context);
   await input.ports.import.verifyActivation(context);
@@ -353,7 +358,7 @@ it('allows import cleanup after the unpublished target lifecycle has changed', a
   await createProductionTenantBackupExportAdapter({ DB: platform } as unknown as Env, context);
 
   expect(platform.queryOne).toHaveBeenCalledWith(
-    expect.stringContaining('lifecycle_state IN (?,?)'),
-    ['tenant-a', 'provisioning', 'active']
+    expect.stringContaining('lifecycle_state IN (?,?,?)'),
+    ['tenant-a', 'provisioning', 'active', 'deleted']
   );
 });
