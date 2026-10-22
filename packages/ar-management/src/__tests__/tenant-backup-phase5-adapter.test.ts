@@ -121,7 +121,7 @@ function fixture() {
     },
     cleanup: {
       resolveSnapshotSource: vi.fn(async () => ({}) as never),
-      cleanupRestoreTarget: vi.fn(async () => {}),
+      cleanupRestoreTarget: vi.fn(async () => ({ done: true })),
       cleanupAdditionalPage: vi.fn(async () => ({ done: true })),
       assertClean: vi.fn(async () => {}),
     },

@@ -278,7 +278,8 @@ export const PROTECTION: SettingsPageDef = {
 };
 
 /**
- * Authentication → Enterprise SSO (SAML): whether the tenant answers SAML at all, how long what
+ * Authentication → Enterprise SSO (SAML): the institution the tenant stands for (its scopes and
+ * names, which only the platform can change), whether the tenant answers SAML at all, how long what
  * it issues and accepts stays valid, and the defaults a new SAML provider starts from. The
  * Artifact binding settings (`federation.saml_artifact_*`) stay in the draft until that binding
  * exists. Registering providers is still done in the previous Admin UI.
@@ -314,6 +315,15 @@ export const ENTERPRISE_SAML: SettingsPageDef = {
 				{ key: 'federation.saml_nameid_format', depth: 'primary' },
 				{ key: 'federation.saml_sso_binding', depth: 'advanced' },
 				{ key: 'federation.saml_slo_binding', depth: 'advanced' }
+			]
+		},
+		{
+			id: 'saml-institution',
+			title: 'set.section.samlInstitution',
+			description: 'set.section.samlInstitution.desc',
+			settings: [
+				{ key: 'institution.scopes', depth: 'primary' },
+				{ key: 'institution.display_names', depth: 'primary' }
 			]
 		}
 	]

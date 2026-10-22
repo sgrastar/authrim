@@ -358,6 +358,10 @@
             {
               "path": "047_log_row_archive.sql",
               "checksum": "9016348aa878b2f500436ad817943c76f58d970f5b1ce42647ada2249e203656"
+            },
+            {
+              "path": "048_tenant_backup_import_discards.sql",
+              "checksum": "df10ebed09bf42e58ab18751274a71d867d4f8f553b0ddc0ca26a04a85c2e3f0"
             }
           ]
         },
@@ -923,6 +927,10 @@
         {
           "path": "047_log_row_archive.sql",
           "checksum": "9016348aa878b2f500436ad817943c76f58d970f5b1ce42647ada2249e203656"
+        },
+        {
+          "path": "048_tenant_backup_import_discards.sql",
+          "checksum": "df10ebed09bf42e58ab18751274a71d867d4f8f553b0ddc0ca26a04a85c2e3f0"
         }
       ]
     },

@@ -369,6 +369,11 @@ export function sanitizeCopiedSettingsValue(
     }
   }
 
+  if (category === 'institution') {
+    // The scopes and names say which institution a tenant speaks for: the copy is another tenant's.
+    for (const key of ['institution.scopes', 'institution.display_names']) delete record[key];
+  }
+
   if (category === 'identity-mapping') {
     // The shadow comparison of the Mapping Set selection is gone with the resolution it compared
     // against: a saved value is dropped.

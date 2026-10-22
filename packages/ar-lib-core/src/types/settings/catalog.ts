@@ -44,6 +44,7 @@ import { SELF_SERVICE_CATEGORY_META } from './self-service';
 import { SERVICE_SITE_CATEGORY_META } from './service-site';
 import { IDENTITY_MAPPING_CATEGORY_META } from './identity-mapping';
 import { BULK_APPLY_CATEGORY_META } from './bulk-apply';
+import { INSTITUTION_CATEGORY_META } from './institution';
 
 /**
  * All category metadata for easy registration
@@ -104,6 +105,8 @@ export const ALL_CATEGORY_META = {
   'identity-mapping': IDENTITY_MAPPING_CATEGORY_META,
   // Limits of the bulk apply (platform)
   'bulk-apply': BULK_APPLY_CATEGORY_META,
+  // The institution a tenant stands for: its scopes and name (the platform sets them)
+  institution: INSTITUTION_CATEGORY_META,
 } as const;
 
 /**
@@ -124,6 +127,12 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   {
     allowedScopes: SettingScopeLevel[];
     scopePermissions?: Partial<Record<SettingScopeLevel, Partial<ScopePermission>>>;
+    /**
+     * A tenant's administrators may read the category but not change it: only a caller with
+     * platform authority (a role held through a global assignment, or a machine token for every
+     * tenant) may. For settings that say what the tenant is allowed to claim, not how it works.
+     */
+    tenantEditRequiresPlatformAuthority?: boolean;
   }
 > = {
   // Platform-only categories (infrastructure settings)
@@ -261,6 +270,12 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['platform'],
   },
 
+  // The institution's scopes and names: a tenant reads them, the platform sets them.
+  institution: {
+    allowedScopes: ['tenant'],
+    tenantEditRequiresPlatformAuthority: true,
+  },
+
   // Diagnostic Logging (tenant + client in future)
   'diagnostic-logging': {
     allowedScopes: ['tenant'], // Phase 1: tenant only, will add 'client' in future
@@ -269,6 +284,14 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['tenant'],
   },
 };
+
+/**
+ * Whether changing a category's settings for a tenant takes platform authority, beyond the roles
+ * its scope permissions name (see `tenantEditRequiresPlatformAuthority`).
+ */
+export function categoryTenantEditRequiresPlatformAuthority(categoryName: CategoryName): boolean {
+  return CATEGORY_SCOPE_CONFIG[categoryName]?.tenantEditRequiresPlatformAuthority === true;
+}
 
 /**
  * Get scoped category metadata for a category

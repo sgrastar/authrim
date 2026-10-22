@@ -37,6 +37,11 @@ interface ContainerInputRow {
 interface RestoreSequenceRow {
   payload_json: string;
 }
+interface DiscardRow {
+  decision: 'none' | 'discard' | null;
+  blocker_kind: string | null;
+  blocker_json: string | null;
+}
 
 export interface TenantBackupOperationProgress {
   registered: number;
@@ -66,6 +71,14 @@ export interface TenantBackupOperationView extends TenantBackupOperationSummary 
   adminMapping: TenantBackupAdminMappingStatus | null;
   heldRecords: TenantBackupRestoreHoldSummary[];
   progress: TenantBackupOperationProgress | null;
+  /**
+   * Import cleanup that discards the restored tenant: whether it does, and while it is stopped,
+   * why (for example the legal holds that keep it from deleting anything).
+   */
+  discard: {
+    decision: 'none' | 'discard' | null;
+    blocker: { kind: string; detail: unknown } | null;
+  } | null;
   preview: {
     planDigest: string;
     datasetCount: number;
@@ -129,46 +142,61 @@ export class TenantBackupOperationReadModel {
     const operation = await this.operations.get(tenantId, operationId);
     if (!operation) return null;
     const intent = await this.requests.load(tenantId, operationId);
-    const [publication, plan, datasets, adminMapping, heldRecords, containerInputs, sequence] =
-      await Promise.all([
-        this.database.queryOne<PublicationRow>(
-          'SELECT expires_at FROM tenant_backup_publications WHERE tenant_id=? AND operation_id=?',
-          [tenantId, operationId]
-        ),
-        this.database.queryOne<PlanRow>(
-          `SELECT state,item_count,chain_digest FROM tenant_backup_restore_plan_inventories
+    const [
+      publication,
+      plan,
+      datasets,
+      adminMapping,
+      heldRecords,
+      containerInputs,
+      sequence,
+      discardRow,
+    ] = await Promise.all([
+      this.database.queryOne<PublicationRow>(
+        'SELECT expires_at FROM tenant_backup_publications WHERE tenant_id=? AND operation_id=?',
+        [tenantId, operationId]
+      ),
+      this.database.queryOne<PlanRow>(
+        `SELECT state,item_count,chain_digest FROM tenant_backup_restore_plan_inventories
          WHERE tenant_id=? AND operation_id=?`,
-          [tenantId, operationId]
-        ),
-        this.database.query<DatasetRow>(
-          `SELECT i.dataset_id,sum(i.record_count) record_count
+        [tenantId, operationId]
+      ),
+      this.database.query<DatasetRow>(
+        `SELECT i.dataset_id,sum(i.record_count) record_count
          FROM tenant_backup_dataset_inspections i
          JOIN tenant_backup_validation_sessions s ON s.id=i.session_id AND s.tenant_id=i.tenant_id
          WHERE s.tenant_id=? AND s.operation_id=?
          GROUP BY i.dataset_id ORDER BY i.dataset_id LIMIT 4096`,
-          [tenantId, operationId]
-        ),
-        intent.kind === 'import' && intent.selection.admin
-          ? new TenantBackupAdminMappingStore(this.database).status(tenantId, operationId)
-          : null,
-        intent.kind === 'import'
-          ? new TenantBackupRestoreHoldStore(this.database).summaries(tenantId, operationId)
-          : [],
-        intent.kind === 'import'
-          ? this.database.query<ContainerInputRow>(
-              `SELECT dataset_stats_json FROM tenant_backup_container_inputs
+        [tenantId, operationId]
+      ),
+      intent.kind === 'import' && intent.selection.admin
+        ? new TenantBackupAdminMappingStore(this.database).status(tenantId, operationId)
+        : null,
+      intent.kind === 'import'
+        ? new TenantBackupRestoreHoldStore(this.database).summaries(tenantId, operationId)
+        : [],
+      intent.kind === 'import'
+        ? this.database.query<ContainerInputRow>(
+            `SELECT dataset_stats_json FROM tenant_backup_container_inputs
              WHERE tenant_id=? AND operation_id=? ORDER BY bundle_id`,
-              [tenantId, operationId]
-            )
-          : [],
-        intent.kind === 'import'
-          ? this.database.queryOne<RestoreSequenceRow>(
-              `SELECT payload_json FROM tenant_backup_restore_plan_inventory_items
+            [tenantId, operationId]
+          )
+        : [],
+      intent.kind === 'import'
+        ? this.database.queryOne<RestoreSequenceRow>(
+            `SELECT payload_json FROM tenant_backup_restore_plan_inventory_items
              WHERE tenant_id=? AND operation_id=? AND item_id='sqlite-restore-sequence'`,
-              [tenantId, operationId]
-            )
-          : null,
-      ]);
+            [tenantId, operationId]
+          )
+        : null,
+      intent.kind === 'import'
+        ? this.database.queryOne<DiscardRow>(
+            `SELECT decision,blocker_kind,blocker_json FROM tenant_backup_import_discards
+             WHERE tenant_id=? AND operation_id=?`,
+            [tenantId, operationId]
+          )
+        : null,
+    ]);
     if (
       datasets.some(
         ({ dataset_id, record_count }) =>
@@ -273,6 +301,18 @@ export class TenantBackupOperationReadModel {
         adminMapping,
         heldRecords,
         progress,
+        discard: discardRow
+          ? {
+              decision: discardRow.decision,
+              blocker:
+                discardRow.blocker_kind && discardRow.blocker_json
+                  ? {
+                      kind: discardRow.blocker_kind,
+                      detail: JSON.parse(discardRow.blocker_json) as unknown,
+                    }
+                  : null,
+            }
+          : null,
         publication: publication
           ? { expiresAt: publication.expires_at, downloadAvailable: publication.expires_at > now }
           : null,

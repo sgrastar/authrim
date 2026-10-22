@@ -33,8 +33,8 @@ import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
 import { getSAMLIdPSigningMaterial } from '../common/idp-signing';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
-  buildSAMLAttributesForSP,
   resolveSAMLIdentityMappingFieldMappingBinding,
+  MissingRequiredSAMLAttributeError,
   SAMLIdentityMappingRuntimeError,
 } from './attributes';
 import { applySAMLResponseSigningPolicy } from './signing';
@@ -59,7 +59,9 @@ import {
 import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
 import { resolveSAMLRuntimeIdentityMapping } from './runtime-identity-mapping';
 import { checkSAMLAuthnAssurance } from './authn-assurance';
-import { scheduleSAMLPolicyFailureAudit } from './audit';
+import { scheduleSAMLAttributeWithheldAudit, scheduleSAMLPolicyFailureAudit } from './audit';
+import { releaseSAMLAttributesWithInstitution } from './institution-release';
+import type { SAMLWithheldScopedValues } from './institution-scope';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -196,7 +198,14 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         consentTransactionId,
         c,
         log,
-        authnAssurance.outcome === 'met' ? authnAssurance : undefined
+        authnAssurance.outcome === 'met' ? authnAssurance : undefined,
+        (withheld) =>
+          scheduleSAMLAttributeWithheldAudit(c, {
+            tenantId,
+            spEntityId: spConfig.entityId,
+            authnRequestId: consentTransactionId,
+            withheld,
+          })
       );
     } catch (error) {
       if (error instanceof SAMLAuthnContextPolicyError) {
@@ -213,6 +222,27 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
           policyDetails: { reason: 'no_class_ref' },
         });
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
+      if (error instanceof MissingRequiredSAMLAttributeError) {
+        // No assertion without a required attribute (there is no SAML error answer to an
+        // IdP-initiated sign-in). The administrator gets the attributes, and the scoped values
+        // that were withheld on the way (reason and scope, no value).
+        log.warn('SAML attribute release policy failed', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          missingAttributes: error.missingAttributes,
+        });
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: consentTransactionId,
+          failureKind: 'required_attribute_missing',
+          missingAttributes: error.missingAttributes,
+          ...(error.withheldScopedValues.length > 0
+            ? { policyDetails: { withheld: error.withheldScopedValues } }
+            : {}),
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
       if (
         error instanceof SAMLIdentityMappingRuntimeError ||
@@ -498,7 +528,9 @@ async function generateIdPInitiatedResponse(
     error(message: string, context?: Record<string, unknown>, error?: Error): void;
   },
   /** The class reference chosen for the AAL reached, and what the one issued is checked against. */
-  assurance?: { classRef?: string; guard: SAMLClassRefGuard }
+  assurance?: { classRef?: string; guard: SAMLClassRefGuard },
+  /** Told what scoped values the tenant's institution scopes kept out of the assertion. */
+  onScopedValuesWithheld?: (withheld: SAMLWithheldScopedValues[]) => void
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
@@ -531,33 +563,43 @@ async function generateIdPInitiatedResponse(
     idpEntityId,
     spConfig
   );
-  // The assurance values a mapping releases come from the person's evidence, read only when
-  // one is released.
-  const releaseSubject = await withSAMLAssuranceAttributes(userInfo, {
-    requestScope,
-    env,
-    tenantId,
-    userId: authSession.userId,
-    identityMapping,
-    mappingContext: {
-      role: 'idp',
-      tenantId,
-      localEntityId: idpEntityId,
-      partnerEntityId: spConfig.entityId,
-    },
-    onError: (message, error) =>
-      log.error(
-        message,
-        { tenantId, spEntityId: spConfig.entityId },
-        error instanceof Error ? error : new Error(String(error))
-      ),
-  });
-  let attributes = buildSAMLAttributesForSP(releaseSubject, {
-    ...spConfig,
+  const mappingContext = {
+    role: 'idp' as const,
     tenantId,
     localEntityId: idpEntityId,
-    identityMapping,
+    partnerEntityId: spConfig.entityId,
+  };
+  const onReadError = (message: string, error: unknown) =>
+    log.error(
+      message,
+      { tenantId, spEntityId: spConfig.entityId },
+      error instanceof Error ? error : new Error(String(error))
+    );
+  // The assurance values a mapping releases come from the person's evidence, read only when
+  // one is released. The tenant's institution (the scopes the scoped attributes must be under,
+  // and the attributes a mapping may release about it) is applied when the mapping has a use for it.
+  const release = await releaseSAMLAttributesWithInstitution({
+    env,
+    tenantId,
+    subject: await withSAMLAssuranceAttributes(userInfo, {
+      requestScope,
+      env,
+      tenantId,
+      userId: authSession.userId,
+      identityMapping,
+      mappingContext,
+      onError: onReadError,
+    }),
+    releaseConfig: {
+      ...spConfig,
+      tenantId,
+      localEntityId: idpEntityId,
+      identityMapping,
+    },
+    onError: onReadError,
   });
+  if (release.withheldScopedValues?.length) onScopedValuesWithheld?.(release.withheldScopedValues);
+  let attributes = release.attributes;
   let destinationFieldConsentConfirmed: { consentRecordId: string } | undefined;
   if (identityMapping?.destinationProfileId) {
     const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
