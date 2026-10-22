@@ -8,6 +8,10 @@ import {
   ialAssuranceValuesProblem,
   ialMapProblem,
   idaProfileProblem,
+  institutionDisplayNamesProblem,
+  institutionScopesProblem,
+  INSTITUTION_DISPLAY_NAMES_KEY,
+  INSTITUTION_SCOPES_KEY,
   outboundAcrMappingsProblem,
   samlAuthnContextAALProblem,
   SCIM_MAX_IAL_MAX,
@@ -610,6 +614,29 @@ export function validateDcrPatch(body: SettingsPatchRequest): string | null {
   return null;
 }
 
+/**
+ * The institution category: the scopes are one to twenty distinct lowercase domain names and the
+ * names are JSON text with at least ja and en (see services/tenant-institution.ts). A value cannot
+ * be disabled: "none" is a cleared key, never a marker the reader would turn into something else.
+ */
+export function validateInstitutionPatch(body: SettingsPatchRequest): string | null {
+  const unknown = validateKnownSettingKeys('institution', 'institution', body);
+  if (unknown) return unknown;
+  if ((body.disable ?? []).length > 0) {
+    return 'institution settings cannot be disabled; clear them to have none';
+  }
+  for (const [key, problemOf] of [
+    [INSTITUTION_SCOPES_KEY, institutionScopesProblem],
+    [INSTITUTION_DISPLAY_NAMES_KEY, institutionDisplayNamesProblem],
+  ] as const) {
+    if (body.set && key in body.set) {
+      const problem = problemOf(body.set[key]);
+      if (problem) return `${key} ${problem}`;
+    }
+  }
+  return null;
+}
+
 const OIDC_DEFAULT_SET_KEY = 'identity_mapping.oidc_default_set_id';
 
 /**
@@ -651,6 +678,7 @@ const CATEGORY_VALIDATION_KIND: Readonly<Record<string, ValidationKind>> = {
   plugin: 'value',
   'diagnostic-logging': 'value',
   'bulk-apply': 'value',
+  institution: 'value',
   assurance: 'value',
   oauth: 'value',
   tokens: 'value',
@@ -680,6 +708,8 @@ export function validateCategoryPatch(
       return validateIdentityMappingPatch(body, scope === 'platform' ? 'platform' : 'tenant');
     case 'bulk-apply':
       return validateKnownSettingKeys('bulk-apply', 'bulk apply', body);
+    case 'institution':
+      return validateInstitutionPatch(body);
     case 'tenant':
       return validateKnownSettingKeys('tenant', 'tenant', body);
     case 'dcr':

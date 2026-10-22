@@ -69,10 +69,32 @@ const SETTINGS_SUPER_ROLES = ['super_admin', 'system_admin'];
  * - `super_admin` and `system_admin` open every category;
  * - a category no role may edit at a scope is read-only there, for everyone (infrastructure
  *   and encryption on the platform: they are set when deploying);
- * - a category not offered at the scope (session settings for the platform) is `none`.
+ * - a category not offered at the scope (session settings for the platform) is `none`;
+ * - a category only the platform may change for a tenant (the institution) is `view` for the
+ *   tenant's own admins, whatever their role.
  * Machine and agent callers are checked by permission instead; they do not use the console.
  */
 export function settingsLevel(
+	access: AdminAccess,
+	category: CategoryName,
+	scope: SettingScopeLevel
+): AccessLevel {
+	const level = roleSettingsLevel(access, category, scope);
+	// The API asks for a role held through a global assignment. The session says only that the
+	// admin holds one (`platform`) and which roles they have, so an admin with a global read-only
+	// role who is a super_admin of one tenant is offered controls that the API then refuses.
+	if (
+		level === 'edit' &&
+		scope === 'tenant' &&
+		CATEGORY_SCOPE_CONFIG[category].tenantEditRequiresPlatformAuthority &&
+		!(access.platform && access.roles.some((role) => SETTINGS_SUPER_ROLES.includes(role)))
+	) {
+		return 'view';
+	}
+	return level;
+}
+
+function roleSettingsLevel(
 	access: AdminAccess,
 	category: CategoryName,
 	scope: SettingScopeLevel

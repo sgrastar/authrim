@@ -6,8 +6,14 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import type { Env, TenantInstitution } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+  institutionFromSettings,
+  resolveEffectiveSettings,
+} from '@authrim/ar-lib-core';
 import {
   SAML_NAMESPACES,
   BINDING_URIS,
@@ -56,6 +62,20 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
     getSAMLPublicSettings(env, tenantId),
   ]);
   const { issuerUrl, idpEntityId: entityId } = entityIds;
+
+  // The tenant's institution (its scopes and name), when it has set them. A tenant whose settings
+  // cannot be read gets no metadata rather than metadata without its scopes: a service provider
+  // that took the scopes out would refuse the assertions that carry them, for as long as it
+  // caches the metadata.
+  let institution: TenantInstitution;
+  try {
+    institution = institutionFromSettings(
+      await resolveEffectiveSettings(env, 'institution', { tenantId })
+    );
+  } catch (error) {
+    log.error('Failed to read the tenant institution settings', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
   const signingContext = buildSAMLIdPSigningContext({
     tenantId,
     settings,
@@ -76,6 +96,7 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
     entityId,
     issuerUrl,
     signingCertificates,
+    institution,
   });
 
   if (shouldSignSAMLMetadata(env)) {
@@ -101,6 +122,11 @@ export interface IdPMetadataOptions {
   issuerUrl: string;
   signingCertificates: SAMLMetadataSigningCertificate[];
   validUntil?: string;
+  /**
+   * The tenant's institution. Its scopes are published as shibmd:Scope, and its names are the
+   * organization's. Left out, or with none set, the metadata names Authrim and has no scope.
+   */
+  institution?: Pick<TenantInstitution, 'scopes' | 'displayNames'>;
 }
 
 /**
@@ -108,6 +134,9 @@ export interface IdPMetadataOptions {
  */
 export function buildIdPMetadata(options: IdPMetadataOptions): string {
   const { entityId, issuerUrl, signingCertificates } = options;
+  const scopes =
+    options.institution?.scopes.state === 'set' ? options.institution.scopes.scopes : [];
+  const organizationNames = Object.entries(options.institution?.displayNames ?? {});
 
   const doc = createDocument();
 
@@ -123,6 +152,7 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
     md: SAML_NAMESPACES.MD,
     ds: SAML_NAMESPACES.DS,
     saml: SAML_NAMESPACES.SAML2,
+    ...(scopes.length > 0 ? { shibmd: SAML_NAMESPACES.SHIBMD } : {}),
   });
 
   // Create IDPSSODescriptor
@@ -133,6 +163,19 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
     'urn:oasis:names:tc:SAML:2.0:protocol'
   );
   setAttribute(idpSsoDescriptor, 'WantAuthnRequestsSigned', 'false');
+
+  // The scopes the IdP speaks for: a service provider accepts a scoped value only under one of
+  // them. Extensions comes first in the descriptor.
+  if (scopes.length > 0) {
+    const extensions = createElement(doc, SAML_NAMESPACES.MD, 'Extensions', 'md');
+    for (const scope of scopes) {
+      const scopeElement = createElement(doc, SAML_NAMESPACES.SHIBMD, 'Scope', 'shibmd');
+      setAttribute(scopeElement, 'regexp', 'false');
+      setTextContent(scopeElement, scope);
+      appendChild(extensions, scopeElement);
+    }
+    appendChild(idpSsoDescriptor, extensions);
+  }
 
   for (const signingCertificate of signingCertificates) {
     appendChild(idpSsoDescriptor, buildSigningKeyDescriptor(doc, signingCertificate));
@@ -183,20 +226,30 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
   // Add Organization (optional but recommended)
   const organization = createElement(doc, SAML_NAMESPACES.MD, 'Organization', 'md');
 
-  const orgName = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationName', 'md');
-  setAttributeNS(orgName, SAML_NAMESPACES.XML, 'xml:lang', 'en');
-  setTextContent(orgName, 'Authrim');
-  appendChild(organization, orgName);
-
-  const orgDisplayName = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationDisplayName', 'md');
-  setAttributeNS(orgDisplayName, SAML_NAMESPACES.XML, 'xml:lang', 'en');
-  setTextContent(orgDisplayName, 'Authrim Identity Provider');
-  appendChild(organization, orgDisplayName);
-
-  const orgUrl = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationURL', 'md');
-  setAttributeNS(orgUrl, SAML_NAMESPACES.XML, 'xml:lang', 'en');
-  setTextContent(orgUrl, issuerUrl);
-  appendChild(organization, orgUrl);
+  // The schema wants the names, then the display names, then the URLs. The tenant's institution
+  // names itself in each language it gave; otherwise it is Authrim, in English.
+  const languages: Array<{ lang: string; name: string; displayName: string }> =
+    organizationNames.length > 0
+      ? organizationNames.map(([lang, name]) => ({ lang, name, displayName: name }))
+      : [{ lang: 'en', name: 'Authrim', displayName: 'Authrim Identity Provider' }];
+  for (const { lang, name } of languages) {
+    const orgName = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationName', 'md');
+    setAttributeNS(orgName, SAML_NAMESPACES.XML, 'xml:lang', lang);
+    setTextContent(orgName, name);
+    appendChild(organization, orgName);
+  }
+  for (const { lang, displayName } of languages) {
+    const orgDisplayName = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationDisplayName', 'md');
+    setAttributeNS(orgDisplayName, SAML_NAMESPACES.XML, 'xml:lang', lang);
+    setTextContent(orgDisplayName, displayName);
+    appendChild(organization, orgDisplayName);
+  }
+  for (const { lang } of languages) {
+    const orgUrl = createElement(doc, SAML_NAMESPACES.MD, 'OrganizationURL', 'md');
+    setAttributeNS(orgUrl, SAML_NAMESPACES.XML, 'xml:lang', lang);
+    setTextContent(orgUrl, issuerUrl);
+    appendChild(organization, orgUrl);
+  }
 
   appendChild(entityDescriptor, organization);
 

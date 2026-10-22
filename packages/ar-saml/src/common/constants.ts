@@ -9,6 +9,8 @@ export const SAML_NAMESPACES = {
   SAML2P: 'urn:oasis:names:tc:SAML:2.0:protocol',
   SAML2: 'urn:oasis:names:tc:SAML:2.0:assertion',
   MD: 'urn:oasis:names:tc:SAML:2.0:metadata',
+  /** Shibboleth metadata extensions (shibmd:Scope). */
+  SHIBMD: 'urn:mace:shibboleth:metadata:1.0',
   DS: 'http://www.w3.org/2000/09/xmldsig#',
   XENC: 'http://www.w3.org/2001/04/xmlenc#',
   XENC11: 'http://www.w3.org/2009/xmlenc11#',
