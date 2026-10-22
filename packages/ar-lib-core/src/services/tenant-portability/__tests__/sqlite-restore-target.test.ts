@@ -599,6 +599,402 @@ it('keeps the installed tenant isolation policy while restoring tenant settings'
     isolation_policy: 'tenant_exclusive',
   });
 });
+it('never moves another tenant seed row that shares an id-only primary key', async () => {
+  // Mirrors admin.field_catalogs: the key is `id` alone and tenant_id is an ordinary column.
+  db.exec(
+    "CREATE TABLE catalogs(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL,name TEXT NOT NULL); INSERT INTO catalogs VALUES ('own','a','installed'),('shared','b','tenant b')"
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const catalogPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'admin.field_catalogs' },
+    schema: {
+      table: 'catalogs',
+      columns: ['id', 'tenant_id', 'name'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    restoreReplacesInstalledSeedRows: true,
+    restoreAllowsAdditionalRows: true,
+  };
+  const catalogManifest: TenantBundleManifest = {
+    ...manifest,
+    datasets: [catalogPolicy.dataset],
+  };
+  const catalogRow = (id: string, name: string) =>
+    JSON.stringify({ id: ['text', id], tenant_id: ['text', 'a'], name: ['text', name] });
+  const tenantB = () => db.prepare("SELECT * FROM catalogs WHERE id='shared'").get();
+  const before = tenantB();
+  const target = await SqliteRestoreTarget.open(input());
+
+  await target.writeRow(catalogPolicy, catalogManifest, catalogRow('own', 'restored'));
+  await target.writeRows(catalogPolicy, catalogManifest, [catalogRow('own', 'restored again')]);
+  expect(db.prepare("SELECT tenant_id,name FROM catalogs WHERE id='own'").get()).toEqual({
+    tenant_id: 'a',
+    name: 'restored again',
+  });
+
+  await expect(
+    target.writeRow(catalogPolicy, catalogManifest, catalogRow('shared', 'taken over'))
+  ).rejects.toThrow('backup_restore_target_rejected');
+  await expect(
+    target.writeRows(catalogPolicy, catalogManifest, [
+      catalogRow('new', 'inserted'),
+      catalogRow('shared', 'taken over'),
+    ])
+  ).rejects.toThrow('backup_restore_target_rejected');
+  expect(tenantB()).toEqual(before);
+  // The batch is refused before it is sent, so none of its rows were written.
+  expect(db.prepare("SELECT count(*) AS n FROM catalogs WHERE id='new'").get()).toEqual({ n: 0 });
+});
+it('replaces an owned seed row whose table has update triggers', async () => {
+  // D1 reports changes made by triggers too, so a seed update must not depend on its row count.
+  db.exec(
+    "CREATE TABLE claims(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL,name TEXT NOT NULL); CREATE TABLE claim_epochs(tenant_id TEXT NOT NULL); CREATE TRIGGER claims_epoch AFTER UPDATE ON claims BEGIN INSERT INTO claim_epochs VALUES (NEW.tenant_id); END; INSERT INTO claims VALUES ('own','a','installed')"
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const options = input();
+  const totalChanges = () =>
+    Number((db.prepare('SELECT total_changes() AS n').get() as { n: number }).n);
+  const execute = options.database.execute;
+  options.database.execute = async (sql, params) => {
+    const before = totalChanges();
+    const result = await execute(sql, params);
+    return { ...result, rowsAffected: totalChanges() - before };
+  };
+  options.database.batch = async (statements) => {
+    batchCalls++;
+    db.exec('BEGIN');
+    try {
+      const results = statements.map(({ sql, params = [] }) => {
+        const before = totalChanges();
+        db.prepare(sql).run(...(params as SQLInputValue[]));
+        return { success: true, rowsAffected: totalChanges() - before };
+      });
+      db.exec('COMMIT');
+      return results;
+    } catch (cause) {
+      db.exec('ROLLBACK');
+      throw cause;
+    }
+  };
+  const claimPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'core.custom_claim_schemas' },
+    schema: {
+      table: 'claims',
+      columns: ['id', 'tenant_id', 'name'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    restoreReplacesInstalledSeedRows: true,
+  };
+  const claimManifest: TenantBundleManifest = { ...manifest, datasets: [claimPolicy.dataset] };
+  const claimRow = (name: string) =>
+    JSON.stringify({ id: ['text', 'own'], tenant_id: ['text', 'a'], name: ['text', name] });
+  const target = await SqliteRestoreTarget.open(options);
+  await target.writeRow(claimPolicy, claimManifest, claimRow('restored'));
+  await target.writeRows(claimPolicy, claimManifest, [claimRow('restored again')]);
+  expect(db.prepare('SELECT name FROM claims').get()).toEqual({ name: 'restored again' });
+  expect(db.prepare('SELECT count(*) AS n FROM claim_epochs').get()).toEqual({ n: 2 });
+});
+it('keeps the conflict update guarded when ownership changes after the seed key check', async () => {
+  db.exec(
+    "CREATE TABLE catalogs(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL,name TEXT NOT NULL); INSERT INTO catalogs VALUES ('race','a','installed')"
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const options = input();
+  const queryOne = options.database.queryOne;
+  options.database.queryOne = async (sql, params) => {
+    const result = await queryOne(sql, params);
+    // Another tenant takes the key between the ownership check and the write.
+    if (sql.includes('AS foreign_row'))
+      db.prepare("UPDATE catalogs SET tenant_id='b',name='tenant b' WHERE id='race'").run();
+    return result;
+  };
+  const catalogPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'admin.field_catalogs' },
+    schema: {
+      table: 'catalogs',
+      columns: ['id', 'tenant_id', 'name'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    restoreReplacesInstalledSeedRows: true,
+  };
+  const catalogManifest: TenantBundleManifest = { ...manifest, datasets: [catalogPolicy.dataset] };
+  const raceRow = JSON.stringify({
+    id: ['text', 'race'],
+    tenant_id: ['text', 'a'],
+    name: ['text', 'taken over'],
+  });
+  const target = await SqliteRestoreTarget.open(options);
+  await expect(target.writeRow(catalogPolicy, catalogManifest, raceRow)).rejects.toThrow(
+    'backup_restore_target_rejected'
+  );
+  expect(db.prepare("SELECT tenant_id,name FROM catalogs WHERE id='race'").get()).toEqual({
+    tenant_id: 'b',
+    name: 'tenant b',
+  });
+  db.prepare("UPDATE catalogs SET tenant_id='a',name='installed' WHERE id='race'").run();
+  await target.writeRows(catalogPolicy, catalogManifest, [raceRow]);
+  expect(db.prepare("SELECT tenant_id,name FROM catalogs WHERE id='race'").get()).toEqual({
+    tenant_id: 'b',
+    name: 'tenant b',
+  });
+  await expect(target.verifyRows(catalogPolicy, catalogManifest, [raceRow])).rejects.toThrow();
+});
+it.each([
+  {
+    name: 'scope',
+    setup:
+      "CREATE TABLE seeds(id TEXT NOT NULL PRIMARY KEY,scope_type TEXT NOT NULL,scope_id TEXT NOT NULL,name TEXT NOT NULL); INSERT INTO seeds VALUES ('shared','tenant','b','tenant b')",
+    columns: ['id', 'scope_type', 'scope_id', 'name'],
+    schema: { tenantColumn: 'scope_id', scopeTypeColumn: 'scope_type' },
+    row: { scope_type: ['text', 'tenant'], scope_id: ['text', 'a'] },
+    extra: {},
+  },
+  {
+    name: 'tenantKey',
+    setup:
+      "CREATE TABLE seeds(id TEXT NOT NULL PRIMARY KEY,tenant_key TEXT NOT NULL,name TEXT NOT NULL); INSERT INTO seeds VALUES ('shared','key-b','tenant b')",
+    columns: ['id', 'tenant_key', 'name'],
+    schema: { tenantColumn: 'tenant_key', tenantIdentity: 'tenantKey' as const },
+    row: { tenant_key: ['text', 'authrim-portable-tenant-v1'] },
+    extra: {
+      tenantKey: 'authrim-portable-tenant-v1',
+      restoreTenantKey: 'key-a',
+      restoreOverrides: { tenant_key: ['text', 'key-a'] as const },
+    },
+  },
+])('refuses a $name-owned seed key held by another tenant', async (variant) => {
+  db.exec(variant.setup);
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const seedPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    ...variant.extra,
+    dataset: { ...policy.dataset, id: 'admin.field_catalogs' },
+    schema: {
+      table: 'seeds',
+      columns: variant.columns,
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      ...variant.schema,
+    },
+    restoreReplacesInstalledSeedRows: true,
+  };
+  const seedManifest: TenantBundleManifest = { ...manifest, datasets: [seedPolicy.dataset] };
+  const seedRow = JSON.stringify({ id: ['text', 'shared'], ...variant.row, name: ['text', 'x'] });
+  const before = db.prepare('SELECT * FROM seeds').all();
+  const target = await SqliteRestoreTarget.open(input());
+  await expect(target.writeRow(seedPolicy, seedManifest, seedRow)).rejects.toThrow(
+    'backup_restore_target_rejected'
+  );
+  await expect(target.writeRows(seedPolicy, seedManifest, [seedRow])).rejects.toThrow(
+    'backup_restore_target_rejected'
+  );
+  expect(db.prepare('SELECT * FROM seeds').all()).toEqual(before);
+});
+it('refuses a parent-owned seed key whose parent belongs to another tenant', async () => {
+  db.exec(
+    "CREATE TABLE owners(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL); CREATE TABLE seeds(id TEXT NOT NULL PRIMARY KEY,owner_id TEXT NOT NULL,name TEXT NOT NULL); INSERT INTO owners VALUES ('owner-a','a'),('owner-b','b'); INSERT INTO seeds VALUES ('shared','owner-b','tenant b')"
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const seedPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'admin.field_catalog_entries' },
+    schema: {
+      table: 'seeds',
+      columns: ['id', 'owner_id', 'name'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      parent: {
+        childColumns: ['owner_id'],
+        schema: {
+          table: 'owners',
+          columns: ['id', 'tenant_id'],
+          primaryKey: ['id'],
+          uniqueKeys: [],
+          tenantColumn: 'tenant_id',
+        },
+      },
+    } as SqliteDatasetInspectionPolicy['schema'],
+    parentDataset: { id: 'admin.field_catalog_owners', module: policy.dataset.module },
+    restoreReplacesInstalledSeedRows: true,
+  };
+  const seedManifest: TenantBundleManifest = {
+    ...manifest,
+    datasets: [{ ...policy.dataset, id: 'admin.field_catalog_owners' }, seedPolicy.dataset],
+  };
+  const seedRow = JSON.stringify({
+    id: ['text', 'shared'],
+    owner_id: ['text', 'owner-a'],
+    name: ['text', 'x'],
+  });
+  const before = db.prepare('SELECT * FROM seeds').all();
+  const target = await SqliteRestoreTarget.open(input());
+  await expect(target.writeRows(seedPolicy, seedManifest, [seedRow])).rejects.toThrow(
+    'backup_restore_target_rejected'
+  );
+  expect(db.prepare('SELECT * FROM seeds').all()).toEqual(before);
+});
+it('checks a full seed page for foreign keys with a few grouped reads', async () => {
+  db.exec(
+    'CREATE TABLE catalogs(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL,name TEXT NOT NULL)'
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const options = input();
+  const queryOne = options.database.queryOne;
+  let ownershipReads = 0;
+  options.database.queryOne = async (sql, params) => {
+    if (sql.includes('AS foreign_row')) ownershipReads++;
+    return queryOne(sql, params);
+  };
+  const catalogPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'admin.field_catalogs' },
+    schema: {
+      table: 'catalogs',
+      columns: ['id', 'tenant_id', 'name'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    restoreReplacesInstalledSeedRows: true,
+  };
+  const catalogManifest: TenantBundleManifest = { ...manifest, datasets: [catalogPolicy.dataset] };
+  const rows = Array.from({ length: 500 }, (_, index) =>
+    JSON.stringify({
+      id: ['text', `catalog-${index}`],
+      tenant_id: ['text', 'a'],
+      name: ['text', 'restored'],
+    })
+  );
+  const target = await SqliteRestoreTarget.open(options);
+  await target.writeRows(catalogPolicy, catalogManifest, rows);
+  expect(db.prepare('SELECT count(*) AS n FROM catalogs').get()).toEqual({ n: 500 });
+  expect(ownershipReads).toBeLessThanOrEqual(6);
+});
+it('completes a deferred reference on a table whose update triggers add D1 changes', async () => {
+  db.exec(
+    'CREATE TABLE roles(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL,parent_id TEXT); CREATE TABLE role_epochs(tenant_id TEXT NOT NULL); CREATE TRIGGER roles_epoch AFTER UPDATE ON roles BEGIN INSERT INTO role_epochs VALUES (NEW.tenant_id); END'
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const options = input();
+  const totalChanges = () =>
+    Number((db.prepare('SELECT total_changes() AS n').get() as { n: number }).n);
+  const execute = options.database.execute;
+  options.database.execute = async (sql, params) => {
+    const before = totalChanges();
+    const result = await execute(sql, params);
+    return { ...result, rowsAffected: totalChanges() - before };
+  };
+  const rolePolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'core.roles' },
+    schema: {
+      table: 'roles',
+      columns: ['id', 'tenant_id', 'parent_id'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    deferredColumns: ['parent_id'],
+  };
+  const roleManifest: TenantBundleManifest = { ...manifest, datasets: [rolePolicy.dataset] };
+  const parentRow = JSON.stringify({
+    id: ['text', 'parent'],
+    tenant_id: ['text', 'a'],
+    parent_id: ['null', null],
+  });
+  const childRow = JSON.stringify({
+    id: ['text', 'child'],
+    tenant_id: ['text', 'a'],
+    parent_id: ['text', 'parent'],
+  });
+  const target = await SqliteRestoreTarget.open(options);
+  await target.writeRows(rolePolicy, roleManifest, [childRow, parentRow]);
+  await target.restoreDeferredRow(rolePolicy, roleManifest, childRow);
+  expect(db.prepare("SELECT parent_id FROM roles WHERE id='child'").get()).toEqual({
+    parent_id: 'parent',
+  });
+  expect(db.prepare('SELECT count(*) AS n FROM role_epochs').get()).toEqual({ n: 1 });
+});
+it('keeps deferred and sidecar updates off another tenant row under the same key', async () => {
+  db.exec(
+    "CREATE TABLE groups(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL,parent_id TEXT,secret TEXT); INSERT INTO groups VALUES ('shared','b','b-parent','b-secret')"
+  );
+  identity.seedFingerprint = await readSqliteRestoreSeedFingerprint(
+    input().database,
+    async () => {}
+  );
+  const groupPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'core.groups' },
+    schema: {
+      table: 'groups',
+      columns: ['id', 'tenant_id', 'parent_id', 'secret'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    deferredColumns: ['parent_id'],
+    restoreOverrides: { secret: ['null', null] },
+    verificationIgnoredColumns: ['secret'],
+    restoreAllowsAdditionalRows: true,
+  };
+  const groupManifest: TenantBundleManifest = { ...manifest, datasets: [groupPolicy.dataset] };
+  const groupRow = JSON.stringify({
+    id: ['text', 'shared'],
+    tenant_id: ['text', 'a'],
+    parent_id: ['text', 'a-parent'],
+    secret: ['text', 'source-secret'],
+  });
+  const tenantB = () => db.prepare("SELECT * FROM groups WHERE id='shared'").get();
+  const before = tenantB();
+  const target = await SqliteRestoreTarget.open(input());
+  // The insert is skipped because tenant b already holds the key.
+  await target.writeRows(groupPolicy, groupManifest, [groupRow]);
+  await expect(target.restoreDeferredRow(groupPolicy, groupManifest, groupRow)).rejects.toThrow(
+    'backup_restore_target_rejected'
+  );
+  await expect(
+    target.writeSidecarText(
+      groupPolicy,
+      groupManifest,
+      groupRow,
+      'secret',
+      'a-secret',
+      async (stored) => stored === 'a-secret'
+    )
+  ).rejects.toThrow('backup_restore_target_rejected');
+  expect(tenantB()).toEqual(before);
+});
 it('recovers from an uncertain insert response without replaying application triggers', async () => {
   const options = input();
   const execute = options.database.execute;
