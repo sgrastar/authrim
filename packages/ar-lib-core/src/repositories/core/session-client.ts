@@ -16,6 +16,8 @@ export interface SessionClient {
   session_id: string;
   client_id: string;
   oidc_sid?: string;
+  /** The sub the client's ID token carried, which its logout token carries too. */
+  oidc_sub?: string;
   first_token_at: number;
   last_token_at: number;
   last_seen_at: number | null;
@@ -25,6 +27,11 @@ export interface CreateSessionClientInput {
   session_id: string;
   client_id: string;
   oidc_sid?: string;
+  /**
+   * The sub of the ID token issued to the client (after its identity mapping), when one was:
+   * kept from an earlier registration when not given.
+   */
+  oidc_sub?: string;
 }
 
 export interface SessionClientWithDetails extends SessionClient {

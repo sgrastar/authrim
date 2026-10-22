@@ -319,6 +319,7 @@ export interface TestAuthCodeData {
   cHash?: string;
   dpopJkt?: string;
   sid?: string;
+  sessionId?: string;
   authorizationDetails?: string; // JSON string
   replayAttack?: {
     accessTokenJti?: string;

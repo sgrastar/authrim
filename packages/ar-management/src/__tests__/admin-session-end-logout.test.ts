@@ -295,6 +295,8 @@ function backchannelClient(sessionId: string, clientId: string, uri: string) {
     session_id: sessionId,
     client_id: clientId,
     oidc_sid: `sid-${sessionId}-${clientId}`,
+    // The sub the client's ID token carried (its identity mapping may issue a per-client one).
+    oidc_sub: `sub-for-${clientId}`,
     first_token_at: 1,
     last_token_at: 1,
     last_seen_at: null,
@@ -435,7 +437,9 @@ describe('admin actions that end sessions notify downstream relying parties', ()
         ['client-b', 'sid-session-1-client-b'],
       ]);
       for (const claim of claims) {
-        expect(claim.sub).toBe('user-1');
+        // Each client's own sub, never the user's internal id.
+        expect(claim.sub).toBe(`sub-for-${claim.aud}`);
+        expect(JSON.stringify(claim)).not.toContain('user-1');
         expect(claim.events).toEqual({ 'http://schemas.openid.net/event/backchannel-logout': {} });
         expect(claim).not.toHaveProperty('nonce');
       }
@@ -480,7 +484,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
     expect(await verified(sent[0].token)).toMatchObject({
       aud: 'client-a',
       sid: 'sid-session-1-client-a',
-      sub: 'user-1',
+      sub: 'sub-for-client-a',
     });
     expect(mocks.scheduleAdminAudit).toHaveBeenCalledWith(
       expect.anything(),

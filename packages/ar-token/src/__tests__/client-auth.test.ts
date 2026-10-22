@@ -53,6 +53,8 @@ const mocks = vi.hoisted(() => {
   };
 
   return {
+    // The sub an app's identity mapping gives its ID tokens (unset: the mapping as configured).
+    mappedIdTokenSub: { value: undefined as string | undefined },
     // Logging
     mockLoggerMethods,
     mockLogger,
@@ -206,6 +208,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return override === undefined
         ? actual.loadClientContractCached(...args)
         : Promise.resolve(override as Awaited<ReturnType<typeof actual.loadClientContractCached>>);
+    },
+    mapIDTokenClaims: async (...args: Parameters<typeof actual.mapIDTokenClaims>) => {
+      const mapped = await actual.mapIDTokenClaims(...args);
+      const sub = mocks.mappedIdTokenSub.value;
+      return sub && mapped.ok ? { ok: true as const, claims: { ...mapped.claims, sub } } : mapped;
     },
     ensureAccountAuthenticationState: mocks.mockEnsureAccountAuthenticationState,
     findCanonicalAccountAuthenticationState: vi.fn(async (_adapter, _tenantId, userId) => ({
@@ -3068,6 +3075,79 @@ describe('Client Authentication Tests', () => {
         expect.any(Number),
         'RS256'
       );
+    });
+
+    describe('the session-client the logout token is sent from', () => {
+      afterEach(() => {
+        mocks.mappedIdTokenSub.value = undefined;
+      });
+
+      async function exchangeWithinSession() {
+        const client = createConfidentialClient({
+          token_endpoint_auth_method: 'client_secret_post',
+        });
+        const authCodeData = createAuthCodeData({ sid: 'oidc-sid-001', sessionId: 'session-001' });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+        });
+        const registerClientRpc = vi.fn(async (input: Record<string, unknown>) => ({
+          id: 'sc-1',
+          tenant_id: input.tenantId,
+          session_id: input.sessionId,
+          client_id: input.clientId,
+          first_token_at: 1,
+          last_token_at: 1,
+          last_seen_at: null,
+        }));
+        mockEnv.SESSION_CLIENT_STORE.get = vi.fn().mockReturnValue({
+          registerClientRpc,
+          registerOidcSidAliasRpc: vi.fn().mockResolvedValue(undefined),
+        });
+        const ctx = createMockContext({
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        });
+        const response = await tokenHandler(ctx);
+        const waitUntil = ctx.executionCtx.waitUntil as ReturnType<typeof vi.fn>;
+        await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+        return { response, registerClientRpc, client };
+      }
+
+      it("records the sub the app's ID token carries when its identity mapping issues one", async () => {
+        mocks.mappedIdTokenSub.value = 'pairwise-sub-for-app';
+
+        const { response, registerClientRpc, client } = await exchangeWithinSession();
+
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateIDToken.mock.calls.at(-1)?.[0]).toMatchObject({
+          sub: 'pairwise-sub-for-app',
+        });
+        expect(registerClientRpc).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sessionId: 'session-001',
+            clientId: client.client_id,
+            oidcSid: 'oidc-sid-001',
+            oidcSub: 'pairwise-sub-for-app',
+          })
+        );
+      });
+
+      it("records the user's id when the app's ID token carries it", async () => {
+        const { response, registerClientRpc } = await exchangeWithinSession();
+
+        expect(response.status).toBe(200);
+        expect(registerClientRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ oidcSub: 'user-001' })
+        );
+      });
     });
 
     it('rejects token issuance when the account is no longer allowed to authenticate', async () => {
