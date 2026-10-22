@@ -32024,6 +32024,7 @@ paths:
                                   'heldRecords',
                                   'progress',
                                   'preview',
+                                  'discard',
                                 ],
                               'properties':
                                 {
@@ -32049,6 +32050,7 @@ paths:
                                   'createdAt': { 'type': 'integer', 'minimum': 0 },
                                   'updatedAt': { 'type': 'integer', 'minimum': 0 },
                                   'lastErrorCode': { 'type': 'string', 'nullable': true },
+                                  'failureReason': { 'type': 'string', 'nullable': true },
                                   'selection': { 'type': 'object' },
                                   'publication':
                                     {
@@ -32106,6 +32108,44 @@ paths:
                                                   'datasetId': { 'type': 'string' },
                                                   'reason': { 'type': 'string' },
                                                   'count': { 'type': 'integer', 'minimum': 1 },
+                                                },
+                                            },
+                                        },
+                                    },
+                                  'discard':
+                                    {
+                                      'type': 'object',
+                                      'nullable': true,
+                                      'description': 'Import cleanup that discards the restored tenant: whether it does, and while it is stopped, why (for example the legal holds that keep it from deleting anything).',
+                                      'additionalProperties': false,
+                                      'required': ['decision', 'blocker'],
+                                      'properties':
+                                        {
+                                          'decision':
+                                            {
+                                              'type': 'string',
+                                              'nullable': true,
+                                              'enum': ['none', 'discard', null],
+                                            },
+                                          'blocker':
+                                            {
+                                              'type': 'object',
+                                              'nullable': true,
+                                              'additionalProperties': false,
+                                              'required': ['kind', 'detail'],
+                                              'properties':
+                                                {
+                                                  'kind':
+                                                    {
+                                                      'type': 'string',
+                                                      'enum':
+                                                        [
+                                                          'legal_hold',
+                                                          'blocked_rows',
+                                                          'schema_changed',
+                                                        ],
+                                                    },
+                                                  'detail': { 'type': 'object' },
                                                 },
                                             },
                                         },

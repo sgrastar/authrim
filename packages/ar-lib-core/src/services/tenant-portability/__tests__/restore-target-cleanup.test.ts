@@ -102,6 +102,7 @@ it('records cleanup only after exact physical target deletion and proves an empt
       lose = false;
       throw new Error('response_lost');
     }
+    return { done: true };
   };
   expect(
     await cleanupTenantBackupRestoreTargetPage({ database, context, cleanup, now: () => now })
@@ -122,6 +123,28 @@ it('records cleanup only after exact physical target deletion and proves an empt
   expect(sql.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
 });
 
+it('records a target only once the adapter reports it done', async () => {
+  const pages = new Map<string, number>();
+  const cleanup = async (target: { targetId: string }) => {
+    const page = (pages.get(target.targetId) ?? 0) + 1;
+    pages.set(target.targetId, page);
+    return { done: page === 3 };
+  };
+  const step = () =>
+    cleanupTenantBackupRestoreTargetPage({ database, context, cleanup, now: () => now });
+  const receipts = () =>
+    sql.prepare('SELECT count(*) AS n FROM tenant_backup_restore_cleanup_receipts').get()?.n;
+  expect(await step()).toEqual({ done: false });
+  expect(await step()).toEqual({ done: false });
+  expect(receipts()).toBe(0);
+  expect(await step()).toEqual({ done: false });
+  expect(receipts()).toBe(1);
+  for (let i = 0; i < 3; i++) await step();
+  expect(receipts()).toBe(2);
+  expect(await step()).toEqual({ done: true });
+  expect(Object.fromEntries(pages)).toEqual({ 'target-0': 3, 'target-1': 3 });
+});
+
 it('rejects a stale cancellation lease without invoking provider cleanup', async () => {
   now = 700_000;
   let called = false;
@@ -131,6 +154,7 @@ it('rejects a stale cancellation lease without invoking provider cleanup', async
       context,
       cleanup: async () => {
         called = true;
+        return { done: true };
       },
       now: () => now,
     })
