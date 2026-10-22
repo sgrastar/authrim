@@ -18,7 +18,12 @@
  * - enterprise: Enterprise customer
  * - department: Internal department or sub-organization
  */
-export type OrganizationType = 'distributor' | 'enterprise' | 'department';
+export const ORGANIZATION_TYPES = ['distributor', 'enterprise', 'department'] as const;
+export type OrganizationType = (typeof ORGANIZATION_TYPES)[number];
+
+export function isOrganizationType(value: unknown): value is OrganizationType {
+  return (ORGANIZATION_TYPES as readonly unknown[]).includes(value);
+}
 
 /**
  * Plan/subscription tier
