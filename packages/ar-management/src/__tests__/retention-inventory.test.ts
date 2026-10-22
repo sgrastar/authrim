@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   resolveTenantRuntimeProfilesFromEnv: vi.fn(),
   getScheduledMaintenanceTaskView: vi.fn(),
   readTenantRetentionRuns: vi.fn(),
+  resolveAccountTombstonePolicy: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -22,6 +23,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     readTenantSessionSettingsStrict: mocks.readTenantSessionSettingsStrict,
     loadTenantProfileStrict: mocks.loadTenantProfileStrict,
     resolveTenantRuntimeProfilesFromEnv: mocks.resolveTenantRuntimeProfilesFromEnv,
+    resolveAccountTombstonePolicy: mocks.resolveAccountTombstonePolicy,
   };
 });
 vi.mock('../audit-hot-query', async (importOriginal) => {
@@ -101,6 +103,10 @@ describe('retention inventory', () => {
     });
     mocks.resolveTenantRuntimeProfilesFromEnv.mockResolvedValue({ auditProfile: { id: 'custom' } });
     mocks.loadTenantProfileStrict.mockResolvedValue({ max_token_ttl_seconds: 86400 });
+    mocks.resolveAccountTombstonePolicy.mockResolvedValue({
+      retentionDays: 180,
+      blockReregistration: false,
+    });
     mocks.getAuditHotQuerySupportForProfile.mockReturnValue({
       supported: true,
       context: {
@@ -182,11 +188,27 @@ describe('retention inventory', () => {
       counts: { total: 3, expired: 1 },
     });
     expect(c.user_tombstones).toMatchObject({
-      retention: { value: 90, unit: 'days' },
-      source: { kind: 'default' },
-      edit: { kind: 'none' },
+      retention: { value: 180, unit: 'days' },
+      source: {
+        kind: 'setting',
+        category: 'account-lifecycle',
+        key: 'account-lifecycle.deletion.tombstone_retention_days',
+        level: 'tenant',
+      },
+      edit: {
+        kind: 'settings',
+        category: 'account-lifecycle',
+        key: 'account-lifecycle.deletion.tombstone_retention_days',
+        level: 'tenant',
+      },
       varies: 'by_request',
     });
+    // Read as just saved, not from the runtime cache.
+    expect(mocks.resolveAccountTombstonePolicy).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-a',
+      { fresh: true }
+    );
     expect(c.lookup_directory).toMatchObject({
       retention: { value: 365, unit: 'days' },
       edit: { kind: 'lookup_directory' },

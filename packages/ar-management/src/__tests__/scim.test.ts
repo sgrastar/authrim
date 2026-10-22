@@ -17,6 +17,16 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
 
+const SCIM_TOMBSTONE_KEY = { generation: 2, secret: 's'.repeat(32) };
+vi.mock('../lookup-hmac-runtime', () => ({
+  loadLookupHmacRuntimeKeys: vi.fn(async () => ({
+    state: {},
+    readKeys: [SCIM_TOMBSTONE_KEY],
+    writeKeys: [SCIM_TOMBSTONE_KEY],
+  })),
+}));
+const scimTombstoneInserts: unknown[][] = [];
+
 vi.mock('../scim-identifier-replacement', () => ({
   syncScimIdentifierReplacements: vi.fn(async () => {}),
 }));
@@ -1058,6 +1068,9 @@ describe('SCIM 2.0 Endpoints', () => {
                 return { results: [] };
               }),
               run: vi.fn().mockImplementation(async () => {
+                if (sql.includes('COALESCE(excluded.email_blind_index')) {
+                  scimTombstoneInserts.push(args);
+                }
                 if (sql.includes('INSERT INTO identity_sensitive_values')) {
                   const userId = args[3];
                   const valueKey = args[4];
@@ -2240,12 +2253,22 @@ describe('SCIM 2.0 Endpoints', () => {
     });
 
     it('should delete user', async () => {
+      scimTombstoneInserts.length = 0;
       const req = createRequest('/scim/v2/Users/user-001', {
         method: 'DELETE',
       });
       const res = await app.fetch(req, mockEnv as Env);
 
       expect(res.status).toBe(204);
+      // The deletion record keeps the address only as its keyed index, for the default 90 days.
+      const { createTombstoneEmailIndex } =
+        await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+      expect(scimTombstoneInserts).toHaveLength(1);
+      const [insert] = scimTombstoneInserts;
+      expect(insert[2]).toBe(
+        await createTombstoneEmailIndex('john.doe@example.com', SCIM_TOMBSTONE_KEY)
+      );
+      expect((insert[6] as number) - (insert[3] as number)).toBe(90 * 24 * 60 * 60 * 1000);
       const namespace = mockEnv.SESSION_REVOCATION_STORE as any;
       expect(namespace.get).toHaveBeenCalledTimes(2);
       expect(

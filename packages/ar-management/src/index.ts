@@ -772,6 +772,7 @@ import {
   cleanupPlatformTombstones,
   deleteTombstone,
   deletePlatformTombstone,
+  checkTombstoneEmail,
 } from './routes/settings/tombstones';
 import {
   getIpSecurityConfig,
@@ -2216,6 +2217,7 @@ app.delete('/api/admin/settings/pii-partitions', deletePartitionSettings);
 app.get('/api/admin/tombstones', listTombstones);
 app.get('/api/admin/tombstones/stats', getTombstoneStats); // Must be before :id
 app.post('/api/admin/tombstones/cleanup', cleanupTombstones);
+app.post('/api/admin/tombstones/email-check', checkTombstoneEmail);
 app.get('/api/admin/tombstones/:id', getTombstone);
 app.delete('/api/admin/tombstones/:id', deleteTombstone);
 app.get('/api/admin/platform/tombstones', requireSystemAdmin(), listPlatformTombstones);

@@ -6,8 +6,10 @@ const {
   mockResolveTenantAssignedDatabaseSourcesFromRegistry,
   mockCleanupResolvedAuditPrimaries,
   mockTombstone,
+  mockResolveTenantAuditRetentionFromEnv,
 } = vi.hoisted(() => ({
   mockTombstone: vi.fn(),
+  mockResolveTenantAuditRetentionFromEnv: vi.fn(),
   mockEnsureDatabaseAdapter: vi.fn(),
   mockResolvePlatformSettingsWithSources: vi.fn(),
   mockResolveTenantAssignedDatabaseSourcesFromRegistry: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveTenantAssignedDatabaseSourcesFromRegistry:
       mockResolveTenantAssignedDatabaseSourcesFromRegistry,
     tombstoneObjectCatalogEntryForTenant: mockTombstone,
+    resolveTenantAuditRetentionFromEnv: mockResolveTenantAuditRetentionFromEnv,
   };
 });
 
@@ -71,6 +74,7 @@ describe('retention maintenance', () => {
   let leaseAdapter: ReturnType<typeof createAdapter>;
   let piiAdapter: ReturnType<typeof createAdapter>;
   let coreAdapter: ReturnType<typeof createAdapter>;
+  let accessLogAdapter: ReturnType<typeof createAdapter>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -78,9 +82,18 @@ describe('retention maintenance', () => {
     leaseAdapter = createAdapter(1);
     piiAdapter = createAdapter(2);
     coreAdapter = createAdapter(3);
+    accessLogAdapter = createAdapter(5);
     mockEnsureDatabaseAdapter.mockImplementation((_source: unknown, label: string) =>
-      label.startsWith('tombstone-retention:') ? piiAdapter : leaseAdapter
+      label.startsWith('tombstone-retention:')
+        ? piiAdapter
+        : label.startsWith('pii-access-log-retention:')
+          ? accessLogAdapter
+          : leaseAdapter
     );
+    mockResolveTenantAuditRetentionFromEnv.mockResolvedValue({
+      event: { days: 90, source: 'default', variesByRoute: false, archived: false },
+      pii: { days: 365, source: 'default', variesByRoute: false, archived: false },
+    });
     mockResolvePlatformSettingsWithSources.mockResolvedValue({
       values: { 'audit.check_api_retention_days': 30 },
       sources: {},
@@ -140,6 +153,39 @@ describe('retention maintenance', () => {
     );
   });
 
+  it("deletes the tenant's PII read records past its audit PII retention, in each PII store", async () => {
+    const before = Date.now();
+    await runRetentionMaintenance(env(), targets(), log);
+
+    expect(mockResolveTenantAuditRetentionFromEnv).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-a'
+    );
+    const [sql, params] = accessLogAdapter.execute.mock.calls[0]!;
+    expect(sql).toBe(
+      'DELETE FROM audit_log_pii WHERE id IN (SELECT id FROM audit_log_pii WHERE tenant_id = ? AND created_at < ? LIMIT ?)'
+    );
+    expect(params[0]).toBe('tenant-a');
+    // Milliseconds, as the records keep created_at.
+    const cutoff = params[1] as number;
+    expect(cutoff).toBeGreaterThanOrEqual(before - 365 * 86400 * 1000);
+    expect(cutoff).toBeLessThanOrEqual(Date.now() - 365 * 86400 * 1000);
+    const view = await getScheduledMaintenanceTaskView(env(), 'audit_retention');
+    expect(view.lastResult).toMatchObject({ piiAccessDeleted: 5 });
+  });
+
+  it('marks the tenant failed and deletes no read records when its retention cannot be read', async () => {
+    mockResolveTenantAuditRetentionFromEnv.mockRejectedValueOnce(new Error('pii_config_invalid'));
+    await runRetentionMaintenance(env(), targets(), log);
+
+    expect(accessLogAdapter.execute).not.toHaveBeenCalled();
+    expect((await readTenantRetentionRuns(env(), 'tenant-a')).audit_retention).toMatchObject({
+      outcome: 'failed',
+    });
+    const view = await getScheduledMaintenanceTaskView(env(), 'audit_retention');
+    expect(view.status).toBe('failed');
+  });
+
   it('records, per tenant and per task, when it last ran and how it ended', async () => {
     mockCleanupResolvedAuditPrimaries.mockResolvedValueOnce({
       tenantCount: 1,
@@ -196,9 +242,10 @@ describe('retention maintenance', () => {
   });
 
   it('marks a tenant whose tombstone stores cannot be reached as failed', async () => {
-    mockResolveTenantAssignedDatabaseSourcesFromRegistry.mockRejectedValueOnce(
-      new Error('registry_unavailable')
-    );
+    // The first resolution is the audit task's (PII read records), the second the tombstones'.
+    mockResolveTenantAssignedDatabaseSourcesFromRegistry
+      .mockResolvedValueOnce([{ source: {}, bindingRef: 'DB_PII' }])
+      .mockRejectedValueOnce(new Error('registry_unavailable'));
     await runRetentionMaintenance(env(), targets(), log);
 
     expect(piiAdapter.execute).not.toHaveBeenCalled();
@@ -250,10 +297,13 @@ describe('retention maintenance', () => {
   it('still cleans the other tombstone stores when one fails', async () => {
     const failing = createAdapter();
     failing.execute.mockRejectedValue(new Error('store_down'));
-    mockResolveTenantAssignedDatabaseSourcesFromRegistry.mockResolvedValueOnce([
+    const stores = [
       { source: { id: 'a' }, bindingRef: 'DB_PII_A' },
       { source: { id: 'b' }, bindingRef: 'DB_PII_B' },
-    ]);
+    ];
+    mockResolveTenantAssignedDatabaseSourcesFromRegistry
+      .mockResolvedValueOnce(stores)
+      .mockResolvedValueOnce(stores);
     mockEnsureDatabaseAdapter.mockImplementation((_source: unknown, label: string) =>
       label === 'tombstone-retention:DB_PII_A'
         ? failing

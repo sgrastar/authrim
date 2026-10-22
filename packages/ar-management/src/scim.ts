@@ -55,6 +55,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 import { canonicalProjectionToScimInternalUser } from './identity-canonical-runtime';
+import { prepareAccountTombstone, writeAccountTombstone } from './account-tombstone-write';
 import {
   AccountCreationOperationRepository,
   hashAccountCreationRequest,
@@ -3026,7 +3027,11 @@ app.delete('/Users/:id', async (c) => {
     }
 
     const now = Date.now();
-    const retentionDays = 90; // GDPR retention period
+    // Decided before anything changes: the address's keyed fingerprint and the tenant's retention.
+    const tombstoneInput = await prepareAccountTombstone(c.env, {
+      tenantId,
+      email: existingUser.email,
+    });
     const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
       tenantId,
       userId,
@@ -3036,21 +3041,15 @@ app.delete('/Users/:id', async (c) => {
 
     // Step 1: Create tombstone record in PII DB for GDPR audit trail
     if (piiAdapter) {
-      await piiAdapter
-        .execute(
-          `INSERT INTO users_pii_tombstone (
-          id, tenant_id, deleted_at, deleted_by, deletion_reason, retention_until
-        ) VALUES (?, ?, ?, 'scim_api', 'scim_delete', ?)`,
-          [
-            userId,
-            existingUser.tenant_id || getTenantIdFromContext(c),
-            now,
-            now + retentionDays * 24 * 60 * 60 * 1000,
-          ]
-        )
-        .catch(() => {
-          // Ignore tombstone creation errors - not critical
-        });
+      // A retried DELETE finds the record the first attempt wrote.
+      await writeAccountTombstone(piiAdapter, {
+        tenantId: existingUser.tenant_id || tenantId,
+        userId,
+        prepared: tombstoneInput,
+        deletedBy: 'scim_api',
+        reason: 'scim_delete',
+        metadata: { source: 'scim_api' },
+      });
     }
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(

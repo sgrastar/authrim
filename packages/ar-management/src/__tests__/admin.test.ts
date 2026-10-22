@@ -82,6 +82,55 @@ vi.mock('../account-directory-removal-producer', () => ({
   eraseAccountPiiAfterDirectoryRemovalPrepared: eraseAccountPii,
 }));
 
+// The environment's lookup HMAC key, as deletion paths load it for the tombstone's email index.
+const TOMBSTONE_TEST_KEY = { generation: 3, secret: 't'.repeat(32) };
+vi.mock('../lookup-hmac-runtime', () => ({
+  loadLookupHmacRuntimeKeys: vi.fn(async () => ({
+    state: {},
+    readKeys: [TOMBSTONE_TEST_KEY],
+    writeKeys: [TOMBSTONE_TEST_KEY],
+  })),
+}));
+
+/** Marks the statement that writes the user's tombstone row (account-tombstone-write.ts). */
+const TOMBSTONE_ROW_UPSERT = 'COALESCE(excluded.email_blind_index';
+
+/** The parameters bound to the first statement whose SQL contains `fragment`. */
+function boundParamsFor(db: any, fragment: string): unknown[] | undefined {
+  const prepareIndex = (db.prepare.mock.calls as [string][]).findIndex(([sql]) =>
+    sql.includes(fragment)
+  );
+  if (prepareIndex < 0) return undefined;
+  const preparedAt = db.prepare.mock.invocationCallOrder[prepareIndex] as number;
+  const bind = db._mockStatement.bind.mock;
+  const bindIndex = (bind.invocationCallOrder as number[]).findIndex((order) => order > preparedAt);
+  return bindIndex < 0 ? undefined : (bind.calls[bindIndex] as unknown[]);
+}
+
+/** Every PII read record written to `db` (after the response's waitUntil work has run). */
+async function piiAccessRecords(c: any, db: any) {
+  await Promise.all(
+    c.executionCtx.waitUntil.mock.calls.map(([promise]: [Promise<unknown>]) => promise)
+  );
+  const records: Array<{ params: unknown[]; details: Record<string, unknown> }> = [];
+  const bind = db._mockStatement.bind.mock;
+  (db.prepare.mock.calls as [string][]).forEach(([sql], index) => {
+    if (!sql.includes('INSERT INTO audit_log_pii')) return;
+    const preparedAt = db.prepare.mock.invocationCallOrder[index] as number;
+    const bindIndex = (bind.invocationCallOrder as number[]).findIndex((at) => at > preparedAt);
+    const params = bind.calls[bindIndex] as unknown[];
+    records.push({ params, details: JSON.parse(params[5] as string) });
+  });
+  return records;
+}
+
+/** The email index a tombstone of `email` must carry (the deletion's own computation). */
+async function expectedTombstoneEmailIndex(email: string): Promise<string> {
+  const { createTombstoneEmailIndex } =
+    await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+  return createTombstoneEmailIndex(email, TOMBSTONE_TEST_KEY);
+}
+
 vi.mock('../tenant-alias-directory', () => ({
   resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
     ...input,
@@ -149,6 +198,10 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
     }),
   };
 });
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   const ensureMockAccountDataContext = (c: {
@@ -170,6 +223,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
   return {
     ...actual,
+    checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
+      registrationCheck.override ?? actual.checkEmailRegistration(...args),
     createAccountAuthContextFromHono: vi.fn((c, tenantId) => {
       ensureMockAccountDataContext(c);
       return actual.createAccountAuthContextFromHono(c, tenantId);
@@ -698,7 +753,10 @@ function createSqlAwareMockDB(
       };
       return statement;
     }),
-    batch: vi.fn().mockResolvedValue([]),
+    // A batch runs each statement through the handler, so its SQL and parameters are seen too.
+    batch: vi.fn(async (statements: Array<{ run(): Promise<unknown> }>) =>
+      Promise.all(statements.map((statement) => statement.run()))
+    ),
     exec: vi.fn().mockResolvedValue(undefined),
     dump: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
   } as unknown as D1Database;
@@ -902,8 +960,10 @@ function createRoutedAccountDatabases(userId: string) {
       Promise.all(statements.map((statement) => statement.run()))
   );
   const accountPiiSqls: string[] = [];
-  const accountPiiDb = createSqlAwareMockDB(async (sql, _params, op) => {
+  const accountPiiCalls: Array<{ sql: string; params: unknown[] }> = [];
+  const accountPiiDb = createSqlAwareMockDB(async (sql, params, op) => {
     accountPiiSqls.push(sql);
+    accountPiiCalls.push({ sql, params });
     return op === 'run' ? { success: true } : undefined;
   });
   const attachAccount = (c: { set(key: string, value: unknown): void }) =>
@@ -933,6 +993,7 @@ function createRoutedAccountDatabases(userId: string) {
     accountCoreResults,
     accountPiiDb,
     accountPiiSqls,
+    accountPiiCalls,
     attachAccount,
   };
 }
@@ -1848,6 +1909,119 @@ describe('Admin API Handlers', () => {
       }
     );
 
+    it('records, in the PII store each user came from, who was shown which personal fields', async () => {
+      const userId = 'user-read-record';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        account_type: 'user',
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'read-me@example.com',
+        name: 'Read Me',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      listCrossShardAccounts.mockResolvedValue({
+        items: [
+          {
+            id: `account:${userId}`,
+            legacyUserId: userId,
+            tenantId: 'default',
+            accountType: 'user',
+            lifecycleState: 'active',
+            displayLabel: null,
+            createdAt: Date.now(),
+            coreBindingRef: 'DB',
+            piiBindingRef: 'DB_PII',
+          },
+        ],
+        nextCursor: null,
+      });
+      const core = createMockDB({ allResults: [] });
+      const pii = createMockDB({ allResults: [] });
+      const c = createMockContext({
+        db: core,
+        dbPII: pii,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
+          coreDb: core,
+        },
+      });
+      c.set('adminAuth', { userId: 'admin-7', authMethod: 'session', actorType: 'human' });
+      c.set('requestId', 'req-list-1');
+
+      const response = await adminUsersListHandler(c);
+      expect(response.status).toBe(200);
+
+      const records = await piiAccessRecords(c, pii);
+      expect(records).toHaveLength(1);
+      // id, tenant_id, user_id (actor), action, target_user_id, details, created_at
+      expect(records[0].params.slice(1, 5)).toEqual(['default', 'admin-7', 'pii_accessed', userId]);
+      expect(records[0].details).toEqual({
+        fields: ['email', 'name'],
+        operation: 'admin.users.list',
+        request_id: 'req-list-1',
+        actor_type: 'human',
+      });
+      // Never a value.
+      expect(JSON.stringify(records[0].params)).not.toContain('read-me@example.com');
+      expect(JSON.stringify(records[0].params)).not.toContain('Read Me');
+    });
+
+    it('still answers when the read record cannot be written', async () => {
+      const userId = 'user-read-record-fails';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        account_type: 'user',
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'unrecorded@example.com',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      listCrossShardAccounts.mockResolvedValue({
+        items: [
+          {
+            id: `account:${userId}`,
+            legacyUserId: userId,
+            tenantId: 'default',
+            accountType: 'user',
+            lifecycleState: 'active',
+            displayLabel: null,
+            createdAt: Date.now(),
+            coreBindingRef: 'DB',
+            piiBindingRef: 'DB_PII',
+          },
+        ],
+        nextCursor: null,
+      });
+      const core = createMockDB({ allResults: [] });
+      const pii = createMockDB({ allResults: [] });
+      (pii as any).batch.mockRejectedValue(new Error('d1_unavailable'));
+      const c = createMockContext({
+        db: core,
+        dbPII: pii,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
+          coreDb: core,
+        },
+      });
+
+      const response = await adminUsersListHandler(c);
+
+      expect(response.status).toBe(200);
+      await expect(piiAccessRecords(c, pii)).resolves.toHaveLength(1);
+      expect((pii as any).batch).toHaveBeenCalled();
+    });
+
     it('uses exact routed search for shared-pool metadata without runtime sources', async () => {
       const userId = 'user-metadata-route';
       const createdAt = Date.UTC(2026, 6, 10, 10, 40, 0);
@@ -2325,6 +2499,9 @@ describe('Admin API Handlers', () => {
         return accountDataContext;
       });
 
+      c.set('adminAuth', { userId: 'admin-8', authMethod: 'bearer' });
+      c.set('requestId', 'req-get-1');
+
       const response = await adminUserGetHandler(c);
 
       expect(response.status).toBe(200);
@@ -2332,6 +2509,16 @@ describe('Admin API Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({ user: expect.objectContaining({ id: userId }) })
       );
+      // The read is recorded in the account's own PII store.
+      const records = await piiAccessRecords(c, routedPii);
+      expect(records).toHaveLength(1);
+      expect(records[0].params.slice(1, 5)).toEqual(['default', 'admin-8', 'pii_accessed', userId]);
+      expect(records[0].details).toMatchObject({
+        fields: ['email'],
+        operation: 'admin.users.get',
+        request_id: 'req-get-1',
+        actor_type: 'bearer',
+      });
     });
 
     it('returns the canonical suspended status and restriction timestamps', async () => {
@@ -2956,6 +3143,39 @@ describe('Admin API Handlers', () => {
         );
         expect(executeDurableAccountCreation).not.toHaveBeenCalled();
       });
+
+      it("refuses an address of an account deleted within the tenant's retention, as an address in use", async () => {
+        executeDurableAccountCreation.mockClear();
+        registrationCheck.override = 'blocked';
+        try {
+          const c = await createWith({});
+          expect(c.json).toHaveBeenCalledWith(
+            {
+              error: 'conflict',
+              error_description: 'Unable to create user with the provided information',
+            },
+            409
+          );
+        } finally {
+          registrationCheck.override = null;
+        }
+        expect(executeDurableAccountCreation).not.toHaveBeenCalled();
+      });
+
+      it('answers 503, not a conflict, when the deleted-account records cannot be searched', async () => {
+        executeDurableAccountCreation.mockClear();
+        // Blocking is on, and this environment has no tenant registry to find the PII stores in.
+        const c = await createWith({
+          'settings:tenant:default:account-lifecycle': JSON.stringify({
+            'account-lifecycle.deletion.block_reregistration': true,
+          }),
+        });
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'temporarily_unavailable' }),
+          503
+        );
+        expect(executeDurableAccountCreation).not.toHaveBeenCalled();
+      });
     });
 
     it('should create a canonical runtime user when runtime cutover is enabled', async () => {
@@ -3380,6 +3600,64 @@ describe('Admin API Handlers', () => {
       );
       expect(dbs.metadataUserSqls()).toEqual([]);
       expect(canonicalRuntimeUsers.get(userId)).toMatchObject({ email: null });
+    });
+
+    it("keeps the erased address's keyed index and the requested retention in the tombstone", async () => {
+      const userId = 'user-routed-delete-pii-index';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'erase-me@example.com',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      const dbs = createRoutedAccountDatabases(userId);
+      routeAccountSources(dbs);
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        body: { reason: 'user_request', retention_days: 14 },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, retention_days: 14 })
+      );
+      const insert = dbs.accountPiiCalls.find(({ sql }) => sql.includes(TOMBSTONE_ROW_UPSERT))!;
+      expect(insert.params[2]).toBe(await expectedTombstoneEmailIndex('erase-me@example.com'));
+      expect((insert.params[6] as number) - (insert.params[3] as number)).toBe(
+        14 * 24 * 60 * 60 * 1000
+      );
+    });
+
+    it('refuses a retention period outside 1 to 3650 days before erasing anything', async () => {
+      const userId = 'user-routed-delete-pii-bad-retention';
+      const dbs = createRoutedAccountDatabases(userId);
+      routeAccountSources(dbs);
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        body: { retention_days: 0 },
+        db: dbs.metadataDb,
+        dbPII: dbs.metadataPiiDb,
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'invalid_request' }),
+        400
+      );
+      expect(
+        dbs.accountPiiSqls.filter((sql) => sql.includes('INSERT INTO users_pii_tombstone'))
+      ).toEqual([]);
     });
 
     it('honours a legal hold recorded in the account database', async () => {
@@ -4123,6 +4401,64 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it("keeps the deleted address's keyed index and the tenant's retention in the tombstone", async () => {
+      const userId = 'user-routed-delete-index';
+      const core = createMockDB({ firstResult: null, runResult: { success: true } });
+      const pii = createMockDB({ firstResult: null, runResult: { success: true } });
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'Indexed-Delete@Example.com',
+        email_verified: 0,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      findExactCrossShardAccounts.mockResolvedValue([
+        {
+          id: `account:${userId}`,
+          legacyUserId: userId,
+          tenantId: 'default',
+          accountType: 'user',
+          lifecycleState: 'active',
+          displayLabel: null,
+          createdAt: Date.now(),
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB_PII',
+        },
+      ]);
+      const settings = {
+        get: vi.fn(async (key: string) =>
+          key === 'settings:tenant:default:account-lifecycle'
+            ? JSON.stringify({ 'account-lifecycle.deletion.tombstone_retention_days': 30 })
+            : null
+        ),
+      };
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: core,
+        dbPII: pii,
+        envOverrides: { SETTINGS: settings as unknown as KVNamespace },
+        tenantMetadataContext: {
+          tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
+          coreDb: core,
+        },
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+      const params = boundParamsFor(pii, TOMBSTONE_ROW_UPSERT)!;
+      // id, tenant_id, email_blind_index, deleted_at, deleted_by, deletion_reason, retention_until
+      expect(params[2]).toBe(await expectedTombstoneEmailIndex('indexed-delete@example.com'));
+      expect(params[2]).not.toContain('example.com');
+      expect((params[6] as number) - (params[3] as number)).toBe(30 * 24 * 60 * 60 * 1000);
+    });
+
     it('resumes tenant-D1 deletion after the PII projection has already been erased', async () => {
       const userId = 'user-routed-delete-retry';
       const core = createMockDB({ firstResult: null, runResult: { success: true } });
@@ -4385,7 +4721,9 @@ describe('Admin API Handlers', () => {
         return op === 'run' ? { success: true } : undefined;
       });
 
-      const piiDb = createSqlAwareMockDB(async (sql, _params, op) => {
+      let tombstoneParams: unknown[] | undefined;
+      const piiDb = createSqlAwareMockDB(async (sql, params, op) => {
+        if (sql.includes(TOMBSTONE_ROW_UPSERT)) tombstoneParams = params;
         if (op === 'first') {
           if (sql.includes('SELECT * FROM users_pii_tombstone WHERE id = ?')) {
             return null;
@@ -4417,10 +4755,17 @@ describe('Admin API Handlers', () => {
       const body = (await res.json()) as {
         success: boolean;
         tombstone_id: string | null;
+        deleted_at: string;
+        retention_until: string;
       };
 
       expect(body.success).toBe(true);
       expect(body.tombstone_id).toBe(userId);
+      // The record keeps the address only as its keyed index, for the default 90 days.
+      expect(tombstoneParams?.[2]).toBe(await expectedTombstoneEmailIndex('anon@example.com'));
+      const keptDays =
+        (Date.parse(body.retention_until) - Date.parse(body.deleted_at)) / (24 * 60 * 60 * 1000);
+      expect(Math.round(keptDays)).toBe(90);
 
       const coreSqls = (coreDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
       const piiSqls = (piiDb.prepare as any).mock.calls.map((call: [string]) => call[0]);

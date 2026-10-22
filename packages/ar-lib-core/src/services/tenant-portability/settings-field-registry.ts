@@ -714,6 +714,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     account-lifecycle.guest.deletion_enabled
     account-lifecycle.guest.upgrade_enabled
+    account-lifecycle.deletion.block_reregistration
   `,
     ],
     [
@@ -723,6 +724,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     account-lifecycle.guest.deletion_after_days
     account-lifecycle.guest.upgrade_hold_minutes
+    account-lifecycle.deletion.tombstone_retention_days
   `,
     ],
     [

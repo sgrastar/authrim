@@ -90,6 +90,7 @@ import {
   adminUserRevokeAllSessionsHandler,
   serveAvatarHandler,
 } from '../admin-user-sessions';
+import { createPIIContextFromHono } from '@authrim/ar-lib-core';
 
 function createContext(
   options: {
@@ -496,6 +497,51 @@ describe('admin user session revocation', () => {
         expect.stringContaining('expires_at > ?'),
         expect.arrayContaining(['tenant-1', 'user-1', 2, 2])
       );
+    });
+
+    it('records which personal fields of which user each listed session showed, without values', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const piiStore = {
+        batch: vi.fn(async (statements: unknown[]) => statements.map(() => ({}))),
+      };
+      vi.mocked(createPIIContextFromHono).mockReturnValue({
+        defaultPiiAdapter: piiStore,
+      } as never);
+      mockCoreAdapter.queryOne.mockResolvedValueOnce({ count: 1 });
+      mockCoreAdapter.query.mockResolvedValueOnce([
+        {
+          id: 's1',
+          user_id: 'user-1',
+          created_at: now - 100,
+          last_accessed_at: null,
+          expires_at: now + 100,
+          ip_address: '203.0.113.9',
+          user_agent: null,
+        },
+      ]);
+      const waitUntil = vi.fn();
+      const context = Object.assign(createContext(), { executionCtx: { waitUntil } });
+
+      try {
+        const response = await adminSessionsListHandler(context);
+        expect(response.status).toBe(200);
+        await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+      } finally {
+        vi.mocked(createPIIContextFromHono).mockReturnValue({ defaultPiiAdapter: {} } as never);
+      }
+
+      expect(piiStore.batch).toHaveBeenCalledTimes(1);
+      const [[statement]] = piiStore.batch.mock.calls[0] as [
+        Array<{ sql: string; params: unknown[] }>,
+      ];
+      expect(statement.sql).toContain('INSERT INTO audit_log_pii');
+      expect(statement.params[4]).toBe('user-1');
+      expect(JSON.parse(statement.params[5] as string)).toMatchObject({
+        fields: ['user_email', 'user_name', 'ip_address'],
+        operation: 'admin.sessions.list',
+      });
+      expect(JSON.stringify(statement.params)).not.toContain('person@example.com');
+      expect(JSON.stringify(statement.params)).not.toContain('203.0.113.9');
     });
 
     it.each([

@@ -1,6 +1,13 @@
 import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
+  ADMIN_SESSION_PII_FIELDS,
+  createAdminPiiAccessLog,
+  noteAdminPiiRead,
+  requestPiiStore,
+  scheduleAdminPiiAccessLog,
+} from './admin-pii-access-log';
+import {
   invalidateUserCache,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
@@ -426,6 +433,15 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
       };
     });
 
+    if (formattedSessions.length > 0) {
+      const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.sessions.list');
+      const store = requestPiiStore(c, createPIIContextFromHono(c, tenantId).defaultPiiAdapter);
+      for (const session of formattedSessions) {
+        noteAdminPiiRead(accessLog, store, session.user_id, session, ADMIN_SESSION_PII_FIELDS);
+      }
+      scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+    }
+
     return c.json({
       sessions: formattedSessions,
       pagination: {
@@ -520,6 +536,18 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       isActive: isActive || (session?.expires_at as number) > Math.floor(Date.now() / 1000),
       source: sessionStoreOk ? 'memory' : 'database',
     };
+
+    if (userId) {
+      const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.sessions.get');
+      noteAdminPiiRead(
+        accessLog,
+        requestPiiStore(c, createPIIContextFromHono(c, tenantId).defaultPiiAdapter),
+        userId,
+        { user_email: userEmail, user_name: userName },
+        ADMIN_SESSION_PII_FIELDS
+      );
+      scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+    }
 
     return c.json({
       session: result,

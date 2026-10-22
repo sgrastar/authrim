@@ -3,7 +3,8 @@
  * per tenant when that last happened (each run covers one page of tenants, so a task's own
  * last run does not say when a given tenant was last cleaned).
  *
- * - audit_retention: audit event and PII logs, by each entry's retention_until (audit profile).
+ * - audit_retention: audit event and PII logs, by each entry's retention_until (audit profile),
+ *   and the records of who read PII (audit_log_pii), older than the tenant's audit PII retention.
  * - check_api_audit_retention: Check API decisions older than audit.check_api_retention_days.
  * - user_tombstone_retention: deleted users' PII tombstones past their retention_until.
  * - compliance_report_retention: compliance reports past their download period (their file is
@@ -12,6 +13,7 @@
 import {
   ensureDatabaseAdapter,
   resolvePlatformSettingsWithSources,
+  resolveTenantAuditRetentionFromEnv,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   type DatabaseAdapter,
   type Env,
@@ -52,6 +54,50 @@ async function deleteInBatches(
   return deleted;
 }
 
+/**
+ * Deletes the tenant's PII read records (audit_log_pii) older than its audit PII retention, in
+ * each of its PII stores. Returns how many were deleted; throws when any store failed.
+ */
+async function piiAccessLogRetention(
+  env: Env,
+  tenantId: string,
+  log: Logger,
+  now: number
+): Promise<number> {
+  const days = (await resolveTenantAuditRetentionFromEnv(env, tenantId)).pii.days;
+  if (!Number.isSafeInteger(days) || days < 1) throw new Error('pii_access_log_retention_invalid');
+  const cutoff = now - days * 24 * 60 * 60 * 1000;
+  const stores = await resolveTenantAssignedDatabaseSourcesFromRegistry(env, {
+    tenantId,
+    role: 'tenant_pii',
+    dataRole: 'tenant_pii',
+    maxStores: 32,
+    concurrency: 4,
+  });
+  let deleted = 0;
+  let failed = false;
+  // Each store on its own: one failing does not keep the others' records.
+  for (const store of stores) {
+    try {
+      deleted += await deleteInBatches(
+        ensureDatabaseAdapter(store.source, `pii-access-log-retention:${store.bindingRef}`),
+        'audit_log_pii',
+        'tenant_id = ? AND created_at < ?',
+        [tenantId, cutoff]
+      );
+    } catch (error) {
+      failed = true;
+      log.warn('PII access record retention failed for a store', {
+        tenantId,
+        bindingRef: store.bindingRef,
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+  }
+  if (failed) throw new Error('pii_access_log_retention_store_failed');
+  return deleted;
+}
+
 async function auditRetention(
   env: Env,
   targets: RetentionMaintenanceTarget[],
@@ -62,22 +108,26 @@ async function auditRetention(
     logger: log,
   });
   const at = Date.now();
+  let piiAccessDeleted = 0;
+  let failedTenants = summary.failedTenants;
   for (const target of targets) {
-    await recordTenantRun(
-      env,
-      target.tenantId,
-      'audit_retention',
-      {
-        at,
-        outcome: Object.hasOwn(tenantOutcomes, target.tenantId)
-          ? tenantOutcomes[target.tenantId]!
-          : 'not_supported',
-      },
-      log
-    );
+    let outcome: TenantRetentionRun['outcome'] = Object.hasOwn(tenantOutcomes, target.tenantId)
+      ? tenantOutcomes[target.tenantId]!
+      : 'not_supported';
+    try {
+      piiAccessDeleted += await piiAccessLogRetention(env, target.tenantId, log, at);
+    } catch (error) {
+      if (outcome !== 'failed') failedTenants += 1;
+      outcome = 'failed';
+      log.warn('PII access record retention failed', {
+        tenantId: target.tenantId,
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    await recordTenantRun(env, target.tenantId, 'audit_retention', { at, outcome }, log);
   }
-  if (summary.failedTenants > 0) throw new Error('audit_retention_partial_failure');
-  return { ...summary };
+  if (failedTenants > 0) throw new Error('audit_retention_partial_failure');
+  return { ...summary, failedTenants, piiAccessDeleted };
 }
 
 async function checkApiAuditRetention(
