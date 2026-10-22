@@ -606,6 +606,29 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
     );
     expect(adminAudits).toHaveLength(1);
     expect(JSON.stringify(adminAudits[0].slice(1))).not.toContain('user-1');
+
+    // The anonymization's own audits too: the tombstone (keyed by the user id) by the same hash.
+    expect(mocks.contextAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      'user.anonymized',
+      'user',
+      hash,
+      expect.objectContaining({ tombstone_id: hash })
+    );
+    expect(mocks.scheduleAdminAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      'user.anonymized',
+      hash,
+      'success',
+      expect.objectContaining({ tombstone_id: hash })
+    );
+    for (const call of [
+      ...mocks.contextAudit.mock.calls,
+      ...mocks.scheduleAdminAudit.mock.calls.map((args) => args.slice(1)),
+    ]) {
+      expect(JSON.stringify(call.slice(1))).not.toContain('user-1');
+    }
+    expect(JSON.stringify(mocks.logger.info.mock.calls)).not.toContain('user-1');
   });
 
   it.each(DELETIONS)(

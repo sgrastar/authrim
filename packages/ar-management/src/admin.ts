@@ -1148,11 +1148,16 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Generate user ID hash for audit trail (no way to recover original ID)
-    const encoder = new TextEncoder();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(userId + tenantId));
-    const userIdHash = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+    const anonymizedRef = async (id: string) => {
+      const hashBuffer = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(id + tenantId)
+      );
+      return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    };
+    const userIdHash = await anonymizedRef(userId);
 
     // Get admin actor ID
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1286,10 +1291,13 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       }
     );
 
+    // The tombstone is keyed by the user id: the audits and the log name it by the same hash.
+    const tombstoneIdHash = tombstoneId === null ? null : await anonymizedRef(tombstoneId);
+
     // Step 6: Write audit log (user_id_hash only, no original ID)
     await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
       reason_code: body.reason_code,
-      tombstone_id: tombstoneId,
+      tombstone_id: tombstoneIdHash,
       retention_until: new Date(retentionUntil * 1000).toISOString(),
     });
 
@@ -1297,13 +1305,13 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       action: 'user_anonymize',
       userIdHash,
       reasonCode: body.reason_code,
-      tombstoneId,
+      tombstoneIdHash,
     });
 
     // Admin Audit Log (use user_id_hash to preserve anonymization)
     scheduleAdminAuditLog(c, 'user.anonymized', userIdHash, 'success', {
       reason_code: body.reason_code,
-      tombstone_id: tombstoneId,
+      tombstone_id: tombstoneIdHash,
     });
 
     return c.json({
