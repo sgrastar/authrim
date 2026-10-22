@@ -358,7 +358,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     key: 'session.logout_webhook_include_sub',
     type: 'boolean',
     label: 'Logout Webhook: sub',
-    description: 'Put the user (sub) in logout webhook payloads',
+    description:
+      "Put the sub the app's ID token carried in logout webhook payloads (left out when none was recorded)",
     visibility: 'admin',
     default: true,
   },

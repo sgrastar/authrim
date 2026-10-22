@@ -49,7 +49,7 @@ describe('createWebhookPayload', () => {
     const payload = createWebhookPayload({
       issuer: 'https://auth.example.com',
       clientId: 'test-client',
-      userId: 'user-123',
+      subject: 'rp-sub-123',
       sessionId: 'session-456',
       includeSub: true,
       includeSid: true,
@@ -58,7 +58,7 @@ describe('createWebhookPayload', () => {
     expect(payload.event).toBe('user.logout');
     expect(payload.client_id).toBe('test-client');
     expect(payload.issuer).toBe('https://auth.example.com');
-    expect(payload.sub).toBe('user-123');
+    expect(payload.sub).toBe('rp-sub-123');
     expect(payload.sid).toBe('session-456');
     expect(typeof payload.iat).toBe('number');
     expect(payload.iat).toBeGreaterThan(0);
@@ -68,7 +68,7 @@ describe('createWebhookPayload', () => {
     const payload = createWebhookPayload({
       issuer: 'https://auth.example.com',
       clientId: 'test-client',
-      userId: 'user-123',
+      subject: 'rp-sub-123',
       sessionId: 'session-456',
       includeSub: false,
       includeSid: true,
@@ -82,14 +82,27 @@ describe('createWebhookPayload', () => {
     const payload = createWebhookPayload({
       issuer: 'https://auth.example.com',
       clientId: 'test-client',
-      userId: 'user-123',
+      subject: 'rp-sub-123',
       sessionId: 'session-456',
       includeSub: true,
       includeSid: false,
     });
 
-    expect(payload.sub).toBe('user-123');
+    expect(payload.sub).toBe('rp-sub-123');
     expect(payload.sid).toBeUndefined();
+  });
+
+  it('should leave sub out when the client has no recorded sub, and name the session by its sid', () => {
+    const payload = createWebhookPayload({
+      issuer: 'https://auth.example.com',
+      clientId: 'test-client',
+      sessionId: 'session-456',
+      includeSub: true,
+      includeSid: false,
+    });
+
+    expect(payload.sub).toBeUndefined();
+    expect(payload.sid).toBe('session-456');
   });
 
   it('should create a minimal payload when no user/session info included', () => {

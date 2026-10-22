@@ -10,7 +10,7 @@
  * The attributes that name the institution itself (schacHomeOrganization and the organization name
  * `o`) are held to the same rule: they are the tenant's to state, so a value of them is released
  * only when it is one the tenant registered (a scope, or a name), whatever source a mapping took it
- * from.
+ * from. A tenant that registered neither releases neither of them: it has no institution to name.
  *
  * Pure: it works on the attributes a mapping produced, and says what it withheld by code, never by
  * value (the only thing named besides the attribute is a scope, which is a domain name).
@@ -47,7 +47,14 @@ export type SAMLScopedValueWithholdReason =
   /** The tenant's saved institution names are not valid, so the institution cannot be told. */
   | 'institution_names_invalid'
   /** A value of schacHomeOrganization or `o` that is not a scope or a name the tenant registered. */
-  | 'organization_not_registered';
+  | 'organization_not_registered'
+  /** The tenant registered no institution (no scope, no name), so it has none to name. */
+  | 'institution_not_registered';
+
+/** schacHomeOrganization and `o`: the attributes that name the institution itself. */
+function isInstitutionAttribute(kind: SAMLScopedAttributeKind | null): boolean {
+  return kind === 'schacHomeOrganization' || kind === 'organizationName';
+}
 
 /** What was withheld from one attribute for one reason (and under one scope, when it has one). */
 export interface SAMLWithheldScopedValues {
@@ -144,8 +151,15 @@ export function applySAMLInstitutionScopePolicy(
   /** The names the tenant registered for its institution (in any language). */
   registeredNames: readonly string[] = []
 ): { attributes: SAMLAttribute[]; withheld: SAMLWithheldScopedValues[] } {
-  // A tenant that registered nothing is released as it always was.
-  if (policy.state === 'unset' && registeredNames.length === 0) {
+  // A tenant that registered nothing releases its scoped values (eduPersonPrincipalName,
+  // eduPersonScopedAffiliation) as they come, as it always did. The attributes that name the
+  // institution are another matter: with nothing registered there is no institution to name, so
+  // they are never released (below).
+  if (
+    policy.state === 'unset' &&
+    registeredNames.length === 0 &&
+    !attributes.some((attribute) => isInstitutionAttribute(kindOf(attribute)))
+  ) {
     return { attributes, withheld: [] };
   }
 
@@ -167,10 +181,7 @@ export function applySAMLInstitutionScopePolicy(
   for (const attribute of attributes) {
     const kind = kindOf(attribute);
     // The scoped attributes of a tenant with no registered scope go as they come.
-    if (
-      !kind ||
-      (policy.state === 'unset' && kind !== 'organizationName' && kind !== 'schacHomeOrganization')
-    ) {
+    if (!kind || (policy.state === 'unset' && !isInstitutionAttribute(kind))) {
       released.push(attribute);
       continue;
     }
@@ -207,6 +218,10 @@ function organizationValue(
   if (policy.state === 'unavailable') return { reason: 'institution_settings_unavailable' };
   if (policy.state === 'names_invalid') return { reason: 'institution_names_invalid' };
   if (policy.state === 'invalid') return { reason: 'institution_scopes_invalid' };
+  // Neither a scope nor a name is registered: the tenant has no institution to name.
+  if (policy.state === 'unset' && registeredNames.length === 0) {
+    return { reason: 'institution_not_registered' };
+  }
   const registered =
     kind === 'schacHomeOrganization'
       ? policy.state === 'set'

@@ -60,6 +60,16 @@ vi.mock('@authrim/ar-lib-core', async () => {
       matchedInstallations: 0,
     }),
     resolveLogoutTargetsFromSessionClientStore: vi.fn().mockResolvedValue(null),
+    // The tenant's canonical issuer, which is not the host the request came in on.
+    // (its retries are tested in ar-lib-core)
+    resolveLogoutIssuerWithRetry: vi.fn(async () => 'https://canonical.example.com'),
+    reportLogoutNotSent: vi.fn().mockResolvedValue({ sessions: 0, clients: 0 }),
+    reportIncompleteLogouts: vi.fn().mockResolvedValue(undefined),
+    reportLogoutTargetsUnavailable: vi.fn().mockResolvedValue(undefined),
+    resolveLogoutWebhookConfig: vi.fn(
+      (actual as { resolveLogoutWebhookConfig: (...args: unknown[]) => unknown })
+        .resolveLogoutWebhookConfig
+    ),
     sendBackchannelLogoutFanout: vi.fn().mockResolvedValue(null),
     sendLogoutWebhookFanout: vi.fn().mockResolvedValue(null),
     purgeEndedSessionsFromSessionClientStore: vi.fn().mockResolvedValue(undefined),
@@ -84,6 +94,11 @@ import {
   recordHybridUserSessionRevocationEpoch,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
+  resolveLogoutIssuerWithRetry,
+  reportLogoutNotSent,
+  reportIncompleteLogouts,
+  reportLogoutTargetsUnavailable,
+  resolveLogoutWebhookConfig,
   purgeEndedSessionsFromSessionClientStore,
   DEFAULT_LOGOUT_CONFIG,
 } from '@authrim/ar-lib-core';
@@ -396,11 +411,12 @@ describe('Front-channel Logout', () => {
       await frontChannelLogoutHandler(c);
       await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
 
+      expect(reportLogoutNotSent).not.toHaveBeenCalled();
       expect(sendBackchannelLogoutFanout).toHaveBeenCalledWith(
         c.env,
         expect.objectContaining({
           tenantId: 'default',
-          issuer: 'https://op.example.com',
+          issuer: 'https://canonical.example.com',
           config: DEFAULT_LOGOUT_CONFIG.backchannel,
           onAlert: expect.any(Function),
           sessions: [
@@ -415,8 +431,54 @@ describe('Front-channel Logout', () => {
       expect(sendLogoutWebhookFanout).toHaveBeenCalledWith(
         c.env,
         expect.objectContaining({
-          issuer: 'https://op.example.com',
+          issuer: 'https://canonical.example.com',
           sessions: [expect.objectContaining({ sessionId: '0_session_123' })],
+        })
+      );
+    });
+
+    it('sends nothing downstream, and still logs the user out, when the tenant issuer cannot be resolved', async () => {
+      const { c } = createMockContext({
+        query: {},
+        body: { confirmation_token: '0_session_123' },
+      });
+      const waitUntil = vi.fn();
+      c.executionCtx = { waitUntil };
+
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+        backchannelClients: [{ client_id: 'rp-client', oidc_sid: 'rp-session-123' }],
+        frontchannelClients: [],
+        webhookClients: [{ client_id: 'rp-webhook' }],
+      } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+      vi.mocked(resolveLogoutIssuerWithRetry).mockResolvedValueOnce(null);
+
+      const response = await frontChannelLogoutHandler(c);
+      await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+
+      expect(response.status).toBeLessThan(500);
+      expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
+      // No other issuer is made up from the request's host: nothing is sent.
+      expect(sendBackchannelLogoutFanout).not.toHaveBeenCalled();
+      expect(sendLogoutWebhookFanout).not.toHaveBeenCalled();
+      // Nothing was told, so the records of the ended session stay until they expire.
+      expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+      // The apps that were not told are recorded for the admin, with the path.
+      expect(reportLogoutNotSent).toHaveBeenCalledWith(
+        c.env,
+        expect.objectContaining({
+          tenantId: 'default',
+          trigger: 'user_logout',
+          backchannelEnabled: DEFAULT_LOGOUT_CONFIG.backchannel.enabled,
+          sessions: [
+            expect.objectContaining({
+              sessionId: '0_session_123',
+              backchannelClients: [expect.objectContaining({ client_id: 'rp-client' })],
+              webhookClients: [expect.objectContaining({ client_id: 'rp-webhook' })],
+            }),
+          ],
         })
       );
     });
@@ -521,6 +583,119 @@ describe('Front-channel Logout', () => {
         expect(sendLogoutWebhookFanout).toHaveBeenCalled();
         // Only the removal itself failed: the notices' own work after the response did not.
         expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      });
+
+      it('keeps it, and records the apps not told, when a notice broke off before sending', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(sendBackchannelLogoutFanout).mockImplementationOnce(async (_env, params) => {
+          params.onIncomplete?.({
+            kind: 'backchannel',
+            sessionIds: ['0_session_123'],
+            reason: 'signing_key_unavailable',
+          });
+          return null;
+        });
+
+        await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(reportLogoutTargetsUnavailable).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({ sessionCount: 0 })
+        );
+        expect(reportIncompleteLogouts).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({
+            tenantId: 'default',
+            trigger: 'user_logout',
+            incomplete: [
+              {
+                kind: 'backchannel',
+                sessionIds: ['0_session_123'],
+                reason: 'signing_key_unavailable',
+              },
+            ],
+          })
+        );
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+      });
+
+      it('keeps it when its clients could not be read', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore)
+          .mockReset()
+          .mockRejectedValueOnce(new Error('store unavailable'));
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValue(null);
+
+        await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+        // The admin can see how many sessions ended without their apps being told.
+        expect(reportLogoutTargetsUnavailable).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({
+            tenantId: 'default',
+            trigger: 'user_logout',
+            sessionCount: 1,
+          })
+        );
+      });
+
+      it('does not treat unreadable webhook settings as off: the webhook apps are recorded and kept', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockReset();
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+          backchannelClients: [],
+          frontchannelClients: [],
+          webhookClients: [{ client_id: 'rp-webhook' }],
+        } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+        vi.mocked(resolveLogoutWebhookConfig).mockRejectedValueOnce(new Error('kv down'));
+
+        await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(sendLogoutWebhookFanout).not.toHaveBeenCalled();
+        expect(reportIncompleteLogouts).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({
+            incomplete: [
+              {
+                kind: 'webhook',
+                sessionIds: ['0_session_123'],
+                reason: 'webhook_settings_unavailable',
+              },
+            ],
+          })
+        );
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+      });
+
+      it('includes the webhook apps in the report of an unresolved issuer when the webhook settings are unreadable', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(resolveLogoutIssuerWithRetry).mockResolvedValueOnce(null);
+        vi.mocked(resolveLogoutWebhookConfig).mockRejectedValueOnce(new Error('kv down'));
+
+        await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(reportLogoutNotSent).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({ trigger: 'user_logout', webhookEnabled: true })
+        );
+      });
+
+      it('leaves the webhook apps out of that report when the webhook is explicitly off', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(resolveLogoutIssuerWithRetry).mockResolvedValueOnce(null);
+
+        await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(reportLogoutNotSent).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({ webhookEnabled: false })
+        );
       });
 
       it('removes nothing when no session ended', async () => {
