@@ -3,7 +3,10 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { beforeEach, afterEach, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
-import { TenantBackupMutationAdmission } from '../mutation-admission';
+import {
+  TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS,
+  TenantBackupMutationAdmission,
+} from '../mutation-admission';
 import { TenantBackupBoundaryReceipts } from '../boundary-receipts';
 let db: DatabaseSync;
 let adapter: Pick<DatabaseAdapter, 'queryOne' | 'execute'>;
@@ -131,6 +134,16 @@ it('drains existing writers, excludes new writers, and isolates other tenants', 
   await admission.abort('a', 'boundary', 107);
   expect(await admission.acquire('a', 'new', 108)).toBe(true);
   expect(await admission.hold('a', 'boundary', 109)).toBeNull();
+});
+it('stops counting a permit its writer never completed once the permit lease has passed', async () => {
+  // The writer's Worker stopped mid-effect: its permit is never completed.
+  expect(await admission.acquire('a', 'abandoned', 99)).toBe(true);
+  const late = 99 + TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS;
+  expect(await admission.begin({ ...boundary, now: late - 10 })).not.toBeNull();
+  expect(await admission.hold('a', 'boundary', late - 9)).toBeNull();
+  await admission.abort('a', 'boundary', late - 8);
+  expect(await admission.begin({ ...boundary, id: 'after-lease', now: late + 1 })).not.toBeNull();
+  expect(await admission.hold('a', 'after-lease', late + 2)).toMatchObject({ state: 'held' });
 });
 it('never treats an unresolved permit as complete or extends a retried admission deadline', async () => {
   expect(await admission.acquire('a', 'unknown-completion', 1)).toBe(true);
