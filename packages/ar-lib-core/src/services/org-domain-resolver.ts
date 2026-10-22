@@ -324,6 +324,28 @@ export async function assignRoleToUser(
   orgId: string,
   tenantId: string
 ): Promise<{ success: boolean; assignment_id?: string; error?: string }> {
+  return assignScopedRoleToUser(db, userId, roleId, 'org', `org:${orgId}`, tenantId);
+}
+
+/**
+ * Assign a role to a user at the given scope (JIT rules, domain mappings, default role)
+ *
+ * @param db - Database source
+ * @param userId - User ID
+ * @param roleId - Role ID to assign
+ * @param scopeType - Assignment scope type ('global', 'org', ...)
+ * @param scopeTarget - Assignment scope target (e.g. 'org:<id>')
+ * @param tenantId - Tenant ID
+ * @returns Assignment result
+ */
+export async function assignScopedRoleToUser(
+  db: DatabaseSource,
+  userId: string,
+  roleId: string,
+  scopeType: string,
+  scopeTarget: string,
+  tenantId: string
+): Promise<{ success: boolean; assignment_id?: string; error?: string }> {
   const adapter = getAdapter(db);
   const assignmentId = `ra_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
@@ -346,8 +368,8 @@ export async function assignRoleToUser(
     // Check if already assigned
     const existing = await adapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = 'org' AND scope_target = ?`,
-      [tenantId, userId, roleId, `org:${orgId}`]
+       WHERE tenant_id = ? AND subject_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
+      [tenantId, userId, roleId, scopeType, scopeTarget]
     );
 
     if (existing) {
@@ -360,9 +382,9 @@ export async function assignRoleToUser(
 
     // Create assignment
     await adapter.execute(
-      `INSERT INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'org', ?, ?, ?)`,
-      [assignmentId, tenantId, userId, roleId, `org:${orgId}`, now, now]
+      `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope_type, scope_target, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [assignmentId, tenantId, userId, roleId, scopeType, scopeTarget, now, now]
     );
 
     return {
@@ -370,7 +392,7 @@ export async function assignRoleToUser(
       assignment_id: assignmentId,
     };
   } catch (error) {
-    log.error('Database error in assignRoleToUser', { roleId, userId, orgId }, error as Error);
+    log.error('Database error in assignScopedRoleToUser', { roleId, userId }, error as Error);
     return {
       success: false,
       // SECURITY: Do not expose internal error details
