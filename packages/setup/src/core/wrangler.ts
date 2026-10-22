@@ -470,10 +470,13 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   ],
   // RATE_LIMITER: /api/external/* is rate limited. Without it the limiter falls back to a
   // STATE_STORE KV the Bridge Worker does not have, and every request would answer 503.
+  // SESSION_CLIENT_STORE: an upstream back-channel logout tells the relying parties signed in
+  // through the sessions it ends; their logout targets are read from this store.
   'ar-bridge': [
     'KEY_MANAGER',
     'SESSION_STORE',
     'SESSION_REVOCATION_STORE',
+    'SESSION_CLIENT_STORE',
     'CHALLENGE_STORE',
     'RATE_LIMITER',
   ],

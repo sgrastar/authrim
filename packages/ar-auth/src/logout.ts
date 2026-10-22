@@ -38,7 +38,8 @@ import {
   resolveLogoutTargetsFromSessionClientStore,
   resolveSessionIdFromOidcSidStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
-  createBackchannelLogoutOrchestrator,
+  sendBackchannelLogoutFanout,
+  sendLogoutWebhookFanout,
   resolveLogoutConfig,
   resolveLogoutWebhookConfig,
   DEFAULT_LOGOUT_CONFIG,
@@ -52,9 +53,6 @@ import {
   normalizeDeviceSecretLogoutScope,
   revokeDeviceSecretsForLogoutScope,
   type RevokeDeviceSecretsForLogoutScopeResult,
-  // Simple Logout Webhook (Authrim Extension)
-  createLogoutWebhookOrchestrator,
-  decryptValue,
   // Event System
   publishEvent,
   USER_EVENTS,
@@ -72,14 +70,12 @@ import {
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type {
-  LogoutSendResult,
   LogoutConfig,
   LogoutWebhookConfig,
   SessionClientWithWebhook,
   SessionClientWithDetails,
-  LogoutWebhookSendResult,
 } from '@authrim/ar-lib-core';
-import { importJWK, jwtVerify, importPKCS8 } from 'jose';
+import { importJWK, jwtVerify } from 'jose';
 import type { JSONWebKeySet, CryptoKey, JWTPayload } from 'jose';
 
 /**
@@ -142,16 +138,6 @@ interface LogoutTokenPayload extends JWTPayload {
 
 // ===== Module-level Logger for Helper Functions =====
 const moduleLogger = createLogger().module('LOGOUT');
-
-/**
- * Import a PEM-encoded RSA private key for JWT signing
- *
- * @param pem - PEM-encoded private key
- * @returns CryptoKey for signing
- */
-async function importPrivateKeyPem(pem: string): Promise<CryptoKey> {
-  return (await importPKCS8(pem, 'RS256')) as CryptoKey;
-}
 
 /**
  * The tenant's back-channel, front-channel and session management settings (`session.*`, as the
@@ -679,128 +665,33 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     const logoutConfig = await getLogoutConfig(c.env, getTenantIdFromContext(c));
 
     if (deletedSessions.length > 0 && c.executionCtx) {
+      // The retry budget counts from when this work starts: loading keys uses it too.
       c.executionCtx.waitUntil(
-        (async () => {
-          // The retry budget counts from here: loading keys uses it too.
-          const startedAt = Date.now();
-          try {
-            if (!logoutConfig.backchannel.enabled) {
-              log.debug('Backchannel logout is disabled', { action: 'BackchannelLogout' });
-              return;
-            }
-
-            // Get signing key for logout tokens
-            const tenantId = getTenantIdFromContext(c);
-            const backchannelConfig = logoutConfig.backchannel;
-            const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-            const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-            const keys = await keyManager.getAllPublicKeysRpc();
-
-            if (!keys || keys.length === 0) {
-              log.error('No signing keys available', { action: 'BackchannelLogout' });
-              return;
-            }
-
-            // Get the private key from KeyManager
-            const activeKey = await keyManager.getActiveKeyWithPrivateRpc();
-
-            if (!activeKey || !activeKey.privatePEM) {
-              log.error('No private key available', { action: 'BackchannelLogout' });
-              return;
-            }
-
-            const kid = activeKey.kid;
-
-            // Import private key for signing
-            const privateKey = await importPrivateKeyPem(activeKey.privatePEM);
-
-            // Create orchestrator
-            const kv = c.env.SETTINGS || c.env.STATE_STORE;
-            // Retries follow session.backchannel_retry_*; a final failure with
-            // on_failure 'error' (alert) is written to the audit log.
-            const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
-              startedAt,
-              onAlert: async (details) => {
-                await createAuditLog(c.env, {
-                  tenantId,
-                  userId: details.userId,
-                  action: 'backchannel_logout.failed',
-                  resource: 'session',
-                  resourceId: details.sessionId,
-                  // Sent from the server after the response: no client request applies.
-                  ipAddress: '',
-                  userAgent: '',
-                  metadata: JSON.stringify({
-                    client_id: details.clientId,
-                    attempts: details.attempts,
-                  }),
-                  severity: 'warning',
-                });
-              },
+        sendBackchannelLogoutFanout(c.env, {
+          tenantId,
+          issuer,
+          sessions: sessionsToNotify,
+          config: logoutConfig.backchannel,
+          log,
+          // A final failure with on_failure 'error' (alert) is written to the audit log.
+          onAlert: async (details) => {
+            await createAuditLog(c.env, {
+              tenantId,
+              userId: details.userId,
+              action: 'backchannel_logout.failed',
+              resource: 'session',
+              resourceId: details.sessionId,
+              // Sent from the server after the response: no client request applies.
+              ipAddress: '',
+              userAgent: '',
+              metadata: JSON.stringify({
+                client_id: details.clientId,
+                attempts: details.attempts,
+              }),
+              severity: 'warning',
             });
-
-            // Send logout notifications for each deleted session
-            const allResults: LogoutSendResult[] = [];
-
-            // Retries run behind the first attempts: they are waited for even when a send fails.
-            let retried: LogoutSendResult[] = [];
-            try {
-              for (const {
-                sessionId: sessId,
-                userId: sessUserId,
-                backchannelClients,
-              } of sessionsToNotify) {
-                if (backchannelClients.length === 0) {
-                  log.debug('No clients to notify for session', {
-                    sessionId: sessId,
-                    action: 'BackchannelLogout',
-                  });
-                  continue;
-                }
-
-                log.info('Sending logout notifications', {
-                  sessionId: sessId,
-                  clientCount: backchannelClients.length,
-                  action: 'BackchannelLogout',
-                });
-
-                const results = await orchestrator.sendToAll(
-                  backchannelClients,
-                  {
-                    issuer,
-                    userId: sessUserId,
-                    sessionId: sessId,
-                    privateKey,
-                    kid,
-                  },
-                  backchannelConfig
-                );
-
-                allResults.push(...results);
-              }
-            } finally {
-              retried = await orchestrator.settle();
-            }
-
-            // Log summary
-            const succeeded =
-              allResults.filter((r) => r.success).length + retried.filter((r) => r.success).length;
-            const failed =
-              allResults.filter((r) => !r.success && !r.retryScheduled).length +
-              retried.filter((r) => !r.success).length;
-            log.info('Backchannel logout completed', {
-              succeeded,
-              failed,
-              action: 'BackchannelLogout',
-            });
-          } catch (error) {
-            log.error(
-              'Error sending notifications',
-              { action: 'BackchannelLogout' },
-              error as Error
-            );
-          }
-        })()
+          },
+        })
       );
     }
 
@@ -812,86 +703,13 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (deletedSessions.length > 0 && c.executionCtx) {
       c.executionCtx.waitUntil(
         (async () => {
-          try {
-            const webhookConfig = await getLogoutWebhookConfig(c.env, getTenantIdFromContext(c));
-
-            if (!webhookConfig.enabled) {
-              log.debug('Logout webhook is disabled', { action: 'LogoutWebhook' });
-              return;
-            }
-
-            // Check if we have any webhook clients to notify
-            const hasWebhookClients = sessionsToNotify.some((s) => s.webhookClients.length > 0);
-            if (!hasWebhookClients) {
-              log.debug('No webhook clients to notify', { action: 'LogoutWebhook' });
-              return;
-            }
-
-            // Get encryption key for decrypting webhook secrets
-            const encryptionKey = c.env.RP_TOKEN_ENCRYPTION_KEY || c.env.PII_ENCRYPTION_KEY;
-            if (!encryptionKey) {
-              log.error('No encryption key for decrypting webhook secrets', {
-                action: 'LogoutWebhook',
-              });
-              return;
-            }
-
-            // Create secret decryption function
-            // SECURITY: Wrap decryption in try-catch to avoid leaking key info in errors
-            const decryptSecret = async (encrypted: string): Promise<string> => {
-              try {
-                const result = await decryptValue(encrypted, encryptionKey);
-                return result.decrypted;
-              } catch {
-                // SECURITY: Do not expose decryption error details
-                log.error('Failed to decrypt webhook secret', { action: 'LogoutWebhook' });
-                throw new Error('Decryption failed');
-              }
-            };
-
-            // Create orchestrator
-            const kv = c.env.SETTINGS || c.env.STATE_STORE;
-            const orchestrator = createLogoutWebhookOrchestrator(kv);
-
-            // Send webhook notifications for each deleted session
-            const allResults: LogoutWebhookSendResult[] = [];
-
-            for (const {
-              sessionId: sessId,
-              userId: sessUserId,
-              webhookClients,
-            } of sessionsToNotify) {
-              if (webhookClients.length === 0) {
-                continue;
-              }
-
-              log.info('Sending webhook notifications', {
-                sessionId: sessId,
-                clientCount: webhookClients.length,
-                action: 'LogoutWebhook',
-              });
-
-              const results = await orchestrator.sendToAll(
-                webhookClients,
-                {
-                  issuer,
-                  userId: sessUserId,
-                  sessionId: sessId,
-                },
-                webhookConfig,
-                decryptSecret
-              );
-
-              allResults.push(...results);
-            }
-
-            // Log summary
-            const succeeded = allResults.filter((r) => r.success).length;
-            const failed = allResults.filter((r) => !r.success).length;
-            log.info('Logout webhook completed', { succeeded, failed, action: 'LogoutWebhook' });
-          } catch (error) {
-            log.error('Error sending notifications', { action: 'LogoutWebhook' }, error as Error);
-          }
+          const webhookConfig = await getLogoutWebhookConfig(c.env, tenantId);
+          await sendLogoutWebhookFanout(c.env, {
+            issuer,
+            sessions: sessionsToNotify,
+            config: webhookConfig,
+            log,
+          });
         })()
       );
     }
