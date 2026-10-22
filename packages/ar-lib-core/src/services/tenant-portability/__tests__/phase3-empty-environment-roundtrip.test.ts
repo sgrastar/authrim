@@ -152,6 +152,9 @@ describe('Phase 3 empty-environment roundtrip', () => {
         INSERT INTO consent_statement_versions(
           id,tenant_id,statement_id,version,effective_at,created_at,updated_at
         ) VALUES('statement-version-a','tenant-a','statement-a','20260915',1,1,1);
+        -- An organisation as the Admin API wrote it before core migration 024.
+        INSERT INTO organizations(id,tenant_id,name,org_type,created_at,updated_at)
+        VALUES('org-a','tenant-a','acme','team',1,1);
       `);
       sourceAdmin.exec(`
         INSERT INTO tenant_settings_documents(
@@ -256,7 +259,11 @@ describe('Phase 3 empty-environment roundtrip', () => {
       for (const policy of ordered(planned)) {
         const entry = planned.find((candidate) => candidate.dataset.id === policy.dataset.id)!;
         const target = entry.family === 'core' ? targetCore : targetAdmin;
-        for (const rowJson of restored.get(entry.dataset.id) ?? []) {
+        for (const sourceRow of restored.get(entry.dataset.id) ?? []) {
+          // The restore step writes each row through the policy's installed transform.
+          const rowJson = policy.restoreTransform
+            ? await policy.restoreTransform.transform({} as never, sourceRow, 'write')
+            : sourceRow;
           const fields = JSON.parse(rowJson) as Record<string, ['text' | 'null', string | null]>;
           if (entry.dataset.id === 'core.oauth_clients' && fields.logout_webhook_secret_encrypted) {
             const portableValue = fields.logout_webhook_secret_encrypted[1];
@@ -294,6 +301,9 @@ describe('Phase 3 empty-environment roundtrip', () => {
       expect(
         targetCore.prepare("SELECT parent_role_id FROM roles WHERE id='role-1-child'").get()
       ).toEqual({ parent_role_id: 'role-0-parent' });
+      expect(
+        targetCore.prepare("SELECT org_type FROM organizations WHERE id='org-a'").get()
+      ).toEqual({ org_type: 'department' });
       const storedSecret = String(
         targetCore
           .prepare(
