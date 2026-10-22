@@ -133,6 +133,20 @@ describe('the IdP metadata of a tenant', () => {
     expect(xml).toContain('Authrim Identity Provider');
   });
 
+  it('names the organization as it always did, and still lists the scopes, when the saved names are not valid', async () => {
+    mocks.settings = {
+      'institution.scopes': 'example.ac.jp',
+      'institution.display_names': 'broken',
+    };
+    const response = await fetchMetadata();
+    const xml = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(scopesIn(xml)).toEqual(['example.ac.jp']);
+    expect(xml).toContain('Authrim Identity Provider');
+    expect(xml).not.toContain('broken');
+  });
+
   it('is not served, rather than served without the scopes, when the settings cannot be read', async () => {
     mocks.settingsError = new Error('kv down');
     const response = await fetchMetadata();

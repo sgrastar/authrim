@@ -58,6 +58,7 @@ describe('loadSAMLInstitutionRelease', () => {
       },
       homeOrganization: 'example.ac.jp',
       organizationName: 'Example University',
+      registeredNames: ['例大学', 'Example University'],
     });
   });
 
@@ -82,6 +83,25 @@ describe('loadSAMLInstitutionRelease', () => {
       'Failed to read the tenant institution settings',
       mocks.settingsError
     );
+  });
+
+  it('does not read saved names that are not valid as no names, with or without scopes', async () => {
+    mocks.settings = { 'institution.display_names': 'broken' };
+    expect((await loadSAMLInstitutionRelease(env, 'tenant-a', noError)).scopePolicy).toEqual({
+      state: 'names_invalid',
+    });
+    mocks.settings = {
+      'institution.scopes': 'example.ac.jp',
+      'institution.display_names': 'broken',
+    };
+    expect((await loadSAMLInstitutionRelease(env, 'tenant-a', noError)).scopePolicy).toEqual({
+      state: 'names_invalid',
+    });
+    // Invalid scopes are the more specific answer.
+    mocks.settings = { 'institution.scopes': '*.example', 'institution.display_names': 'broken' };
+    expect((await loadSAMLInstitutionRelease(env, 'tenant-a', noError)).scopePolicy).toEqual({
+      state: 'invalid',
+    });
   });
 
   it('has nothing to release about the institution of a tenant that registered none', async () => {
@@ -431,6 +451,165 @@ describe('releaseSAMLAttributesWithInstitution', () => {
     expect(result.withheldScopedValues).toEqual([
       expect.objectContaining({ name: 'uid', reason: 'scope_not_registered' }),
     ]);
+  });
+
+  describe('the attributes that name the institution', () => {
+    const OID_SCHAC = 'urn:oid:1.3.6.1.4.1.25178.1.2.9';
+    const OID_O = 'urn:oid:2.5.4.10';
+    const OID_EPPN_HERE = 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6';
+    const withSubject = (claims: Record<string, string>) => {
+      subject.customClaims = { ...subject.customClaims, ...claims };
+    };
+
+    it('does not let a tenant administrator name another institution from the person’s own data', async () => {
+      withSubject({ homeDomain: 'rival.example', orgName: 'Rival University' });
+      const parts = {
+        edges: [
+          edge('e1', 'homeDomain', target(OID_SCHAC)),
+          edge('e2', 'orgName', target(OID_O)),
+          edge('e3', 'mail', target(OID_MAIL)),
+        ],
+      };
+
+      const result = await release(parts);
+
+      expect(result.attributes.map((attribute) => attribute.name)).toEqual([OID_MAIL]);
+      expect(result.withheldScopedValues).toEqual([
+        expect.objectContaining({
+          attribute: 'schacHomeOrganization',
+          reason: 'organization_not_registered',
+          scope: 'rival.example',
+        }),
+        expect.objectContaining({
+          attribute: 'organizationName',
+          reason: 'organization_not_registered',
+        }),
+      ]);
+      expect(JSON.stringify(result)).not.toContain('Rival');
+    });
+
+    it('withholds them, and the scoped values, when only invalid names are saved', async () => {
+      mocks.settings = { 'institution.display_names': 'broken' };
+      withSubject({ homeDomain: 'rival.example', orgName: 'Rival University' });
+      const result = await release({
+        edges: [
+          edge('e1', 'homeDomain', target(OID_SCHAC)),
+          edge('e2', 'orgName', target(OID_O)),
+          edge('e3', 'principal', target(OID_EPPN_HERE)),
+          edge('e4', 'mail', target(OID_MAIL)),
+        ],
+      });
+
+      expect(result.attributes.map((attribute) => attribute.name)).toEqual([OID_MAIL]);
+      expect(result.withheldScopedValues?.map((entry) => entry.reason)).toEqual([
+        'institution_names_invalid',
+        'institution_names_invalid',
+        'institution_names_invalid',
+      ]);
+    });
+
+    it('holds a value released under the URN name of o, with no friendly name', async () => {
+      withSubject({ orgName: 'Rival University' });
+      const result = await release({
+        edges: [edge('e1', 'orgName', target('urn:mace:dir:attribute-def:o'))],
+      });
+
+      expect(result.attributes).toEqual([]);
+    });
+
+    it('lets a person’s own value through when it is the registered one', async () => {
+      withSubject({ homeDomain: 'med.example.ac.jp', orgName: '例大学' });
+      const attributes = await released({
+        edges: [edge('e1', 'homeDomain', target(OID_SCHAC)), edge('e2', 'orgName', target(OID_O))],
+      });
+
+      expect(attributes).toEqual({ [OID_SCHAC]: ['med.example.ac.jp'], [OID_O]: ['例大学'] });
+    });
+
+    it('holds a value that reaches them through a hidden intermediate field and a copy', async () => {
+      withSubject({ homeDomain: 'rival.example' });
+      const parts = {
+        edges: [edge('e1', 'homeDomain', target('urn:oid:example:tmp'))],
+        transforms: [copy('t1', 'e1', target('schacHomeOrganization'))],
+        policies: { 'urn:oid:example:tmp': 'hidden' as const },
+      };
+
+      expect((await release(parts)).attributes).toEqual([]);
+    });
+
+    it('holds a value read from a field called schac_home_organization, released as another name', async () => {
+      withSubject({ schac_home_organization: 'rival.example' });
+      const result = await release({
+        edges: [edge('e1', 'schac_home_organization', target('homeDomain'))],
+      });
+
+      expect(result.attributes).toEqual([]);
+    });
+
+    it('passes the values of the system sources, which are the registered ones', async () => {
+      const parts = {
+        edges: [
+          systemEdge(
+            'e1',
+            'schac_home_organization',
+            'system.identity.schac_home_organization',
+            target(OID_SCHAC)
+          ),
+          systemEdge('e2', 'organization_name', 'system.identity.organization_name', target(OID_O)),
+        ],
+      };
+      const result = await releaseSAMLAttributesWithInstitution({
+        env,
+        tenantId: 'tenant-a',
+        subject: { id: 'u' },
+        releaseConfig: {
+          entityId: 'https://sp.example.test',
+          attributeMapping: {},
+          identityMapping: {
+            catalog: {
+              identity: { id: 'c', version: '1', contentHash: 'c', compatibilityRange: '*' },
+              entries: destinations(parts),
+            },
+            edges: parts.edges,
+          } as never,
+        },
+        onError: noError,
+      });
+
+      expect(Object.fromEntries(result.attributes.map((a) => [a.name, a.values]))).toEqual({
+        [OID_SCHAC]: ['example.ac.jp'],
+        [OID_O]: ['Example University'],
+      });
+      expect(result.withheldScopedValues).toBeUndefined();
+    });
+
+    it('does not take other attributes for them by a part of their name', async () => {
+      withSubject({ dept: 'Rival Department' });
+      const attributes = await released({
+        edges: [edge('e1', 'dept', target('ou')), edge('e2', 'dept', target('urn:oid:2.5.4.100'))],
+      });
+
+      expect(attributes).toEqual({
+        ou: ['Rival Department'],
+        'urn:oid:2.5.4.100': ['Rival Department'],
+      });
+    });
+
+    it('withholds them when the settings cannot be read, and leaves them alone for a tenant that registered nothing', async () => {
+      withSubject({ homeDomain: 'rival.example' });
+      const parts = { edges: [edge('e1', 'homeDomain', target(OID_SCHAC))] };
+
+      mocks.settingsError = new Error('kv down');
+      const unavailable = await release(parts, () => undefined);
+      expect(unavailable.attributes).toEqual([]);
+      expect(unavailable.withheldScopedValues).toEqual([
+        expect.objectContaining({ reason: 'institution_settings_unavailable' }),
+      ]);
+
+      mocks.settingsError = null;
+      mocks.settings = {};
+      expect(await released(parts)).toEqual({ [OID_SCHAC]: ['rival.example'] });
+    });
   });
 
   it('releases the organization name through a hidden intermediate field and a copy, to a service provider that requires it', async () => {

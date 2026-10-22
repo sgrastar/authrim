@@ -335,6 +335,51 @@ describe.each([
     expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('rival');
   });
 
+  it('does not let a mapping name another institution from the person’s own data', async () => {
+    mocks.user = {
+      id: 'user-a',
+      email: 'user@example.test',
+      customClaims: { homeDomain: 'rival.example', orgName: 'Rival University' },
+    };
+    const binding = institutionBinding([
+      customClaimEdge('edge_home', 'homeDomain', OID_SCHAC_HOME_ORGANIZATION),
+      customClaimEdge('edge_name', 'orgName', OID_ORGANIZATION_NAME),
+    ]);
+    mocks.binding = {
+      ...binding,
+      catalog: {
+        ...binding.catalog,
+        entries: [
+          ...binding.catalog.entries,
+          ...['homeDomain', 'orgName'].map((claim) => ({
+            id: `field.custom.${claim}`,
+            namespace: 'authrim.custom_claims',
+            path: claim,
+            valueType: 'string',
+            cardinality: 'single' as const,
+            classification: 'internal' as const,
+            targetType: 'custom' as const,
+          })),
+        ],
+      },
+    };
+    const response = await run();
+    expect(response.status).toBe(200);
+    expect(assertionAttributes()).toEqual({ [OID_MAIL]: ['user@example.test'] });
+    expect(mocks.lastXml).not.toContain('Rival');
+    expect(mocks.lastXml).not.toContain('rival');
+    expect(withheldRecords()[0]).toMatchObject({
+      withheld: [
+        expect.objectContaining({ reason: 'organization_not_registered', scope: 'rival.example' }),
+        expect.objectContaining({
+          attribute: 'organizationName',
+          reason: 'organization_not_registered',
+        }),
+      ],
+    });
+    expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('Rival');
+  });
+
   it('records what it withheld by reason and scope, with no value of the person', async () => {
     await run();
     expect(withheldRecords()).toEqual([

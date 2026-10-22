@@ -9,6 +9,8 @@ import {
 const EPSA = 'urn:oid:1.3.6.1.4.1.5923.1.1.1.9';
 const EPPN = 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6';
 const MAIL = 'urn:oid:0.9.2342.19200300.100.1.3';
+const SCHAC = 'urn:oid:1.3.6.1.4.1.25178.1.2.9';
+const ORG_NAME = 'urn:oid:2.5.4.10';
 
 const set = (...scopes: string[]): SAMLInstitutionScopePolicy => ({
   state: 'set',
@@ -38,6 +40,22 @@ describe('which attributes are scoped', () => {
     ['urn:oid:1.3.6.1.4.1.5923.1.1.1.9', 'eduPersonScopedAffiliation'],
     ['target.eduPersonPrincipalName', 'eduPersonPrincipalName'],
     ['field.saml.edu_person_scoped_affiliation', 'eduPersonScopedAffiliation'],
+    [SCHAC, 'schacHomeOrganization'],
+    ['1.3.6.1.4.1.25178.1.2.9', 'schacHomeOrganization'],
+    ['schac_home_organization', 'schacHomeOrganization'],
+    ['target.schacHomeOrganization', 'schacHomeOrganization'],
+    [ORG_NAME, 'organizationName'],
+    ['2.5.4.10', 'organizationName'],
+    ['o', 'organizationName'],
+    ['O', 'organizationName'],
+    ['organizationName', 'organizationName'],
+    ['organization_name', 'organizationName'],
+    ['urn:mace:dir:attribute-def:o', 'organizationName'],
+    ['URN:MACE:DIR:ATTRIBUTE-DEF:O', 'organizationName'],
+    ['urn:mace:dir:attribute-def:organizationName', 'organizationName'],
+    ['urn:mace:dir:attribute-def:eduPersonPrincipalName', 'eduPersonPrincipalName'],
+    ['urn:mace:dir:attribute-def:eduPersonScopedAffiliation', 'eduPersonScopedAffiliation'],
+    ['urn:mace:terena.org:attribute-def:schacHomeOrganization', 'schacHomeOrganization'],
   ])('reads %s as %s', (name, kind) => {
     expect(scopedAttributeKind(attribute(name, ['x']))).toBe(kind);
   });
@@ -54,6 +72,28 @@ describe('which attributes are scoped', () => {
     expect(scopedAttributeKind(attribute('urn:oid:1.3.6.1.4.1.5923.1.1.1.60', ['x']))).toBeNull();
     expect(scopedAttributeKind(attribute('urn:oid:11.3.6.1.4.1.5923.1.1.1.6', ['x']))).toBeNull();
     expect(scopedAttributeKind(attribute('eppn2', ['x']))).toBeNull();
+    // The URN forms are whole names; another attribute's URN that ends the same way is not them.
+    for (const name of [
+      'urn:mace:dir:attribute-def:ou',
+      'urn:mace:dir:attribute-def:o2',
+      'urn:mace:dir:attribute-def:mail',
+    ]) {
+      expect(scopedAttributeKind(attribute(name, ['x'])), name).toBeNull();
+    }
+    // The organization name is a short name: only the whole name counts, never a part of a word.
+    for (const name of [
+      'ou',
+      'other',
+      'to',
+      'mobile',
+      'organization',
+      'urn:oid:2.5.4.100',
+      'urn:oid:2.5.4.1',
+      'urn:oid:12.5.4.10',
+      'urn:oid:1.3.6.1.4.1.25178.1.2.90',
+    ]) {
+      expect(scopedAttributeKind(attribute(name, ['x'])), name).toBeNull();
+    }
     // eduPersonAffiliation has no scope.
     expect(
       scopedAttributeKind(attribute('urn:oid:1.3.6.1.4.1.5923.1.1.1.1', ['member']))
@@ -279,6 +319,139 @@ describe('a tenant whose scopes cannot be trusted', () => {
         reason: 'institution_settings_unavailable',
         count: 1,
       }),
+    ]);
+  });
+});
+
+describe('the attributes that name the institution', () => {
+  const registered = set('example.ac.jp', 'med.example.ac.jp');
+  const names = ['例大学', 'Example University'];
+  const apply = (
+    attributes: SAMLAttribute[],
+    policy: SAMLInstitutionScopePolicy,
+    registeredNames = names
+  ) => applySAMLInstitutionScopePolicy(attributes, policy, scopedAttributeKind, registeredNames);
+
+  it('releases schacHomeOrganization when it is a registered scope, exactly', () => {
+    const result = apply([attribute(SCHAC, ['example.ac.jp', 'med.example.ac.jp'])], registered);
+    expect(result.attributes).toEqual([attribute(SCHAC, ['example.ac.jp', 'med.example.ac.jp'])]);
+    expect(result.withheld).toEqual([]);
+  });
+
+  it('withholds a schacHomeOrganization that is not a registered scope, and says which domain', () => {
+    const result = apply(
+      [
+        attribute(SCHAC, [
+          'rival.example',
+          'example.ac.jp',
+          'EXAMPLE.AC.JP',
+          'sub.example.ac.jp',
+          '',
+        ]),
+      ],
+      registered
+    );
+    expect(result.attributes).toEqual([attribute(SCHAC, ['example.ac.jp'])]);
+    expect(result.withheld).toEqual([
+      {
+        attribute: 'schacHomeOrganization',
+        name: SCHAC,
+        reason: 'organization_not_registered',
+        scope: 'rival.example',
+        count: 1,
+      },
+      // What is not a domain name is not named.
+      {
+        attribute: 'schacHomeOrganization',
+        name: SCHAC,
+        reason: 'organization_not_registered',
+        count: 2,
+      },
+      expect.objectContaining({ scope: 'sub.example.ac.jp', count: 1 }),
+    ]);
+  });
+
+  it('releases the organization name when it is a registered name in any language, exactly', () => {
+    const result = apply([attribute(ORG_NAME, ['Example University', '例大学'])], registered);
+    expect(result.attributes).toEqual([attribute(ORG_NAME, ['Example University', '例大学'])]);
+  });
+
+  it('withholds an organization name that is not registered, and never names it', () => {
+    const result = apply(
+      [attribute(ORG_NAME, ['Rival University', 'example university', 'Example University '])],
+      registered
+    );
+    expect(result.attributes).toEqual([]);
+    expect(result.withheld).toEqual([
+      {
+        attribute: 'organizationName',
+        name: ORG_NAME,
+        reason: 'organization_not_registered',
+        count: 3,
+      },
+    ]);
+    expect(JSON.stringify(result.withheld)).not.toContain('Rival');
+  });
+
+  it('holds both to the registered values when only the names, or only the scopes, are registered', () => {
+    expect(
+      apply([attribute(SCHAC, ['example.ac.jp']), attribute(ORG_NAME, ['Example University'])], {
+        state: 'unset',
+      }).attributes
+    ).toEqual([attribute(ORG_NAME, ['Example University'])]);
+    expect(apply([attribute(ORG_NAME, ['Example University'])], registered, []).attributes).toEqual(
+      []
+    );
+  });
+
+  it('withholds both when the saved scopes are not valid or the settings cannot be read', () => {
+    for (const [policy, reason] of [
+      [{ state: 'invalid' }, 'institution_scopes_invalid'],
+      [{ state: 'unavailable' }, 'institution_settings_unavailable'],
+    ] as const) {
+      const result = apply(
+        [attribute(SCHAC, ['example.ac.jp']), attribute(ORG_NAME, ['Example University'])],
+        policy
+      );
+      expect(result.attributes).toEqual([]);
+      expect(result.withheld.map((entry) => entry.reason)).toEqual([reason, reason]);
+    }
+  });
+
+  it('leaves them as they come for a tenant that registered nothing', () => {
+    const attributes = [
+      attribute(SCHAC, ['rival.example']),
+      attribute(ORG_NAME, ['Rival University']),
+    ];
+    const result = apply(attributes, { state: 'unset' }, []);
+    expect(result.attributes).toBe(attributes);
+    expect(result.withheld).toEqual([]);
+  });
+
+  it('does not touch the scoped affiliation of a tenant that registered names but no scope', () => {
+    const attributes = [attribute(EPSA, ['member@rival.example'])];
+    expect(apply(attributes, { state: 'unset' }).attributes).toEqual(attributes);
+  });
+});
+
+describe('a tenant whose saved names are not valid', () => {
+  it('withholds the scoped values and the attributes that name the institution, with its own reason', () => {
+    const result = applySAMLInstitutionScopePolicy(
+      [
+        attribute(EPSA, ['member@example.ac.jp']),
+        attribute(SCHAC, ['example.ac.jp']),
+        attribute(ORG_NAME, ['Example University']),
+        attribute(MAIL, ['a@b.example'], 'mail'),
+      ],
+      { state: 'names_invalid' },
+      scopedAttributeKind,
+      []
+    );
+    expect(result.attributes).toEqual([attribute(MAIL, ['a@b.example'], 'mail')]);
+    expect(result.withheld.map((entry) => [entry.attribute, entry.reason])).toEqual([
+      ['eduPersonScopedAffiliation', 'institution_names_invalid'],
+      ['schacHomeOrganization', 'institution_names_invalid'],
+      ['organizationName', 'institution_names_invalid'],
     ]);
   });
 });

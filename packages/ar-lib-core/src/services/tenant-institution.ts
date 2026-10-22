@@ -140,10 +140,24 @@ export function readInstitutionDisplayNames(value: unknown): Readonly<Record<str
   return JSON.parse(value) as Record<string, string>;
 }
 
+/**
+ * Whether `institution.display_names` holds something that is not a valid set of names. Nothing
+ * saved (or the default `{}`) is not invalid: it is unset.
+ */
+export function institutionDisplayNamesInvalid(value: unknown): boolean {
+  if (value === undefined || value === null || value === '' || value === '{}') return false;
+  return institutionDisplayNamesProblem(value) !== null;
+}
+
 /** What a tenant's institution settings say. */
 export interface TenantInstitution {
   scopes: InstitutionScopes;
   displayNames: Readonly<Record<string, string>>;
+  /**
+   * Set when something that is not a valid set of names is saved: `displayNames` is empty then,
+   * and a consumer that gates on the institution must not read that as "no names registered".
+   */
+  namesInvalid?: true;
 }
 
 /**
@@ -154,5 +168,8 @@ export function institutionFromSettings(values: Record<string, unknown>): Tenant
   return {
     scopes: readInstitutionScopes(values[INSTITUTION_SCOPES_KEY]),
     displayNames: readInstitutionDisplayNames(values[INSTITUTION_DISPLAY_NAMES_KEY]),
+    ...(institutionDisplayNamesInvalid(values[INSTITUTION_DISPLAY_NAMES_KEY])
+      ? { namesInvalid: true as const }
+      : {}),
   };
 }

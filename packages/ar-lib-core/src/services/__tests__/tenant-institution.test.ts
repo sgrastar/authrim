@@ -191,8 +191,24 @@ describe('a tenant’s institution from its effective settings', () => {
     ).toEqual({ scopes: { state: 'unset' }, displayNames: {} });
     expect(institutionFromSettings({})).toEqual({ scopes: { state: 'unset' }, displayNames: {} });
   });
+});
 
-  it('keeps the scopes and the names apart: an invalid name does not touch the scopes', () => {
+describe('saved names that are not valid', () => {
+  it('are told from names that are not saved, which are simply unset', () => {
+    for (const unset of [undefined, null, '', '{}']) {
+      expect(institutionFromSettings({ 'institution.display_names': unset }).namesInvalid).toBe(
+        undefined
+      );
+    }
+    for (const invalid of ['broken', '[]', '{"en":"only English"}', 'null', 1, false, {}]) {
+      expect(
+        institutionFromSettings({ 'institution.display_names': invalid }),
+        JSON.stringify(invalid)
+      ).toEqual({ scopes: { state: 'unset' }, displayNames: {}, namesInvalid: true });
+    }
+  });
+
+  it('do not touch the scopes', () => {
     expect(
       institutionFromSettings({
         'institution.scopes': 'example.ac.jp',
@@ -201,6 +217,7 @@ describe('a tenant’s institution from its effective settings', () => {
     ).toEqual({
       scopes: { state: 'set', scopes: ['example.ac.jp'], defaultScope: 'example.ac.jp' },
       displayNames: {},
+      namesInvalid: true,
     });
   });
 });

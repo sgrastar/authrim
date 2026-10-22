@@ -28,6 +28,8 @@ export interface SAMLInstitutionRelease {
   homeOrganization?: string;
   /** The institution's name as the `o` attribute carries it. */
   organizationName?: string;
+  /** Every name the tenant registered, in any language: the values `o` may have. */
+  registeredNames?: readonly string[];
 }
 
 /**
@@ -47,12 +49,18 @@ export async function loadSAMLInstitutionRelease(
     );
     const names = institution.displayNames;
     return {
-      scopePolicy: institution.scopes,
+      // Saved names that are not valid are as untrustworthy as saved scopes that are not (invalid
+      // scopes are the more specific answer).
+      scopePolicy:
+        institution.namesInvalid && institution.scopes.state !== 'invalid'
+          ? { state: 'names_invalid' }
+          : institution.scopes,
       ...(institution.scopes.state === 'set'
         ? { homeOrganization: institution.scopes.defaultScope }
         : {}),
       // The attribute has no language: the English name (a saved set of names always has one).
       ...(names.en ? { organizationName: names.en } : {}),
+      ...(Object.keys(names).length > 0 ? { registeredNames: Object.values(names) } : {}),
     };
   } catch (error) {
     onError('Failed to read the tenant institution settings', error);
@@ -80,7 +88,11 @@ export async function releaseSAMLAttributesWithInstitution(input: {
   const institution = await loadSAMLInstitutionRelease(input.env, input.tenantId, input.onError);
   return buildSAMLAttributesForSPWithDiagnostics(
     withSAMLInstitutionAttributes(input.subject, institution),
-    { ...input.releaseConfig, institutionScope: institution.scopePolicy }
+    {
+      ...input.releaseConfig,
+      institutionScope: institution.scopePolicy,
+      institutionNames: institution.registeredNames,
+    }
   );
 }
 

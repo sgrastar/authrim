@@ -74,6 +74,8 @@ export interface SAMLAttributeReleaseConfig {
    * eduPersonPrincipalName) must be under. Left out, the values are released as the mapping gives them.
    */
   institutionScope?: SAMLInstitutionScopePolicy;
+  /** The names the tenant registered for its institution, which `o` must be one of. */
+  institutionNames?: readonly string[];
 }
 
 export interface SAMLAttributeReleaseRule {
@@ -234,7 +236,8 @@ export function buildSAMLAttributesForSPWithDiagnostics(
         partnerEntityId: spConfig.entityId,
         runtimeContext: spConfig.identityMapping.runtimeContext,
       },
-      spConfig.institutionScope
+      spConfig.institutionScope,
+      spConfig.institutionNames
     );
   }
 
@@ -261,7 +264,8 @@ function buildSAMLAttributesFromIdentityMapping(
   subject: SAMLAttributeSubject,
   config: SAMLIdentityMappingReleaseConfig,
   context: SAMLIdentityMappingRuntimeContext,
-  institutionScope?: SAMLInstitutionScopePolicy
+  institutionScope?: SAMLInstitutionScopePolicy,
+  institutionNames?: readonly string[]
 ): SAMLAttributeReleaseResult {
   const binding = resolveSAMLIdentityMappingFieldMappingBinding(config, context);
   const destinationNamespace = binding.destinationNamespace ?? 'saml.attribute';
@@ -309,7 +313,7 @@ function buildSAMLAttributesFromIdentityMapping(
   // Before the required attributes are checked: a required scoped attribute none of whose values
   // is under a registered scope is missing, as any other that has no value.
   const { attributes, withheld } = institutionScope
-    ? applySAMLInstitutionScopePolicy(mapped, institutionScope, kindOf)
+    ? applySAMLInstitutionScopePolicy(mapped, institutionScope, kindOf, institutionNames)
     : { attributes: mapped, withheld: [] };
   const missingAttributes = findMissingRequiredMappedAttributes(
     attributes,
