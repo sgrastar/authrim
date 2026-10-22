@@ -104,12 +104,14 @@ export interface LogoutNotSentSummary {
 }
 
 /**
- * The downstream logout could not be sent at all (no issuer to sign with): make that visible.
- * Each relying party that was to be told (back-channel when `backchannelEnabled`, webhook when
- * `webhookEnabled`) gets a failure record with the reason `issuer_unresolved`, which
- * `/api/admin/logout-failures` lists, and the audit log gets one `user.downstream_logout_failed`
- * entry per user with the path (`trigger`) and the number of sessions and apps not told. No
- * value, client id or internal id is put in the audit entry. Never throws.
+ * Some downstream logouts could not be sent (no issuer to sign with, no signing key, unreadable
+ * settings, the sending broke off): make that visible. Each relying party that was to be told
+ * (back-channel when `backchannelEnabled`, webhook when `webhookEnabled`) gets a failure record
+ * with the reason code `reason`, which `/api/admin/logout-failures` lists, and the audit log gets
+ * one `user.downstream_logout_failed` entry with the path (`trigger`), the reason and the number of
+ * sessions and apps not told. The entry names no user, client or session: it is attributed to the
+ * system, so that the id a user logout may carry from an `id_token_hint` is never recorded.
+ * Never throws.
  */
 export async function reportLogoutNotSent(
   env: Env,
@@ -120,12 +122,15 @@ export async function reportLogoutNotSent(
     sessions: LogoutFanoutSession[];
     backchannelEnabled: boolean;
     webhookEnabled: boolean;
+    /** Why (default: the tenant issuer could not be resolved). */
+    reason?: string;
     /** More metadata for the audit entry (ids of the notice, no personal data). */
     metadata?: Record<string, string>;
     log?: Logger;
   }
 ): Promise<LogoutNotSentSummary> {
   const log = params.log ?? defaultLog;
+  const reason = params.reason ?? 'issuer_unresolved';
   const targets = (session: LogoutFanoutSession): string[] => [
     ...(params.backchannelEnabled ? session.backchannelClients.map((c) => c.client_id) : []),
     ...(params.webhookEnabled ? session.webhookClients.map((c) => c.client_id) : []),
@@ -141,7 +146,7 @@ export async function reportLogoutNotSent(
   if (kv) {
     await Promise.all(
       [...clientIds].map((clientId) =>
-        LogoutKVHelpers.recordFailure(kv, clientId, { error: 'issuer_unresolved' }).catch((error) =>
+        LogoutKVHelpers.recordFailure(kv, clientId, { error: reason }).catch((error) =>
           log.error('Failed to record a logout failure', { action: 'LogoutFanout' }, error as Error)
         )
       )
@@ -150,43 +155,79 @@ export async function reportLogoutNotSent(
     log.error('No KV to record logout failures in', { action: 'LogoutFanout' });
   }
 
-  const perUser = new Map<string, { sessions: number; clients: Set<string> }>();
-  for (const session of params.sessions) {
-    const ids = targets(session);
-    if (ids.length === 0) continue;
-    const entry = perUser.get(session.userId) ?? { sessions: 0, clients: new Set<string>() };
-    entry.sessions += 1;
-    ids.forEach((id) => entry.clients.add(id));
-    perUser.set(session.userId, entry);
-  }
-  await Promise.all(
-    [...perUser].map(([userId, entry]) =>
-      createAuditLog(env, {
-        tenantId: params.tenantId,
-        userId: userId || 'system',
-        action: 'user.downstream_logout_failed',
-        resource: 'user',
-        resourceId: userId || 'system',
-        ipAddress: '',
-        userAgent: '',
-        metadata: JSON.stringify({
-          trigger: params.trigger,
-          error_code: 'issuer_unresolved',
-          session_count: entry.sessions,
-          client_count: entry.clients.size,
-          ...params.metadata,
-        }),
-        severity: 'warning',
-      }).catch((error) =>
-        log.error(
-          'Failed to create audit log for an unsent logout',
-          { action: 'audit_log' },
-          error as Error
-        )
-      )
+  await createAuditLog(env, {
+    tenantId: params.tenantId,
+    userId: 'system',
+    action: 'user.downstream_logout_failed',
+    resource: 'downstream_logout',
+    resourceId: params.trigger,
+    ipAddress: '',
+    userAgent: '',
+    metadata: JSON.stringify({
+      trigger: params.trigger,
+      error_code: reason,
+      session_count: summary.sessions,
+      client_count: summary.clients,
+      ...params.metadata,
+    }),
+    severity: 'warning',
+  }).catch((error) =>
+    log.error(
+      'Failed to create audit log for an unsent logout',
+      { action: 'audit_log' },
+      error as Error
     )
   );
   return summary;
+}
+
+/**
+ * `reportLogoutNotSent` for what the fan-out reported as incomplete (`onIncomplete`): one report
+ * per kind of notice and reason, for the sessions concerned. Never throws.
+ */
+export async function reportIncompleteLogouts(
+  env: Env,
+  params: {
+    tenantId: string;
+    trigger: string;
+    sessions: LogoutFanoutSession[];
+    incomplete: readonly LogoutIncomplete[];
+    metadata?: Record<string, string>;
+    log?: Logger;
+  }
+): Promise<void> {
+  const groups = new Map<
+    string,
+    { kind: LogoutIncomplete['kind']; reason: string; ids: Set<string> }
+  >();
+  for (const { kind, reason, sessionIds } of params.incomplete) {
+    const group = groups.get(`${kind}\u0000${reason}`) ?? { kind, reason, ids: new Set<string>() };
+    sessionIds.forEach((id) => group.ids.add(id));
+    groups.set(`${kind}\u0000${reason}`, group);
+  }
+  for (const { kind, reason, ids } of groups.values()) {
+    await reportLogoutNotSent(env, {
+      tenantId: params.tenantId,
+      trigger: params.trigger,
+      sessions: params.sessions.filter((session) => ids.has(session.sessionId)),
+      backchannelEnabled: kind === 'backchannel',
+      webhookEnabled: kind === 'webhook',
+      reason,
+      metadata: params.metadata,
+      log: params.log,
+    });
+  }
+}
+
+/**
+ * Sessions whose notice broke off before it was sent (no signing key, the notice failed part way):
+ * the relying parties of these sessions were not told, and the caller keeps their records.
+ */
+export interface LogoutIncomplete {
+  kind: 'backchannel' | 'webhook';
+  sessionIds: string[];
+  /** A code for what failed, never a message or a value. */
+  reason: string;
 }
 
 /** An ended session and the relying parties to tell. */
@@ -267,12 +308,24 @@ export async function sendBackchannelLogoutFanout(
     startedAt?: number;
     /** Called when a client still fails after its retries and `on_final_failure` is 'alert'. */
     onAlert?: BackchannelRetryOptions['onAlert'];
+    /**
+     * Told of the sessions whose clients were not sent to because the sending broke off (not when
+     * the notice is disabled or there is nobody to tell, and not for a client that failed after
+     * its retries: that has its own failure record).
+     */
+    onIncomplete?: (incomplete: LogoutIncomplete) => void;
     log?: Logger;
   }
 ): Promise<LogoutFanoutSummary | null> {
   // The retry budget counts from here: loading keys uses it too.
   const startedAt = params.startedAt ?? Date.now();
   const log = params.log ?? defaultLog;
+  const incomplete = (reason: string, sessionIds?: string[]): void => {
+    const ids =
+      sessionIds ??
+      params.sessions.filter((s) => s.backchannelClients.length > 0).map((s) => s.sessionId);
+    if (ids.length > 0) params.onIncomplete?.({ kind: 'backchannel', sessionIds: ids, reason });
+  };
   try {
     if (!params.config.enabled) {
       log.debug('Backchannel logout is disabled', { action: 'BackchannelLogout' });
@@ -286,6 +339,7 @@ export async function sendBackchannelLogoutFanout(
 
     if (!keys || keys.length === 0) {
       log.error('No signing keys available', { action: 'BackchannelLogout' });
+      incomplete('signing_key_unavailable');
       return null;
     }
 
@@ -294,6 +348,7 @@ export async function sendBackchannelLogoutFanout(
 
     if (!activeKey || !activeKey.privatePEM) {
       log.error('No private key available', { action: 'BackchannelLogout' });
+      incomplete('signing_key_unavailable');
       return null;
     }
 
@@ -345,6 +400,7 @@ export async function sendBackchannelLogoutFanout(
         },
         (session, error) => {
           sessionErrors++;
+          incomplete('send_failed', [session.sessionId]);
           log.error(
             'Error sending notifications for session',
             { sessionId: session.sessionId, action: 'BackchannelLogout' },
@@ -368,6 +424,7 @@ export async function sendBackchannelLogoutFanout(
     return summary;
   } catch (error) {
     log.error('Error sending notifications', { action: 'BackchannelLogout' }, error as Error);
+    incomplete('send_failed');
     return null;
   }
 }
@@ -382,10 +439,18 @@ export async function sendLogoutWebhookFanout(
     issuer: string;
     sessions: LogoutFanoutSession[];
     config: LogoutWebhookConfig;
+    /** Told of the sessions whose clients were not sent to because the sending broke off. */
+    onIncomplete?: (incomplete: LogoutIncomplete) => void;
     log?: Logger;
   }
 ): Promise<LogoutFanoutSummary | null> {
   const log = params.log ?? defaultLog;
+  const incomplete = (reason: string, sessionIds?: string[]): void => {
+    const ids =
+      sessionIds ??
+      params.sessions.filter((s) => s.webhookClients.length > 0).map((s) => s.sessionId);
+    if (ids.length > 0) params.onIncomplete?.({ kind: 'webhook', sessionIds: ids, reason });
+  };
   try {
     if (!params.config.enabled) {
       log.debug('Logout webhook is disabled', { action: 'LogoutWebhook' });
@@ -402,6 +467,7 @@ export async function sendLogoutWebhookFanout(
     const encryptionKey = env.RP_TOKEN_ENCRYPTION_KEY || env.PII_ENCRYPTION_KEY;
     if (!encryptionKey) {
       log.error('No encryption key for decrypting webhook secrets', { action: 'LogoutWebhook' });
+      incomplete('webhook_key_unavailable');
       return null;
     }
 
@@ -449,6 +515,7 @@ export async function sendLogoutWebhookFanout(
       },
       (session, error) => {
         sessionErrors++;
+        incomplete('send_failed', [session.sessionId]);
         log.error(
           'Error sending notifications for session',
           { sessionId: session.sessionId, action: 'LogoutWebhook' },
@@ -466,6 +533,7 @@ export async function sendLogoutWebhookFanout(
     return summary;
   } catch (error) {
     log.error('Error sending notifications', { action: 'LogoutWebhook' }, error as Error);
+    incomplete('send_failed');
     return null;
   }
 }

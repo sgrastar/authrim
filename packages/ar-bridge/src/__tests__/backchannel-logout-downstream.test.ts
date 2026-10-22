@@ -35,6 +35,7 @@ const {
   mockResolveLogoutWebhookConfig,
   mockResolveLogoutIssuer,
   mockReportNotSent,
+  mockReportIncomplete,
   mockSafeFetchJson,
   mockDiagnosticAuthDecision,
   mockPurgeEndedSessions,
@@ -49,6 +50,7 @@ const {
   mockResolveLogoutWebhookConfig: vi.fn(),
   mockResolveLogoutIssuer: vi.fn(),
   mockReportNotSent: vi.fn(),
+  mockReportIncomplete: vi.fn(),
   mockSafeFetchJson: vi.fn(),
   mockDiagnosticAuthDecision: vi.fn(),
   mockPurgeEndedSessions: vi.fn(),
@@ -96,6 +98,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // (its retries are tested in ar-lib-core)
     resolveLogoutIssuerWithRetry: mockResolveLogoutIssuer,
     reportLogoutNotSent: mockReportNotSent,
+    reportIncompleteLogouts: mockReportIncomplete,
     createAuditLog: mockCreateAuditLog,
   };
 });
@@ -304,6 +307,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     mockResolveLogoutWebhookConfig.mockResolvedValue(DEFAULT_LOGOUT_WEBHOOK_CONFIG);
     mockResolveLogoutIssuer.mockResolvedValue(CANONICAL_ISSUER);
     mockReportNotSent.mockResolvedValue({ sessions: 0, clients: 0 });
+    mockReportIncomplete.mockResolvedValue(undefined);
     mockPurgeEndedSessions.mockResolvedValue(undefined);
   });
 
@@ -411,6 +415,95 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     expect(mockPurgeEndedSessions).toHaveBeenCalledWith(c.env, 'tenant-a', [SESSION_ID]);
     expect(mockResolveTargets.mock.invocationCallOrder[0]).toBeLessThan(
       mockPurgeEndedSessions.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('keeps the ended session, and records the apps not told, when there is no signing key', async () => {
+    const sent = captureDownstream();
+    const { c, pending } = buildContext(await upstreamLogoutToken());
+    c.env.KEY_MANAGER.get = vi.fn(() => ({
+      getAllPublicKeysRpc: vi.fn().mockResolvedValue([]),
+      getActiveKeyWithPrivateRpc: vi.fn(),
+    }));
+
+    expect((await handleBackchannelLogout(c as never)).status).toBe(200);
+    await Promise.all(pending);
+
+    expect(sent).toEqual([]);
+    expect(mockReportIncomplete).toHaveBeenCalledWith(
+      c.env,
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        trigger: 'upstream_backchannel_logout',
+        incomplete: [
+          { kind: 'backchannel', sessionIds: [SESSION_ID], reason: 'signing_key_unavailable' },
+        ],
+      })
+    );
+    // Not told, so the records stay (they expire on their own).
+    expect(mockPurgeEndedSessions).not.toHaveBeenCalled();
+  });
+
+  it('keeps the ended session when its clients could not be read', async () => {
+    mockResolveTargets.mockRejectedValue(new Error('store unavailable'));
+    const sent = captureDownstream();
+    const { c, pending } = buildContext(await upstreamLogoutToken());
+
+    expect((await handleBackchannelLogout(c as never)).status).toBe(200);
+    await Promise.all(pending);
+
+    expect(sent).toEqual([]);
+    expect(mockPurgeEndedSessions).not.toHaveBeenCalled();
+  });
+
+  it('does not treat unreadable webhook settings as off: the webhook apps are recorded and the session kept', async () => {
+    mockResolveLogoutWebhookConfig.mockRejectedValue(new Error('kv down'));
+    mockResolveTargets.mockResolvedValue({
+      backchannelClients: [backchannelClient('rp-a', RP_A, 'sid-for-rp-a')],
+      frontchannelClients: [],
+      webhookClients: [
+        {
+          id: 'sc-rp-c',
+          session_id: SESSION_ID,
+          client_id: 'rp-c',
+          oidc_sid: 'sid-for-rp-c',
+          client_name: 'rp-c',
+          logout_webhook_uri: RP_C_WEBHOOK,
+          logout_webhook_secret_encrypted: 'webhook-secret',
+        },
+      ],
+    });
+    const sent = captureDownstream();
+    const { c, pending } = buildContext(await upstreamLogoutToken());
+
+    expect((await handleBackchannelLogout(c as never)).status).toBe(200);
+    await Promise.all(pending);
+
+    // The back-channel notice goes as usual; the webhook is not sent, and that is recorded.
+    expect(sent.map((s) => s.url)).toEqual([RP_A]);
+    expect(mockReportIncomplete).toHaveBeenCalledWith(
+      c.env,
+      expect.objectContaining({
+        incomplete: [
+          { kind: 'webhook', sessionIds: [SESSION_ID], reason: 'webhook_settings_unavailable' },
+        ],
+      })
+    );
+    expect(mockPurgeEndedSessions).not.toHaveBeenCalled();
+  });
+
+  it('includes the webhook apps in the report of an unresolved issuer when the webhook settings are unreadable', async () => {
+    mockResolveLogoutIssuer.mockResolvedValue(null);
+    mockResolveLogoutWebhookConfig.mockRejectedValue(new Error('kv down'));
+    captureDownstream();
+    const { c, pending } = buildContext(await upstreamLogoutToken());
+
+    await handleBackchannelLogout(c as never);
+    await Promise.all(pending);
+
+    expect(mockReportNotSent).toHaveBeenCalledWith(
+      c.env,
+      expect.objectContaining({ webhookEnabled: true })
     );
   });
 

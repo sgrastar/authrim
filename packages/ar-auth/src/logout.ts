@@ -40,6 +40,8 @@ import {
   resolveLegacyLogoutTargetsFromOidcSidStore,
   resolveLogoutIssuerWithRetry,
   reportLogoutNotSent,
+  reportIncompleteLogouts,
+  type LogoutIncomplete,
   purgeEndedSessionsFromSessionClientStore,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
@@ -157,15 +159,21 @@ async function getLogoutConfig(env: Env, tenantId: string): Promise<LogoutConfig
   }
 }
 
-/** The tenant's logout webhook settings; the code defaults (off) when they cannot be read. */
-async function getLogoutWebhookConfig(env: Env, tenantId: string): Promise<LogoutWebhookConfig> {
+/**
+ * The tenant's logout webhook settings; null when they cannot be read (not the same as off: the
+ * apps with a webhook are then not told, and that is recorded).
+ */
+async function getLogoutWebhookConfig(
+  env: Env,
+  tenantId: string
+): Promise<LogoutWebhookConfig | null> {
   try {
     return await resolveLogoutWebhookConfig(env, tenantId);
   } catch (error) {
     moduleLogger.warn('Logout webhook settings could not be read', {
       error: error instanceof Error ? error.message : String(error),
     });
-    return DEFAULT_LOGOUT_WEBHOOK_CONFIG;
+    return null;
   }
 }
 
@@ -329,6 +337,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       webhookClients: SessionClientWithWebhook[];
     };
     const sessionsToNotify: SessionNotificationTarget[] = [];
+    // Sessions whose clients could not be read: they are not told, and their records are kept.
+    const targetReadFailed = new Set<string>();
 
     const collectSessionData = async (sessId: string, fallbackUserId?: string) => {
       // Avoid duplicate work if the same session is encountered twice
@@ -352,6 +362,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             error: (error as Error).message,
             action: 'Logout',
           });
+          targetReadFailed.add(sessId);
           return null;
         });
         const targetClients = storeTargets ?? {
@@ -384,6 +395,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.debug('No logout clients found for session', { sessionId: sessId });
         }
       } catch (error) {
+        targetReadFailed.add(sessId);
         log.warn('Failed to load session data', {
           sessionId: sessId,
           error: (error as Error).message,
@@ -679,6 +691,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // The notices below read nothing more from the SessionClientStore (the targets were collected
     // before the sessions ended); the ended sessions' records are removed once they have finished.
     const logoutFanouts: Promise<unknown>[] = [];
+    // What the notices could not send before sending (no signing key, unreadable settings, ...).
+    const incompleteNotices: LogoutIncomplete[] = [];
+    const onIncomplete = (incomplete: LogoutIncomplete) => incompleteNotices.push(incomplete);
+    // Read once for the webhook notice and for the report of what was not sent.
+    const logoutWebhookConfig = logoutIssuer ? getLogoutWebhookConfig(c.env, tenantId) : null;
 
     if (logoutIssuer && c.executionCtx) {
       const backchannelFanout = (async () => {
@@ -693,6 +710,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           config: logoutConfig.backchannel,
           startedAt,
           log,
+          onIncomplete,
           // A final failure with on_failure 'error' (alert) is written to the audit log.
           onAlert: async (details) => {
             await createAuditLog(c.env, {
@@ -724,14 +742,26 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // This is an Authrim extension for clients that don't support OIDC Back-Channel Logout
     if (logoutIssuer && c.executionCtx) {
       const webhookFanout = (async () => {
-        const webhookConfig = await getLogoutWebhookConfig(c.env, tenantId);
+        const webhookConfig = await logoutWebhookConfig;
         const webhookIssuer = await logoutIssuer;
         if (!webhookIssuer) return;
+        if (!webhookConfig) {
+          // Not known whether the webhook is on: the apps with a webhook are not told.
+          onIncomplete({
+            kind: 'webhook',
+            sessionIds: sessionsToNotify
+              .filter((session) => session.webhookClients.length > 0)
+              .map((session) => session.sessionId),
+            reason: 'webhook_settings_unavailable',
+          });
+          return;
+        }
         await sendLogoutWebhookFanout(c.env, {
           issuer: webhookIssuer,
           sessions: sessionsToNotify,
           config: webhookConfig,
           log,
+          onIncomplete,
         });
       })();
       logoutFanouts.push(webhookFanout);
@@ -743,15 +773,15 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // Only after both notices have finished (with their retries): a removal before them would
     // leave a later read of the targets with nothing. A failed removal does not touch the notices'
-    // results; the store's expiry removes what it leaves. When the tenant issuer could not be
-    // resolved nothing was sent, so nothing is removed either: the records stay until they expire.
+    // results; the store's expiry removes what it leaves. A session whose notice did not get as
+    // far as sending (no issuer, no signing key, unreadable settings or clients, the sending
+    // broke off) is not removed: its records stay until they expire. The apps that were not told
+    // are made visible to the admin (the failure list and the audit log).
     if (logoutIssuer && c.executionCtx) {
       c.executionCtx.waitUntil(
         (async () => {
           if (!(await logoutIssuer)) {
-            // Nothing was sent: make the apps that were not told visible to the admin (the
-            // failure list and the audit log), and keep the records.
-            const webhookConfig = await getLogoutWebhookConfig(c.env, tenantId).catch(() => null);
+            const webhookConfig = await logoutWebhookConfig;
             await reportLogoutNotSent(c.env, {
               tenantId,
               trigger: 'user_logout',
@@ -764,7 +794,23 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             return;
           }
           await Promise.allSettled(logoutFanouts);
-          await purgeEndedSessionsFromSessionClientStore(c.env, tenantId, deletedSessions);
+          if (incompleteNotices.length > 0) {
+            await reportIncompleteLogouts(c.env, {
+              tenantId,
+              trigger: 'user_logout',
+              sessions: sessionsToNotify,
+              incomplete: incompleteNotices,
+              log,
+            });
+          }
+          const kept = new Set<string>([
+            ...targetReadFailed,
+            ...incompleteNotices.flatMap((incomplete) => incomplete.sessionIds),
+          ]);
+          const removable = deletedSessions.filter((sessionId) => !kept.has(sessionId));
+          if (removable.length > 0) {
+            await purgeEndedSessionsFromSessionClientStore(c.env, tenantId, removable);
+          }
         })()
       );
     }

@@ -12,7 +12,11 @@ vi.mock('../../utils/audit-log', async (importOriginal) => ({
 }));
 
 import { LogoutKVHelpers } from '../backchannel-logout-sender';
-import { reportLogoutNotSent, type LogoutFanoutSession } from '../logout-fanout';
+import {
+  reportIncompleteLogouts,
+  reportLogoutNotSent,
+  type LogoutFanoutSession,
+} from '../logout-fanout';
 
 function memoryKv() {
   const store = new Map<string, string>();
@@ -82,43 +86,37 @@ describe('reportLogoutNotSent', () => {
     });
   });
 
-  it('records the path and the counts in the audit log, once per user, with no value or id of an app', async () => {
-    await report({ metadata: { provider_id: 'provider-1', upstream_flow_id: 'flow-1' } });
+  it('records the path, the reason and the counts in one audit entry that names no user, app or session', async () => {
+    await report({
+      reason: 'signing_key_unavailable',
+      metadata: { provider_id: 'provider-1', upstream_flow_id: 'flow-1' },
+    });
 
-    const entries = auditMock.mock.calls.map(([, entry]) => entry);
-    expect(entries).toHaveLength(2);
-    expect(entries.map((entry) => [entry.userId, JSON.parse(entry.metadata)])).toEqual([
-      [
-        'user-1',
-        {
-          trigger: 'user_logout',
-          error_code: 'issuer_unresolved',
-          session_count: 2,
-          client_count: 3,
-          provider_id: 'provider-1',
-          upstream_flow_id: 'flow-1',
-        },
-      ],
-      [
-        'user-2',
-        expect.objectContaining({
-          session_count: 1,
-          client_count: 1,
-          error_code: 'issuer_unresolved',
-        }),
-      ],
-    ]);
-    expect(entries[0]).toMatchObject({
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    const entry = auditMock.mock.calls[0][1];
+    expect(entry).toMatchObject({
       tenantId: 'tenant-a',
       action: 'user.downstream_logout_failed',
       severity: 'warning',
+      // Attributed to the system: a user logout may only know the sub of an id_token_hint.
+      userId: 'system',
+      resourceId: 'user_logout',
     });
-    for (const entry of entries) {
-      for (const clientId of ['rp-a', 'rp-b', 'rp-c']) {
-        expect(entry.metadata).not.toContain(clientId);
-      }
-      expect(entry.metadata).not.toContain('session-');
+    expect(JSON.parse(entry.metadata)).toEqual({
+      trigger: 'user_logout',
+      error_code: 'signing_key_unavailable',
+      session_count: 3,
+      client_count: 3,
+      provider_id: 'provider-1',
+      upstream_flow_id: 'flow-1',
+    });
+    const recorded = JSON.stringify(entry);
+    for (const secret of ['rp-a', 'rp-b', 'rp-c', 'session-', 'user-1', 'user-2']) {
+      expect(recorded).not.toContain(secret);
     }
+    expect(await LogoutKVHelpers.getFailure(kv as never, 'rp-a')).toMatchObject({
+      error: 'signing_key_unavailable',
+    });
   });
 
   it('leaves out the kind of notice the tenant has turned off', async () => {
@@ -138,5 +136,45 @@ describe('reportLogoutNotSent', () => {
     kv.put.mockRejectedValue(new Error('kv down'));
     auditMock.mockRejectedValue(new Error('audit down'));
     await expect(report()).resolves.toEqual({ sessions: 3, clients: 3 });
+  });
+});
+
+describe('reportIncompleteLogouts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auditMock.mockResolvedValue(undefined);
+  });
+
+  it('reports each kind of notice and reason for its own sessions and apps only', async () => {
+    const kv = memoryKv();
+    await reportIncompleteLogouts({ SETTINGS: kv } as never, {
+      tenantId: 'tenant-a',
+      trigger: 'upstream_backchannel_logout',
+      sessions,
+      incomplete: [
+        { kind: 'backchannel', sessionIds: ['session-1'], reason: 'signing_key_unavailable' },
+        { kind: 'webhook', sessionIds: ['session-3'], reason: 'send_failed' },
+        { kind: 'webhook', sessionIds: ['session-3'], reason: 'send_failed' },
+      ],
+    });
+
+    // session-1: its back-channel apps only (not its webhook app); session-3: its webhook app.
+    expect(await LogoutKVHelpers.getFailure(kv as never, 'rp-a')).toMatchObject({
+      error: 'signing_key_unavailable',
+    });
+    expect(await LogoutKVHelpers.getFailure(kv as never, 'rp-b')).toMatchObject({
+      error: 'signing_key_unavailable',
+    });
+    expect(await LogoutKVHelpers.getFailure(kv as never, 'rp-c')).toMatchObject({
+      error: 'send_failed',
+    });
+    expect(auditMock.mock.calls.map(([, entry]) => JSON.parse(entry.metadata))).toEqual([
+      expect.objectContaining({
+        error_code: 'signing_key_unavailable',
+        session_count: 1,
+        client_count: 2,
+      }),
+      expect.objectContaining({ error_code: 'send_failed', session_count: 1, client_count: 1 }),
+    ]);
   });
 });
