@@ -697,7 +697,14 @@ Client `logout_webhook_uri` configuration uses a separate simple JSON notificati
 }
 ```
 
-`sub` and `sid` are conditional on logout webhook configuration. This callback has no subscription
+`issuer` is the tenant's canonical issuer (its primary domain, else the configured issuer), the same
+value as the `iss` of its logout tokens, never one made from the host of the request that ended the
+session. `sub` is the sub the client's ID token carried (after the client's identity mapping, so a
+pairwise or persistent value where the client has one), as in the OIDC logout token, and never the
+user's internal ID; it is left out when the client has no recorded sub or when the tenant turned
+`session.logout_webhook_include_sub` off. `sid` is the client's own session ID; it follows
+`session.logout_webhook_include_sid` but is sent anyway when there is no `sub`, so that the notice
+always says which session ended. This callback has no subscription
 event `id`, `type`, `tenantId`, or `data` envelope. It has its own retry/deduplication handling and
 must not be confused with subscription `user.logout`. OIDC Back-Channel Logout is another separate
 protocol using a logout token, not either JSON format above.

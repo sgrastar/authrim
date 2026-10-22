@@ -1,8 +1,9 @@
 /**
  * Downstream logout for sessions an admin action ended.
  *
- * Suspending, locking or bulk-suspending an account, and revoking all of a user's sessions, end
- * the user's sessions by moving the user's session revocation epoch. The relying parties signed
+ * Suspending, locking or bulk-suspending an account, revoking all of a user's sessions, deleting
+ * or anonymizing an account, and deactivating or deleting it through SCIM, end the user's
+ * sessions by moving the user's session revocation epoch. The relying parties signed
  * in through those sessions are then told as on a user logout: one OIDC Back-Channel Logout
  * token per client with that client's sid, the Simple Logout Webhook, the same retries and the
  * same failure records (`GET /api/admin/logout-failures`), through the shared fan-out.
@@ -15,12 +16,14 @@
  * run.
  */
 import {
-  buildCanonicalTenantIssuerUrl,
   createAuditLog,
   createLogger,
+  transitionAccountAuthenticationStateEndingSessions,
+  purgeEndedSessionsFromSessionClientStore,
   requireDedicatedAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveLogoutConfig,
+  resolveLogoutIssuer,
   resolveLogoutTargetsFromSessionClientStore,
   resolveLogoutWebhookConfig,
   sendBackchannelLogoutFanout,
@@ -32,7 +35,6 @@ import {
   type LogoutFanoutSession,
   type LogoutFanoutSummary,
 } from '@authrim/ar-lib-core';
-import { getCanonicalTenantBaseUrl } from './request-issuer';
 
 export const SESSION_END_LOGOUT_JOB_TYPE = 'users/session-end-logout';
 
@@ -49,7 +51,11 @@ export type AdminSessionEndAction =
   | 'user.lock'
   | 'user.sessions_revoked'
   | 'support_ops.action.execute'
-  | 'bulk_user_update';
+  | 'bulk_user_update'
+  | 'user.deleted'
+  | 'user.anonymized'
+  | 'scim.user.deactivate'
+  | 'scim.user.delete';
 
 const ADMIN_SESSION_END_ACTIONS: ReadonlySet<string> = new Set<AdminSessionEndAction>([
   'user.suspend',
@@ -57,14 +63,24 @@ const ADMIN_SESSION_END_ACTIONS: ReadonlySet<string> = new Set<AdminSessionEndAc
   'user.sessions_revoked',
   'support_ops.action.execute',
   'bulk_user_update',
+  'user.deleted',
+  'user.anonymized',
+  'scim.user.deactivate',
+  'scim.user.delete',
 ]);
 
 export interface AdminSessionEndTrigger {
   action: AdminSessionEndAction;
   /** The lifecycle operation, support action or job the sessions ended under. */
   operationId?: string;
-  /** The admin who acted, when one did. */
+  /** The admin (or SCIM token) who acted, when one did. */
   actorId?: string;
+  /**
+   * The id the audit records name the user by, when not the user's own: an anonymized account is
+   * named by its hash only, as its anonymization's own audit does. Only for an action that ended
+   * the sessions of one user.
+   */
+  auditUserId?: string;
 }
 
 /** A session an admin action ended. */
@@ -111,6 +127,36 @@ async function mapConcurrently<T, R>(
   return results;
 }
 
+/** The id the audit records name this user by (see `AdminSessionEndTrigger.auditUserId`). */
+export function auditUserIdOf(trigger: AdminSessionEndTrigger, userId: string): string {
+  return trigger.auditUserId ?? userId;
+}
+
+/**
+ * Move an account's authentication state to a lifecycle that ends its sessions, through the
+ * revocation that returns the sessions it ended, and add those to `ended` (for telling their
+ * relying parties). A transition taken before (a retry) ended none.
+ */
+export async function transitionEndingSessions(
+  env: Env,
+  ended: EndedSession[],
+  transition: {
+    tenantId: string;
+    userId: string;
+    lifecycle: Parameters<
+      typeof transitionAccountAuthenticationStateEndingSessions
+    >[1]['lifecycle'];
+    sourceVersionMs: number;
+    operationId: string;
+  }
+): Promise<void> {
+  const { endedSessionIds } = await transitionAccountAuthenticationStateEndingSessions(env, {
+    ...transition,
+    revokeSessions: true,
+  });
+  ended.push(...endedSessionsOf(transition.userId, endedSessionIds));
+}
+
 function triggerMetadata(trigger: AdminSessionEndTrigger): Record<string, string> {
   return {
     trigger_action: trigger.action,
@@ -142,10 +188,10 @@ export async function auditSessionEndLogoutStarted(
     [...sessionCounts].map(([userId, sessionCount]) =>
       createAuditLog(env, {
         tenantId: params.tenantId,
-        userId,
+        userId: auditUserIdOf(params.trigger, userId),
         action: 'user.downstream_logout',
         resource: 'user',
-        resourceId: userId,
+        resourceId: auditUserIdOf(params.trigger, userId),
         ipAddress: '',
         userAgent: '',
         metadata: JSON.stringify({
@@ -218,16 +264,6 @@ export async function enqueueSessionEndLogout(
 }
 
 /**
- * The tenant's issuer, as the relying parties know it. A failed lookup of the tenant's primary
- * domain throws (the job is retried) instead of signing with another issuer.
- */
-async function resolveLogoutIssuer(env: Env, tenantId: string): Promise<string> {
-  return buildCanonicalTenantIssuerUrl(env, tenantId, getCanonicalTenantBaseUrl(env, tenantId), {
-    strict: true,
-  });
-}
-
-/**
  * Tell the relying parties signed in through these sessions. Throws, before anything is sent,
  * when the issuer or a session's logout targets cannot be read: the job is then retried. Once
  * sending starts, each relying party's failure is recorded by the fan-out (failure list, alert)
@@ -250,6 +286,8 @@ export async function sendAdminSessionEndLogout(
   const metadata = triggerMetadata(trigger);
 
   const [issuer, coreAdapter, logoutConfig, webhookConfig] = await Promise.all([
+    // A lookup of the tenant's primary domain that fails fails the job (retried) instead of
+    // signing with another issuer.
     resolveLogoutIssuer(env, tenantId),
     resolveAuthCorePersistenceAdapterFromEnv(env, 'management-session-end-logout', { tenantId }),
     // Settings that cannot be read fail the job (retried): defaults could send what the tenant
@@ -284,7 +322,7 @@ export async function sendAdminSessionEndLogout(
   const audits = sessions.map((session) =>
     createAuditLog(env, {
       tenantId,
-      userId: session.userId,
+      userId: auditUserIdOf(trigger, session.userId),
       action: 'user.logout',
       resource: 'session',
       resourceId: session.sessionId,
@@ -322,7 +360,7 @@ export async function sendAdminSessionEndLogout(
       onAlert: async (details) => {
         await createAuditLog(env, {
           tenantId,
-          userId: details.userId,
+          userId: auditUserIdOf(trigger, details.userId),
           action: 'backchannel_logout.failed',
           resource: 'session',
           resourceId: details.sessionId,
@@ -364,6 +402,15 @@ export async function sendAdminSessionEndLogout(
     throw new Error('session_end_logout_webhook_not_sent');
   }
 
+  // Every relying party has been told: the sessions' records are no longer needed. Only here,
+  // after the checks above: a job that throws is retried and reads the targets again. A failed
+  // removal is left to the store's expiry.
+  await purgeEndedSessionsFromSessionClientStore(
+    env,
+    tenantId,
+    params.sessions.map((session) => session.sessionId)
+  );
+
   const summary = { sessions: sessions.length, backchannel, webhook };
   log.info('Downstream logout for admin session end completed', {
     action: trigger.action,
@@ -396,7 +443,8 @@ export async function auditSessionEndLogoutFailed(
   const errorCode = LOGOUT_JOB_ERROR_CODE.test(message) ? message : 'unexpected';
   const sessionCounts = new Map<string, number>();
   for (const { userId } of config?.sessions ?? []) {
-    sessionCounts.set(userId, (sessionCounts.get(userId) ?? 0) + 1);
+    const auditUserId = config ? auditUserIdOf(config.trigger, userId) : userId;
+    sessionCounts.set(auditUserId, (sessionCounts.get(auditUserId) ?? 0) + 1);
   }
   const entries = sessionCounts.size > 0 ? [...sessionCounts] : [['system', 0] as const];
   await Promise.all(
@@ -432,6 +480,9 @@ function parseJobConfig(raw: string | null): SessionEndLogoutJobConfig {
   if (
     !config?.trigger ||
     !ADMIN_SESSION_END_ACTIONS.has(config.trigger.action) ||
+    (config.trigger.auditUserId !== undefined &&
+      (typeof config.trigger.auditUserId !== 'string' ||
+        config.trigger.auditUserId.length === 0)) ||
     !Array.isArray(config.sessions) ||
     config.sessions.length > SESSIONS_PER_LOGOUT_JOB ||
     !config.sessions.every(

@@ -34,7 +34,6 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveCustomClaimRuntimeSourcesFromHono,
   resolveAccountDataContextFromHono,
-  transitionAccountAuthenticationState,
   DefaultIALUnavailableError,
   resolveTenantPolicyInitialAssurance,
   type CanonicalRuntimeUserProjection,
@@ -93,6 +92,8 @@ import {
   type PreparedAccountTombstone,
 } from './account-tombstone-write';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
+import { adminActorIdFromContext, withAdminSessionEndLogout } from './admin-session-end';
+import { transitionEndingSessions } from './session-end-logout';
 
 type AdminRuntimeUserCore = {
   email_verified: boolean | number;
@@ -1901,44 +1902,59 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
         tenantId,
         email: projection?.email,
       });
-      const deletingVersionMs = Date.now();
-      await transitionAccountAuthenticationState(c.env, {
-        tenantId,
-        userId,
-        lifecycle: 'deleting',
-        sourceVersionMs: deletingVersionMs,
-        operationId: crypto.randomUUID(),
-        revokeSessions: true,
-      });
-      const removals = await prepareAccountDirectoryRemoval(c.env, {
-        tenantId,
-        userId,
-        core,
-        pii,
-      });
-      await writeAccountTombstone(pii, {
-        tenantId,
-        userId,
-        prepared: tombstoneInput,
-        deletedBy: 'admin',
-        reason: 'admin_action',
-        metadata: { source: 'admin_api' },
-      });
-      await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId, core });
-      await new CanonicalRuntimeUserWriter(
-        new CanonicalIdentityRepository(core, tenantId),
-        pii
-      ).deleteRuntimeUser(userId);
-      await transitionAccountAuthenticationState(c.env, {
-        tenantId,
-        userId,
-        lifecycle: 'deleted',
-        sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-        operationId: crypto.randomUUID(),
-        revokeSessions: true,
-      });
-      await markAccountDirectoryRemovalsReady(core, removals);
-      await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, removals);
+      // The sessions the deletion ends: their relying parties are told after the response (each
+      // logout token carries the sub recorded with its session-client, not one read from the
+      // account being removed), also when a later step fails.
+      const deletingOperationId = crypto.randomUUID();
+      await withAdminSessionEndLogout(
+        c,
+        {
+          tenantId,
+          trigger: {
+            action: 'user.deleted',
+            operationId: deletingOperationId,
+            actorId: adminActorIdFromContext(c),
+          },
+        },
+        async (ended) => {
+          const deletingVersionMs = Date.now();
+          await transitionEndingSessions(c.env, ended, {
+            tenantId,
+            userId,
+            lifecycle: 'deleting',
+            sourceVersionMs: deletingVersionMs,
+            operationId: deletingOperationId,
+          });
+          const removals = await prepareAccountDirectoryRemoval(c.env, {
+            tenantId,
+            userId,
+            core,
+            pii,
+          });
+          await writeAccountTombstone(pii, {
+            tenantId,
+            userId,
+            prepared: tombstoneInput,
+            deletedBy: 'admin',
+            reason: 'admin_action',
+            metadata: { source: 'admin_api' },
+          });
+          await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId, core });
+          await new CanonicalRuntimeUserWriter(
+            new CanonicalIdentityRepository(core, tenantId),
+            pii
+          ).deleteRuntimeUser(userId);
+          await transitionEndingSessions(c.env, ended, {
+            tenantId,
+            userId,
+            lifecycle: 'deleted',
+            sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+            operationId: crypto.randomUUID(),
+          });
+          await markAccountDirectoryRemovalsReady(core, removals);
+          await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, removals);
+        }
+      );
       await invalidateUserCache(c.env, tenantId, userId);
       await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
         registration_state: projection?.registration_state,
@@ -1988,40 +2004,53 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       tenantId,
       email: projection.email,
     });
-    const deletingVersionMs = Date.now();
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleting',
-      sourceVersionMs: deletingVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-
-    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
-    if (piiAdapter) {
-      await writeAccountTombstone(piiAdapter, {
+    // As above: the sessions the deletion ends are told after the response.
+    const deletingOperationId = crypto.randomUUID();
+    await withAdminSessionEndLogout(
+      c,
+      {
         tenantId,
-        userId,
-        prepared: tombstoneInput,
-        deletedBy: 'admin',
-        reason: 'admin_action',
-        metadata: {
-          source: 'admin_api',
-          timestamp: new Date().toISOString(),
+        trigger: {
+          action: 'user.deleted',
+          operationId: deletingOperationId,
+          actorId: adminActorIdFromContext(c),
         },
-      });
-    }
+      },
+      async (ended) => {
+        const deletingVersionMs = Date.now();
+        await transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'deleting',
+          sourceVersionMs: deletingVersionMs,
+          operationId: deletingOperationId,
+        });
 
-    await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleted',
-      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
+        const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+        if (piiAdapter) {
+          await writeAccountTombstone(piiAdapter, {
+            tenantId,
+            userId,
+            prepared: tombstoneInput,
+            deletedBy: 'admin',
+            reason: 'admin_action',
+            metadata: {
+              source: 'admin_api',
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+
+        await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
+        await transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'deleted',
+          sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+          operationId: crypto.randomUUID(),
+        });
+      }
+    );
     await invalidateUserCache(c.env, tenantId, userId);
 
     const log = getLogger(c).module('ADMIN-USER');

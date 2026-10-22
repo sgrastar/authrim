@@ -32,6 +32,13 @@ import {
   resolveLogoutConfig,
   resolveLogoutWebhookConfig,
   resolveLogoutTargetsFromSessionClientStore,
+  resolveLogoutIssuerWithRetry,
+  reportLogoutNotSent,
+  reportIncompleteLogouts,
+  reportLogoutTargetsUnavailable,
+  type LogoutIncomplete,
+  type LogoutWebhookConfig,
+  purgeEndedSessionsFromSessionClientStore,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
   DEFAULT_LOGOUT_CONFIG,
@@ -304,6 +311,8 @@ function scheduleDownstreamLogout(
     return;
   }
   try {
+    // Only for deriving the sid of an old session-client record, as when it was issued; the
+    // logout tokens and webhooks carry the tenant's canonical issuer (notifyDownstream).
     const issuer = buildRequestIssuerUrl(c.req.raw, c.env, params.tenantId);
     const repository = createAuthContextFromHono(c, params.tenantId).repositories.sessionClient;
     waitUntil(notifyDownstream(c.env, log, { ...params, issuer, repository }));
@@ -328,6 +337,7 @@ async function notifyDownstream(
     providerId: string;
     upstreamFlowId: string;
     sessions: EndedSession[];
+    /** The issuer an old session-client record's sid was derived with (the request's). */
     issuer: string;
     repository: SessionClientRepository;
   }
@@ -335,19 +345,30 @@ async function notifyDownstream(
   // The retry budget counts from here: reading settings and targets uses it too.
   const startedAt = Date.now();
   const { tenantId, providerId, upstreamFlowId } = params;
+  // Sessions whose clients could not be read: they are not told, and their records are kept.
+  const targetReadFailed = new Set<string>();
+  // What the notices could not send before sending (no signing key, unreadable settings, ...).
+  const incompleteNotices: LogoutIncomplete[] = [];
+  const onIncomplete = (incomplete: LogoutIncomplete) => incompleteNotices.push(incomplete);
   try {
-    const [logoutConfig, webhookConfig, sessions] = await Promise.all([
+    const [logoutIssuer, logoutConfig, webhookConfig, sessions] = await Promise.all([
+      // The tenant's canonical issuer, never one made from the host the upstream notice came in
+      // on (tried again a few times if the lookup fails). When it still cannot be resolved
+      // nothing is sent (there is no other issuer to sign with): see below.
+      resolveLogoutIssuerWithRetry(env, tenantId, { log }),
       resolveLogoutConfig(env, tenantId).catch((error) => {
         log.warn('Logout settings could not be read', {
           error: error instanceof Error ? error.message : String(error),
         });
         return DEFAULT_LOGOUT_CONFIG;
       }),
-      resolveLogoutWebhookConfig(env, tenantId).catch((error) => {
+      // Null when they cannot be read: not the same as off (the apps with a webhook are then not
+      // told, and that is recorded).
+      resolveLogoutWebhookConfig(env, tenantId).catch((error): LogoutWebhookConfig | null => {
         log.warn('Logout webhook settings could not be read', {
           error: error instanceof Error ? error.message : String(error),
         });
-        return DEFAULT_LOGOUT_WEBHOOK_CONFIG;
+        return null;
       }),
       // Session invalidation leaves the SessionClientStore records, so the targets can be read
       // after the session has ended.
@@ -364,6 +385,7 @@ async function notifyDownstream(
               sessionId,
               error: error instanceof Error ? error.message : String(error),
             });
+            targetReadFailed.add(sessionId);
             return null;
           });
           return {
@@ -375,6 +397,31 @@ async function notifyDownstream(
         })
       ),
     ]);
+
+    // Sessions whose apps could not be looked up were not told either: counted for the admin.
+    await reportLogoutTargetsUnavailable(env, {
+      tenantId,
+      trigger: 'upstream_backchannel_logout',
+      sessionCount: targetReadFailed.size,
+      metadata: { provider_id: providerId, upstream_flow_id: upstreamFlowId },
+      log,
+    });
+
+    if (!logoutIssuer) {
+      // Nothing can be sent: make the apps that were not told visible to the admin (the failure
+      // list and the audit log), and keep the sessions' records (they expire on their own).
+      await reportLogoutNotSent(env, {
+        tenantId,
+        trigger: 'upstream_backchannel_logout',
+        sessions,
+        backchannelEnabled: logoutConfig.backchannel.enabled,
+        // Settings that cannot be read: report the webhook apps too.
+        webhookEnabled: webhookConfig ? webhookConfig.enabled : true,
+        metadata: { provider_id: providerId, upstream_flow_id: upstreamFlowId },
+        log,
+      });
+      return;
+    }
 
     const audits = sessions.map((session) =>
       createAuditLog(env, {
@@ -393,7 +440,7 @@ async function notifyDownstream(
           backchannel_client_ids: logoutConfig.backchannel.enabled
             ? session.backchannelClients.map((client) => client.client_id)
             : [],
-          webhook_client_ids: webhookConfig.enabled
+          webhook_client_ids: webhookConfig?.enabled
             ? session.webhookClients.map((client) => client.client_id)
             : [],
         }),
@@ -410,11 +457,12 @@ async function notifyDownstream(
     const [backchannel, webhook] = await Promise.all([
       sendBackchannelLogoutFanout(env, {
         tenantId,
-        issuer: params.issuer,
+        issuer: logoutIssuer,
         sessions,
         config: logoutConfig.backchannel,
         startedAt,
         log,
+        onIncomplete,
         onAlert: async (details) => {
           await createAuditLog(env, {
             tenantId,
@@ -435,12 +483,24 @@ async function notifyDownstream(
           });
         },
       }),
-      sendLogoutWebhookFanout(env, {
-        issuer: params.issuer,
-        sessions,
-        config: webhookConfig,
-        log,
-      }),
+      webhookConfig
+        ? sendLogoutWebhookFanout(env, {
+            issuer: logoutIssuer,
+            sessions,
+            config: webhookConfig,
+            log,
+            onIncomplete,
+          })
+        : Promise.resolve(
+            // Not known whether the webhook is on: the apps with a webhook are not told.
+            onIncomplete({
+              kind: 'webhook',
+              sessionIds: sessions
+                .filter((session) => session.webhookClients.length > 0)
+                .map((session) => session.sessionId),
+              reason: 'webhook_settings_unavailable',
+            })
+          ),
       Promise.all(audits),
     ]);
 
@@ -450,6 +510,32 @@ async function notifyDownstream(
       backchannel,
       webhook,
     });
+
+    // The notices (with their retries) have finished. The apps whose notice did not get as far as
+    // sending are made visible to the admin (the failure list and the audit log), and the
+    // sessions that were not (fully) sent, or whose clients could not be read, keep their records
+    // (the store's expiry removes them). The others are no longer needed; a failed removal is
+    // left to the store's expiry.
+    if (incompleteNotices.length > 0) {
+      await reportIncompleteLogouts(env, {
+        tenantId,
+        trigger: 'upstream_backchannel_logout',
+        sessions,
+        incomplete: incompleteNotices,
+        metadata: { provider_id: providerId, upstream_flow_id: upstreamFlowId },
+        log,
+      });
+    }
+    const kept = new Set<string>([
+      ...targetReadFailed,
+      ...incompleteNotices.flatMap((incomplete) => incomplete.sessionIds),
+    ]);
+    const removable = params.sessions
+      .map((session) => session.sessionId)
+      .filter((sessionId) => !kept.has(sessionId));
+    if (removable.length > 0) {
+      await purgeEndedSessionsFromSessionClientStore(env, tenantId, removable);
+    }
   } catch (error) {
     log.error('Downstream logout for upstream notice failed', { upstreamFlowId }, error as Error);
   }

@@ -7,8 +7,12 @@ import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { getCanonicalAccountStatus, transitionAccountLifecycle } from './account-status';
 import { withdrawOAuthClientConsent } from './oauth-client-consent-withdrawal';
-import { adminActorIdFromContext, startAdminSessionEndLogout } from './admin-session-end';
-import { endedSessionsOf, type EndedSession } from './session-end-logout';
+import {
+  adminActorIdFromContext,
+  startAdminSessionEndLogout,
+  withAdminSessionEndLogout,
+} from './admin-session-end';
+import { endedSessionsOf, transitionEndingSessions, type EndedSession } from './session-end-logout';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   invalidateConsentCache,
@@ -52,6 +56,7 @@ import {
   transitionAccountAuthenticationState,
   readAccountAuthenticationState,
   produceNotificationDelivery,
+  SESSION_MAX_TTL_DEFINITION,
   type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
 import {
@@ -1144,11 +1149,16 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Generate user ID hash for audit trail (no way to recover original ID)
-    const encoder = new TextEncoder();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(userId + tenantId));
-    const userIdHash = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+    const anonymizedRef = async (id: string) => {
+      const hashBuffer = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(id + tenantId)
+      );
+      return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    };
+    const userIdHash = await anonymizedRef(userId);
 
     // Get admin actor ID
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1159,106 +1169,125 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     // Decided before the deletion changes anything: the email's keyed fingerprint (taken while
     // the address is still there) and the tenant's retention for the record.
     const tombstoneInput = await prepareAccountTombstone(c.env, { tenantId, email: user.email });
-    const deletingVersionMs = Date.now();
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleting',
-      sourceVersionMs: deletingVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-
     // Milliseconds, as tombstones keep it.
     let retentionUntil = nowTs * 1000 + tombstoneInput.retentionDays * 24 * 60 * 60 * 1000;
     let tombstoneId: string | null = null;
 
-    if (!hasPIIDatabase(c)) {
-      throw new Error('account_directory_removal_pii_unavailable');
-    }
-    const removalPiiContext = createPIIContextFromHono(c, tenantId);
-    const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
-      tenantId,
-      userId,
-      core: authCtx.coreAdapter,
-      pii: removalPiiContext.defaultPiiAdapter,
-    });
-
-    if (hasPIIDatabase(c)) {
-      const piiCtx = removalPiiContext;
-      const tombstone = await writeAccountTombstone(piiCtx.defaultPiiAdapter, {
+    // The sessions the anonymization ends: their relying parties are told after the response (each
+    // logout token carries the sub recorded with its session-client, not one read from the account
+    // being removed), also when a later step fails. Its audits name the user by the hash only.
+    const deletingOperationId = crypto.randomUUID();
+    await withAdminSessionEndLogout(
+      c,
+      {
         tenantId,
-        userId,
-        prepared: tombstoneInput,
-        deletedBy,
-        reason: body.reason_code,
-        metadata: {
-          source: 'admin_user_anonymize',
-          request_confirmed: true,
-          user_id_hash: userIdHash,
+        trigger: {
+          action: 'user.anonymized',
+          operationId: deletingOperationId,
+          actorId: adminActorIdFromContext(c),
+          auditUserId: userIdHash,
         },
-      });
-      tombstoneId = tombstone.id;
-      retentionUntil = tombstone.retention_until;
-      await eraseAccountPiiAfterDirectoryRemovalPrepared(
-        piiCtx.defaultPiiAdapter,
-        { tenantId, userId, core: authCtx.coreAdapter },
-        nowTs
-      );
-      await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(
-        tenantId,
-        userId,
-        piiCtx.defaultPiiAdapter
-      );
-      await piiCtx.piiRepositories.identifier.deleteByUserId(
-        tenantId,
-        userId,
-        piiCtx.defaultPiiAdapter
-      );
-    }
+      },
+      async (ended) => {
+        const deletingVersionMs = Date.now();
+        await transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'deleting',
+          sourceVersionMs: deletingVersionMs,
+          operationId: deletingOperationId,
+        });
 
-    const sessions = await authCtx.coreAdapter.query<{ id: string }>(
-      'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
-      [tenantId, userId]
+        if (!hasPIIDatabase(c)) {
+          throw new Error('account_directory_removal_pii_unavailable');
+        }
+        const removalPiiContext = createPIIContextFromHono(c, tenantId);
+        const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
+          tenantId,
+          userId,
+          core: authCtx.coreAdapter,
+          pii: removalPiiContext.defaultPiiAdapter,
+        });
+
+        if (hasPIIDatabase(c)) {
+          const piiCtx = removalPiiContext;
+          const tombstone = await writeAccountTombstone(piiCtx.defaultPiiAdapter, {
+            tenantId,
+            userId,
+            prepared: tombstoneInput,
+            deletedBy,
+            reason: body.reason_code,
+            metadata: {
+              source: 'admin_user_anonymize',
+              request_confirmed: true,
+              user_id_hash: userIdHash,
+            },
+          });
+          tombstoneId = tombstone.id;
+          retentionUntil = tombstone.retention_until;
+          await eraseAccountPiiAfterDirectoryRemovalPrepared(
+            piiCtx.defaultPiiAdapter,
+            { tenantId, userId, core: authCtx.coreAdapter },
+            nowTs
+          );
+          await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(
+            tenantId,
+            userId,
+            piiCtx.defaultPiiAdapter
+          );
+          await piiCtx.piiRepositories.identifier.deleteByUserId(
+            tenantId,
+            userId,
+            piiCtx.defaultPiiAdapter
+          );
+        }
+
+        const sessions = await authCtx.coreAdapter.query<{ id: string }>(
+          'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
+          [tenantId, userId]
+        );
+        await Promise.all(
+          sessions.map((session) =>
+            authCtx.coreAdapter.execute(
+              'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
+              [tenantId, session.id]
+            )
+          )
+        );
+
+        await Promise.all([
+          authCtx.coreAdapter.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
+            tenantId,
+            userId,
+          ]),
+          authCtx.repositories.passkey.deleteByUserId(userId),
+          authCtx.repositories.role.removeAllRolesFromUser(userId),
+          authCtx.coreAdapter.execute(
+            'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
+            [tenantId, userId]
+          ),
+        ]);
+
+        await runtimeUsers.deleteUser(userId);
+        await transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'deleted',
+          sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+          operationId: crypto.randomUUID(),
+        });
+        await markAccountDirectoryRemovalsReady(authCtx.coreAdapter, directoryRemovals);
+        await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
+      }
     );
-    await Promise.all(
-      sessions.map((session) =>
-        authCtx.coreAdapter.execute(
-          'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
-          [tenantId, session.id]
-        )
-      )
-    );
 
-    await Promise.all([
-      authCtx.coreAdapter.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
-        tenantId,
-        userId,
-      ]),
-      authCtx.repositories.passkey.deleteByUserId(userId),
-      authCtx.repositories.role.removeAllRolesFromUser(userId),
-      authCtx.coreAdapter.execute(
-        'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
-        [tenantId, userId]
-      ),
-    ]);
-
-    await runtimeUsers.deleteUser(userId);
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleted',
-      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-    await markAccountDirectoryRemovalsReady(authCtx.coreAdapter, directoryRemovals);
-    await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
+    // The tombstone is keyed by the user id: the audits and the log name it by the same hash.
+    const tombstoneIdHash = tombstoneId === null ? null : await anonymizedRef(tombstoneId);
 
     // Step 6: Write audit log (user_id_hash only, no original ID)
     await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
       reason_code: body.reason_code,
-      tombstone_id: tombstoneId,
+      tombstone_id: tombstoneIdHash,
       retention_until: new Date(retentionUntil).toISOString(),
     });
 
@@ -1266,13 +1295,13 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       action: 'user_anonymize',
       userIdHash,
       reasonCode: body.reason_code,
-      tombstoneId,
+      tombstoneIdHash,
     });
 
     // Admin Audit Log (use user_id_hash to preserve anonymization)
     scheduleAdminAuditLog(c, 'user.anonymized', userIdHash, 'success', {
       reason_code: body.reason_code,
-      tombstone_id: tombstoneId,
+      tombstone_id: tombstoneIdHash,
     });
 
     return c.json({
@@ -2073,7 +2102,13 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       ttl_seconds?: number;
     }>();
 
-    const { user_id, ttl_seconds = 3600 } = body;
+    const { user_id } = body;
+    // A test session lasts no longer than any session can (the highest session.max_ttl): what is
+    // kept for a session's lifetime, such as the relying parties it signed in to, relies on it.
+    const ttl_seconds = Math.min(
+      body.ttl_seconds ?? 3600,
+      Math.floor(SESSION_MAX_TTL_DEFINITION.maxMs / 1000)
+    );
 
     if (!user_id) {
       return c.json(

@@ -44,6 +44,13 @@ class MemoryDurableObjectState implements Partial<DurableObjectState> {
       },
       transaction: <T>(closure: (txn: DurableObjectStorage) => Promise<T>): Promise<T> =>
         closure(this.storage),
+      // The store's expiry: registrations set an alarm.
+      setAlarm: (): Promise<void> => Promise.resolve(),
+      deleteAlarm: (): Promise<void> => Promise.resolve(),
+      deleteAll: (): Promise<void> => {
+        this.values.clear();
+        return Promise.resolve();
+      },
     } as unknown as DurableObjectStorage;
   }
 }

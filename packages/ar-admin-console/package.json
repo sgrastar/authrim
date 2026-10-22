@@ -60,6 +60,6 @@
 	"dependencies": {
 		"@authrim/ar-lib-core": "workspace:*",
 		"@authrim/ar-lib-field-mapping": "workspace:*",
-		"@simplewebauthn/browser": "^13.2.2"
+		"@simplewebauthn/browser": "^14.0.0"
 	}
 }

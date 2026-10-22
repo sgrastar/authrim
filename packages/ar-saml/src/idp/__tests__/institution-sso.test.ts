@@ -251,6 +251,33 @@ function arrange(settings: Record<string, unknown>, customClaims: Record<string,
   mocks.assuranceSettings = settings;
 }
 
+/** A mapping that takes schacHomeOrganization and the organization name from the person's own data. */
+function bindingFromPersonsOwnData(...otherEdges: object[]) {
+  const binding = institutionBinding([
+    ...otherEdges,
+    customClaimEdge('edge_home', 'homeDomain', OID_SCHAC_HOME_ORGANIZATION),
+    customClaimEdge('edge_name', 'orgName', OID_ORGANIZATION_NAME),
+  ]);
+  return {
+    ...binding,
+    catalog: {
+      ...binding.catalog,
+      entries: [
+        ...binding.catalog.entries,
+        ...['homeDomain', 'orgName'].map((claim) => ({
+          id: `field.custom.${claim}`,
+          namespace: 'authrim.custom_claims',
+          path: claim,
+          valueType: 'string',
+          cardinality: 'single' as const,
+          classification: 'internal' as const,
+          targetType: 'custom' as const,
+        })),
+      ],
+    },
+  };
+}
+
 describe.each([
   ['SP-initiated SSO', sso],
   ['IdP-initiated SSO', idpInitiated],
@@ -341,28 +368,7 @@ describe.each([
       email: 'user@example.test',
       customClaims: { homeDomain: 'rival.example', orgName: 'Rival University' },
     };
-    const binding = institutionBinding([
-      customClaimEdge('edge_home', 'homeDomain', OID_SCHAC_HOME_ORGANIZATION),
-      customClaimEdge('edge_name', 'orgName', OID_ORGANIZATION_NAME),
-    ]);
-    mocks.binding = {
-      ...binding,
-      catalog: {
-        ...binding.catalog,
-        entries: [
-          ...binding.catalog.entries,
-          ...['homeDomain', 'orgName'].map((claim) => ({
-            id: `field.custom.${claim}`,
-            namespace: 'authrim.custom_claims',
-            path: claim,
-            valueType: 'string',
-            cardinality: 'single' as const,
-            classification: 'internal' as const,
-            targetType: 'custom' as const,
-          })),
-        ],
-      },
-    };
+    mocks.binding = bindingFromPersonsOwnData();
     const response = await run();
     expect(response.status).toBe(200);
     expect(assertionAttributes()).toEqual({ [OID_MAIL]: ['user@example.test'] });
@@ -377,6 +383,44 @@ describe.each([
         }),
       ],
     });
+    expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('Rival');
+  });
+
+  it('releases neither schacHomeOrganization nor the name for a tenant that registered no institution, and keeps the scoped values', async () => {
+    mocks.assuranceSettings = {};
+    mocks.user = {
+      id: 'user-a',
+      email: 'user@example.test',
+      customClaims: {
+        homeDomain: 'rival.example',
+        orgName: 'Rival University',
+        eduPersonPrincipalName: 'alice@anywhere.example',
+      },
+    };
+    mocks.binding = bindingFromPersonsOwnData(EDGE_EPPN);
+    const response = await run();
+    expect(response.status).toBe(200);
+    // ePPN is unchanged for such a tenant, as before; the institution attributes are not sent.
+    expect(assertionAttributes()).toMatchObject({ [OID_EPPN]: ['alice@anywhere.example'] });
+    expect(Object.keys(assertionAttributes())).not.toContain(OID_SCHAC_HOME_ORGANIZATION);
+    expect(Object.keys(assertionAttributes())).not.toContain(OID_ORGANIZATION_NAME);
+    expect(mocks.lastXml).not.toContain('Rival');
+    expect(mocks.lastXml).not.toContain('rival');
+    expect(withheldRecords()[0]).toMatchObject({
+      withheld: [
+        expect.objectContaining({
+          attribute: 'schacHomeOrganization',
+          reason: 'institution_not_registered',
+          count: 1,
+        }),
+        expect.objectContaining({
+          attribute: 'organizationName',
+          reason: 'institution_not_registered',
+          count: 1,
+        }),
+      ],
+    });
+    expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('rival');
     expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('Rival');
   });
 
