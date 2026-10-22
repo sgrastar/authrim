@@ -173,6 +173,61 @@ describe('DatabaseSettingsCanonicalStore', () => {
     expect(await store.pending()).toEqual([]);
   });
 
+  it('removes its own KV write when the document is deleted while it is written', async () => {
+    const scope = { type: 'tenant' as const, id: 'discarded' };
+    const data = { 'security.enabled': true };
+    await store.create('security', scope, { data, version: generateVersion(data) });
+    const kv = new Map<string, string>();
+    const storageKey = 'settings:tenant:discarded:security';
+    const result = await projectLatestSettingsDocument(
+      store,
+      {
+        async put(key: string, value: string) {
+          kv.set(key, value);
+          // A discarded restore removes the document and its key while this write is in flight.
+          db.prepare("DELETE FROM tenant_settings_documents WHERE tenant_id='discarded'").run();
+          kv.delete(key);
+          kv.set(key, value);
+        },
+        async delete(key: string) {
+          kv.delete(key);
+        },
+      } as unknown as KVNamespace,
+      'security',
+      scope,
+      storageKey
+    );
+    expect(result).toBe('applied');
+    expect(kv.has(storageKey)).toBe(false);
+  });
+
+  it('retries removing its own KV write when the first delete fails', async () => {
+    const scope = { type: 'tenant' as const, id: 'discarded' };
+    const data = { 'security.enabled': true };
+    await store.create('security', scope, { data, version: generateVersion(data) });
+    const kv = new Map<string, string>();
+    const storageKey = 'settings:tenant:discarded:security';
+    let deletes = 0;
+    await projectLatestSettingsDocument(
+      store,
+      {
+        async put(key: string, value: string) {
+          kv.set(key, value);
+          db.prepare("DELETE FROM tenant_settings_documents WHERE tenant_id='discarded'").run();
+        },
+        async delete(key: string) {
+          if (++deletes === 1) throw new Error('kv unavailable');
+          kv.delete(key);
+        },
+      } as unknown as KVNamespace,
+      'security',
+      scope,
+      storageKey
+    );
+    expect(deletes).toBe(2);
+    expect(kv.has(storageKey)).toBe(false);
+  });
+
   it("reads a tenant's documents and the platform's copy state as one snapshot", async () => {
     const scope = { type: 'tenant' as const, id: 'acme' };
     const data = { 'security.enabled': true };

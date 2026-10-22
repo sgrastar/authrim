@@ -72,6 +72,12 @@ beforeEach(() => {
   state.sequence = null;
 });
 
+let discard: {
+  decision: string | null;
+  blocker_kind: string | null;
+  blocker_json: string | null;
+} | null = null;
+
 function database(
   planDigest = digest,
   datasets = [
@@ -96,6 +102,7 @@ function database(
       if (sql.includes('AS source_count')) return mappingCounts;
       if (sql.includes('tenant_backup_admin_mapping_heads')) return mappingHead;
       if (sql.includes('tenant_backup_restore_plan_inventory_items')) return state.sequence;
+      if (sql.includes('tenant_backup_import_discards')) return discard;
       return state.operation;
     }),
     execute: vi.fn(async () => ({ rowsAffected: 0 })),
@@ -219,4 +226,29 @@ it('fails closed on malformed persisted dataset totals', async () => {
   await expect(model.get('tenant-a', 'operation-a', 300)).rejects.toThrow(
     'backup_restore_preview_invalid'
   );
+});
+
+it('shows why an import cleanup stopped before it discarded anything', async () => {
+  state.operation = { ...state.operation, state: 'cancelling', phase: 'cleanup' };
+  discard = {
+    decision: 'discard',
+    blocker_kind: 'legal_hold',
+    blocker_json: JSON.stringify({ holdIds: ['hold-a'], restoredHolds: 1, bundleHolds: 0 }),
+  };
+  try {
+    const result = await new TenantBackupOperationReadModel(database() as never).get(
+      'tenant-a',
+      'operation-a',
+      300
+    );
+    expect(result?.view.discard).toEqual({
+      decision: 'discard',
+      blocker: {
+        kind: 'legal_hold',
+        detail: { holdIds: ['hold-a'], restoredHolds: 1, bundleHolds: 0 },
+      },
+    });
+  } finally {
+    discard = null;
+  }
 });

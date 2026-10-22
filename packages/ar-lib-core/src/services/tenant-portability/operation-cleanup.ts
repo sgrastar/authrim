@@ -5,7 +5,14 @@ import { TenantBackupSnapshotResources } from './snapshot-resources';
 import { DatabaseTenantBundleReferenceIndex } from './validation-index';
 
 type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
-type Stage = 'boundary' | 'snapshots' | 'artifact' | 'validation' | 'staging' | 'additional';
+type Stage =
+  | 'prepare'
+  | 'boundary'
+  | 'snapshots'
+  | 'artifact'
+  | 'validation'
+  | 'staging'
+  | 'additional';
 
 interface CleanupCursor {
   version: 1;
@@ -13,6 +20,11 @@ interface CleanupCursor {
 }
 
 export interface TenantBackupOperationCleanupAdapter {
+  /**
+   * Import only: settle what the cleanup does before anything is removed (for example whether the
+   * restored tenant is discarded, or why it must stop). Done once that decision is recorded.
+   */
+  prepareImportCleanup?(context: TenantBackupStepContext): Promise<{ done: boolean }>;
   /** Abort or prove terminal the exact Control boundary owned by this operation. */
   abortBoundary(context: TenantBackupStepContext): Promise<void>;
   /** Reopen the recorded physical source, even if tenant routing has since changed. */
@@ -35,7 +47,7 @@ interface CleanupBucket {
 
 function parseCursor(operation: TenantBackupStepContext['operation']): CleanupCursor {
   if (operation.cursor_json === null)
-    return { version: 1, stage: operation.kind === 'export' ? 'boundary' : 'validation' };
+    return { version: 1, stage: operation.kind === 'export' ? 'boundary' : 'prepare' };
   try {
     const value = JSON.parse(operation.cursor_json) as Record<string, unknown>;
     if (
@@ -43,9 +55,15 @@ function parseCursor(operation: TenantBackupStepContext['operation']): CleanupCu
       Array.isArray(value) ||
       Object.keys(value).sort().join(',') !== 'stage,version' ||
       value.version !== 1 ||
-      !['boundary', 'snapshots', 'artifact', 'validation', 'staging', 'additional'].includes(
-        value.stage as string
-      )
+      ![
+        'prepare',
+        'boundary',
+        'snapshots',
+        'artifact',
+        'validation',
+        'staging',
+        'additional',
+      ].includes(value.stage as string)
     )
       throw new Error();
     return value as unknown as CleanupCursor;
@@ -58,15 +76,17 @@ function next(stage: Stage): string {
   return JSON.stringify({
     version: 1,
     stage:
-      stage === 'boundary'
-        ? 'snapshots'
-        : stage === 'snapshots'
-          ? 'artifact'
-          : stage === 'artifact'
-            ? 'validation'
-            : stage === 'validation'
-              ? 'staging'
-              : 'additional',
+      stage === 'prepare'
+        ? 'validation'
+        : stage === 'boundary'
+          ? 'snapshots'
+          : stage === 'snapshots'
+            ? 'artifact'
+            : stage === 'artifact'
+              ? 'validation'
+              : stage === 'validation'
+                ? 'staging'
+                : 'additional',
   } satisfies CleanupCursor);
 }
 
@@ -124,6 +144,15 @@ export async function runTenantBackupOperationCleanupStep(input: {
     throw new Error('backup_cleanup_state');
   const cursor = parseCursor(input.context.operation);
 
+  if (cursor.stage === 'prepare') {
+    if (input.context.operation.kind !== 'import') throw new Error('backup_cleanup_cursor');
+    const result = input.adapter.prepareImportCleanup
+      ? await input.adapter.prepareImportCleanup(input.context)
+      : { done: true };
+    return result.done
+      ? { cursor: next('prepare'), done: false }
+      : { cursor: JSON.stringify(cursor), done: false };
+  }
   if (cursor.stage === 'boundary') {
     if (input.context.operation.kind !== 'export') throw new Error('backup_cleanup_cursor');
     await input.adapter.abortBoundary(input.context);

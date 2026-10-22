@@ -1167,6 +1167,9 @@ export class SettingsManager {
  * newer one was projected and marked, and a failed read can hide that. The scheduled retry
  * therefore also compares recently projected documents with KV and repairs any that differ
  * (`processPendingSettingsProjections`).
+ *
+ * A document deleted while it was being written (a discarded tenant restore removes its
+ * documents and their keys) is no longer listed for any retry, so the write is undone here.
  */
 export async function projectLatestSettingsDocument(
   store: SettingsCanonicalStore,
@@ -1177,16 +1180,25 @@ export async function projectLatestSettingsDocument(
   attempts = 3
 ): Promise<'applied' | 'pending'> {
   let lastSeen: string | undefined;
+  let written = false;
   for (let attempt = 0; attempt < attempts; attempt++) {
     // Any failure (reading the canonical copy, writing KV, marking) counts as this attempt
     // failing: the save itself has already succeeded and must not be reported as an error.
     try {
       const latest = await store.load(category, scope);
-      if (!latest) return 'applied';
+      if (!latest) {
+        if (written) await kv.delete(key);
+        return 'applied';
+      }
       lastSeen = latest.version;
+      written = true;
       await kv.put(key, JSON.stringify(latest.data));
       const after = await store.load(category, scope);
-      if (after) lastSeen = after.version;
+      if (!after) {
+        await kv.delete(key);
+        return 'applied';
+      }
+      lastSeen = after.version;
       if (after?.version !== latest.version) continue;
       // Throws when a newer save landed between the check and the mark; project that one.
       await store.markProjected(category, scope, latest.version);

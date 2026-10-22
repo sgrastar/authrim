@@ -14,6 +14,7 @@ import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tena
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
 import { planSqliteTenantDatasets } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-plan';
 import { readBackupSqliteDatabaseSchema } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-schema-reader';
+import type { BackupSchemaTable } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-schema-types';
 import { tenantBackupDatabaseFamily } from './tenant-backup-database-inventory';
 
 type Family = 'core' | 'pii' | 'admin';
@@ -39,7 +40,9 @@ function invalid(): never {
 /** Build every installed policy from complete live schemas; no bundle can supply this metadata. */
 export async function planPhase8InstalledSqliteResources(
   resources: readonly Phase8SqlitePlanResource[],
-  signal: AbortSignal
+  signal: AbortSignal,
+  /** Receives each database's complete schema, so a caller need not read it twice. */
+  observeSchema?: (resourceId: string, tables: readonly BackupSchemaTable[]) => void
 ): Promise<PlannedInstalledSqliteDataset[]> {
   signal.throwIfAborted();
   if (
@@ -69,6 +72,7 @@ export async function planPhase8InstalledSqliteResources(
         resource.family,
         signal
       );
+      observeSchema?.(resource.resourceId, tables);
       const plan = planSqliteTenantDatasets(resource.family, tables, allSelection);
       return {
         ...plan,
@@ -135,6 +139,28 @@ function tenantResource(resource: BackupDatabaseResource): Phase8SqlitePlanResou
   };
 }
 
+/** The tenant's routed core and PII databases plus the shared Admin database, as planned. */
+export async function resolvePhase8SqlitePlanResources(
+  env: Env,
+  tenantId: string,
+  signal: AbortSignal
+): Promise<Phase8SqlitePlanResource[]> {
+  const tenant = await resolveBackupTenantDatabaseResources(env, {
+    tenantId,
+    roles: ['tenant_core', 'tenant_pii'],
+    signal,
+  });
+  const fixed = resolveFixedBackupDatabaseResources(env, ['DB_ADMIN']);
+  return [
+    ...tenant.map(tenantResource),
+    ...fixed.map((resource) => ({
+      resourceId: resource.databaseId,
+      family: resource.family as 'admin',
+      database: resource.database,
+    })),
+  ];
+}
+
 /** Resolve the target deployment inventory again on every import-policy load. */
 export async function loadPhase8InstalledSqlitePlan(
   env: Env,
@@ -144,21 +170,8 @@ export async function loadPhase8InstalledSqlitePlan(
   const admin = requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup');
   const requests = new TenantBackupRequestStore(admin);
   await requests.loadForExecution(context, now);
-  const tenant = await resolveBackupTenantDatabaseResources(env, {
-    tenantId: context.lease.tenantId,
-    roles: ['tenant_core', 'tenant_pii'],
-    signal: context.signal,
-  });
-  const fixed = resolveFixedBackupDatabaseResources(env, ['DB_ADMIN']);
   const planned = await planPhase8InstalledSqliteResources(
-    [
-      ...tenant.map(tenantResource),
-      ...fixed.map((resource) => ({
-        resourceId: resource.databaseId,
-        family: resource.family as 'admin',
-        database: resource.database,
-      })),
-    ],
+    await resolvePhase8SqlitePlanResources(env, context.lease.tenantId, context.signal),
     context.signal
   );
   await requests.loadForExecution(context, now);

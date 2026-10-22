@@ -208,16 +208,30 @@ export async function readBackupSqliteBoundarySchemaDigest(
   database: Pick<DatabaseAdapter, 'queryOne'>,
   signal: AbortSignal
 ): Promise<string> {
-  signal.throwIfAborted();
-  const row = await database.queryOne<{ definitions_json: string }>(
-    `SELECT json_group_array(json_object(
+  return (await readBackupSqliteSchemaDefinitions(database, signal)).digest;
+}
+
+/**
+ * The schema definitions the boundary digest hashes, as one SQL expression. A statement can
+ * compare it with definitions read earlier, so it runs only against exactly that schema.
+ */
+export const BACKUP_SQLITE_SCHEMA_DEFINITIONS_SQL = `(SELECT json_group_array(json_object(
       'name',name,'type',type,'table',tbl_name,'sql',sql
-    )) AS definitions_json FROM (
+    )) FROM (
       SELECT name,type,tbl_name,sql FROM sqlite_schema
       WHERE name NOT GLOB 'sqlite_*'
         AND NOT (type='trigger' AND name GLOB 'tenant_backup_*')
       ORDER BY type,name
-    )`
+    ))`;
+
+/** The boundary schema definitions and their digest. */
+export async function readBackupSqliteSchemaDefinitions(
+  database: Pick<DatabaseAdapter, 'queryOne'>,
+  signal: AbortSignal
+): Promise<{ definitions: string; digest: string }> {
+  signal.throwIfAborted();
+  const row = await database.queryOne<{ definitions_json: string }>(
+    `SELECT ${BACKUP_SQLITE_SCHEMA_DEFINITIONS_SQL} AS definitions_json`
   );
   signal.throwIfAborted();
   if (!row || typeof row.definitions_json !== 'string')
@@ -225,5 +239,10 @@ export async function readBackupSqliteBoundarySchemaDigest(
   const bytes = new TextEncoder().encode(row.definitions_json);
   if (bytes.length > 4 * 1024 * 1024) throw new Error('backup_schema_definition_limit');
   const hashed = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(hashed), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return {
+    definitions: row.definitions_json,
+    digest: Array.from(new Uint8Array(hashed), (byte) => byte.toString(16).padStart(2, '0')).join(
+      ''
+    ),
+  };
 }
