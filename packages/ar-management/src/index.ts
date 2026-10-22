@@ -71,6 +71,7 @@ import {
   processInteractiveAdminJobQueues,
   processScheduledAdminJobQueues,
 } from './scheduled-admin-jobs';
+import { processPendingSessionEndLogoutJobs } from './admin-job-executor';
 import {
   createLogRowArchiver,
   LOG_ROW_ARCHIVE_BUDGET_MS,
@@ -4236,6 +4237,14 @@ async function handleCoveredScheduled(
     await processScheduledAgentElevationRecovery(env, log);
     await processScheduledAgentTokenRevocations(env, log);
     await processScheduledAgentPayloadRetention(env, log);
+    try {
+      // Relying parties of sessions an admin action ended, not yet told (or to retry).
+      await processPendingSessionEndLogoutJobs(env, log);
+    } catch (error) {
+      log.warn('Downstream logout job processing failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
     return;
   }
   if (isInteractiveAdminJobCron(event.cron)) {

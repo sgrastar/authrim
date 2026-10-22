@@ -441,6 +441,8 @@ export {
   transitionAccountAuthenticationState,
   readAccountAuthenticationState,
   initializeAccountAuthenticationFromAccount,
+  recordUserSessionRevocationEndingSessions,
+  transitionAccountAuthenticationStateEndingSessions,
 } from './services/session-revocation-store';
 export * from './services/tenant-database-health';
 export * from './services/tenant-backup-policy';

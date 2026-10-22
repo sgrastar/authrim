@@ -286,6 +286,31 @@ describe('worker capability manifests', () => {
     }
   });
 
+  it('binds the session-client store to the Workers that end sessions outside a user logout', async () => {
+    // Without the binding the logout targets of an ended session cannot be read, so an upstream
+    // back-channel logout (Bridge) or an admin suspend / lock / session revocation (Management)
+    // tells no relying party.
+    const components = ['ar-bridge', 'ar-management'] as const;
+    const manifests = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: [...components],
+    });
+    const config = deploymentConfig('logouttest');
+    for (const compiled of manifests) {
+      expect(compiled.manifest.bindings, compiled.component).toContainEqual({
+        name: 'SESSION_CLIENT_STORE',
+        kind: 'durable_object_namespace',
+        required: true,
+      });
+      const generated = generateWranglerConfig(compiled.component, config, maximalResourceIds());
+      expect(generated.durable_objects?.bindings, compiled.component).toContainEqual({
+        name: 'SESSION_CLIENT_STORE',
+        class_name: 'SessionClientStore',
+        script_name: 'logouttest-ar-lib-core',
+      });
+    }
+  });
+
   it('declares encrypted sensitive-detail storage for Bridge token refresh evidence', async () => {
     const [bridge] = await loadWorkerCapabilityManifests({
       baseDir: ROOT_DIR,
