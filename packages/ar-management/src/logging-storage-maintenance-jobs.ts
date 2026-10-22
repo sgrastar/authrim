@@ -4125,11 +4125,14 @@ export async function runScheduledRetiredR2GenerationCleanup(
       row.object_catalog_id,
       row.tenant_key,
     ]);
+    // A rewrapped generation is superseded once its replacement is served, or once the catalog
+    // row is deleted (an expired archive chunk is retired after a rewrap moved it): a deleted row
+    // serves no body.
     const safelyRetired =
       !current ||
       (row.reason === 'rewrap' &&
-        current.status === 'committed' &&
-        current.object_key === row.replacement_object_key) ||
+        (current.status === 'deleted' ||
+          (current.status === 'committed' && current.object_key === row.replacement_object_key))) ||
       (row.reason === 'catalog_delete' && current.status === 'deleted');
     // A deleted catalog row keeps the key of the body it no longer serves; any other row that
     // still names the key is still served from it.

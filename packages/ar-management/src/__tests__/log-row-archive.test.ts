@@ -165,6 +165,7 @@ describe('log row archive', () => {
   let archive: ReturnType<typeof bucket>;
   let clock: number;
   let kv: Map<string, string>;
+  let keyVersion: string | undefined;
 
   const env = () =>
     ({
@@ -173,6 +174,7 @@ describe('log row archive', () => {
       SETTINGS: {},
       AUDIT_ARCHIVE: archive,
       OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+      OBJECT_ENCRYPTION_KEY_VERSION: keyVersion,
       PII_ENCRYPTION_KEY: PII_KEY,
       AUTHRIM_CONFIG: {
         get: async (key: string) => kv.get(key) ?? null,
@@ -223,6 +225,7 @@ describe('log row archive', () => {
     archive = bucket();
     clock = NOW;
     kv = new Map();
+    keyVersion = undefined;
     settings.days = 7;
     settings.checkApi = 90;
   });
@@ -405,6 +408,21 @@ describe('log row archive', () => {
     expect(catalog().map((row) => [row.id, row.status])).toEqual([
       [`obj_${batch.id}`, 'committed'],
     ]);
+    expect(ids(core, 'audit_log')).toEqual([]);
+  });
+
+  it('resumes a batch with the key version its chunk was started with', async () => {
+    core
+      .prepare('INSERT INTO audit_log VALUES (?, ?, ?, ?, ?, ?)')
+      .run('a1', 'tenant-a', null, 'x', null, Math.floor((NOW - 9 * DAY) / 1000));
+    const put = vi.spyOn(archive, 'put').mockRejectedValueOnce(new Error('r2 down'));
+    expect(await run()).toMatchObject({ failed: 1 });
+    put.mockRestore();
+    // The configured key version moves on before the batch is resumed.
+    keyVersion = '2';
+    clock += 2 * 60_000;
+    expect(await run()).toMatchObject({ failed: 0 });
+    expect(catalog().map((row) => [row.status, row.key_version])).toEqual([['committed', 1]]);
     expect(ids(core, 'audit_log')).toEqual([]);
   });
 
@@ -814,6 +832,36 @@ describe('log row archive', () => {
     clock += 10 * 60 * 1000;
     await run();
     expect(catalog()).toMatchObject([{ status: 'deleted', source_table: 'core.event_log' }]);
+  });
+
+  it('retires an expired chunk that a rewrap moved while it was being retired', async () => {
+    core
+      .prepare('INSERT INTO event_log VALUES (?, ?, ?, ?, ?)')
+      .run('e1', 'tenant-a', 'x', NOW - 100 * DAY, NOW - DAY);
+    // A rewrap commits a new object for the chunk between its selection and its retirement.
+    const original = DatabaseSync.prototype.prepare;
+    let moved = false;
+    const racing = vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (
+      this: DatabaseSync,
+      sql: string
+    ) {
+      if (!moved && sql.includes('INSERT INTO tenant_backup_r2_retired_generations')) {
+        moved = true;
+        original
+          .call(this, "UPDATE log_object_catalog SET object_key = object_key || '.rewrapped'")
+          .run();
+      }
+      return original.call(this, sql);
+    });
+    await run();
+    racing.mockRestore();
+    expect(catalog()).toMatchObject([{ status: 'committed' }]);
+
+    clock += 10 * 60 * 1000;
+    await run();
+    const [chunk] = catalog();
+    expect(chunk).toMatchObject({ status: 'deleted' });
+    expect(String(chunk.object_key)).toMatch(/\.rewrapped$/);
   });
 
   it('retires chunks whose every row has expired', async () => {

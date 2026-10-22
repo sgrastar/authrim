@@ -347,9 +347,19 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
     if (!env.AUDIT_ARCHIVE) invalid('log_row_archive_bucket_unavailable');
     if (!env.OBJECT_ENCRYPTION_ROOT_KEY) invalid('log_row_archive_encryption_key_unavailable');
     const key = await tenantKey(batch.tenant_id);
+    // A resumed batch writes with the key version its catalog row was created with: the writer
+    // refuses to change it, and the configured version may have moved on since.
+    const existing = await admin().queryOne<{ key_version: number | null }>(
+      'SELECT key_version FROM log_object_catalog WHERE id = ?',
+      [batch.object_catalog_id]
+    );
     const keyVersionText = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1', 10);
     const keyVersion =
-      Number.isSafeInteger(keyVersionText) && keyVersionText > 0 ? keyVersionText : 1;
+      existing && Number.isSafeInteger(existing.key_version) && (existing.key_version ?? 0) > 0
+        ? (existing.key_version as number)
+        : Number.isSafeInteger(keyVersionText) && keyVersionText > 0
+          ? keyVersionText
+          : 1;
     await writeLogChunkToR2({
       bucket: env.AUDIT_ARCHIVE,
       tenantKey: key,
@@ -513,15 +523,23 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
     let retired = 0;
     for (const row of expired) {
       if (now() >= deadline) break;
-      await retireDeletedLogObjectGeneration(admin(), {
-        retirementId: `log-row-archive-expired:${row.id}`,
-        tenantKey: row.tenant_key,
-        objectCatalogId: row.id,
-        objectKey: row.object_key,
-        deletedAt: now(),
-        bucketBinding: 'AUDIT_ARCHIVE',
-      });
-      retired += 1;
+      try {
+        await retireDeletedLogObjectGeneration(admin(), {
+          // One retirement per object generation: a rewrap that moved the chunk after it was
+          // selected leaves its retirement unused, and the next run retires the new object.
+          retirementId: `log-row-archive-expired:${row.id}:${(await sha256Hex(row.object_key)).slice(0, 16)}`,
+          tenantKey: row.tenant_key,
+          objectCatalogId: row.id,
+          objectKey: row.object_key,
+          deletedAt: now(),
+          bucketBinding: 'AUDIT_ARCHIVE',
+        });
+        retired += 1;
+      } catch (error) {
+        log.warn('Log row archive could not retire an expired chunk', {
+          errorCode: errorCode(error),
+        });
+      }
     }
     return retired;
   };
