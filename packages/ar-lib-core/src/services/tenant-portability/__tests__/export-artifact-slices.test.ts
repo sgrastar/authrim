@@ -17,7 +17,6 @@ import { cleanupCancelledTenantBackupArtifactPage } from '../cancelled-artifact-
 import { runTenantBackupArtifactVerificationStep } from '../verify-artifact-step';
 import { readTenantBackupArtifact } from '../artifact-reader';
 import { openTenantBackupDownload } from '../published-artifact-reader';
-import { cleanupCancelledTenantBackupArtifactPage } from '../cancelled-artifact-cleanup';
 import {
   initialTenantBackupContainerVerificationProgress,
   verifyTenantBackupContainerV2Slice,

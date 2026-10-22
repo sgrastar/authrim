@@ -14,15 +14,10 @@ export default defineConfig({
 	envPrefix: ['VITE_', 'PUBLIC_'],
 	build: {
 		target: 'esnext',
-		minify: 'esbuild',
 		sourcemap: false,
 		// The Admin UI emits a large chunk graph. Computing and printing the gzip size of every
 		// output makes hosted CI spend minutes on reporting after the artifacts are already built.
 		reportCompressedSize: false,
-		chunkSizeWarningLimit: 1000,
-		rollupOptions: {
-			// Reduce parallelism to prevent EPIPE errors in CI
-			maxParallelFileOps: 2
-		}
+		chunkSizeWarningLimit: 1000
 	}
 });
