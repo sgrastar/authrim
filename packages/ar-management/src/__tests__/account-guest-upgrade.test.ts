@@ -478,6 +478,25 @@ describe('account guest upgrade API', () => {
       })
     );
   });
+  it('checks again on a retry whose publication was pinned but whose reservation failed', async () => {
+    mocks.operation.mockResolvedValue({
+      ...(await operation()),
+      state: 'verified',
+      reservation_publication_json: JSON.stringify({ operationId: 'op' }),
+    });
+    registrationCheck.override = 'blocked';
+    let result: Response;
+    try {
+      result = await completeAccountGuestUpgradeHandler(
+        context({ operation_id: 'op', upgrade_token: token })
+      );
+    } finally {
+      registrationCheck.override = null;
+    }
+    expect(result.status).toBe(409);
+    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(mocks.commit).not.toHaveBeenCalled();
+  });
   it('does not refresh authentication when a completed operation is retried', async () => {
     mocks.operation.mockResolvedValue({ ...(await operation()), state: 'completed' });
     mocks.lifecycle.mockResolvedValue({

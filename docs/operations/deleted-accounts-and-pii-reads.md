@@ -103,18 +103,19 @@ cannot be recorded is not answered.
 whose email has a deletion record within its retention, or a change to such an address, is
 refused on:
 
-| Path                                                                      | Refused as                                                    |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Passkey sign-up (`/api/auth/passkeys`)                                    | An address that has an account (409)                          |
-| Direct-auth passkey sign-up                                               | An address that has an account (409)                          |
-| Email code / direct-auth email code                                       | The usual "code sent" reply; nothing is sent                  |
-| TOTP sign-up (start and activation)                                       | An address that has an account (409)                          |
-| External IdP / social JIT                                                 | A policy denial (`policy_access_denied`)                      |
-| SAML JIT                                                                  | Sign-up turned off for the IdP (403)                          |
-| Admin create (`POST /api/admin/users`)                                    | The address conflict (409)                                    |
-| Guest upgrade with email (complete)                                       | `identity_already_registered` (409), as for an address in use |
-| Own email change or addition (complete, after the code to it is verified) | `Email address is already in use` (409)                       |
-| Admin retry-PII setting another address                                   | The update conflict (409)                                     |
+| Path                                                            | Refused as                                                            |
+| --------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Passkey sign-up (`/api/auth/passkeys`)                          | An address that has an account (409)                                  |
+| Direct-auth passkey sign-up                                     | An address that has an account (409)                                  |
+| Email code / direct-auth email code                             | The usual "code sent" reply; nothing is sent                          |
+| TOTP sign-up (start and activation)                             | An address that has an account (409)                                  |
+| External IdP / social JIT                                       | A policy denial (`policy_access_denied`)                              |
+| SAML JIT                                                        | Sign-up turned off for the IdP (403)                                  |
+| Admin create (`POST /api/admin/users`)                          | The address conflict (409)                                            |
+| Guest upgrade with email (complete)                             | `identity_already_registered` (409), as for an address in use         |
+| Own email addition (complete, after the code to it is verified) | `Email address is already in use` (409), as for an address in use     |
+| Own email change (complete, after the code to it is verified)   | The operation ends `canceled` (202), as one to an address in use does |
+| Admin retry-PII setting another address                         | The update conflict (409)                                             |
 
 Not covered: SCIM create and update and user import (a directory that re-provisions a deleted
 person is the directory's decision), and accounts without an email (passkey-only, guest, DID).

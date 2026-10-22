@@ -415,29 +415,27 @@ describe('account identifier replacement handlers', () => {
     ).toBe(false);
   });
 
-  it.each(['replacement', 'addition'] as const)(
-    'refuses a verified %s to a recently deleted address as an address in use',
-    async (mode) => {
-      const challengeId = 'identifier-replacement-00000000-0000-4000-8000-000000000001';
-      const code = '123456';
-      const now = Math.floor(Date.now() / 1000);
-      const key = await crypto.subtle.importKey(
-        'raw',
-        new TextEncoder().encode('test-identifier-replacement-secret-32-bytes'),
-        { name: 'HMAC', hash: 'SHA-256' },
-        false,
-        ['sign']
-      );
-      const signature = await crypto.subtle.sign(
-        'HMAC',
-        key,
-        new TextEncoder().encode(`${challengeId}\0${code}`)
-      );
-      const verifier = Array.from(new Uint8Array(signature), (byte) =>
-        byte.toString(16).padStart(2, '0')
-      ).join('');
-      if (mode === 'addition') mocks.findById.mockResolvedValueOnce({ email: null });
-      mocks.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({
+  const verifiedChallenge = async (challengeId: string, mode: 'replacement' | 'addition') => {
+    const code = '123456';
+    const now = Math.floor(Date.now() / 1000);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode('test-identifier-replacement-secret-32-bytes'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const signature = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      new TextEncoder().encode(`${challengeId}\0${code}`)
+    );
+    const verifier = Array.from(new Uint8Array(signature), (byte) =>
+      byte.toString(16).padStart(2, '0')
+    ).join('');
+    return {
+      code,
+      row: {
         tenant_id: 'tenant-a',
         account_id: 'account-a',
         normalized_value_json: JSON.stringify('deleted@example.com'),
@@ -451,30 +449,98 @@ describe('account identifier replacement handlers', () => {
         initiating_session_ref: 'session-current',
         recent_reauth_verified_at: now,
         operation_mode: mode,
-      });
+      },
+    };
+  };
 
-      registrationCheck.override = 'blocked';
-      let response: Response;
-      try {
-        response = await completeAccountIdentifierReplacementHandler(
-          context({
-            body: { challenge_id: challengeId, code },
-            idempotencyKey: `blocked-${mode}-key-0000`,
-          }) as never
-        );
-      } finally {
-        registrationCheck.override = null;
-      }
+  it('refuses a verified addition of a recently deleted address as an address in use', async () => {
+    const challengeId = 'identifier-replacement-00000000-0000-4000-8000-000000000001';
+    const { code, row } = await verifiedChallenge(challengeId, 'addition');
+    mocks.findById.mockResolvedValueOnce({ email: null });
+    mocks.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(row);
 
-      expect(response.status).toBe(409);
-      expect(await response.json()).toEqual({
-        error: 'conflict',
-        error_description: 'Email address is already in use',
-      });
-      expect(mocks.repositoryCreate).not.toHaveBeenCalled();
-      expect(mocks.publishEmailAddition).not.toHaveBeenCalled();
+    registrationCheck.override = 'blocked';
+    let response: Response;
+    try {
+      response = await completeAccountIdentifierReplacementHandler(
+        context({
+          body: { challenge_id: challengeId, code },
+          idempotencyKey: 'blocked-addition-key-0000',
+        }) as never
+      );
+    } finally {
+      registrationCheck.override = null;
     }
-  );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: 'conflict',
+      error_description: 'Email address is already in use',
+    });
+    expect(mocks.publishEmailAddition).not.toHaveBeenCalled();
+  });
+
+  it('ends a verified replacement to a recently deleted address as one to an address in use', async () => {
+    const challengeId = 'identifier-replacement-00000000-0000-4000-8000-000000000002';
+    const operationId = 'identifier-replacement:00000000-0000-4000-8000-000000000002';
+    // Both end with the operation canceled before its reservation and read back as such.
+    const finish = async (arrange: () => void) => {
+      const { code, row } = await verifiedChallenge(challengeId, 'replacement');
+      mocks.queryOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(row)
+        .mockResolvedValueOnce({ state: 'canceled' })
+        .mockResolvedValueOnce({ state: 'canceled' });
+      arrange();
+      const response = await completeAccountIdentifierReplacementHandler(
+        context({
+          body: { challenge_id: challengeId, code },
+          idempotencyKey: 'replacement-key-00000000',
+        }) as never
+      );
+      return { status: response.status, body: await response.json() };
+    };
+
+    const inUse = await finish(() => {
+      mocks.execute.mockResolvedValue({ rowsAffected: 1 });
+      mocks.resume.mockRejectedValueOnce(new Error('identifier_replacement_reservation_conflict'));
+    });
+    mocks.batch.mockClear();
+    mocks.resume.mockClear();
+    registrationCheck.override = 'blocked';
+    let deleted: Awaited<ReturnType<typeof finish>>;
+    try {
+      deleted = await finish(() => {
+        // The outbox is no longer claimable once the operation is canceled.
+        mocks.execute.mockImplementation(async (sql: string) =>
+          String(sql).includes("SET status = 'leased'") ? { rowsAffected: 0 } : { rowsAffected: 1 }
+        );
+      });
+    } finally {
+      registrationCheck.override = null;
+    }
+
+    expect(deleted).toEqual(inUse);
+    expect(deleted).toEqual({
+      status: 202,
+      body: {
+        operation: {
+          id: operationId,
+          state: 'canceled',
+          status_url: `/api/account/identifier-replacements/${encodeURIComponent(operationId)}`,
+        },
+      },
+    });
+    expect(mocks.resume).not.toHaveBeenCalled();
+    // Recorded canceled in the write that creates it, so it is never runnable.
+    expect(mocks.repositoryCreate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        operationId,
+        canceledAs: 'identifier_replacement_permanent_failure',
+      })
+    );
+    expect(mocks.repositoryCreate.mock.calls[0][0]).not.toHaveProperty('canceledAs');
+  });
 
   it('fails closed before resuming an operation owned by another account', async () => {
     mocks.queryOne.mockResolvedValueOnce(null);

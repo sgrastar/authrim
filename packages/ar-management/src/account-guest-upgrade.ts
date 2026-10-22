@@ -735,8 +735,9 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
       const payload = JSON.parse(operation.proof_payload_json!) as ProofPayload;
       // An address of an account deleted within the retention period, where the tenant blocks
       // re-registration: answered as an address that already has an account, at the same step.
-      // A resumed upgrade whose reservation is already pinned passed this check.
-      if (operation.method === 'email' && payload.email && !operation.reservation_publication_json) {
+      // Checked on every attempt while the upgrade is not committed: a pinned publication does
+      // not mean the address was reserved (the reservation may have failed since).
+      if (operation.method === 'email' && payload.email) {
         const registration = await checkEmailRegistration(c.env, {
           tenantId: ctx.tenantId,
           email: payload.email,

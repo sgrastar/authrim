@@ -44,6 +44,11 @@ export interface CreateIdentifierReplacementOperationInput {
   newIndexes: LookupBlindIndex[];
   authorityEvidence: Record<string, unknown>;
   verificationEvidence: Record<string, unknown>;
+  /**
+   * Record the operation already ended, with this error code, in the same write: it is never
+   * runnable (used where the operation must end as a permanent failure before it starts).
+   */
+  canceledAs?: 'identifier_replacement_permanent_failure';
 }
 
 interface OperationRow {
@@ -293,6 +298,22 @@ export class IdentifierReplacementOperationRepository {
         ],
       },
     ];
+    if (input.canceledAs) {
+      statements.push(
+        {
+          sql: `UPDATE identity_identifier_replacement_operations
+                   SET state = 'canceled', error_code = ?, next_attempt_at = NULL, updated_at = ?
+                 WHERE operation_id = ?`,
+          params: [input.canceledAs, now, input.operationId],
+        },
+        {
+          sql: `UPDATE identity_identifier_replacement_outbox
+                   SET status = 'blocked', next_attempt_at = NULL, error_code = ?, updated_at = ?
+                 WHERE outbox_id = ?`,
+          params: [input.canceledAs, now, input.outboxId],
+        }
+      );
+    }
     try {
       await this.pii.batch(statements);
     } catch (error) {
@@ -323,10 +344,10 @@ export class IdentifierReplacementOperationRepository {
     }
     return {
       operationId: input.operationId,
-      state: 'directory_pending',
+      state: input.canceledAs ? 'canceled' : 'directory_pending',
       createdAt: now,
       updatedAt: now,
-      errorCode: null,
+      errorCode: input.canceledAs ?? null,
     };
   }
 }

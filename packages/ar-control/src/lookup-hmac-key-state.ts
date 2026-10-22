@@ -1692,7 +1692,10 @@ export class LookupHmacKeyStateService {
       .bind(
         ownerId,
         fencingToken,
-        now + SETUP_TRANSITION_LEASE_SECONDS,
+        now +
+          SETUP_TRANSITION_LEASE_SECONDS +
+          // A resumed dual-write still has the dwell ahead of it (see activate).
+          (existing.state === 'activation_dual_write' ? LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS : 0),
         now,
         environmentId,
         existing.operationId,

@@ -738,10 +738,12 @@ export async function rotateLookupHmacKeyCommand(options: LookupHmacRotateOption
       async ({ client }) => waitForVerification(client, rotation.operationId, 'generation')
     );
     // Control leaves dual-write only once every Worker can have dropped the state from before
-    // the activation from its cache; wait that long, from this run's activation or in full.
+    // the activation from its cache. After this run's own activation, wait out what is left of
+    // that; a resumed run asks Control, which answers until it is over (retried below).
     const dwellMs =
-      LOOKUP_HMAC_DUAL_WRITE_DWELL_SECONDS * 1000 -
-      (dualWriteSinceMs === null ? 0 : Date.now() - dualWriteSinceMs);
+      dualWriteSinceMs === null
+        ? 0
+        : LOOKUP_HMAC_DUAL_WRITE_DWELL_SECONDS * 1000 - (Date.now() - dualWriteSinceMs);
     if (dwellMs > 0) {
       console.log(
         chalk.cyan(

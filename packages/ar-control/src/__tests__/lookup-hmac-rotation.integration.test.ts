@@ -387,7 +387,8 @@ describe('Lookup HMAC rotation state machine', () => {
       state: 'activation_dual_write',
       ownerId: 'recovery-owner',
       fencingToken: 3,
-      leaseExpiresAt: now + 120,
+      // A resumed dual-write lease also covers the dwell still ahead of it.
+      leaseExpiresAt: now + 120 + LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS,
       mutationStarted: true,
     });
     recordGenerationObservation(started.operationId);
