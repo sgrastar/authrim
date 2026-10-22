@@ -17,11 +17,12 @@ export const LOG_STORAGE_SETTINGS_META: Record<keyof LogStorageSettings, Setting
   'log-storage.d1_retention_days': {
     key: 'log-storage.d1_retention_days',
     type: 'number',
-    // Off by default; setup turns it on (7) for new environments only.
+    // Off everywhere until the admin screens and APIs read archived rows from R2; setup then
+    // turns it on (7) for new environments.
     default: 0,
     label: 'Days in D1',
     description:
-      'Audit and security log rows older than this many days move from D1 to R2 as whole rows and stay readable there until they expire. 0 keeps every row in D1.',
+      'Audit and security log rows older than this many days move from D1 to R2 as whole rows and are kept there until they expire. The admin screens and APIs read D1 only for now, so moved rows are not shown there. 0 keeps every row in D1.',
     visibility: 'admin',
     min: 0,
     max: 3650,
