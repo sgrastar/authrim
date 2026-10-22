@@ -266,6 +266,38 @@ describe('external callback: a sign-in started from an invitation', () => {
     });
   });
 
+  it('gives the use back when the sign-in fails before reaching identity handling', async () => {
+    mocks.exchangeCode.mockRejectedValue(new Error('upstream token endpoint unavailable'));
+
+    const response = await callback();
+
+    expect(response.status).toBe(302);
+    expect(mocks.handleIdentity).not.toHaveBeenCalled();
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(mocks.release).toHaveBeenCalledWith(env, expect.anything(), {
+      ...invitation,
+      tenantId: 'default',
+    });
+  });
+
+  it('keeps the use for an account still being provisioned (the resume applies it)', async () => {
+    mocks.handleIdentity.mockResolvedValue({
+      status: 'pending',
+      userId: 'user-new',
+      isNewUser: true,
+      stitchedFromExisting: false,
+      accountId: 'account:user-new',
+      operationId: 'operation-1',
+      providerId: 'provider-a',
+      providerUserId: 'external-subject-a',
+    });
+
+    await callback();
+
+    expect(mocks.release).not.toHaveBeenCalled();
+    expect(mocks.apply).not.toHaveBeenCalled();
+  });
+
   it('handles a sign-in without an invitation as before', async () => {
     mocks.consumeAuthState.mockResolvedValue(
       signInState({ inviteId: undefined, inviteReservationId: undefined })

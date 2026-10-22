@@ -6,12 +6,13 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseSource, Env } from '@authrim/ar-lib-core';
 import type { SAMLIdPConfig, SAMLAssertion, SAMLRequestData } from '@authrim/ar-lib-core';
 import {
   getSessionStoreForNewSession,
   type DatabaseAdapter,
   ensureDatabaseAdapter,
+  resolveAuthCorePersistenceAdapterFromEnv,
   requireAdminDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -42,6 +43,13 @@ import {
   readExternalProviderUsagePolicy,
   resolveSessionTtl,
 } from '@authrim/ar-lib-core';
+import {
+  applyExternalSignupInvitation,
+  externalSignupInvitationEmailCheck,
+  externalSignupInvitationRequirement,
+  releaseExternalSignupInvitation,
+  type ExternalSignupInvitationRequirement,
+} from '@authrim/ar-lib-core/services/external-signup-invitation';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -91,6 +99,9 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
   const tenantId = resolveSAMLTenantIdFromContext(c);
   const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
   let auditProviderId = 'unknown';
+  // The invitation use this sign-in's start reserved, until it goes to an account the ACS
+  // creates. Every other ending (an existing account, any refusal or failure) gives it back.
+  let unsettledInvitation: { inviteId: string; inviteReservationId: string } | null = null;
 
   try {
     // Parse POST data
@@ -154,6 +165,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         log.error('InResponseTo validation failed', { inResponseTo });
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
+      unsettledInvitation = validatedRequest.context?.invitation ?? null;
     } else if (await getStrictInResponseToSetting(env)) {
       log.error('SAML Response missing InResponseTo while strict mode is enabled', {});
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -208,15 +220,42 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     // Extract user information from assertion through the configured Field Mapping Set.
     const userInfo = await extractUserInfo(env, tenantId, spEntityId, assertion, idpConfig);
 
-    // Resolve the federated identity before applying any future attribute mapping.
+    // Resolve the federated identity before applying any future attribute mapping. An invitation
+    // the sign-in started from creates an account only for the email it names.
+    const invitationRequirement = unsettledInvitation
+      ? await externalSignupInvitationRequirement(
+          env,
+          await samlInvitationDatabase(env, tenantId),
+          {
+            tenantId,
+            inviteId: unsettledInvitation.inviteId,
+          }
+        )
+      : null;
     const identityResolution = await findOrCreateUser(
       env,
       userInfo,
       idpConfig,
       tenantId,
-      usagePolicy.signupEnabled
+      usagePolicy.signupEnabled,
+      invitationRequirement
     );
     const userId = identityResolution.userId;
+    // The reserved use goes to the account created here, before its session is made.
+    if (
+      unsettledInvitation &&
+      identityResolution.action === 'jit_create' &&
+      identityResolution.accountCoreDb
+    ) {
+      const invitation = unsettledInvitation;
+      unsettledInvitation = null;
+      await applyExternalSignupInvitation(
+        () => samlInvitationDatabase(env, tenantId),
+        identityResolution.accountCoreDb,
+        log,
+        { ...invitation, tenantId, userId }
+      );
+    }
 
     // A sign-in that answers a re-authentication needs the IdP to show a new login made after
     // Authrim asked for one (ForceAuthn): its AuthnInstant, within the usual clock skew.
@@ -404,7 +443,19 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     });
 
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  } finally {
+    if (unsettledInvitation) {
+      await releaseExternalSignupInvitation(() => samlInvitationDatabase(env, tenantId), log, {
+        ...unsettledInvitation,
+        tenantId,
+      });
+    }
   }
+}
+
+/** Where invitations and their reservations are kept: the tenant metadata database. */
+function samlInvitationDatabase(env: Env, tenantId: string) {
+  return resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-invitation', { tenantId });
 }
 
 function scheduleSAMLIdentityResolutionFailureAudit(
@@ -1310,6 +1361,8 @@ interface SAMLIdentityResolution {
   userId: string;
   action: SAMLIdentityResolutionAction;
   linkedIdentityId?: string;
+  /** The created account's core database (jit_create), where its assignments are written. */
+  accountCoreDb?: DatabaseSource;
 }
 
 interface SAMLLinkedIdentityRow {
@@ -1332,7 +1385,8 @@ type SAMLIdentityResolutionFailureReason =
   | 'custom_claim_validation_failed'
   | 'account_provisioning_pending'
   | 'account_route_inconsistent'
-  | 'linked_identity_subject_conflict';
+  | 'linked_identity_subject_conflict'
+  | 'invitation_email_mismatch';
 
 class SamlProvisioningError extends Error {
   constructor(
@@ -1545,7 +1599,8 @@ async function findOrCreateUser(
   userInfo: UserInfo,
   idpConfig: SAMLIdPConfig,
   tenantId: string,
-  signupEnabled: boolean
+  signupEnabled: boolean,
+  invitation?: ExternalSignupInvitationRequirement | null
 ): Promise<SAMLIdentityResolution> {
   const providerId = idpConfig.entityId;
   const providerUserKey = buildSAMLProviderUserKey(userInfo);
@@ -1582,6 +1637,19 @@ async function findOrCreateUser(
     }
     // Creating an account is a sign-up: decided before anything is written.
     if (!signupEnabled) throw new SamlSignupDisabledError();
+    // An invitation that names an email creates an account only for that email (a SAML IdP's
+    // email is taken as verified, as the account it creates records).
+    if (
+      externalSignupInvitationEmailCheck(invitation, {
+        email: normalizedEmail,
+        emailVerified: true,
+      }) !== 'ok'
+    ) {
+      throw new SamlProvisioningError(
+        'This invitation is for another email address',
+        'invitation_email_mismatch'
+      );
+    }
     return provisionSamlJitAccount(env, {
       tenantId,
       providerId,
@@ -1870,6 +1938,8 @@ async function provisionSamlJitAccount(
     runtimeUser,
   });
   if (provisioned.status === 202) {
+    // The sign-in fails here, and an invitation it carried is given back (the ACS has no
+    // continuation for an account created later).
     throw new SamlProvisioningError(
       'SAML account provisioning is still pending',
       'account_provisioning_pending'
@@ -1918,7 +1988,12 @@ async function provisionSamlJitAccount(
     providerId: input.providerId,
     providerUserKey: input.providerUserKey,
   });
-  return { userId: account.legacyUserId, action: 'jit_create', linkedIdentityId };
+  return {
+    userId: account.legacyUserId,
+    action: 'jit_create',
+    linkedIdentityId,
+    accountCoreDb: account.coreDb,
+  };
 }
 
 function buildSAMLProviderUserKey(userInfo: UserInfo): string {

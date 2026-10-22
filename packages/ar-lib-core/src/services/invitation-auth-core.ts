@@ -379,7 +379,7 @@ export async function assignTenantRoleToUser(
 
   const existing = await adapter.queryOne<{ id: string }>(
     `SELECT id FROM role_assignments
-     WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = 'tenant' AND scope_target = ?`,
+     WHERE tenant_id = ? AND subject_id = ? AND role_id = ? AND scope_type = 'tenant' AND scope_target = ?`,
     [tenantId, userId, roleId, tenantId]
   );
   if (existing) {
@@ -391,7 +391,7 @@ export async function assignTenantRoleToUser(
   }
 
   await adapter.execute(
-    `INSERT INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
+    `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope_type, scope_target, created_at, updated_at)
      VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?)`,
     [assignmentId, tenantId, userId, roleId, tenantId, now, now]
   );

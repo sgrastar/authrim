@@ -2013,6 +2013,9 @@ export const externalIdpAPI = {
 		if (authorizationChallengeId) {
 			targetUrl.searchParams.set('authorization_challenge_id', authorizationChallengeId);
 		}
+		if (inviteToken) {
+			targetUrl.searchParams.set('invite_token', inviteToken);
+		}
 
 		if (startMode === 'saml_sp') {
 			if (redirectUri) {
@@ -2044,9 +2047,6 @@ export const externalIdpAPI = {
 
 		if (redirectUri) {
 			params.set('redirect_uri', redirectUri);
-		}
-		if (inviteToken) {
-			params.set('invite_token', inviteToken);
 		}
 
 		for (const [key, value] of params.entries()) {

@@ -5,6 +5,11 @@
  * GET /saml/sp/login?idp=<idp_id>
  */
 
+import {
+  isUsableInvitationToken,
+  reserveExternalSignupInvitation,
+  type ExternalSignupInvitation,
+} from '@authrim/ar-lib-core/services/external-signup-invitation';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { SAMLIdPConfig, SAMLRequestContext } from '@authrim/ar-lib-core';
@@ -18,6 +23,7 @@ import {
   readAuthorizationChallengeKind,
   readExternalProviderReauthPolicy,
   readExternalProviderUsagePolicy,
+  resolveAuthCorePersistenceAdapterFromEnv,
   resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
@@ -79,6 +85,9 @@ async function verifySPLoginHumanVerification(
 /**
  * Handle SP login initiation
  */
+/** How much longer than the request itself an invitation reservation lasts (the ACS round trip). */
+const SAML_INVITATION_RESERVATION_MARGIN_SECONDS = 60;
+
 export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
@@ -105,7 +114,8 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
           issuerUrl,
           idps,
           returnUrl,
-          c.req.query('authorization_challenge_id') || undefined
+          c.req.query('authorization_challenge_id') || undefined,
+          c.req.query('invite_token')
         )
       );
     }
@@ -184,6 +194,37 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     if (!requestId) {
       throw new Error('Generated SAML AuthnRequest is missing ID');
     }
+    // A sign-in started from an invitation reserves one use now, held by this request for as
+    // long as the IdP may take to answer it, so the ACS can apply it to the account it creates.
+    // A re-authentication creates no account, so it carries no invitation.
+    const inviteToken = c.req.query('invite_token');
+    let invitation: ExternalSignupInvitation | null = null;
+    if (inviteToken !== undefined && !reauthentication) {
+      if (!isUsableInvitationToken(inviteToken)) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'invite_token' },
+        });
+      }
+      invitation = await reserveExternalSignupInvitation(
+        await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-invitation', { tenantId }),
+        {
+          token: inviteToken,
+          tenantId,
+          holder: `saml:${requestId}`,
+          ttlSeconds: requestTtlSeconds + SAML_INVITATION_RESERVATION_MARGIN_SECONDS,
+        }
+      );
+      if (!invitation) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+    }
+    const requestContext: SAMLRequestContext | undefined =
+      reauthentication || invitation
+        ? {
+            ...(reauthentication ? { spReauthentication: reauthentication } : {}),
+            ...(invitation ? { invitation } : {}),
+          }
+        : undefined;
     await storeAuthnRequest(
       env,
       tenantId,
@@ -192,7 +233,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       outboundIdpConfig.entityId,
       returnUrl,
       requestTtlSeconds,
-      reauthentication ? { spReauthentication: reauthentication } : undefined
+      requestContext
     );
 
     // RelayState is limited by the SAML bindings; use the opaque request ID, not the return URL.
@@ -386,12 +427,18 @@ function buildIdPSelectionPage(
   issuerUrl: string,
   idps: Array<{ id: string; name: string; entityId: string }>,
   returnUrl: string,
-  authorizationChallengeId?: string
+  authorizationChallengeId?: string,
+  inviteToken?: string
 ): string {
-  // A choice answering an authorization challenge (a re-authentication) keeps answering it.
-  const challenge = authorizationChallengeId
-    ? `&authorization_challenge_id=${encodeURIComponent(authorizationChallengeId)}`
-    : '';
+  // A choice answering an authorization challenge (a re-authentication) keeps answering it, and
+  // a sign-in started from an invitation keeps its invitation.
+  const challenge =
+    (authorizationChallengeId
+      ? `&authorization_challenge_id=${encodeURIComponent(authorizationChallengeId)}`
+      : '') +
+    (isUsableInvitationToken(inviteToken)
+      ? `&invite_token=${encodeURIComponent(inviteToken)}`
+      : '');
   const idpLinks = idps
     .map(
       (idp) =>

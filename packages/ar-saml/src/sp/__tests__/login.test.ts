@@ -9,7 +9,11 @@ const {
   mockGetSigningKey,
   mockChallengeKind,
   mockReauthPolicy,
+  mockReserveInvitation,
+  mockResolveCoreAdapter,
 } = vi.hoisted(() => ({
+  mockReserveInvitation: vi.fn(),
+  mockResolveCoreAdapter: vi.fn(),
   mockGetIdPConfig: vi.fn(),
   mockListIdPConfigs: vi.fn(),
   mockSignRedirectBinding: vi.fn(),
@@ -46,6 +50,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     readAuthorizationChallengeKind: mockChallengeKind,
     readExternalProviderReauthPolicy: mockReauthPolicy,
+    resolveAuthCorePersistenceAdapterFromEnv: mockResolveCoreAdapter,
     getLogger: () => ({
       module: () => ({
         info: vi.fn(),
@@ -56,6 +61,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
   };
 });
+
+vi.mock('@authrim/ar-lib-core/services/external-signup-invitation', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@authrim/ar-lib-core/services/external-signup-invitation')
+  >()),
+  reserveExternalSignupInvitation: mockReserveInvitation,
+}));
 
 describe('SP login tenant signing boundary', () => {
   let mockEnv: Partial<Env>;
@@ -463,6 +475,129 @@ describe("SP login and the tenant's sign-in switch", () => {
 
     expect(res.status).toBe(200);
     expect(storeBodies).toHaveLength(1);
+  });
+});
+
+describe('SP login started from an invitation', () => {
+  let storeBodies: Array<Record<string, unknown>>;
+  let mockEnv: Partial<Env>;
+  const metadataDb = { name: 'tenant-metadata' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storeBodies = [];
+    mockGetIdPConfig.mockResolvedValue({
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      attributeMapping: {},
+      allowedBindings: ['post'],
+    });
+    mockChallengeKind.mockResolvedValue('reauth');
+    mockReauthPolicy.mockResolvedValue({ reauthEnabled: true, acceptWithoutAuthTime: false });
+    mockResolveCoreAdapter.mockResolvedValue(metadataDb);
+    mockReserveInvitation.mockResolvedValue({ inviteId: 'invite-1', inviteReservationId: 'inr-1' });
+    mockEnv = {
+      ISSUER_URL: 'https://auth.example.com',
+      SAML_REQUEST_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (_url: string, init: RequestInit) => {
+            storeBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+            return new Response('OK', { status: 200 });
+          }),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'],
+    };
+  });
+
+  it('reserves a use held by the request and records it in the request context', async () => {
+    const { context } = createLoginContext(mockEnv, 'tenant-a', { invite_token: 'invite-token' });
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(200);
+    const stored = storeBodies[0] as { requestId: string; context?: Record<string, unknown> };
+    expect(mockResolveCoreAdapter).toHaveBeenCalledWith(mockEnv, expect.any(String), {
+      tenantId: 'tenant-a',
+    });
+    expect(mockReserveInvitation).toHaveBeenCalledWith(metadataDb, {
+      token: 'invite-token',
+      tenantId: 'tenant-a',
+      holder: `saml:${stored.requestId}`,
+      ttlSeconds: expect.any(Number),
+    });
+    const { ttlSeconds } = mockReserveInvitation.mock.calls[0][1] as { ttlSeconds: number };
+    expect(ttlSeconds).toBeGreaterThan(0);
+    expect(ttlSeconds).toBeLessThanOrEqual(3600);
+    expect(stored.context).toEqual({
+      invitation: { inviteId: 'invite-1', inviteReservationId: 'inr-1' },
+    });
+  });
+
+  it('stops before anything is stored when the invitation cannot be used', async () => {
+    mockReserveInvitation.mockResolvedValue(null);
+    const { context } = createLoginContext(mockEnv, 'tenant-a', { invite_token: 'invite-token' });
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(404);
+    expect(storeBodies).toEqual([]);
+  });
+
+  it.each(['', 'x'.repeat(513)])('rejects a malformed invitation token', async (token) => {
+    const { context } = createLoginContext(mockEnv, 'tenant-a', { invite_token: token });
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(400);
+    expect(mockReserveInvitation).not.toHaveBeenCalled();
+    expect(storeBodies).toEqual([]);
+  });
+
+  it('carries no invitation on a re-authentication, which creates no account', async () => {
+    const { context } = createLoginContext(mockEnv, 'tenant-a', {
+      invite_token: 'invite-token',
+      authorization_challenge_id: 'reauth_1',
+    });
+
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(200);
+    expect(mockReserveInvitation).not.toHaveBeenCalled();
+    expect((storeBodies[0]?.context as Record<string, unknown>)?.invitation).toBeUndefined();
+  });
+
+  it('keeps the invitation on every choice of the IdP selection page', async () => {
+    mockListIdPConfigs.mockResolvedValue([
+      { id: 'idp-1', name: 'Campus', entityId: 'https://idp.example.com' },
+      { id: 'idp-2', name: 'Partner', entityId: 'https://partner.example.com' },
+    ]);
+    const { context } = createLoginContext(mockEnv, 'tenant-a', { invite_token: 'invite token' });
+    (context.req.query as ReturnType<typeof vi.fn>).mockImplementation((name: string) =>
+      name === 'invite_token'
+        ? 'invite token'
+        : name === 'return_url'
+          ? 'https://app.example.com/'
+          : undefined
+    );
+
+    const res = await handleSPLogin(context);
+    const html = await res.text();
+
+    expect(html.match(/invite_token=invite%20token/g)).toHaveLength(2);
+    expect(mockReserveInvitation).not.toHaveBeenCalled();
+    expect(storeBodies).toEqual([]);
+  });
+
+  it('stores no context for a plain sign-in', async () => {
+    const { context } = createLoginContext(mockEnv, 'tenant-a');
+
+    await handleSPLogin(context);
+
+    expect(mockReserveInvitation).not.toHaveBeenCalled();
+    expect(storeBodies[0]).not.toHaveProperty('context');
   });
 });
 

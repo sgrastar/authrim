@@ -1196,7 +1196,7 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(result).not.toHaveProperty('codeVerifier');
 	});
 
-	it('carries an invitation to an OAuth start, and never to a SAML start', async () => {
+	it('carries an invitation to an OAuth start and to a SAML start', async () => {
 		const { externalIdpAPI } = await loadClient();
 
 		const oauth = new URL(
@@ -1230,7 +1230,8 @@ describe('LoginUI external IdP adapter boundary', () => {
 		);
 
 		expect(oauth.searchParams.get('invite_token')).toBe('invite-abc');
-		expect(saml.searchParams.has('invite_token')).toBe(false);
+		expect(saml.searchParams.get('invite_token')).toBe('invite-abc');
+		expect(saml.searchParams.get('idp')).toBe('corp');
 		expect(plain.searchParams.has('invite_token')).toBe(false);
 	});
 

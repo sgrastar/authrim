@@ -132,7 +132,7 @@ describe('invitation-auth-core', () => {
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining('INSERT INTO org_memberships'),
+      expect.stringContaining('INSERT INTO subject_org_membership'),
       expect.arrayContaining(['tenant-1', 'user-1', 'org-1', 'member'])
     );
   });

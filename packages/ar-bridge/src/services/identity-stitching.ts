@@ -4,6 +4,7 @@
  * with JIT Provisioning, policy evaluation, and organization auto-join
  */
 
+import { externalSignupInvitationEmailCheck } from '@authrim/ar-lib-core/services/external-signup-invitation';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   createAuditLog,
@@ -540,22 +541,23 @@ export async function handleIdentity(
 
     // An invitation that names an email creates an account only for that email; a tenant that
     // requires the invited email to be verified also needs the provider to say it verified it.
-    const invitedEmail = params.invitation?.invitedEmail?.trim().toLowerCase();
-    if (invitedEmail) {
-      if (userInfo.email?.trim().toLowerCase() !== invitedEmail) {
-        throw new ExternalIdPError(
-          ExternalIdPErrorCode.INVITATION_EMAIL_MISMATCH,
-          'This invitation is for another email address.',
-          { providerName: provider.name }
-        );
-      }
-      if (params.invitation?.requireVerifiedEmail && userInfo.email_verified !== true) {
-        throw new ExternalIdPError(
-          ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
-          'This invitation needs an email your provider has verified.',
-          { providerName: provider.name }
-        );
-      }
+    const invitationEmail = externalSignupInvitationEmailCheck(params.invitation, {
+      email: userInfo.email,
+      emailVerified: userInfo.email_verified,
+    });
+    if (invitationEmail === 'email_mismatch') {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.INVITATION_EMAIL_MISMATCH,
+        'This invitation is for another email address.',
+        { providerName: provider.name }
+      );
+    }
+    if (invitationEmail === 'email_not_verified') {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
+        'This invitation needs an email your provider has verified.',
+        { providerName: provider.name }
+      );
     }
 
     const jitParams: JITProvisioningParams = {

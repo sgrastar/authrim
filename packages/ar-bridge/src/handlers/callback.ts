@@ -812,6 +812,14 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   let provider: UpstreamProvider | null = null;
   // Set once the state shows this is a link from the account page, whose outcome returns there.
   let link: { tenantId: string; userId: string; sessionId?: string } | null = null;
+  // The invitation use this sign-in's start reserved, until it is handed to the account the
+  // sign-in creates. Every other ending (a provider error, a failed exchange, an existing
+  // account, any failure) gives it back below, so an abandoned start does not hold it.
+  let unsettledInvitation: {
+    inviteId: string;
+    inviteReservationId: string;
+    tenantId: string;
+  } | null = null;
 
   if (c.req.method === 'GET' && !code && !state && !error && !responseJwt) {
     return createHybridFragmentRelayResponse();
@@ -866,6 +874,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // 2. Validate state and get stored data
     const authState = await consumeAuthState(c.env, tenantId, state);
+    if (authState?.inviteId && authState.inviteReservationId) {
+      unsettledInvitation = {
+        inviteId: authState.inviteId,
+        inviteReservationId: authState.inviteReservationId,
+        tenantId: authState.tenantId,
+      };
+    }
     if (!authState) {
       await logCallbackRejection(log, diagnosticLogger, {
         diagnosticSessionId,
@@ -1480,37 +1495,22 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       authState.inviteId && authState.inviteReservationId
         ? { inviteId: authState.inviteId, inviteReservationId: authState.inviteReservationId }
         : null;
-    let result: Awaited<ReturnType<typeof handleIdentity>>;
-    try {
-      const invitation = signupInvitation
-        ? await externalSignupInvitationRequirement(c.env, {
-            tenantId: authState.tenantId,
-            inviteId: signupInvitation.inviteId,
-          })
-        : null;
-      result = await handleIdentity(c.env, {
-        provider,
-        userInfo,
-        tokens,
-        linkingUserId: authState.userId,
-        tenantId: authState.tenantId,
-        ...(invitation ? { invitation } : {}),
-      });
-    } catch (identityError) {
-      if (signupInvitation) {
-        await releaseExternalSignupInvitation(c.env, log, {
-          ...signupInvitation,
+    const invitation = signupInvitation
+      ? await externalSignupInvitationRequirement(c.env, {
           tenantId: authState.tenantId,
-        });
-      }
-      throw identityError;
-    }
-    if (signupInvitation && !result.isNewUser) {
-      await releaseExternalSignupInvitation(c.env, log, {
-        ...signupInvitation,
-        tenantId: authState.tenantId,
-      });
-    }
+          inviteId: signupInvitation.inviteId,
+        })
+      : null;
+    const result = await handleIdentity(c.env, {
+      provider,
+      userInfo,
+      tokens,
+      linkingUserId: authState.userId,
+      tenantId: authState.tenantId,
+      ...(invitation ? { invitation } : {}),
+    });
+    // Created here (now or once provisioning finishes): the use goes to that account.
+    if (result.isNewUser) unsettledInvitation = null;
 
     if (result.status === 'pending') {
       return await beginExternalIdpProvisioningContinuation(c, {
@@ -1669,6 +1669,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       'Authentication failed. Please try again.'
     );
   } finally {
+    if (unsettledInvitation) {
+      await releaseExternalSignupInvitation(c.env, log, unsettledInvitation);
+    }
     if (diagnosticLogger) {
       await diagnosticLogger.cleanup().catch((cleanupError: unknown) => {
         log.warn('Failed to flush callback diagnostic logs', {
