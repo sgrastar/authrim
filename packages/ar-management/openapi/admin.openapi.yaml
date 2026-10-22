@@ -35719,7 +35719,7 @@ components:
             $ref: '#/components/schemas/UserRelationshipCreateRequest'
           example:
             related_subject_id: user_456
-            relationship_type: manager_of
+            relationship_type: manager
             expires_at: 1770086400000
       description: Relationship to create from the path user to the related subject.
     UserRetryPii:
@@ -42231,14 +42231,14 @@ components:
               - id: rel_123
                 subject_id: user_123
                 related_subject_id: user_456
-                relationship_type: manager_of
+                relationship_type: manager
                 expires_at: 1770086400000
                 created_at: 1770000000000
                 related_email: target@example.com
                 related_name: Target User
             incoming_relationships:
               - id: rel_456
-                relationship_type: guardian_of
+                relationship_type: guardian
                 subject_id: user_789
                 subject_email: guardian@example.com
                 subject_name: Guardian User
@@ -42257,7 +42257,7 @@ components:
               id: rel_123
               subject_id: user_123
               related_subject_id: user_456
-              relationship_type: manager_of
+              relationship_type: manager
               expires_at: 1770086400000
               created_at: 1770000000000
     UserRelationshipDelete:
@@ -60125,6 +60125,11 @@ components:
           type: string
         org_type:
           type: string
+        parent_org_id:
+          type:
+            - string
+            - 'null'
+          description: Parent organization of the same tenant; omitted or null for a root.
         metadata_json:
           type: object
           additionalProperties: true
@@ -68290,17 +68295,23 @@ components:
           type: string
         relationship_type:
           type: string
+          description: >-
+            The path user is the side that acts (parent, guardian, delegate, manager) and
+            related_subject_id the one acted for. These are the types the acting-as consent,
+            the relationships claim and guardian approval resolution read.
           enum:
-            - parent_of
-            - guardian_of
-            - manager_of
-            - assistant_of
-            - delegate_of
+            - parent_child
+            - guardian
+            - delegate
+            - manager
         expires_at:
-          type: integer
+          type:
+            - integer
+            - 'null'
+          description: Future expiry in epoch milliseconds; omitted or null for no expiry.
       example:
         related_subject_id: user_456
-        relationship_type: manager_of
+        relationship_type: manager
         expires_at: 1770086400000
     UserRelationshipCreateResponse:
       type: object
@@ -68341,14 +68352,14 @@ components:
           - id: rel_123
             subject_id: user_123
             related_subject_id: user_456
-            relationship_type: manager_of
+            relationship_type: manager
             expires_at: 1770086400000
             created_at: 1770000000000
             related_email: target@example.com
             related_name: Target User
         incoming_relationships:
           - id: rel_456
-            relationship_type: guardian_of
+            relationship_type: guardian
             subject_id: user_789
             subject_email: guardian@example.com
             subject_name: Guardian User

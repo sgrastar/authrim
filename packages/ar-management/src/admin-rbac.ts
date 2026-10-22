@@ -36,6 +36,7 @@ import {
   createAuditLogFromContext,
   CanonicalRuntimeUserStore,
   hasAdminPermission,
+  isUniqueConstraintError,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -386,10 +387,11 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
       display_name?: string;
       plan?: string;
       org_type?: string;
+      parent_org_id?: string | null;
       metadata_json?: string;
     }>();
 
-    const { name, display_name, plan, org_type, metadata_json } = body;
+    const { name, display_name, plan, org_type, parent_org_id, metadata_json } = body;
 
     if (!name) {
       return c.json(
@@ -417,6 +419,26 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
       );
     }
 
+    // The parent, when given, is an organisation of the same tenant.
+    if (parent_org_id !== undefined && parent_org_id !== null) {
+      const parent =
+        typeof parent_org_id === 'string' && parent_org_id
+          ? await coreAdapter.queryOne<{ id: string }>(
+              'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?',
+              [tenantId, parent_org_id]
+            )
+          : null;
+      if (!parent) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'parent_org_id must name an organization of this tenant',
+          },
+          400
+        );
+      }
+    }
+
     const orgId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000); // UNIX seconds
 
@@ -429,8 +451,8 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
     const orgTypeValue = org_type && validOrgTypes.includes(org_type) ? org_type : 'team';
 
     await coreAdapter.execute(
-      `INSERT INTO organizations (id, tenant_id, name, display_name, plan, org_type, is_active, metadata_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      `INSERT INTO organizations (id, tenant_id, name, display_name, plan, org_type, parent_org_id, is_active, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
       [
         orgId,
         tenantId,
@@ -438,6 +460,7 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
         display_name || name,
         orgPlan,
         orgTypeValue,
+        parent_org_id ?? null,
         metadata_json || null,
         now,
         now,
@@ -1411,14 +1434,55 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
 // =============================================================================
 
 /**
+ * Resolve the path user's account store. An unknown user has no account route, which is the
+ * not-found the handler gives; any other failure is the handler's own error.
+ */
+async function resolveUserAccountStore(
+  c: Context<{ Bindings: Env }>,
+  userId: string
+): Promise<boolean> {
+  try {
+    await resolveAccountDataContextFromHono(c, userId);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return false;
+    throw error;
+  }
+}
+
+function relationshipUserNotFound(c: Context<{ Bindings: Env }>) {
+  return c.json(
+    {
+      error: 'not_found',
+      error_description: 'The requested resource was not found',
+    },
+    404
+  );
+}
+
+/**
+ * Subject-to-subject types, named as the readers of `relationships` name them (acting-as
+ * consent, the relationships claim, guardian approval resolution). A row runs from the
+ * subject who acts (`from_id`: parent, guardian, delegate, manager) to the one acted for
+ * (`to_id`). `reseller_of` is left out: it joins organisations, not users.
+ */
+const USER_RELATIONSHIP_TYPES: readonly string[] = [
+  'parent_child',
+  'guardian',
+  'delegate',
+  'manager',
+];
+
+/**
  * GET /api/admin/users/:id/relationships
- * Get user's relationships (both as subject and related_subject)
+ * Get user's relationships: outgoing (the user is `from_id`) and incoming (the user is `to_id`)
  */
 export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
+    if (!(await resolveUserAccountStore(c, userId))) return relationshipUserNotFound(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const direction = c.req.query('direction'); // 'outgoing', 'incoming', or undefined for both
 
     if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
@@ -1441,17 +1505,17 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
       const outgoingResult = await coreAdapter.query<Record<string, unknown>>(
         `SELECT r.*
          FROM relationships r
-         WHERE r.subject_id = ?
-           AND r.tenant_id = ?
+         WHERE r.tenant_id = ?
+           AND r.from_type = 'subject'
+           AND r.from_id = ?
+           AND r.to_type = 'subject'
            AND (r.expires_at IS NULL OR r.expires_at > ?)
          ORDER BY r.created_at DESC`,
-        [userId, tenantId, now]
+        [tenantId, userId, now]
       );
 
       // Fetch PII for related users from PII DB
-      const relatedUserIds = [
-        ...new Set(outgoingResult.map((r) => r.related_subject_id as string)),
-      ];
+      const relatedUserIds = [...new Set(outgoingResult.map((r) => r.to_id as string))];
       const relatedUserPIIMap = await fetchRuntimeUserContactMap(
         coreAdapter,
         piiAdapter,
@@ -1460,11 +1524,11 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
       );
 
       for (const rel of outgoingResult) {
-        const pii = relatedUserPIIMap.get(rel.related_subject_id as string);
+        const pii = relatedUserPIIMap.get(rel.to_id as string);
         outgoing.push({
           id: rel.id,
           relationship_type: rel.relationship_type,
-          related_subject_id: rel.related_subject_id,
+          related_subject_id: rel.to_id,
           related_email: pii?.email || null,
           related_name: pii?.name || null,
           expires_at: rel.expires_at ? toMilliseconds(rel.expires_at as number) : null,
@@ -1479,11 +1543,13 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
       const incomingResult = await coreAdapter.query<Record<string, unknown>>(
         `SELECT r.*
          FROM relationships r
-         WHERE r.related_subject_id = ?
-           AND r.tenant_id = ?
+         WHERE r.tenant_id = ?
+           AND r.to_type = 'subject'
+           AND r.to_id = ?
+           AND r.from_type = 'subject'
            AND (r.expires_at IS NULL OR r.expires_at > ?)
          ORDER BY r.created_at DESC`,
-        [userId, tenantId, now]
+        [tenantId, userId, now]
       );
 
       // Fetch PII for subject users from PII DB
@@ -1491,15 +1557,15 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
         coreAdapter,
         piiAdapter,
         tenantId,
-        incomingResult.map((r) => r.subject_id as string)
+        incomingResult.map((r) => r.from_id as string)
       );
 
       for (const rel of incomingResult) {
-        const pii = subjectUserPIIMap.get(rel.subject_id as string);
+        const pii = subjectUserPIIMap.get(rel.from_id as string);
         incoming.push({
           id: rel.id,
           relationship_type: rel.relationship_type,
-          subject_id: rel.subject_id,
+          subject_id: rel.from_id,
           subject_email: pii?.email || null,
           subject_name: pii?.name || null,
           expires_at: rel.expires_at ? toMilliseconds(rel.expires_at as number) : null,
@@ -1536,7 +1602,6 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
  */
 export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const body = await c.req.json<{
@@ -1567,17 +1632,38 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
       );
     }
 
-    // Validate relationship type
-    const validTypes = ['parent_of', 'guardian_of', 'manager_of', 'assistant_of', 'delegate_of'];
-    if (!validTypes.includes(relationship_type)) {
+    if (!USER_RELATIONSHIP_TYPES.includes(relationship_type)) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: `Invalid relationship_type. Must be one of: ${validTypes.join(', ')}`,
+          error_description: `Invalid relationship_type. Must be one of: ${USER_RELATIONSHIP_TYPES.join(', ')}`,
         },
         400
       );
     }
+
+    // A given expiry is a future instant in milliseconds; 0 or a past time would otherwise be
+    // stored as no expiry, or as a relationship that never applied.
+    if (
+      expires_at !== undefined &&
+      expires_at !== null &&
+      (typeof expires_at !== 'number' ||
+        !Number.isSafeInteger(expires_at) ||
+        expires_at <= Date.now())
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'expires_at must be a future time in milliseconds',
+        },
+        400
+      );
+    }
+
+    // The row lives with the path user's account. The related user is looked up in the same
+    // store, so a user kept in another account store is not found and nothing is written.
+    if (!(await resolveUserAccountStore(c, userId))) return relationshipUserNotFound(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json(
@@ -1613,8 +1699,9 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
     // Check for existing relationship
     const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM relationships
-       WHERE subject_id = ? AND related_subject_id = ? AND relationship_type = ? AND tenant_id = ?`,
-      [userId, related_subject_id, relationship_type, tenantId]
+       WHERE tenant_id = ? AND relationship_type = ?
+         AND from_type = 'subject' AND from_id = ? AND to_type = 'subject' AND to_id = ?`,
+      [tenantId, relationship_type, userId, related_subject_id]
     );
 
     if (existing) {
@@ -1629,21 +1716,38 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
 
     const relationshipId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    const expiresAtSeconds = expires_at ? Math.floor(expires_at / 1000) : null;
+    const expiresAtSeconds = typeof expires_at === 'number' ? Math.floor(expires_at / 1000) : null;
 
-    await coreAdapter.execute(
-      `INSERT INTO relationships (id, tenant_id, subject_id, related_subject_id, relationship_type, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        relationshipId,
-        tenantId,
-        userId,
-        related_subject_id,
-        relationship_type,
-        expiresAtSeconds,
-        now,
-      ]
-    );
+    try {
+      await coreAdapter.execute(
+        `INSERT INTO relationships (
+           id, tenant_id, relationship_type, from_type, from_id, to_type, to_id,
+           expires_at, created_at, updated_at
+         ) VALUES (?, ?, ?, 'subject', ?, 'subject', ?, ?, ?, ?)`,
+        [
+          relationshipId,
+          tenantId,
+          relationship_type,
+          userId,
+          related_subject_id,
+          expiresAtSeconds,
+          now,
+          now,
+        ]
+      );
+    } catch (error) {
+      // A concurrent create of the same tuple lost the race on the unique index.
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
+      return c.json(
+        {
+          error: 'conflict',
+          error_description: 'This relationship already exists',
+        },
+        409
+      );
+    }
 
     return c.json(
       {
@@ -1683,14 +1787,18 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
  */
 export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const relationshipId = c.req.param('relationshipId')!;
+    if (!(await resolveUserAccountStore(c, userId))) return relationshipUserNotFound(c);
+    const { coreAdapter } = createAdaptersFromContext(c);
 
     // Check if relationship exists and involves this user
     const relationship = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM relationships WHERE id = ? AND tenant_id = ? AND (subject_id = ? OR related_subject_id = ?)',
+      `SELECT id FROM relationships
+       WHERE id = ? AND tenant_id = ?
+         AND from_type = 'subject' AND to_type = 'subject'
+         AND (from_id = ? OR to_id = ?)`,
       [relationshipId, tenantId, userId, userId]
     );
 
@@ -1777,7 +1885,7 @@ export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: E
       parent_id: string | null;
       is_active: number;
     }>(
-      'SELECT id, name, display_name, parent_id, is_active FROM organizations WHERE id = ? AND tenant_id = ?',
+      'SELECT id, name, display_name, parent_org_id AS parent_id, is_active FROM organizations WHERE id = ? AND tenant_id = ?',
       [orgId, tenantId]
     );
 
@@ -1797,16 +1905,16 @@ export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: E
     }>(
       `WITH RECURSIVE org_tree AS (
         -- Base case: start with the root organization
-        SELECT id, name, display_name, parent_id, is_active, 0 as depth
+        SELECT id, name, display_name, parent_org_id AS parent_id, is_active, 0 as depth
         FROM organizations
         WHERE id = ? AND tenant_id = ?
 
         UNION ALL
 
         -- Recursive case: get children
-        SELECT o.id, o.name, o.display_name, o.parent_id, o.is_active, ot.depth + 1
+        SELECT o.id, o.name, o.display_name, o.parent_org_id, o.is_active, ot.depth + 1
         FROM organizations o
-        INNER JOIN org_tree ot ON o.parent_id = ot.id
+        INNER JOIN org_tree ot ON o.parent_org_id = ot.id
         WHERE o.tenant_id = ? AND ot.depth < ?
       )
       SELECT * FROM org_tree ORDER BY depth, name`,
