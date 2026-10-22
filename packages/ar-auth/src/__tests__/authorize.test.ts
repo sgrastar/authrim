@@ -3026,13 +3026,20 @@ describe('Authorization Handler', () => {
         );
       });
 
-      it('issues no account reference, and still the mapped sub, without the key to seal one', async () => {
-        const fragment = await authorizeFor('code id_token', { rootKey: false, mapping: pairwise });
+      securityRegressionIt(
+        'refuses to issue a mapped sub without the key to seal its account reference',
+        async () => {
+          // Without the reference the mapped sub would name whichever account has that id.
+          const fragment = await authorizeFor('code id_token', {
+            rootKey: false,
+            mapping: pairwise,
+          });
 
-        const idToken = decodeJwt(fragment.get('id_token')!);
-        expect(idToken.sub).toBe(PAIRWISE_SUB);
-        expect(idToken).not.toHaveProperty('authrim_subject_ref');
-      });
+          expect(fragment.get('error')).toBe('server_error');
+          expect(fragment.get('id_token')).toBeNull();
+          expect(fragment.get('code')).toBeNull();
+        }
+      );
 
       it.each([
         ['an invalid mapping configuration', 'policy.missing_identity_mapping_binding'],
@@ -3849,6 +3856,8 @@ describe('Authorization Handler', () => {
               'auth_time',
               'nonce',
               'authrim_consent_generation',
+              // The mark that the sub is the user's id (no mapping chose another).
+              'authrim_subject_account',
               'sid',
               ...(types.includes('token') ? ['at_hash'] : []),
               ...(types.includes('code') ? ['c_hash'] : []),

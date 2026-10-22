@@ -45,6 +45,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
       return hash === 'hash_' + secret;
     }),
     validateIdTokenHint: vi.fn(),
+    isNativeSSOEnabled: vi.fn((env: unknown) =>
+      (actual as { isNativeSSOEnabled: (env: unknown) => Promise<boolean> }).isNativeSSOEnabled(env)
+    ),
     validatePostLogoutRedirectUri: vi.fn(),
     validateLogoutParameters: vi.fn(),
     DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE: 'group',
@@ -92,6 +95,8 @@ import {
   timingSafeEqual,
   verifyClientSecretHash,
   validateIdTokenHint,
+  isNativeSSOEnabled,
+  revokeDeviceSecretsForLogoutScope,
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   resolveLogoutTargetsFromSessionClientStore,
@@ -817,6 +822,55 @@ describe('Front-channel Logout', () => {
       expect(html).not.toContain('<script>');
       expect(html).toContain(`content="0;url=${escaped}"`);
       expect(html).toContain(`href="${escaped}"`);
+    });
+  });
+
+  describe('a global logout with an id_token_hint whose sub an identity mapping chose', () => {
+    function globalLogoutWithHint(payload: Record<string, unknown>) {
+      const { c } = createMockContext({
+        query: {},
+        body: {
+          confirmation_token: '0_session_123',
+          id_token_hint: 'signed.id.token',
+          logout_scope: 'global',
+        },
+      });
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      mockShardedSessionStore.invalidateSessionRpc.mockReset().mockResolvedValue(true);
+      vi.mocked(isNativeSSOEnabled).mockResolvedValue(true);
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: true,
+        userId: payload.sub as string,
+        clientId: 'client-123',
+        payload,
+      });
+      return c;
+    }
+
+    securityRegressionIt(
+      "does not revoke the devices of the account a hint's unproven sub equals",
+      async () => {
+        // Issued without a sealed reference: its mapped sub equals another user's id.
+        await frontChannelLogoutHandler(
+          globalLogoutWithHint({ sub: 'user-2', aud: 'client-123', authrim_consent_generation: 0 })
+        );
+
+        expect(revokeDeviceSecretsForLogoutScope).toHaveBeenCalledTimes(1);
+        const input = vi.mocked(revokeDeviceSecretsForLogoutScope).mock.calls[0][0];
+        expect(input.scope).toBe('global');
+        expect(input.sessionIds).toEqual(['0_session_123']);
+        // The session's own anchors name the user instead.
+        expect(input.userId).toBeUndefined();
+      }
+    );
+
+    it('revokes the devices of the user a marked hint names', async () => {
+      await frontChannelLogoutHandler(
+        globalLogoutWithHint({ sub: 'user-1', aud: 'client-123', authrim_subject_account: true })
+      );
+
+      const input = vi.mocked(revokeDeviceSecretsForLogoutScope).mock.calls[0][0];
+      expect(input.userId).toBe('user-1');
     });
   });
 
@@ -1557,39 +1611,88 @@ describe('Back-channel Logout', () => {
       consoleWarnSpy.mockRestore();
     });
 
-    it('should revoke all user sessions by epoch when sid is not provided', async () => {
-      const { c } = createMockContext({
-        method: 'POST',
-        body: {
-          logout_token: 'valid.logout.token',
-        },
-        headers: VALID_BACKCHANNEL_AUTH_HEADER,
-      });
-      mockValidBackchannelClient(c);
-
-      vi.mocked(importJWK).mockResolvedValue({} as any);
-      vi.mocked(jwtVerify).mockResolvedValue({
-        payload: {
-          sub: 'user-123',
-          // No 'sid' - cannot bulk delete in sharded store
-          events: {
-            'http://schemas.openid.net/event/backchannel-logout': {},
+    securityRegressionIt(
+      'refuses a logout token without sid rather than end the sessions of the account its sub equals',
+      async () => {
+        // A logout token carries the sub the app's ID tokens carry, which an identity mapping may
+        // have chosen; it may equal another user's id, and no reference says whose it is.
+        const { c } = createMockContext({
+          method: 'POST',
+          body: {
+            logout_token: 'valid.logout.token',
           },
-        },
-        protectedHeader: { alg: 'RS256' },
-      } as any);
+          headers: VALID_BACKCHANNEL_AUTH_HEADER,
+        });
+        mockValidBackchannelClient(c);
 
-      await backChannelLogoutHandler(c);
+        vi.mocked(importJWK).mockResolvedValue({} as any);
+        vi.mocked(jwtVerify).mockResolvedValue({
+          payload: {
+            sub: 'user-123',
+            jti: 'logout-jti-1',
+            events: {
+              'http://schemas.openid.net/event/backchannel-logout': {},
+            },
+          },
+          protectedHeader: { alg: 'RS256' },
+        } as any);
 
-      // Should NOT call the sharded session store (no sid means cannot locate shard)
-      expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
-      expect(recordHybridUserSessionRevocationEpoch).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.anything(),
-        'default',
-        'user-123'
-      );
-    });
+        await backChannelLogoutHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith(
+          {
+            error: 'invalid_request',
+            error_description: 'logout_token must contain sid claim',
+          },
+          400
+        );
+        expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
+        expect(recordHybridUserSessionRevocationEpoch).not.toHaveBeenCalled();
+      }
+    );
+
+    securityRegressionIt(
+      "revokes the devices of the sid session's user, not of the account the sub equals",
+      async () => {
+        const { c } = createMockContext({
+          method: 'POST',
+          body: {
+            logout_token: 'valid.logout.token',
+          },
+          headers: VALID_BACKCHANNEL_AUTH_HEADER,
+        });
+        mockValidBackchannelClient(c);
+        mockShardedSessionStore.getSessionRpc.mockResolvedValueOnce({
+          id: '0_session_456',
+          userId: 'user-1',
+          expiresAt: Date.now() + 60_000,
+          createdAt: Date.now(),
+          data: {},
+        });
+        mockShardedSessionStore.invalidateSessionRpc.mockReset().mockResolvedValue(true);
+        vi.mocked(isNativeSSOEnabled).mockResolvedValue(true);
+
+        vi.mocked(importJWK).mockResolvedValue({} as any);
+        vi.mocked(jwtVerify).mockResolvedValue({
+          payload: {
+            sub: 'user-2',
+            sid: '0_session_456',
+            jti: 'logout-jti-1',
+            events: {
+              'http://schemas.openid.net/event/backchannel-logout': {},
+            },
+          },
+          protectedHeader: { alg: 'RS256' },
+        } as any);
+
+        await backChannelLogoutHandler(c);
+
+        expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_456');
+        const input = vi.mocked(revokeDeviceSecretsForLogoutScope).mock.calls[0][0];
+        expect(input.sessionIds).toEqual(['0_session_456']);
+        expect(input.userId).toBe('user-1');
+      }
+    );
   });
 
   describe('Error Handling', () => {

@@ -25,6 +25,7 @@ import {
 import { accessTokenConsentClaims } from './oauth-client-consent-revocation';
 import {
   isSubjectReferenceAvailable,
+  SUBJECT_ACCOUNT_CLAIM,
   SUBJECT_REFERENCE_CLAIM,
   sealSubjectReference,
 } from './subject-reference';
@@ -39,7 +40,12 @@ export interface IDTokenGrant {
 
 /** Why an ID token's claims could not be released, as an OAuth error the endpoint answers with. */
 export interface IDTokenReleaseFailure {
-  kind: 'invalid_mapping' | 'mapping_failed' | 'consent_required' | 'consent_check_failed';
+  kind:
+    | 'invalid_mapping'
+    | 'mapping_failed'
+    | 'consent_required'
+    | 'consent_check_failed'
+    | 'subject_reference_unavailable';
   error: 'invalid_client' | 'consent_required' | 'server_error';
   description: string;
   status: 400 | 500;
@@ -219,10 +225,23 @@ export async function enforceIDTokenAttributeRelease(
 }
 
 /**
+ * Why an ID token whose sub is not the user's id could not be issued: the key to seal its account
+ * reference is not available. Without the reference the sub would name whichever account has that
+ * id, so the ID token is refused rather than issued without it.
+ */
+export class IDTokenSubjectReferenceUnavailableError extends Error {
+  constructor() {
+    super('subject_reference_key_unavailable');
+    this.name = 'IDTokenSubjectReferenceUnavailableError';
+  }
+}
+
+/**
  * The grant claims an ID token carries, so a Token Exchange of it is held to its consent like the
- * access tokens of the grant: the consent generation, and, when its sub is not the user's id, the
- * sealed reference to the user's account. Without the key to seal one, the reference is left out
- * and an exchange of the ID token is refused.
+ * access tokens of the grant: the consent generation, and the account its sub names: the mark that
+ * the sub is the user's id, or, when an identity mapping chose another sub, the sealed reference to
+ * the user's account. Throws IDTokenSubjectReferenceUnavailableError when a reference is needed and
+ * the key to seal it is not available.
  */
 export async function idTokenGrantClaims(
   env: Env,
@@ -236,7 +255,8 @@ export async function idTokenGrantClaims(
     consentClientId: clientId,
     tokenClientId: clientId,
   });
-  if (claims.sub === grant.userId || !isSubjectReferenceAvailable(env)) return consentClaims;
+  if (claims.sub === grant.userId) return { ...consentClaims, [SUBJECT_ACCOUNT_CLAIM]: true };
+  if (!isSubjectReferenceAvailable(env)) throw new IDTokenSubjectReferenceUnavailableError();
   return {
     ...consentClaims,
     [SUBJECT_REFERENCE_CLAIM]: await sealSubjectReference(
@@ -265,17 +285,29 @@ export async function releaseIDTokenClaims(
   if (!mapped.ok) return mapped;
   const released = await enforceIDTokenAttributeRelease(ctx, input.grant.userId, mapped.claims);
   if (!released.ok) return released;
-  return {
-    ok: true,
-    claims: {
-      ...released.claims,
-      ...(await idTokenGrantClaims(
-        ctx.env,
-        ctx.tenantId,
-        ctx.clientId,
-        released.claims,
-        input.grant
-      )),
-    },
-  };
+  let grantClaims: Record<string, unknown>;
+  try {
+    grantClaims = await idTokenGrantClaims(
+      ctx.env,
+      ctx.tenantId,
+      ctx.clientId,
+      released.claims,
+      input.grant
+    );
+  } catch (error) {
+    if (!(error instanceof IDTokenSubjectReferenceUnavailableError)) throw error;
+    ctx.log.error('ID token sub is mapped but its account reference cannot be sealed', {
+      clientId: ctx.clientId,
+    });
+    return {
+      ok: false,
+      failure: {
+        kind: 'subject_reference_unavailable',
+        error: 'server_error',
+        description: 'Failed to issue the ID token',
+        status: 500,
+      },
+    };
+  }
+  return { ok: true, claims: { ...released.claims, ...grantClaims } };
 }
