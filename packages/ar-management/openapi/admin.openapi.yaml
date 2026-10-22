@@ -15616,6 +15616,10 @@ paths:
           description: Filter by organization type.
           schema:
             type: string
+            enum:
+              - distributor
+              - enterprise
+              - department
       responses:
         '200':
           $ref: '#/components/responses/AdminOrganizationList'
@@ -15636,8 +15640,9 @@ paths:
       operationId: postApiAdminOrganizations
       summary: Create an organization.
       description: >-
-        Creates a tenant organization with a unique name. Invalid or omitted plan and org_type
-        values default to free and team respectively.
+        Creates a tenant organization with a unique name. An invalid or omitted plan defaults to
+        free. An omitted org_type defaults to enterprise; any other value outside distributor,
+        enterprise and department returns invalid_request.
       responses:
         '201':
           $ref: '#/components/responses/AdminOrganization'
@@ -60100,6 +60105,10 @@ components:
           type: integer
         org_type:
           type: string
+          enum:
+            - distributor
+            - enterprise
+            - department
         metadata_json:
           type: object
           additionalProperties: true
@@ -60191,6 +60200,11 @@ components:
           type: string
         org_type:
           type: string
+          enum:
+            - distributor
+            - enterprise
+            - department
+          default: enterprise
         parent_org_id:
           type:
             - string
@@ -60222,6 +60236,10 @@ components:
           type: string
         org_type:
           type: string
+          enum:
+            - distributor
+            - enterprise
+            - department
         is_active:
           type: boolean
         metadata_json:

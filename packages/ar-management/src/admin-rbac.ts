@@ -36,6 +36,8 @@ import {
   createAuditLogFromContext,
   CanonicalRuntimeUserStore,
   hasAdminPermission,
+  ORGANIZATION_TYPES,
+  isOrganizationType,
   isUniqueConstraintError,
 } from '@authrim/ar-lib-core';
 
@@ -147,6 +149,16 @@ function revocationContext(
     // The removal is done and answered; caches that cannot be dropped expire on their own.
     onCacheFailure: 'warn',
   };
+}
+
+function invalidOrganizationType(c: Context<{ Bindings: Env }>) {
+  return c.json(
+    {
+      error: 'invalid_request',
+      error_description: `Invalid org_type. Must be one of: ${ORGANIZATION_TYPES.join(', ')}`,
+    },
+    400
+  );
 }
 
 /**
@@ -403,6 +415,10 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
       );
     }
 
+    if (org_type !== undefined && !isOrganizationType(org_type)) {
+      return invalidOrganizationType(c);
+    }
+
     // Check if organization with same name already exists
     const existing = await coreAdapter.queryOne<{ id: string }>(
       'SELECT id FROM organizations WHERE tenant_id = ? AND name = ?',
@@ -446,9 +462,8 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
     const validPlans = ['free', 'starter', 'professional', 'enterprise'];
     const orgPlan = plan && validPlans.includes(plan) ? plan : 'free';
 
-    // Validate org_type
-    const validOrgTypes = ['personal', 'team', 'enterprise', 'partner'];
-    const orgTypeValue = org_type && validOrgTypes.includes(org_type) ? org_type : 'team';
+    // The column default when no type is given.
+    const orgTypeValue = org_type ?? 'enterprise';
 
     await coreAdapter.execute(
       `INSERT INTO organizations (id, tenant_id, name, display_name, plan, org_type, parent_org_id, is_active, metadata_json, created_at, updated_at)
@@ -559,15 +574,8 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
       bindings.push(body.plan);
     }
     if (body.org_type !== undefined) {
-      const validOrgTypes = ['personal', 'team', 'enterprise', 'partner'];
-      if (!validOrgTypes.includes(body.org_type)) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: `Invalid org_type. Must be one of: ${validOrgTypes.join(', ')}`,
-          },
-          400
-        );
+      if (!isOrganizationType(body.org_type)) {
+        return invalidOrganizationType(c);
       }
       updates.push('org_type = ?');
       bindings.push(body.org_type);

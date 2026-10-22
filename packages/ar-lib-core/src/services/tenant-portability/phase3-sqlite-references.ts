@@ -569,6 +569,43 @@ export function phase3SqliteVerificationIgnoredColumns(datasetId: string): reado
   return datasetId === 'core.oauth_clients' ? ['logout_webhook_secret_encrypted'] : [];
 }
 
+/**
+ * Organisation types the Admin API wrote before core migration 024, renamed as that migration
+ * renames them, so a bundle captured before it restores the core types.
+ */
+const LEGACY_ORGANIZATION_TYPES: Readonly<Record<string, string>> = {
+  team: 'department',
+  partner: 'distributor',
+  personal: 'enterprise',
+};
+
+const ORGANIZATION_TYPE_RESTORE_TRANSFORM: NonNullable<
+  SqliteDatasetInspectionPolicy['restoreTransform']
+> = {
+  id: 'phase3-organization-type-v1',
+  async transform(_context, rowJson) {
+    const parsed = JSON.parse(rowJson) as Record<string, unknown>;
+    const orgType = parsed.org_type;
+    if (!Array.isArray(orgType) || orgType[0] !== 'text' || typeof orgType[1] !== 'string')
+      return rowJson;
+    const renamed = Object.hasOwn(LEGACY_ORGANIZATION_TYPES, orgType[1])
+      ? LEGACY_ORGANIZATION_TYPES[orgType[1]]
+      : undefined;
+    if (!renamed) return rowJson;
+    parsed.org_type = ['text', renamed];
+    return JSON.stringify(parsed);
+  },
+};
+
+/** Installed rewrite of a source row before it is written and verified. */
+export function phase3SqliteRestoreTransform(
+  datasetId: string
+): SqliteDatasetInspectionPolicy['restoreTransform'] {
+  if (!PHASE3_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) => dataset.id === datasetId))
+    throw new Error('backup_phase3_reference_dataset');
+  return datasetId === 'core.organizations' ? ORGANIZATION_TYPE_RESTORE_TRANSFORM : undefined;
+}
+
 /** Build import inspectors only from the sealed SQL plan and the installed Phase 3 registry. */
 export function createPhase3SqliteInspectionPolicies(
   planned: readonly PlannedInstalledSqliteDataset[]
@@ -598,6 +635,7 @@ export function createPhase3SqliteInspectionPolicies(
     const deferredColumns = phase3SqliteDeferredColumns(entry.dataset.id);
     const restoreOverrides = phase3SqliteRestoreOverrides(entry.dataset.id);
     const verificationIgnoredColumns = phase3SqliteVerificationIgnoredColumns(entry.dataset.id);
+    const restoreTransform = phase3SqliteRestoreTransform(entry.dataset.id);
     return {
       dataset: structuredClone(entry.dataset),
       schema: structuredClone(entry.capture),
@@ -605,6 +643,7 @@ export function createPhase3SqliteInspectionPolicies(
       ...(deferredColumns.length ? { deferredColumns } : {}),
       ...(restoreOverrides ? { restoreOverrides } : {}),
       ...(verificationIgnoredColumns.length ? { verificationIgnoredColumns } : {}),
+      ...(restoreTransform ? { restoreTransform } : {}),
       ...(entry.partitions ? { partitions: [...entry.partitions] } : {}),
       inspectRow: async (row, identity) =>
         inspectPhase3SqliteReferences(entry.dataset.id, row, identity),

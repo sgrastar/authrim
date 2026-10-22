@@ -8,6 +8,7 @@ import {
   phase3SqliteDeferredColumns,
   phase3SqliteRestoreOverrides,
   phase3SqliteRestoreDependencies,
+  phase3SqliteRestoreTransform,
   phase3SqliteVerificationIgnoredColumns,
   PHASE3_SQLITE_REFERENCE_RULES,
 } from '../phase3-sqlite-references';
@@ -38,6 +39,37 @@ function streamFor(family: 'core' | 'admin') {
   );
   return inventory.inspectedStreams.find((candidate) => candidate.id === contract?.id);
 }
+
+describe('Phase 3 organisation type restore', () => {
+  const transform = phase3SqliteRestoreTransform('core.organizations')!;
+  const organization = (orgType: string | null) =>
+    JSON.stringify(row({ id: 'org-1', tenant_id: 'tenant-a', name: 'acme', org_type: orgType }));
+  const restored = async (rowJson: string) =>
+    (JSON.parse(await transform.transform({} as never, rowJson, 'write')) as PortableSqliteRow)
+      .org_type;
+
+  it('restores the Admin API types of an older bundle as migration 024 renamed them', async () => {
+    expect(await restored(organization('team'))).toEqual(['text', 'department']);
+    expect(await restored(organization('partner'))).toEqual(['text', 'distributor']);
+    expect(await restored(organization('personal'))).toEqual(['text', 'enterprise']);
+  });
+
+  it('verifies against the same renamed row it wrote', async () => {
+    const source = organization('team');
+    expect(await transform.transform({} as never, source, 'verify')).toBe(
+      await transform.transform({} as never, source, 'write')
+    );
+  });
+
+  it('keeps core types, other values and other datasets as they are', async () => {
+    for (const orgType of ['department', 'distributor', 'enterprise', 'constructor', null]) {
+      const source = organization(orgType);
+      expect(await transform.transform({} as never, source, 'write')).toBe(source);
+    }
+    expect(phase3SqliteRestoreTransform('core.roles')).toBeUndefined();
+    expect(() => phase3SqliteRestoreTransform('core.unknown')).toThrow();
+  });
+});
 
 describe('Phase 3 installed SQL reference graph', () => {
   it('covers every declared foreign key between registered Phase 3 datasets', () => {

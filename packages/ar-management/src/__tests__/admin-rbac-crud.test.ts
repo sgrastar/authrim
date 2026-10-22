@@ -68,7 +68,7 @@ function organization(overrides: Record<string, unknown> = {}) {
     name: 'acme',
     display_name: 'Acme',
     plan: 'professional',
-    org_type: 'team',
+    org_type: 'department',
     is_active: 1,
     created_at: 100,
     updated_at: 1_700_000_000_000,
@@ -117,9 +117,9 @@ describe('admin RBAC organization and role CRUD', () => {
         search: '100%_team',
         is_active: 'true',
         plan: 'professional',
-        org_type: 'team',
+        org_type: 'department',
       },
-      ['tenant-a', '%100\\%\\_team%', '%100\\%\\_team%', 1, 'professional', 'team', 10, 10],
+      ['tenant-a', '%100\\%\\_team%', '%100\\%\\_team%', 1, 'professional', 'department', 10, 10],
     ],
     [{ is_active: 'false' }, ['tenant-a', 0, 20, 0]],
   ])('lists organizations with tenant filters %#', async (query, expectedBindings) => {
@@ -169,19 +169,19 @@ describe('admin RBAC organization and role CRUD', () => {
   });
 
   it.each([
-    [{ name: 'acme' }, 'free', 'team'],
+    [{ name: 'acme' }, 'free', 'enterprise'],
     [
       {
         name: 'acme',
         display_name: 'Acme',
         plan: 'enterprise',
-        org_type: 'partner',
+        org_type: 'distributor',
         metadata_json: '{}',
       },
       'enterprise',
-      'partner',
+      'distributor',
     ],
-    [{ name: 'acme', plan: 'invalid', org_type: 'invalid' }, 'free', 'team'],
+    [{ name: 'acme', plan: 'invalid', org_type: 'department' }, 'free', 'department'],
   ])('creates organization with normalized plan/type %#', async (body, plan, orgType) => {
     mocks.adapter.queryOne
       .mockResolvedValueOnce(null)
@@ -219,7 +219,7 @@ describe('admin RBAC organization and role CRUD', () => {
       name: 'new',
       display_name: '',
       plan: 'starter',
-      org_type: 'personal',
+      org_type: 'department',
       is_active: false,
       metadata_json: '',
     };
@@ -228,7 +228,7 @@ describe('admin RBAC organization and role CRUD', () => {
       .mockResolvedValueOnce(organization({ name: 'new', is_active: 0 }));
     expect((await adminOrganizationUpdateHandler(context({ body }))).status).toBe(200);
     expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
-      expect.arrayContaining(['new', '', 'starter', 'personal', 0, '', 'tenant-a', 'resource-1'])
+      expect.arrayContaining(['new', '', 'starter', 'department', 0, '', 'tenant-a', 'resource-1'])
     );
   });
 
