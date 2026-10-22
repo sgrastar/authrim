@@ -73,6 +73,8 @@ import {
   // Cookie Configuration
   getSessionCookieSameSite,
   getBrowserStateCookieSameSite,
+  resolvePresentedTokenAccount,
+  tokenSubjectAccountSource,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type {
@@ -322,7 +324,21 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       });
 
       if (idTokenResult.valid) {
-        userId = idTokenResult.userId;
+        // The user the hint names, for the account-wide parts of the logout (a global device
+        // revocation, say): its sealed account reference when an identity mapping chose its sub,
+        // else its sub when it shows that is the user's id. A hint that shows neither (its sub may
+        // be a mapped identifier equal to another user's id) names no one; the logout still ends
+        // the sessions it can find.
+        const hintAccount = await resolvePresentedTokenAccount(
+          c.env,
+          getTenantIdFromContext(c),
+          (idTokenResult.payload ?? {}) as Record<string, unknown>
+        );
+        if (hintAccount.ok) {
+          userId = hintAccount.userId;
+        } else {
+          log.warn('id_token_hint does not name an account', { reason: hintAccount.reason });
+        }
         clientId = idTokenResult.clientId;
         sid = idTokenResult.sid;
         idTokenValid = true;
@@ -1342,8 +1358,27 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const userId = logoutClaims.sub as string;
+    // The logout token's sub is the one the app's ID tokens carry, which an identity mapping may
+    // have chosen (and which may equal another user's id); a logout token has no sealed account
+    // reference. So the user is the one whose session its sid names, and a token without a sid
+    // must show its sub is the user's id to end every session of that user.
+    let userId: string | undefined;
     const sessionId = logoutClaims.sid as string | undefined;
+    if (!sessionId) {
+      if (tokenSubjectAccountSource(logoutClaims as Record<string, unknown>) !== 'sub') {
+        log.warn('Back-channel logout token without sid does not name an account', {
+          action: 'BackchannelLogout',
+        });
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'logout_token must contain sid claim',
+          },
+          400
+        );
+      }
+      userId = logoutClaims.sub as string;
+    }
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     let deviceSecretLogoutResult: RevokeDeviceSecretsForLogoutScopeResult | undefined;
@@ -1355,12 +1390,11 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       // Invalidate specific session using sharded routing via RPC
       try {
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
-        await revokeGuestResumeForSession(
-          c,
-          (await sessionStore.getSessionRpc(sessionId).catch(() => {
-            throw new Error('guest_resume_revocation_failed');
-          })) as Session | null
-        );
+        const session = (await sessionStore.getSessionRpc(sessionId).catch(() => {
+          throw new Error('guest_resume_revocation_failed');
+        })) as Session | null;
+        await revokeGuestResumeForSession(c, session);
+        userId = session?.userId;
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {
@@ -1390,7 +1424,12 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     } else {
       // A subject-only logout cannot locate every shard, so advance the user's
       // revocation epoch. SessionStore checks this epoch on active-session reads.
-      await recordHybridUserSessionRevocationEpoch(c.env, authCtx.coreAdapter, tenantId, userId);
+      await recordHybridUserSessionRevocationEpoch(
+        c.env,
+        authCtx.coreAdapter,
+        tenantId,
+        userId as string
+      );
       sessionDeleted = true;
       log.info('Invalidated all user sessions by revocation epoch', {
         userId,
@@ -1448,7 +1487,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         tenantId: tenantIdForEvent,
         data: {
           sessionId,
-          userId,
+          userId: userId ?? '',
           reason: 'logout',
         } satisfies UserEventData,
       }).catch((err) => {
@@ -1465,7 +1504,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         tenantId: tenantIdForEvent,
         data: {
           sessionId,
-          userId,
+          userId: userId ?? '',
           reason: 'logout',
         } satisfies SessionEventData,
       }).catch((err) => {
@@ -1487,7 +1526,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       // Schedule audit log with waitUntil to ensure it completes after response
       const auditPromise = createAuditLog(c.env, {
         tenantId: tenantIdForEvent,
-        userId,
+        userId: userId ?? '',
         action: 'user.logout',
         resource: 'session',
         resourceId: sessionId,

@@ -105,7 +105,8 @@ export const INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS = new Set([
  */
 /**
  * Claims recording the grant a token was issued under (its consent generation and client, the
- * external issuer of its subject, the sealed reference to its account). Authrim reads them back
+ * external issuer of its subject, the sealed reference to its account or the mark that its sub is
+ * the user's id). Authrim reads them back
  * from tokens it signed, so only the authorization server writes them: no identity mapping
  * output, custom claim or Destination Profile field may carry these names.
  */
@@ -114,6 +115,7 @@ export const AUTHORIZATION_SERVER_GRANT_CLAIMS = new Set([
   'authrim_consent_client_id',
   'authrim_subject_issuer',
   'authrim_subject_ref',
+  'authrim_subject_account',
   'authrim_subject_principal',
   // An ID-JAG exchange's record of the IdP that issued its subject token.
   'original_issuer',

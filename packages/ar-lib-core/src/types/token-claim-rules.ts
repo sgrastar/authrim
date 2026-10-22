@@ -181,6 +181,7 @@ export const RESERVED_CLAIMS = [
   'authrim_consent_client_id',
   'authrim_subject_issuer',
   'authrim_subject_ref',
+  'authrim_subject_account',
   'authrim_subject_principal',
   'original_issuer',
   // A person's identity assurance: computed from their evidence when an ID token or UserInfo

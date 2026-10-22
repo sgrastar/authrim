@@ -16,9 +16,12 @@ import type { ValidationResult } from './validation';
  */
 export interface IdTokenHintValidationResult {
   valid: boolean;
+  /** The hint's sub: the user's id, or the identifier the app's identity mapping chose. */
   userId?: string;
   clientId?: string;
   sid?: string;
+  /** The verified hint's claims. */
+  payload?: JWTPayload;
   error?: string;
   errorCode?: 'invalid_token' | 'invalid_request';
 }
@@ -146,6 +149,7 @@ export async function validateIdTokenHint(
       userId,
       clientId,
       sid,
+      payload,
     };
   } catch (error) {
     // Handle specific JWT errors

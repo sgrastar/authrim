@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isSubjectReferenceAvailable,
+  tokenSubjectAccountSource,
   openSubjectReference,
   sealSubjectReference,
   nonAccountPrincipalKind,
@@ -11,6 +12,9 @@ import {
 
 const env = { OBJECT_ENCRYPTION_ROOT_KEY: 'ef'.repeat(32) };
 const binding = { tenantId: 'tenant-a', clientId: 'app' };
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 describe('subject reference', () => {
   it('opens for the tenant and client it was sealed for', async () => {
@@ -207,11 +211,44 @@ describe('subject principal of an exchanged token', () => {
 describe('resolvePresentedTokenAccount', () => {
   const idToken = { sub: 'alice', aud: 'app', authrim_consent_generation: 2 };
 
-  it('is the sub when the token carries no reference', async () => {
+  it('is the sub of an ID token that marks it as the user id', async () => {
     await expect(
-      resolvePresentedTokenAccount(env, 'tenant-a', { ...idToken, sub: 'user-1' })
+      resolvePresentedTokenAccount(env, 'tenant-a', {
+        ...idToken,
+        sub: 'user-1',
+        authrim_subject_account: true,
+      })
     ).resolves.toEqual({ ok: true, userId: 'user-1' });
   });
+
+  it('is the sub of an access or refresh token without a reference', async () => {
+    await expect(
+      resolvePresentedTokenAccount(env, 'tenant-a', {
+        sub: 'user-1',
+        client_id: 'app',
+        token_use: 'access',
+        jti: 'jti-1',
+      })
+    ).resolves.toEqual({ ok: true, userId: 'user-1' });
+  });
+
+  securityRegressionIt(
+    'is invalid for an ID token with neither a reference nor the mark (its sub may be mapped)',
+    async () => {
+      // Issued without the key to seal a reference, or before ID tokens marked their sub: the
+      // mapped sub equals another user's id.
+      for (const payload of [
+        { ...idToken, sub: 'user-2' },
+        { ...idToken, sub: 'user-2', authrim_subject_account: 'true' },
+        { ...idToken, sub: 'user-2', jti: '' },
+      ]) {
+        await expect(resolvePresentedTokenAccount(env, 'tenant-a', payload)).resolves.toEqual({
+          ok: false,
+          reason: 'invalid',
+        });
+      }
+    }
+  );
 
   it('is the account the reference opens, for the client the token was granted under', async () => {
     const reference = await sealSubjectReference(env, binding, 'user-1');
@@ -267,5 +304,46 @@ describe('resolvePresentedTokenAccount', () => {
       ok: false,
       reason: 'invalid',
     });
+  });
+});
+
+describe('tokenSubjectAccountSource', () => {
+  it('reads a token with a sealed reference from the reference', () => {
+    expect(
+      tokenSubjectAccountSource({ sub: 'pairwise', authrim_subject_ref: 'sr1.a.b', jti: 'j' })
+    ).toBe('reference');
+    expect(
+      tokenSubjectAccountSource({
+        sub: 'pairwise',
+        authrim_subject_ref: 'sr1.a.b',
+        authrim_subject_account: true,
+      })
+    ).toBe('reference');
+  });
+
+  it('reads an access or refresh token, or a marked ID token, from the sub', () => {
+    expect(tokenSubjectAccountSource({ sub: 'user-1', token_use: 'access', jti: 'j' })).toBe('sub');
+    expect(tokenSubjectAccountSource({ sub: 'user-1', authrim_subject_account: true })).toBe('sub');
+  });
+
+  securityRegressionIt('leaves an unmarked ID token unproven', () => {
+    expect(tokenSubjectAccountSource({ sub: 'user-2', aud: 'app' })).toBe('unproven');
+    expect(
+      tokenSubjectAccountSource({ sub: 'user-2', aud: 'app', authrim_consent_generation: 1 })
+    ).toBe('unproven');
+    expect(tokenSubjectAccountSource({ sub: 'user-2', token_use: 'access' })).toBe('unproven');
+  });
+
+  securityRegressionIt('leaves a logout token unproven, though it has a JWT ID', () => {
+    // A back-channel logout token carries the sub the app's ID tokens carry (maybe mapped).
+    expect(
+      tokenSubjectAccountSource({
+        sub: 'user-2',
+        aud: 'app',
+        jti: 'logout-jti',
+        events: { 'http://schemas.openid.net/event/backchannel-logout': {} },
+      })
+    ).toBe('unproven');
+    expect(tokenSubjectAccountSource({ sub: 'user-2', jti: 'j' })).toBe('unproven');
   });
 });

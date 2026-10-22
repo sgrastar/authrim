@@ -22,6 +22,7 @@ import { OIDCAttributeReleaseConsentRequiredError } from '../oidc-attribute-rele
 import { openSubjectReference } from '../subject-reference';
 import {
   enforceIDTokenAttributeRelease,
+  IDTokenSubjectReferenceUnavailableError,
   idTokenGrantClaims,
   mapIDTokenClaims,
   releaseIDTokenClaims,
@@ -29,6 +30,9 @@ import {
 } from '../oidc-id-token-release';
 
 const ROOT_KEY = 'cd'.repeat(32);
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 function context(env: Partial<Env> = { OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY }) {
   const log = { warn: vi.fn(), error: vi.fn() };
@@ -215,7 +219,7 @@ describe('ID token release', () => {
   describe('idTokenGrantClaims', () => {
     const grant = { userId: 'user-1', consentGeneration: 3 };
 
-    it('carries only the consent generation while the sub is the user id', async () => {
+    it('carries the consent generation and marks the sub as the user id', async () => {
       const claims = await idTokenGrantClaims(
         { OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY } as Env,
         'tenant-a',
@@ -225,6 +229,14 @@ describe('ID token release', () => {
       );
 
       expect(claims.authrim_consent_generation).toBe(3);
+      expect(claims.authrim_subject_account).toBe(true);
+      expect(claims.authrim_subject_ref).toBeUndefined();
+    });
+
+    it('marks the sub as the user id without the key to seal a reference', async () => {
+      const claims = await idTokenGrantClaims({} as Env, 'tenant-a', 'client-a', baseClaims, grant);
+
+      expect(claims.authrim_subject_account).toBe(true);
       expect(claims.authrim_subject_ref).toBeUndefined();
     });
 
@@ -239,6 +251,7 @@ describe('ID token release', () => {
       );
 
       expect(claims.authrim_consent_generation).toBe(3);
+      expect(claims.authrim_subject_account).toBeUndefined();
       await expect(
         openSubjectReference(
           env,
@@ -248,18 +261,21 @@ describe('ID token release', () => {
       ).resolves.toBe('user-1');
     });
 
-    it('leaves the reference out without the key to seal one', async () => {
-      const claims = await idTokenGrantClaims(
-        {} as Env,
-        'tenant-a',
-        'client-a',
-        { ...baseClaims, sub: 'pairwise' },
-        grant
-      );
-
-      expect(claims.authrim_consent_generation).toBe(3);
-      expect(claims.authrim_subject_ref).toBeUndefined();
-    });
+    securityRegressionIt(
+      'refuses a mapped sub without the key to seal its account reference',
+      async () => {
+        // The mapped sub equals another user's id: without the reference it would name them.
+        await expect(
+          idTokenGrantClaims(
+            {} as Env,
+            'tenant-a',
+            'client-a',
+            { ...baseClaims, sub: 'user-2' },
+            grant
+          )
+        ).rejects.toBeInstanceOf(IDTokenSubjectReferenceUnavailableError);
+      }
+    );
   });
 
   describe('releaseIDTokenClaims', () => {
@@ -300,6 +316,56 @@ describe('ID token release', () => {
           result.claims.authrim_subject_ref as string
         )
       ).resolves.toBe('user-1');
+    });
+
+    securityRegressionIt(
+      'refuses to release a mapped sub without the key to seal its account reference',
+      async () => {
+        const { ctx, log } = context({});
+        mockApplyOIDCIdentityMapping.mockResolvedValue({
+          claims: { ...baseClaims, sub: 'user-2' },
+          binding: null,
+        });
+        mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue({ action: 'release' });
+
+        const result = await releaseIDTokenClaims(ctx, {
+          claims: baseClaims,
+          grant: { userId: 'user-1', consentGeneration: 1 },
+        });
+
+        expect(result).toEqual({
+          ok: false,
+          failure: {
+            kind: 'subject_reference_unavailable',
+            error: 'server_error',
+            description: 'Failed to issue the ID token',
+            status: 500,
+          },
+        });
+        expect(log.error).toHaveBeenCalledWith(
+          'ID token sub is mapped but its account reference cannot be sealed',
+          { clientId: 'client-a' }
+        );
+      }
+    );
+
+    securityRegressionIt('drops a mapped claim saying a mapped sub is the user id', async () => {
+      const { ctx } = context();
+      mockApplyOIDCIdentityMapping.mockResolvedValue({
+        claims: { ...baseClaims, sub: 'user-2', authrim_subject_account: true },
+        binding: null,
+      });
+      mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue({ action: 'release' });
+
+      const result = await releaseIDTokenClaims(ctx, {
+        claims: baseClaims,
+        grant: { userId: 'user-1', consentGeneration: 1 },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.claims.authrim_subject_account).toBeUndefined();
+      expect(typeof result.claims.authrim_subject_ref).toBe('string');
     });
 
     it('stops at the first refusal', async () => {
