@@ -7,6 +7,7 @@ import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
 import { TenantBackupAdminMappingStore } from '@authrim/ar-lib-core/services/tenant-portability/admin-mapping-store';
 import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
+import { tenantDatasetSelectionRule } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 import { createPhase8SqliteInspectionPolicies } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-references';
 import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import {
@@ -34,6 +35,7 @@ import {
   type Phase5InstalledAdapterPorts,
 } from './tenant-backup-phase5-adapter';
 import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-operation-dispatcher';
+import { tenantBackupRecordSnapshotId } from './tenant-backup-phase5-adapter';
 import {
   createPhase8TenantBackupRowFilter,
   createPhase8TenantBackupRowTransform,
@@ -48,7 +50,10 @@ import { createTenantBackupAdminEnvelopePorts } from './tenant-backup-admin-enve
 import { createTenantBackupValidatedInputPorts } from './tenant-backup-validated-input-port';
 import { createTenantBackupR2ObjectRestorePorts } from './tenant-backup-r2-object-restore-port';
 import { createTenantBackupR2CatalogFinalizer } from './tenant-backup-r2-catalog-finalizer';
-import { createTenantBackupR2CatalogLister } from './tenant-backup-r2-catalog-lister';
+import {
+  prepareTenantBackupR2Plans,
+  type TenantBackupR2PlanTarget,
+} from './tenant-backup-r2-plan-builder';
 import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-object-snapshot-port';
 import { createTenantBackupR2ReferenceSelectionLoader } from './tenant-backup-r2-reference-selection';
 import type { TenantBackupInstalledSqliteExportPorts } from './tenant-backup-sqlite-export-adapter';
@@ -173,8 +178,11 @@ export function createPhase8TenantBackupInstalledAdapter(
   const r2Snapshots = createTenantBackupR2ObjectSnapshotPorts({
     env: input.env,
     assertSource: (context) => input.ports.export.assertSources(context),
-    list: createTenantBackupR2CatalogLister({ tenantKey: input.ports.tenantKey }),
   });
+  const r2PlanTargets = [
+    { dataset: ARTIFACT_OBJECT_BODIES_DATASET, port: r2Snapshots.artifactObjects },
+    { dataset: LOG_ARCHIVE_OBJECT_BODIES_DATASET, port: r2Snapshots.logArchiveObjects },
+  ];
   const loadR2References = createTenantBackupR2ReferenceSelectionLoader(r2Snapshots);
   const r2Objects = createTenantBackupR2ObjectRestorePorts({
     env: input.env,
@@ -402,6 +410,27 @@ export function createPhase8TenantBackupInstalledAdapter(
         (!input.ports.allowSqliteSource || (await input.ports.allowSqliteSource(rowInput))) &&
         (await phase8RowFilter(rowInput)),
       transformRow: transformPortableRow,
+      // R2 body plans are listed from the T0 SQL snapshot after the write hold.
+      prepareArtifactResources: async (context) => {
+        const targets: TenantBackupR2PlanTarget[] = [];
+        for (const { dataset, port } of r2PlanTargets) {
+          const rule = tenantDatasetSelectionRule(dataset.kind, context.selection);
+          if (rule.action !== 'selected' && rule.action !== 'resolve_references') continue;
+          targets.push({
+            datasetId: dataset.id as TenantBackupR2PlanTarget['datasetId'],
+            port,
+            snapshotId: await tenantBackupRecordSnapshotId(context, port.resourceId),
+          });
+        }
+        return prepareTenantBackupR2Plans({
+          context,
+          planned: await loadInstalledPlan(context.context),
+          targets,
+          tenantKey: input.ports.tenantKey,
+          boundaryUnixMs: context.boundaryUnixMs,
+          cursor: context.cursor,
+        });
+      },
       otherStores: createPhase8OtherStoreHandlers(input.env, otherStores),
       recordSnapshots: [
         {

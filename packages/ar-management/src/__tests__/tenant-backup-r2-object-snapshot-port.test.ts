@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
-import { decodePortableLogChunkRecords } from '@authrim/ar-lib-core/services/tenant-portability/portable-log-chunk';
 import { decodePortableSensitiveDetailRecord } from '@authrim/ar-lib-core/services/tenant-portability/portable-sensitive-detail';
 import {
   decodePortableR2ObjectChunk,
@@ -13,7 +12,53 @@ import {
   deriveLogChunkEncryptionKey,
 } from '@authrim/ar-lib-logging/chunks';
 import type { AdapterContext } from '../tenant-backup-export-dispatcher';
-import { createTenantBackupR2ObjectSnapshotPorts } from '../tenant-backup-r2-object-snapshot-port';
+import {
+  createTenantBackupR2ObjectSnapshotPorts as createPorts,
+  encodeTenantBackupR2ObjectPlan,
+  type TenantBackupR2ObjectDescriptor,
+} from '../tenant-backup-r2-object-snapshot-port';
+import type { PortableR2DatasetId } from '@authrim/ar-lib-core/services/tenant-portability/portable-r2-object';
+import type { DeferredEncryptedTenantBackupRecordSnapshotPort } from '../tenant-backup-record-snapshot-port';
+
+/**
+ * Test-only shape of the former API: `start` stages the listed descriptors as plan pages, as the
+ * export preparation does from the T0 snapshot after the hold.
+ */
+function createTenantBackupR2ObjectSnapshotPorts(
+  input: Parameters<typeof createPorts>[0] & {
+    list(
+      context: AdapterContext,
+      datasetId: PortableR2DatasetId
+    ): Promise<readonly TenantBackupR2ObjectDescriptor[]>;
+  }
+) {
+  const ports = createPorts(input);
+  const staged = (
+    port: DeferredEncryptedTenantBackupRecordSnapshotPort,
+    datasetId: PortableR2DatasetId
+  ): DeferredEncryptedTenantBackupRecordSnapshotPort => ({
+    ...port,
+    async start(context, snapshotId, assertHeld, boundaryUnixMs) {
+      await port.start(context, snapshotId, assertHeld, boundaryUnixMs);
+      const descriptors = await input.list(context, datasetId);
+      let pages = 0;
+      for (let offset = 0; offset < descriptors.length; offset += 256)
+        await port.writePlanPage(
+          context,
+          snapshotId,
+          pages++,
+          descriptors
+            .slice(offset, offset + 256)
+            .map((descriptor) => encodeTenantBackupR2ObjectPlan(descriptor, datasetId))
+        );
+      await port.publishPlans(context, snapshotId, boundaryUnixMs, pages);
+    },
+  });
+  return {
+    artifactObjects: staged(ports.artifactObjects, 'artifacts.object_catalog_bodies'),
+    logArchiveObjects: staged(ports.logArchiveObjects, 'logs.archive_object_bodies'),
+  };
+}
 
 interface StoredObject {
   bytes: Uint8Array;
@@ -94,7 +139,7 @@ function context(): AdapterContext {
   return {
     boundaryUnixMs: 100,
     context: {
-      lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
+      lease: { tenantId: 'tenant-a', operationId: 'operation-a', fencingToken: 1 },
       signal: new AbortController().signal,
     },
     snapshotResources: {
@@ -123,6 +168,16 @@ function context(): AdapterContext {
       ],
     },
   } as unknown as AdapterContext;
+}
+
+async function collectSummaries(
+  port: DeferredEncryptedTenantBackupRecordSnapshotPort,
+  input: AdapterContext,
+  snapshotId: string
+) {
+  const summaries: unknown[] = [];
+  await port.readSummaries(input, snapshotId, 100, (summary) => summaries.push(summary));
+  return summaries;
 }
 
 async function digest(bytes: Uint8Array): Promise<string> {
@@ -204,7 +259,7 @@ describe('tenant backup R2 object snapshot port', () => {
       new TextDecoder().decode(record?.bytes).trimEnd(),
       'tenant-a'
     );
-    await expect(ports.artifactObjects.readSummaries(input, 'snapshot-a', 100)).resolves.toEqual([
+    await expect(collectSummaries(ports.artifactObjects, input, 'snapshot-a')).resolves.toEqual([
       {
         kind: 'object',
         family: 'core',
@@ -221,7 +276,8 @@ describe('tenant backup R2 object snapshot port', () => {
     expect(source.get).toHaveBeenCalledWith(objectKey, {
       onlyIf: { etagMatches: 'source-etag' },
     });
-    expect(assertSource).toHaveBeenCalledTimes(4);
+    // Once while held (start) and around the materialization of the one plan.
+    expect(assertSource).toHaveBeenCalledTimes(3);
   });
 
   it('decrypts a held logging payload with its opaque tenant key and verifies plaintext', async () => {
@@ -300,7 +356,7 @@ describe('tenant backup R2 object snapshot port', () => {
     });
     expect(JSON.stringify(decoded.context)).not.toContain(tenantKey);
     await expect(
-      ports.logArchiveObjects.readSummaries(input, 'snapshot-hold', 100)
+      collectSummaries(ports.logArchiveObjects, input, 'snapshot-hold')
     ).resolves.toEqual([
       {
         kind: 'hold',
@@ -486,12 +542,12 @@ describe('tenant backup R2 object snapshot port', () => {
     });
   });
 
-  it('repackages only selected records from a log chunk that crosses the time window', async () => {
+  it('carries a whole log chunk unchanged so restored index offsets stay valid', async () => {
     const rootKey = '78'.repeat(32);
     const objectKey = 'logs/tenant-a/crossing';
     const encoded = await encodeLogRecordBlocks(
       [
-        { id: 'record-old', eventAt: 2, payload: { secret: 'outside' } },
+        { id: 'record-old', eventAt: 2, payload: { audit: 'before window' } },
         { id: 'record-kept', eventAt: 4, payload: { audit: 'inside' } },
       ],
       { compression: 'none' }
@@ -514,6 +570,7 @@ describe('tenant backup R2 object snapshot port', () => {
       encryptionScope: 'tenant-log-archive',
       keyVersion: 2,
     });
+    const plaintextKey = 'logs/tenant-a/plaintext';
     const source = bucket({
       [objectKey]: {
         bytes: stored,
@@ -521,38 +578,37 @@ describe('tenant backup R2 object snapshot port', () => {
         version: 'log-version',
         customMetadata: { tenantKey: 'tenant-key-a' },
       },
+      [plaintextKey]: { bytes: encoded.body, etag: 'plain-etag', version: 'plain-version' },
     });
     const input = context();
-    input.databases = {
-      tenant: [
-        {
-          databaseId: 'core-a',
-          database: {
-            queryOne: vi.fn(async () => ({ id: 'sql-snapshot:core-a' })),
-            query: vi.fn(async () => {
-              const location = encoded.records[1]!;
-              const block = encoded.blocks[location.blockIndex]!;
-              return [
-                {
-                  record_id: 'record-kept',
-                  surface: 'auth',
-                  line_number: location.lineNumber,
-                  block_offset: block.compressedOffset,
-                  block_length: block.compressedLength,
-                  record_offset: location.recordOffset,
-                  record_length: location.recordLength,
-                  event_at: 4,
-                  index_profile: 'audit',
-                  indexed_fields: '{"result":"allowed"}',
-                  created_at: 4,
-                },
-              ];
-            }),
-          },
+    const log = (
+      objectId: string,
+      key: string,
+      expectedStoredSha256: string,
+      encryption: Record<string, unknown>
+    ): TenantBackupR2ObjectDescriptor =>
+      ({
+        datasetId: 'logs.archive_object_bodies',
+        objectId,
+        bucketBinding: 'AUDIT_ARCHIVE',
+        objectKey: key,
+        expectedStoredSha256,
+        sourceEncoding: 'log_chunk_v1',
+        context: {
+          tenantId: 'tenant-a',
+          catalogKind: 'log_object',
+          sourceRowId: objectId.split(':')[1],
+          sourceDatabaseId: 'core-a',
+          sourceFamily: 'core',
+          tenantKey: 'tenant-key-a',
+          logType: 'audit',
+          plane: 'archive',
+          chunkId: 'chunk-a',
+          compression: 'none',
+          targetEncryptionScope: 'tenant-log-archive',
+          ...encryption,
         },
-      ],
-      fixed: [],
-    } as unknown as AdapterContext['databases'];
+      }) as TenantBackupR2ObjectDescriptor;
     const ports = createTenantBackupR2ObjectSnapshotPorts({
       env: {
         AUDIT_ARCHIVE: source as unknown as R2Bucket,
@@ -560,13 +616,66 @@ describe('tenant backup R2 object snapshot port', () => {
         OBJECT_ENCRYPTION_ROOT_KEY: rootKey,
       },
       assertSource: async () => {},
+      list: async () => [
+        log('core:log-a', objectKey, await digest(stored), {
+          sourceEncrypted: true,
+          encryptionScope: 'tenant-log-archive',
+          keyVersion: 2,
+        }),
+        log('core:log-b', plaintextKey, await digest(encoded.body), { sourceEncrypted: false }),
+      ],
+    });
+
+    await ports.logArchiveObjects.start(input, 'snapshot-log', async () => {}, 100);
+    const read = async (cursor: string | null) => {
+      const record = await ports.logArchiveObjects.readNext(
+        input,
+        'snapshot-log',
+        cursor,
+        input.context.signal
+      );
+      return {
+        next: record?.nextCursor ?? null,
+        object: await decodePortableR2ObjectChunk(
+          new TextDecoder().decode(record?.bytes).trimEnd(),
+          'tenant-a'
+        ),
+      };
+    };
+    const first = await read(null);
+    const second = await read(first.next);
+
+    for (const { object } of [first, second]) {
+      expect(object.sourceEncoding).toBe('log_chunk_v1');
+      expect(object.context.tenantKey).toBe(PORTABLE_TENANT_KEY);
+      expect(JSON.stringify(object.context)).not.toContain('tenant-key-a');
+      // The whole decrypted body: block and record offsets of the index rows still apply.
+      expect(object.bytes).toEqual(encoded.body);
+    }
+    expect(first.object.customMetadata?.tenantKey).toBe(PORTABLE_TENANT_KEY);
+    expect(second.object.context.sourceEncrypted).toBe(false);
+    await expect(
+      ports.logArchiveObjects.readNext(input, 'snapshot-log', second.next, input.context.signal)
+    ).resolves.toBeNull();
+  });
+
+  it('no longer exports record-level log chunk selections', async () => {
+    const ports = createTenantBackupR2ObjectSnapshotPorts({
+      env: {
+        AUDIT_ARCHIVE: bucket({
+          'logs/a': { bytes: new Uint8Array([1]), etag: 'e', version: 'v' },
+        }) as unknown as R2Bucket,
+        EXPORT_ARTIFACTS: bucket() as unknown as R2Bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: '79'.repeat(32),
+      },
+      assertSource: async () => {},
       list: async (_context, datasetId) => [
         {
           datasetId,
           objectId: 'core:log-a',
           bucketBinding: 'AUDIT_ARCHIVE',
-          objectKey,
-          expectedStoredSha256: await digest(stored),
+          objectKey: 'logs/a',
+          expectedStoredSha256: await digest(new Uint8Array([1])),
           sourceEncoding: 'log_chunk_records_v1',
           context: {
             tenantId: 'tenant-a',
@@ -581,43 +690,17 @@ describe('tenant backup R2 object snapshot port', () => {
             compression: 'none',
             windowFromInclusiveUnixMs: 3,
             windowUntilInclusiveUnixMs: 10,
-            sourceEncrypted: true,
+            sourceEncrypted: false,
             targetEncryptionScope: 'tenant-log-archive',
-            encryptionScope: 'tenant-log-archive',
-            keyVersion: 2,
           },
         },
       ],
     });
-
+    const input = context();
     await ports.logArchiveObjects.start(input, 'snapshot-log', async () => {}, 100);
-    const record = await ports.logArchiveObjects.readNext(
-      input,
-      'snapshot-log',
-      null,
-      input.context.signal
-    );
-    const portableObject = await decodePortableR2ObjectChunk(
-      new TextDecoder().decode(record?.bytes).trimEnd(),
-      'tenant-a'
-    );
-    const portableLog = decodePortableLogChunkRecords(portableObject.bytes);
-
-    expect(portableObject.context.tenantKey).toBe(PORTABLE_TENANT_KEY);
-    expect(portableObject.customMetadata?.tenantKey).toBe(PORTABLE_TENANT_KEY);
-    expect(JSON.stringify(portableObject.context)).not.toContain('tenant-key-a');
-    expect(portableLog.records).toEqual([
-      {
-        recordId: 'record-kept',
-        eventAt: 4,
-        surface: 'auth',
-        indexProfile: 'audit',
-        indexedFields: '{"result":"allowed"}',
-        createdAt: 4,
-        payload: { audit: 'inside' },
-      },
-    ]);
-    expect(new TextDecoder().decode(portableObject.bytes)).not.toContain('outside');
+    await expect(
+      ports.logArchiveObjects.readNext(input, 'snapshot-log', null, input.context.signal)
+    ).rejects.toThrow('backup_r2_object_snapshot_invalid');
   });
 
   it('extracts and decrypts only one record from a shared gzip sensitive-detail body', async () => {

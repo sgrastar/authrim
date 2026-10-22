@@ -380,11 +380,16 @@ async function encodeTargetBody(
   const plane = requiredString(source.context, 'plane');
   const chunkId = requiredString(source.context, 'chunkId');
   const compression = requiredString(source.context, 'compression');
+  // Whole chunks listed from the T0 snapshot name the scope to re-encrypt under, as record
+  // bundles do; older whole-chunk records re-encrypt under their source scope.
   const encryptionScope = requiredString(
     source.context,
-    source.sourceEncoding === 'log_chunk_records_v1' ? 'targetEncryptionScope' : 'encryptionScope'
+    source.sourceEncoding === 'log_chunk_records_v1' || 'targetEncryptionScope' in source.context
+      ? 'targetEncryptionScope'
+      : 'encryptionScope'
   );
-  if (source.sourceEncoding === 'log_chunk_v1') requiredInteger(source.context, 'keyVersion');
+  if (source.sourceEncoding === 'log_chunk_v1' && source.context.sourceEncrypted !== false)
+    requiredInteger(source.context, 'keyVersion');
   if (
     !LOG_TYPES.includes(logType as (typeof LOG_TYPES)[number]) ||
     !LOG_PLANES.includes(plane as (typeof LOG_PLANES)[number]) ||

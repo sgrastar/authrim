@@ -629,6 +629,11 @@ export async function runTenantBackupArtifactExecution(
       readSession?: object
     ) => Promise<{ bytes: Uint8Array; nextCursor: string } | null>;
     assertSources: () => Promise<void>;
+    /** Module state staged after the write hold, before the artifact writer starts. */
+    prepareResources?: (
+      cursor: string | null,
+      boundaryUnixMs: number
+    ) => Promise<{ cursor: string | null; done: boolean }>;
   },
   now: () => number = Date.now
 ): Promise<TenantBackupStepResult> {
@@ -710,6 +715,7 @@ export async function runTenantBackupArtifactExecution(
       },
       now,
       assertSources,
+      ...(adapters.prepareResources ? { prepareResources: adapters.prepareResources } : {}),
     });
     await assertSources();
     return result;

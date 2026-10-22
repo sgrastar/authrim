@@ -86,24 +86,19 @@ export function createTenantBackupR2ReferenceSelectionLoader(input: {
     const existing = cache.get(cacheKey);
     if (existing) return existing;
     const loading = (async () => {
-      const [artifactSummaries, logSummaries] = await Promise.all([
-        input.artifactObjects.readSummaries(
-          context,
-          await tenantBackupRecordSnapshotId(context, input.artifactObjects.resourceId),
-          boundaryUnixMs ?? -1
-        ),
-        input.logArchiveObjects.readSummaries(
-          context,
-          await tenantBackupRecordSnapshotId(context, input.logArchiveObjects.resourceId),
-          boundaryUnixMs ?? -1
-        ),
-      ]);
       const selected = {
         objectCatalogRows: new Set<string>(),
         objectPhysicalRows: new Set<string>(),
         logCatalogRows: new Set<string>(),
       };
-      for (const summary of [...artifactSummaries, ...logSummaries]) addSummary(selected, summary);
+      // Only the reference keys are kept, not the summaries.
+      for (const port of [input.artifactObjects, input.logArchiveObjects])
+        await port.readSummaries(
+          context,
+          await tenantBackupRecordSnapshotId(context, port.resourceId),
+          boundaryUnixMs ?? -1,
+          (summary) => addSummary(selected, summary)
+        );
       return Object.freeze(selected) satisfies TenantBackupR2ReferenceSelection;
     })();
     cache.set(cacheKey, loading);

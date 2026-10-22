@@ -139,19 +139,23 @@ describe('Phase 8 row transform', () => {
         )
       )
     ).resolves.toBe(true);
-    const record = (catalogId: string) =>
+    const record = (catalogId: string, eventAt = boundary, status = 'committed') =>
       context(
         'core.log_chunk_record_index',
         JSON.stringify({
           log_type: ['text', 'audit'],
           plane: ['text', 'archive'],
-          event_at: ['integer', String(boundary)],
+          event_at: ['integer', String(eventAt)],
           object_catalog_id: ['text', catalogId],
+          status: ['text', status],
         }),
         boundary
       );
     await expect(filter(record('log-a'))).resolves.toBe(true);
     await expect(filter(record('log-unused'))).resolves.toBe(false);
+    // A planned chunk travels whole: its index rows follow it even outside the log window.
+    await expect(filter(record('log-a', 1))).resolves.toBe(true);
+    await expect(filter(record('log-a', boundary, 'deleted'))).resolves.toBe(false);
   });
 
   it('uses the installed TOTP codec and scrubs held delivery ciphertext', async () => {
