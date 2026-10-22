@@ -89,7 +89,7 @@ function cookieHeaderFrom(response: Response): string {
 }
 
 describe('logout confirmation through ar-router', () => {
-  it('completes GET /logout -> confirmation form -> POST /logout -> redirect', async () => {
+  it('completes GET /logout -> confirmation form -> POST /logout -> page that moves on', async () => {
     const env = createEnv();
 
     const confirmation = await router.fetch(
@@ -125,8 +125,15 @@ describe('logout confirmation through ar-router', () => {
       executionContext
     );
 
-    expect(submitted.status).toBe(302);
-    expect(submitted.headers.get('Location')).toBe(`${ISSUER}/logged-out`);
+    // The confirmed POST answers with a same-origin page that moves on by itself: browsers apply
+    // the confirmation page's form-action ('self') to any redirect after the form is submitted.
+    expect(submitted.status).toBe(200);
+    expect(submitted.headers.get('Location')).toBeNull();
+    const continuation = await submitted.text();
+    expect(continuation).toContain(
+      `<meta http-equiv="refresh" content="0;url=${ISSUER}/logged-out">`
+    );
+    expect(submitted.headers.get('Set-Cookie')).toContain('authrim_session=;');
     // The confirmed POST really ended the browser session.
     expect(env.SESSION_STORE._invalidateSessionRpc).toHaveBeenCalledWith(SESSION_ID);
     expect(env.SESSION_STORE._sessions.has(SESSION_ID)).toBe(false);
