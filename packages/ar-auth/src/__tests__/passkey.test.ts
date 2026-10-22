@@ -118,10 +118,39 @@ vi.mock('@authrim/ar-lib-core/utils/id', async (importOriginal) => {
 });
 
 // Mock @authrim/ar-lib-core module
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+// Makes the address's account-route lookup fail with this error for one test (null: the real one).
+const routeLookup = vi.hoisted(() => ({
+  failure: null as null | { message: string; cause?: string },
+}));
+
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    resolveAccountDataContextByIdentifierFromHono: async (...args: unknown[]) => {
+      if (routeLookup.failure) {
+        throw new Error(
+          routeLookup.failure.message,
+          routeLookup.failure.cause ? { cause: routeLookup.failure.cause } : undefined
+        );
+      }
+      return (
+        actual as typeof import('@authrim/ar-lib-core')
+      ).resolveAccountDataContextByIdentifierFromHono(
+        ...(args as Parameters<
+          typeof import('@authrim/ar-lib-core').resolveAccountDataContextByIdentifierFromHono
+        >)
+      );
+    },
+    checkEmailRegistration: async (...args: unknown[]) =>
+      registrationCheck.override ??
+      (actual as typeof import('@authrim/ar-lib-core')).checkEmailRegistration(
+        ...(args as Parameters<typeof import('@authrim/ar-lib-core').checkEmailRegistration>)
+      ),
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         const core = await mockUserCoreRepository.findById(userId);
@@ -746,6 +775,141 @@ describe('Passkey Handlers', () => {
 
       expect(response.status).toBe(409);
       expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
+    });
+
+    it('refuses a recently deleted address as it refuses an address in use, creating nothing', async () => {
+      // The address in use, for the reply to compare with.
+      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
+        id: 'existing-user-id',
+        email: 'existing@example.com',
+        name: 'Existing User',
+      });
+      mockUserCoreRepository.findById.mockResolvedValueOnce({
+        id: 'existing-user-id',
+        is_active: true,
+      });
+      const inUse = await passkeyRegisterOptionsHandler(
+        createMockContext({
+          body: { email: 'existing@example.com' },
+          headers: { origin: 'https://example.com' },
+        })
+      );
+
+      registrationCheck.override = 'blocked';
+      try {
+        mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
+        const deleted = await passkeyRegisterOptionsHandler(
+          createMockContext({
+            body: { email: 'deleted@example.com' },
+            headers: { origin: 'https://example.com' },
+          })
+        );
+
+        expect(deleted.status).toBe(inUse.status);
+        expect(await deleted.json()).toEqual(await inUse.json());
+      } finally {
+        registrationCheck.override = null;
+      }
+      expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'a route cached from before the deletion',
+        { message: 'lookup_destination_revalidation_failed', cause: 'account_inactive' },
+        409,
+      ],
+      [
+        'a destination whose shard does not match its route',
+        { message: 'lookup_destination_revalidation_failed' },
+        500,
+      ],
+      ['an unreachable lookup store', { message: 'lookup_physical_binding_unavailable' }, 500],
+    ])(
+      'answers a recently deleted address whose route lookup fails on %s as any address (%#)',
+      async (_case, failure, status) => {
+        const c = createMockContext({
+          body: { email: 'deleted@example.com' },
+          headers: { origin: 'https://example.com' },
+        });
+        c.set('tenantMetadataContext', {
+          tenantId: 'default',
+          route: { allocationScope: 'tenant_exclusive' },
+        });
+        registrationCheck.override = 'blocked';
+        routeLookup.failure = failure;
+        let response: Response;
+        try {
+          response = await passkeyRegisterOptionsHandler(c);
+        } finally {
+          registrationCheck.override = null;
+          routeLookup.failure = null;
+        }
+
+        // A store failure fails every address alike; only the deleted destination is passed over.
+        expect(response.status).toBe(status);
+        expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
+      }
+    );
+
+    it('answers an address in use as any other when the deletion check cannot be made', async () => {
+      registrationCheck.override = 'unavailable';
+      try {
+        mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
+          id: 'existing-user-id',
+          email: 'existing@example.com',
+          name: 'Existing User',
+        });
+        mockUserCoreRepository.findById.mockResolvedValueOnce({
+          id: 'existing-user-id',
+          is_active: true,
+        });
+        const inUse = await passkeyRegisterOptionsHandler(
+          createMockContext({
+            body: { email: 'existing@example.com' },
+            headers: { origin: 'https://example.com' },
+          })
+        );
+        mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
+        const unused = await passkeyRegisterOptionsHandler(
+          createMockContext({
+            body: { email: 'unused@example.com' },
+            headers: { origin: 'https://example.com' },
+          })
+        );
+        expect(inUse.status).toBe(500);
+        expect(unused.status).toBe(500);
+        // Alike but for the id each error response carries.
+        const { error_id: _inUseId, ...inUseBody } = (await inUse.json()) as Record<
+          string,
+          unknown
+        >;
+        const { error_id: _unusedId, ...unusedBody } = (await unused.json()) as Record<
+          string,
+          unknown
+        >;
+        expect(inUseBody).toEqual(unusedBody);
+      } finally {
+        registrationCheck.override = null;
+      }
+    });
+
+    it('creates nothing and answers a server error when the deletion check cannot be made', async () => {
+      registrationCheck.override = 'unavailable';
+      try {
+        mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
+        const response = await passkeyRegisterOptionsHandler(
+          createMockContext({
+            body: { email: 'deleted@example.com' },
+            headers: { origin: 'https://example.com' },
+          })
+        );
+        expect(response.status).toBe(500);
+      } finally {
+        registrationCheck.override = null;
+      }
       expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
     });
 

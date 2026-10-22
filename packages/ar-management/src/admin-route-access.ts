@@ -1897,6 +1897,12 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'platform plugins',
     PLATFORM_ADMIN_ROLES
   ),
+  rule({
+    pattern: '/api/admin/tombstones/email-check',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.USERS_READ],
+    description: 'Check whether an email address was deleted (address in the body)',
+  }),
   ...byMethod(
     '/api/admin/tombstones',
     ADMIN_PERMISSIONS.SETTINGS_READ,

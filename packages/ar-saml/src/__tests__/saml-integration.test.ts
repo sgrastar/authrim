@@ -132,7 +132,6 @@ vi.mock('../common/key-utils', () => ({
   getSigningCertificate: (...args: any[]) => mockGetSigningCertificate(...args),
 }));
 
-// Mock structured logger and event publisher
 vi.mock('@authrim/ar-lib-core/services/external-signup-invitation', async (importOriginal) => ({
   ...(await importOriginal<
     typeof import('@authrim/ar-lib-core/services/external-signup-invitation')
@@ -142,6 +141,12 @@ vi.mock('@authrim/ar-lib-core/services/external-signup-invitation', async (impor
   releaseExternalSignupInvitation: invitationMocks.release,
 }));
 
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
+// Mock structured logger and event publisher
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   const { vi } = await import('vitest');
@@ -151,6 +156,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     resolveAuthCorePersistenceAdapterFromEnv: invitationMocks.resolveCoreAdapter,
+    checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
+      registrationCheck.override ?? actual.checkEmailRegistration(...args),
     getLogger: () => ({
       module: () => ({
         info: vi.fn(),
@@ -2432,6 +2439,26 @@ describe('SAML Integration', () => {
 
       expect(res.status).toBe(403);
       expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it('refuses a recently deleted address as it refuses sign-up turned off, making nothing', async () => {
+      useSettings(entry({ loginEnabled: true, signupEnabled: false }));
+      const signupOff = await newUser();
+      const signupOffBody = await signupOff.text();
+
+      vi.clearAllMocks();
+      useSettings(entry({ loginEnabled: true, signupEnabled: true }));
+      registrationCheck.override = 'blocked';
+      let res: Response;
+      try {
+        res = await newUser();
+      } finally {
+        registrationCheck.override = null;
+      }
+
+      expect(res.status).toBe(signupOff.status);
+      expect(await res.text()).toBe(signupOffBody);
       expectNothingMade();
     });
 

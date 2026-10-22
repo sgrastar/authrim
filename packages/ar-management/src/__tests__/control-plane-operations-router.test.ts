@@ -1244,6 +1244,33 @@ describe('control-plane operations admin router', () => {
     });
   });
 
+  it('asks to retry observing the generation while Control keeps dual-write', async () => {
+    const target = createApp({
+      control: {
+        observeLookupHmacRotationGeneration: vi.fn(async () => {
+          throw new Error('lookup_hmac_dual_write_dwell_incomplete');
+        }),
+      },
+    });
+    const response = await target.app.request(
+      '/api/admin/platform/control-plane/lookup-hmac/rotations/hmac-rotation-1/observe-generation',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'idempotency-key': 'lookup-hmac-observe-dwell',
+        },
+        body: JSON.stringify({ fencingToken: 1 }),
+      },
+      target.env
+    );
+    expect(response.status).toBe(409);
+    expect(response.headers.get('Retry-After')).toBe('15');
+    expect(await response.json()).toMatchObject({
+      error: 'CONTROL_PLANE_LOOKUP_HMAC_DUAL_WRITE_DWELL_INCOMPLETE',
+    });
+  });
+
   it('requires explicit read scope and validates Lookup HMAC verification evidence', async () => {
     const denied = createApp({ actorType: 'machine', roles: [], permissions: [] });
     const deniedResponse = await denied.app.request(

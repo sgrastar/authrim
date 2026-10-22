@@ -165,9 +165,16 @@ const {
 });
 
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
+    checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
+      registrationCheck.override ?? actual.checkEmailRegistration(...args),
     D1Adapter: MockD1Adapter,
     // JIT settings as the Settings API resolves them with nothing set for the platform: the tenant's
     // values, else the saved document (as the older reader maps it), else the defaults.
@@ -1321,6 +1328,46 @@ describe('Identity Stitching Service', () => {
           })
         ).rejects.toMatchObject({ code: 'external_signup_disabled' });
 
+        expectNothingCreated();
+      });
+
+      it('refuses a recently deleted address as any other policy denial, creating nothing', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+        registrationCheck.override = 'blocked';
+        try {
+          await expect(
+            handleIdentity(env as never, {
+              provider: mockProvider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+            })
+          ).rejects.toMatchObject({ code: 'policy_access_denied' });
+        } finally {
+          registrationCheck.override = null;
+        }
+        expectNothingCreated();
+      });
+
+      it('creates nothing when the deletion check cannot be made', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+        registrationCheck.override = 'unavailable';
+        try {
+          await expect(
+            handleIdentity(env as never, {
+              provider: mockProvider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+            })
+          ).rejects.toThrow('external_idp_reregistration_check_unavailable');
+        } finally {
+          registrationCheck.override = null;
+        }
         expectNothingCreated();
       });
 

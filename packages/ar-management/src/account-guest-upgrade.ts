@@ -28,6 +28,7 @@ import {
   type GuestUpgradeOperation,
   type Session,
   resolveEmailCodeTtlSeconds,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
   generateRegistrationOptions,
@@ -732,6 +733,36 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
           status: 403,
         });
       const payload = JSON.parse(operation.proof_payload_json!) as ProofPayload;
+      // An address of an account deleted within the retention period, where the tenant blocks
+      // re-registration: answered as an address that already has an account, at the same step.
+      // Checked on every attempt while the upgrade is not committed: a pinned publication does
+      // not mean the address was reserved (the reservation may have failed since).
+      if (operation.method === 'email' && payload.email) {
+        const registration = await checkEmailRegistration(c.env, {
+          tenantId: ctx.tenantId,
+          email: payload.email,
+        });
+        if (registration === 'unavailable') {
+          c.header('Retry-After', '5');
+          return c.json({ error: 'temporarily_unavailable' }, 503);
+        }
+        if (registration === 'blocked') {
+          await recordAccountOperation(c, {
+            userId: ctx.session.userId,
+            action: 'account.guest.upgrade_failed',
+            required: true,
+            metadata: {
+              stage: 'complete',
+              reason: 'identity_already_registered',
+              operationId: operation.operation_id,
+            },
+          });
+          return c.json(
+            { error: 'identity_already_registered', existing_login_available: true },
+            409
+          );
+        }
+      }
       // Reserve uniqueness before changing the guest. Existing identities never merge.
       const pinned = await ctx.operations.pinReservation(
         operation.operation_id,

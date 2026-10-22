@@ -228,6 +228,49 @@ export async function createLookupBlindIndexes(
   return Promise.all(keys.map((key) => createLookupBlindIndex(indexKind, value, key)));
 }
 
+/**
+ * The label of a deleted account's email index (users_pii_tombstone.email_blind_index). It is
+ * keyed by the lookup HMAC key but under its own label, so a tombstone's value never equals the
+ * lookup directory's email index of the same address: the two stores cannot be joined on it.
+ */
+const TOMBSTONE_EMAIL_INDEX_LABEL = 'tombstone_email';
+const TOMBSTONE_EMAIL_INDEX =
+  /^tombstone_email:v([1-9][0-9]{0,8}):g([1-9][0-9]{0,15}):([a-f0-9]{64})$/u;
+
+/**
+ * A deleted account's email as kept in its tombstone: `tombstone_email:v<n>:g<generation>:<hex>`,
+ * the HMAC-SHA256 of the normalized address under one lookup key, with the normalization version
+ * and key generation it was made with. "Was this address deleted?" is answered by making the
+ * value again from the address; the address cannot be read back from it without the key.
+ */
+export async function createTombstoneEmailIndex(
+  email: string,
+  key: LookupBlindIndexKey
+): Promise<string> {
+  const generation = requiredGeneration(key.generation);
+  const message = concatBytes(
+    encoder.encode(TOMBSTONE_EMAIL_INDEX_LABEL),
+    new Uint8Array([0]),
+    uint32Bytes(LOOKUP_NORMALIZATION_VERSION),
+    lengthPrefixed(encoder.encode(normalizeLookupEmail(email)))
+  );
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyBytes(key.secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const digest = bytesToHex(await crypto.subtle.sign('HMAC', cryptoKey, message));
+  return `${TOMBSTONE_EMAIL_INDEX_LABEL}:v${LOOKUP_NORMALIZATION_VERSION}:g${generation}:${digest}`;
+}
+
+/** The key generation a tombstone's email index was made with, or null for any other value. */
+export function tombstoneEmailIndexGeneration(value: string | null | undefined): number | null {
+  const match = typeof value === 'string' ? TOMBSTONE_EMAIL_INDEX.exec(value) : null;
+  return match ? Number(match[2]) : null;
+}
+
 export async function createLookupAliasIndex(
   aliasKind: LookupAliasKind,
   value: string

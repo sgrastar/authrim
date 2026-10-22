@@ -163,10 +163,20 @@ vi.mock('@authrim/ar-lib-core/services/invitation-auth-core', async (importOrigi
   };
 });
 
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    checkEmailRegistration: async (...args: unknown[]) =>
+      registrationCheck.override ??
+      (actual as typeof import('@authrim/ar-lib-core')).checkEmailRegistration(
+        ...(args as Parameters<typeof import('@authrim/ar-lib-core').checkEmailRegistration>)
+      ),
     withGroupInputWrite: <T>(
       db: import('@authrim/ar-lib-core').DatabaseAdapter,
       tenant: string,
@@ -2858,6 +2868,72 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.challengeStore.deleteChallengeRpc).toHaveBeenCalledWith(
       'direct_passkey_register_map:register_challenge'
     );
+  });
+
+  it('refuses passkey signup with a recently deleted address as with an address in use', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValue(null);
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+    registrationCheck.override = 'blocked';
+    let response: Response;
+    try {
+      response = await directPasskeySignupStartHandler(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'deleted@example.com',
+            code_challenge: 'signup-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        ) as never
+      );
+    } finally {
+      registrationCheck.override = null;
+    }
+
+    expect(response.status).toBe(409);
+    expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing to a recently deleted address, with the usual reply', async () => {
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const send = (email: string) =>
+      directEmailCodeSendHandler(
+        enableEmailOtp(
+          createContext(
+            {
+              client_id: 'web-client',
+              email,
+              code_challenge: 'email-pkce-challenge',
+              code_challenge_method: 'S256',
+              channel: 'browser',
+            },
+            webHeaders()
+          )
+        ) as never
+      );
+    const sent = (await (await send('new@example.com')).json()) as Record<string, unknown>;
+    mocks.challengeStore.storeChallengeRpc.mockClear();
+    mocks.userCore.createUser.mockClear();
+
+    registrationCheck.override = 'blocked';
+    let refused: Record<string, unknown>;
+    try {
+      refused = (await (await send('deleted@example.com')).json()) as Record<string, unknown>;
+    } finally {
+      registrationCheck.override = null;
+    }
+
+    expect(Object.keys(refused).sort()).toEqual(Object.keys(sent).sort());
+    expect(refused.expires_in).toBe(sent.expires_in);
+    expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    expect(
+      mocks.challengeStore.storeChallengeRpc.mock.calls.filter(
+        ([request]) => (request as { type?: string }).type === 'direct_email_code'
+      )
+    ).toHaveLength(0);
   });
 
   it("uses the tenant's email code lifetime, for a code sent and for a send that sends nothing", async () => {

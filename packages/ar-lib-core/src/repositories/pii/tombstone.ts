@@ -191,6 +191,26 @@ export class TombstoneRepository extends BaseRepository<Tombstone> {
   }
 
   /**
+   * The latest tombstone within its retention that carries any of the given email indexes (one
+   * per lookup key generation still read), or null.
+   */
+  async findActiveByEmailIndexes(
+    emailBlindIndexes: readonly string[],
+    tenantId: string,
+    adapter?: DatabaseAdapter
+  ): Promise<Pick<Tombstone, 'deleted_at' | 'retention_until'> | null> {
+    if (emailBlindIndexes.length === 0) return null;
+    const db = adapter ?? this.adapter;
+    const placeholders = emailBlindIndexes.map(() => '?').join(', ');
+    return db.queryOne<Pick<Tombstone, 'deleted_at' | 'retention_until'>>(
+      `SELECT deleted_at, retention_until FROM users_pii_tombstone
+       WHERE tenant_id = ? AND email_blind_index IN (${placeholders}) AND retention_until > ?
+       ORDER BY deleted_at DESC LIMIT 1`,
+      [tenantId, ...emailBlindIndexes, getCurrentTimestamp()]
+    );
+  }
+
+  /**
    * Get tombstone for email (if exists and not expired)
    *
    * @param emailBlindIndex - Email blind index

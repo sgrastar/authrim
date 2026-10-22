@@ -56,8 +56,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
     createAuditLogFromContext: mocks.contextAudit,
     createAuditLog: mocks.audit,
-    buildCanonicalTenantIssuerUrl: vi.fn(
-      async (_env: unknown, _tenantId: string, fallback: string) => fallback
+    // The shared lookup of the tenant's canonical issuer (its own tests are in ar-lib-core):
+    // the configured issuer unless a test says the tenant has a primary domain or the lookup fails.
+    resolveLogoutIssuer: vi.fn(
+      async (env: Parameters<typeof actual.buildIssuerUrl>[0], tenantId: string) =>
+        actual.buildIssuerUrl(env, tenantId)
     ),
     resolveLogoutTargetsFromSessionClientStore: mocks.resolveTargets,
     resolveLogoutConfig: mocks.resolveLogoutConfig,
@@ -81,7 +84,7 @@ vi.mock('../admin-shared', async (importOriginal) => {
 });
 
 import {
-  buildCanonicalTenantIssuerUrl,
+  resolveLogoutIssuer,
   DEFAULT_LOGOUT_CONFIG,
   DEFAULT_LOGOUT_WEBHOOK_CONFIG,
   SessionRevocationStore,
@@ -562,7 +565,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
 
   it("signs with the tenant's canonical issuer, not the admin request's host", async () => {
     const env = createEnv();
-    vi.mocked(buildCanonicalTenantIssuerUrl).mockResolvedValueOnce('https://login.example.com');
+    vi.mocked(resolveLogoutIssuer).mockResolvedValueOnce('https://login.example.com');
     await signIn(env, 'session-1', [['client-a', RP_A]]);
     const sent = captureDownstream();
 
@@ -636,7 +639,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
 
   it('retries instead of signing with another issuer when the tenant issuer cannot be read', async () => {
     const env = createEnv();
-    vi.mocked(buildCanonicalTenantIssuerUrl).mockRejectedValueOnce(new Error('lookup failed'));
+    vi.mocked(resolveLogoutIssuer).mockRejectedValueOnce(new Error('lookup failed'));
     await signIn(env, 'session-1', [['client-a', RP_A]]);
     const sent = captureDownstream();
 
@@ -645,12 +648,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
     await settle(pending);
     expect(sent).toHaveLength(0);
     expect([...env.DB_ADMIN.jobs.values()][0].status).toBe('pending');
-    expect(vi.mocked(buildCanonicalTenantIssuerUrl)).toHaveBeenCalledWith(
-      expect.anything(),
-      'tenant-a',
-      OP_ISSUER,
-      { strict: true }
-    );
+    expect(vi.mocked(resolveLogoutIssuer)).toHaveBeenCalledWith(expect.anything(), 'tenant-a');
   });
 
   it('retries a job the fan-out could not send (no signing key)', async () => {
