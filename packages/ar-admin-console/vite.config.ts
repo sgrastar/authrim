@@ -12,7 +12,6 @@ export default defineConfig({
 	envPrefix: ['VITE_', 'PUBLIC_'],
 	build: {
 		target: 'esnext',
-		minify: 'esbuild',
 		sourcemap: false,
 		reportCompressedSize: false
 	},
