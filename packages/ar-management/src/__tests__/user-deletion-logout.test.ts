@@ -22,6 +22,10 @@ const OP_ISSUER = 'https://op.example.com';
 const RP_A = 'https://rp-a.example.com/backchannel-logout';
 const RP_B = 'https://rp-b.example.com/backchannel-logout';
 const LOGOUT_URIS: Record<string, string> = { 'client-a': RP_A, 'client-b': RP_B };
+const WEBHOOK_W = 'https://rp-w.example.com/logout-webhook';
+const WEBHOOK_X = 'https://rp-x.example.com/logout-webhook';
+/** Clients registered for the Simple Logout Webhook instead of the back-channel. */
+const WEBHOOK_URIS: Record<string, string> = { 'client-w': WEBHOOK_W, 'client-x': WEBHOOK_X };
 
 const mocks = vi.hoisted(() => ({
   /** The user records the deletion removes. */
@@ -123,8 +127,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     publishEvent: vi.fn(async () => undefined),
     createAuditLogFromContext: mocks.contextAudit,
     createAuditLog: mocks.audit,
-    buildCanonicalTenantIssuerUrl: vi.fn(
-      async (_env: unknown, _tenantId: string, fallback: string) => fallback
+    // The tenant's canonical issuer (its own tests are in ar-lib-core): the configured one here.
+    resolveLogoutIssuer: vi.fn(
+      async (env: Parameters<typeof actual.buildIssuerUrl>[0], tenantId: string) =>
+        actual.buildIssuerUrl(env, tenantId)
     ),
     resolveLogoutConfig: mocks.resolveLogoutConfig,
     resolveLogoutWebhookConfig: mocks.resolveLogoutWebhookConfig,
@@ -135,16 +141,26 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return {
         listLogoutCandidateClientIds: vi.fn(async () => []),
         hydrateLogoutTargetsFromSessionClients: vi.fn(async (clients: SessionClient[]) => ({
-          backchannelClients: clients.map((client) => ({
-            ...client,
-            client_name: client.client_id,
-            backchannel_logout_uri: LOGOUT_URIS[client.client_id],
-            backchannel_logout_session_required: true,
-            frontchannel_logout_uri: null,
-            frontchannel_logout_session_required: false,
-          })),
+          backchannelClients: clients
+            .filter((client) => LOGOUT_URIS[client.client_id])
+            .map((client) => ({
+              ...client,
+              client_name: client.client_id,
+              backchannel_logout_uri: LOGOUT_URIS[client.client_id],
+              backchannel_logout_session_required: true,
+              frontchannel_logout_uri: null,
+              frontchannel_logout_session_required: false,
+            })),
           frontchannelClients: [],
-          webhookClients: [],
+          webhookClients: clients
+            .filter((client) => WEBHOOK_URIS[client.client_id])
+            .map((client) => ({
+              ...client,
+              client_name: client.client_id,
+              logout_webhook_uri: WEBHOOK_URIS[client.client_id],
+              // A secret stored before encryption was introduced is used as it is.
+              logout_webhook_secret_encrypted: 'webhook-secret',
+            })),
         })),
       };
     }),
@@ -340,6 +356,7 @@ let opPrivatePem: string;
 function createEnv() {
   return {
     ISSUER_URL: OP_ISSUER,
+    RP_TOKEN_ENCRYPTION_KEY: 'a'.repeat(64),
     SETTINGS: memoryKv(),
     SESSION_REVOCATION_STORE: namespace((state) => new SessionRevocationStore(state, {} as never)),
     SESSION_CLIENT_STORE: namespace((state) => new SessionClientStore(state, {} as never)),
@@ -386,7 +403,13 @@ async function settle(pending: Promise<unknown>[]) {
  * A session the user signed in with, and the relying parties it signed in to: each client's
  * record carries the sid and the sub its ID token was issued with (a per-client sub here).
  */
-async function signIn(env: TestEnv, sessionId: string, clientIds: string[], at = 0) {
+async function signIn(
+  env: TestEnv,
+  sessionId: string,
+  clientIds: string[],
+  at = 0,
+  options: { withoutSub?: string[] } = {}
+) {
   const now = Date.now() - 60_000 + at;
   await env.SESSION_REVOCATION_STORE.get(
     env.SESSION_REVOCATION_STORE.idFromName('tenant:tenant-a:user-session:user-1')
@@ -396,12 +419,13 @@ async function signIn(env: TestEnv, sessionId: string, clientIds: string[], at =
       session_id: sessionId,
       client_id: clientId,
       oidc_sid: `sid-${sessionId}-${clientId}`,
-      oidc_sub: `pairwise-${clientId}`,
+      // A record from before the sub was recorded carries none.
+      ...(options.withoutSub?.includes(clientId) ? {} : { oidc_sub: `pairwise-${clientId}` }),
     });
   }
 }
 
-type Sent = { url: string; token: string; userPresent: boolean };
+type Sent = { url: string; token: string; body: string; userPresent: boolean };
 type FetchInput = Parameters<typeof fetch>[0];
 
 function captureDownstream() {
@@ -413,6 +437,7 @@ function captureDownstream() {
     sent.push({
       url,
       token: body.get('logout_token') ?? '',
+      body: typeof init?.body === 'string' ? init.body : '',
       userPresent: mocks.users.has('user-1'),
     });
     return new Response(null, { status: 200 });
@@ -540,6 +565,46 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
       expect(await storedClients(env, 'session-1')).toEqual([]);
       expect(await storedClients(env, 'session-2')).toEqual([]);
       expect(mocks.logSanitizedError).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(DELETIONS)(
+    '%s sends each webhook client the sub recorded for it, never the internal id',
+    async (_name, handler, _triggerAction, routed) => {
+      mocks.routed = routed;
+      mocks.resolveLogoutWebhookConfig.mockResolvedValue({
+        ...DEFAULT_LOGOUT_WEBHOOK_CONFIG,
+        enabled: true,
+        include_sub_claim: true,
+        include_sid_claim: false,
+      });
+      const env = createEnv();
+      await signIn(env, 'session-1', ['client-w', 'client-x'], 0, { withoutSub: ['client-x'] });
+      const sent = captureDownstream();
+
+      const { c, pending } = context(env);
+      expect((await handler(c)).status).toBe(200);
+      await settle(pending);
+
+      const payloads = new Map(
+        sent.map((s) => [s.url, JSON.parse(s.body) as Record<string, unknown>])
+      );
+      expect([...payloads.keys()].sort()).toEqual([WEBHOOK_W, WEBHOOK_X]);
+      expect(sent.every((s) => !s.userPresent)).toBe(true);
+      // The sub the client's ID token carried.
+      expect(payloads.get(WEBHOOK_W)).toMatchObject({
+        issuer: OP_ISSUER,
+        client_id: 'client-w',
+        sub: 'pairwise-client-w',
+      });
+      // No sub recorded: none is sent, and the session is named by its sid instead.
+      expect(payloads.get(WEBHOOK_X)).not.toHaveProperty('sub');
+      expect(payloads.get(WEBHOOK_X)).toMatchObject({
+        client_id: 'client-x',
+        sid: 'sid-session-1-client-x',
+      });
+      for (const s of sent) expect(s.body).not.toContain('user-1');
+      expect(await storedClients(env, 'session-1')).toEqual([]);
     }
   );
 
