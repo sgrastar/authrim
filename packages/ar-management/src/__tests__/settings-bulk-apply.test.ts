@@ -67,6 +67,16 @@ import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-
  * that the same checks as a PATCH stand in front of every write.
  */
 
+/**
+ * The JSON of a response or an audit entry with the string values that are random identifiers
+ * (a UUID, a version hash) masked whole, so that a check that a value did not leak cannot match
+ * their digits by chance. Text that only contains such a value is checked as it is.
+ */
+const leakText = (value: unknown): string =>
+  JSON.stringify(value)
+    .replace(/"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"/giu, '"<uuid>"')
+    .replace(/"sha256:[0-9a-f]{16}"/giu, '"sha256:<hash>"');
+
 const REPO_ROOT = resolve(__dirname, '../../../..');
 const BULK = '/api/admin/settings/bulk-apply';
 const MAPPING_KEY = 'identity_mapping.oidc_default_set_id';
@@ -420,7 +430,7 @@ describe('who may use the bulk apply', () => {
     expect(resultFor(response.json, 'tenant-a').changes).toEqual([
       expect.objectContaining({ action: 'would_reject', reason: 'forbidden', current: null }),
     ]);
-    expect(JSON.stringify(response.json)).not.toContain('1800000');
+    expect(leakText(response.json)).not.toContain('1800000');
   });
 
   it('never lets an Agent in: its settings writes need an approval for each Tool call', async () => {
@@ -1557,7 +1567,7 @@ describe('the record of an apply', () => {
       categories: ['session', 'oauth'],
       keys: [TTL, 'oauth.access_token_expiry'],
     });
-    const text = JSON.stringify(summary);
+    const text = leakText(summary);
     expect(text).not.toMatch(/1234567|43210|1800000/);
     expect(text).not.toContain('tenant-b');
   });
@@ -1910,7 +1920,7 @@ describe('the records of a change made in bulk', () => {
     const updated = audits('settings.settings.updated');
     expect(updated).toHaveLength(4);
     for (const entry of updated) {
-      const text = JSON.stringify(entry.metadata);
+      const text = leakText(entry.metadata);
       expect(text).not.toMatch(/7654321|4321|1800000|before|after|diff/);
       expect(entry.metadata).toMatchObject({
         changed_keys: expect.any(Array),
@@ -1944,7 +1954,7 @@ describe('the records of a change made in bulk', () => {
     );
     const [entry] = audits('settings.settings.updated');
     expect(entry.metadata).toMatchObject({ results: { [TTL]: 'cleared' } });
-    expect(JSON.stringify(entry.metadata)).not.toContain('1800000');
+    expect(leakText(entry.metadata)).not.toContain('1800000');
   });
 
   it('leave the record of a PATCH as it was: with the values', async () => {
@@ -2451,7 +2461,7 @@ describe('a refusal that depends on what is saved gives a code, not its text', (
     const apply = await t.bulk(t.admin, request({ tenant_ids: tenantIds, changes }));
     expect(preview.status).toBe(200);
     expect(apply.status).toBe(200);
-    return { preview, apply, text: JSON.stringify([preview.json, apply.json]) };
+    return { preview, apply, text: leakText([preview.json, apply.json]) };
   };
   const patch = async (
     t: Awaited<ReturnType<typeof setup>>,
