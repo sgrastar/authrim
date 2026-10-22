@@ -26,6 +26,15 @@ const { mockWriteAdminAuditLog } = vi.hoisted(() => ({
   mockWriteAdminAuditLog: vi.fn(),
 }));
 
+const { mockTransitionAuthentication, mockStartSessionEndLogout } = vi.hoisted(() => ({
+  mockTransitionAuthentication: vi.fn(),
+  mockStartSessionEndLogout: vi.fn(),
+}));
+
+vi.mock('../admin-session-end', () => ({
+  startAdminSessionEndLogout: mockStartSessionEndLogout,
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -151,6 +160,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     listEnvironmentTenantDefaultStores: mockListTenantStores,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdminAdapter),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mockAdapter),
+    transitionAccountAuthenticationStateEndingSessions: mockTransitionAuthentication,
   };
 });
 
@@ -885,6 +895,89 @@ describe('support operations admin router', () => {
 
     expect(response.status).toBe(409);
     expect(executedSql.some((sql) => sql.includes("SET status = 'failed'"))).toBe(true);
+  });
+
+  describe('downstream logout for the accounts a suspend action ended', () => {
+    function approvedSuspend() {
+      mockAdapter.queryOne.mockResolvedValueOnce({
+        id: 'action-1',
+        cohort_id: 'cohort-1',
+        resource: 'User',
+        action: 'suspend',
+        status: 'approved',
+        intended_action: 'suspend',
+        selector_hash: 'sha256:test',
+        matched_count: 12,
+        actionable_count: 12,
+        blocked_count: 0,
+        snapshot_status: 'completed',
+        expires_at: Date.now() + 60_000,
+      });
+      mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+      mockAdapter.query.mockResolvedValueOnce([{ target_id: 'user-1' }, { target_id: 'user-2' }]);
+    }
+
+    it('schedules the fan-out for every suspended account, naming the action', async () => {
+      approvedSuspend();
+      mockAdapter.batch.mockResolvedValueOnce([{ rowsAffected: 2 }, { rowsAffected: 2 }]);
+      mockTransitionAuthentication.mockImplementation(
+        async (_env: unknown, input: { userId: string }) => ({
+          state: { revokedAfterMs: 2_000 },
+          endedSessionIds: [`${input.userId}-session`],
+        })
+      );
+
+      const response = await createApp().request(
+        '/api/admin/support-ops/actions/action-1/execute',
+        { method: 'POST' },
+        {} as Env
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockStartSessionEndLogout).toHaveBeenCalledTimes(1);
+      expect(mockStartSessionEndLogout).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'tenant-a',
+        sessions: [
+          { userId: 'user-1', sessionId: 'user-1-session' },
+          { userId: 'user-2', sessionId: 'user-2-session' },
+        ],
+        trigger: {
+          action: 'support_ops.action.execute',
+          operationId: 'action-1',
+          actorId: 'admin-1',
+        },
+      });
+      expect(mockTransitionAuthentication).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: 'user-1', lifecycle: 'suspended', revokeSessions: true })
+      );
+    });
+
+    it('still tells the accounts already suspended when another one fails', async () => {
+      approvedSuspend();
+      mockTransitionAuthentication.mockImplementation(
+        async (_env: unknown, input: { userId: string }) => {
+          if (input.userId === 'user-2') throw new Error('do unavailable');
+          // Ends after the other account failed: its sessions ended all the same.
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return { state: { revokedAfterMs: 2_000 }, endedSessionIds: ['user-1-session'] };
+        }
+      );
+
+      const response = await createApp().request(
+        '/api/admin/support-ops/actions/action-1/execute',
+        { method: 'POST' },
+        {} as Env
+      );
+
+      expect(response.status).toBe(409);
+      expect(mockStartSessionEndLogout).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          sessions: [{ userId: 'user-1', sessionId: 'user-1-session' }],
+        })
+      );
+    });
   });
 
   it('rejects self approval by default', async () => {

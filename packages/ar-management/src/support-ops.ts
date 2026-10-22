@@ -24,10 +24,12 @@ import {
   listSupportOpsResources,
   requireDedicatedAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
-  transitionAccountAuthenticationState,
+  transitionAccountAuthenticationStateEndingSessions,
   validateSupportOpsAction,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from './admin-shared';
+import { startAdminSessionEndLogout } from './admin-session-end';
+import { endedSessionsOf, type EndedSession } from './session-end-logout';
 import { getApprovalPresetExpiry } from './approval-policy-presets';
 
 type SupportOpsContext = Context<{
@@ -1783,6 +1785,9 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
     return jsonError(c, 409, 'not_executable', 'Action is no longer approved for execution');
   }
 
+  // Accounts whose sessions this action ended: their relying parties are told after the
+  // response, also when a later account or step fails.
+  const ended: EndedSession[] = [];
   try {
     const targets = await authCtx.coreAdapter.query<{ target_id: string }>(
       `SELECT target_id
@@ -1793,18 +1798,26 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
     // Stable per action and account, so the account's record names this action's transition.
     const operationPrefix = `support-op:${actionId}:`;
     for (let offset = 0; offset < targets.length; offset += 20) {
-      await Promise.all(
-        targets.slice(offset, offset + 20).map((target) =>
-          transitionAccountAuthenticationState(c.env, {
-            tenantId,
-            userId: target.target_id,
-            lifecycle: 'suspended',
-            sourceVersionMs: now,
-            operationId: `${operationPrefix}${target.target_id}`,
-            revokeSessions: true,
-          })
-        )
+      const settled = await Promise.allSettled(
+        targets.slice(offset, offset + 20).map(async (target) => {
+          const { endedSessionIds } = await transitionAccountAuthenticationStateEndingSessions(
+            c.env,
+            {
+              tenantId,
+              userId: target.target_id,
+              lifecycle: 'suspended',
+              sourceVersionMs: now,
+              operationId: `${operationPrefix}${target.target_id}`,
+              revokeSessions: true,
+            }
+          );
+          ended.push(...endedSessionsOf(target.target_id, endedSessionIds));
+        })
       );
+      const failure = settled.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected'
+      );
+      if (failure) throw failure.reason;
     }
     // Each account takes this action's transition (its version and operation) only if no newer
     // one did, and its subject only along with it, as single-account status changes do.
@@ -1922,6 +1935,12 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
       reason: 'execution_failed',
     });
     return jsonError(c, 409, 'execution_failed', 'Action execution failed');
+  } finally {
+    await startAdminSessionEndLogout(c, {
+      tenantId,
+      sessions: ended,
+      trigger: { action: 'support_ops.action.execute', operationId: actionId, actorId: executor },
+    });
   }
 });
 

@@ -13,6 +13,19 @@ const SAFE_SESSION_ID = /^[a-zA-Z0-9_.:-]{1,512}$/u;
 const SAFE_DIGEST = /^[a-f0-9]{64}$/u;
 const MAX_SESSION_INDEX_ENTRIES = 1_000;
 const SESSION_INDEX_SCAN_LIMIT = MAX_SESSION_INDEX_ENTRIES + 1;
+/** Index entries read per page when finding the sessions a revocation ended. */
+const REVOCATION_SCAN_PAGE_SIZE = 500;
+/** Keys one storage delete call takes at most. */
+const MAX_DELETE_KEYS = 128;
+
+async function deleteKeysInBatches(
+  storage: { delete(keys: string[]): Promise<number> },
+  keys: string[]
+): Promise<void> {
+  for (let offset = 0; offset < keys.length; offset += MAX_DELETE_KEYS) {
+    await storage.delete(keys.slice(offset, offset + MAX_DELETE_KEYS));
+  }
+}
 
 export type AccountAuthenticationLifecycle =
   | 'active'
@@ -50,6 +63,8 @@ interface SessionRevocationTransactionStorage {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<boolean>;
+  delete(keys: string[]): Promise<number>;
+  list<T>(options: { prefix: string; limit: number; startAfter?: string }): Promise<Map<string, T>>;
 }
 
 export interface UserSessionIndexEntry {
@@ -339,7 +354,7 @@ export class SessionRevocationStore extends DurableObject<Env> {
         active.push(entry);
       }
     }
-    if (expiredKeys.length > 0) await this.ctx.storage.delete(expiredKeys);
+    await deleteKeysInBatches(this.ctx.storage, expiredKeys);
     return active.sort((left, right) => right.createdAtMs - left.createdAtMs);
   }
 
@@ -492,6 +507,58 @@ export class SessionRevocationStore extends DurableObject<Env> {
     operationId: string,
     revokeSessions: boolean
   ): Promise<AccountAuthenticationSnapshot> {
+    return (
+      await this.applyAccountLifecycle(
+        tenantId,
+        userId,
+        accountId,
+        lifecycle,
+        sourceVersionMs,
+        operationId,
+        revokeSessions,
+        null
+      )
+    ).state;
+  }
+
+  /**
+   * As `setAccountLifecycleRpc`, also returning the unexpired sessions this transition ended,
+   * read in the same transaction as the epoch move: a session an earlier or a concurrent
+   * revocation ended is not among them. A transition taken before (a retry) ended none.
+   */
+  async setAccountLifecycleEndingSessionsRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    lifecycle: AccountAuthenticationLifecycle,
+    sourceVersionMs: number,
+    operationId: string,
+    revokeSessions: boolean,
+    nowMs: number
+  ): Promise<{ state: AccountAuthenticationSnapshot; endedSessions: UserSessionIndexEntry[] }> {
+    return this.applyAccountLifecycle(
+      tenantId,
+      userId,
+      accountId,
+      lifecycle,
+      sourceVersionMs,
+      operationId,
+      revokeSessions,
+      this.validateTimestamp(nowMs, 'session_list')
+    );
+  }
+
+  private async applyAccountLifecycle(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    lifecycle: AccountAuthenticationLifecycle,
+    sourceVersionMs: number,
+    operationId: string,
+    revokeSessions: boolean,
+    /** When to read the sessions it ended against; null: not read (none returned). */
+    nowMs: number | null
+  ): Promise<{ state: AccountAuthenticationSnapshot; endedSessions: UserSessionIndexEntry[] }> {
     const identity = this.validateIdentity(tenantId, userId, accountId);
     const validatedLifecycle = this.validateLifecycle(lifecycle);
     const version = this.validateTimestamp(sourceVersionMs, 'account_auth_state');
@@ -506,7 +573,7 @@ export class SessionRevocationStore extends DurableObject<Env> {
       }
       if (state.lifecycleVersionMs === version) {
         if (state.lifecycle === validatedLifecycle && state.lifecycleOperationId === operationId) {
-          return state;
+          return { state, endedSessions: [] };
         }
         throw new Error('account_authentication_lifecycle_conflict');
       }
@@ -514,7 +581,7 @@ export class SessionRevocationStore extends DurableObject<Env> {
       // stays so, whatever a transition of a later version asks. Starting a deletion again once
       // it is done (a retry of the steps after it) is answered with the done state.
       if (state.lifecycle === 'deleted' && validatedLifecycle === 'deleting') {
-        return state;
+        return { state, endedSessions: [] };
       }
       if (
         (state.lifecycle === 'deleting' &&
@@ -534,8 +601,55 @@ export class SessionRevocationStore extends DurableObject<Env> {
           : state.revokedAfterMs,
       } satisfies AccountAuthenticationSnapshot;
       await storage.put(STATE_KEY, next);
-      return next;
+      return {
+        state: next,
+        endedSessions: await this.sessionsRevokedBetween(
+          storage,
+          state.revokedAfterMs,
+          next.revokedAfterMs,
+          nowMs
+        ),
+      };
     });
+  }
+
+  /**
+   * The unexpired sessions the epoch moving from `previous` to `next` revoked (none when it did
+   * not move, or when `nowMs` is null: the caller does not need them). Read inside the
+   * transaction that moved it. A revoked session stays in the index until it expires or is
+   * logged out; expired entries met on the way are removed. The whole index is read, page by
+   * page: a session this revocation ended is never left out, however many entries come first.
+   */
+  private async sessionsRevokedBetween(
+    storage: SessionRevocationTransactionStorage,
+    previous: number | null,
+    next: number | null,
+    nowMs: number | null
+  ): Promise<UserSessionIndexEntry[]> {
+    if (nowMs === null || next === null || (previous !== null && next <= previous)) return [];
+    const ended: UserSessionIndexEntry[] = [];
+    let startAfter: string | undefined;
+    for (;;) {
+      const page = await storage.list<UserSessionIndexEntry>({
+        prefix: SESSION_INDEX_PREFIX,
+        limit: REVOCATION_SCAN_PAGE_SIZE,
+        ...(startAfter ? { startAfter } : {}),
+      });
+      const expiredKeys: string[] = [];
+      for (const [key, entry] of page) {
+        startAfter = key;
+        if (entry.expiresAtMs <= nowMs) {
+          expiredKeys.push(key);
+        } else if (
+          entry.revocationBoundAtMs <= next &&
+          (previous === null || entry.revocationBoundAtMs > previous)
+        ) {
+          ended.push(entry);
+        }
+      }
+      await deleteKeysInBatches(storage, expiredKeys);
+      if (page.size < REVOCATION_SCAN_PAGE_SIZE) return ended;
+    }
   }
 
   async assertAccountActiveRpc(
@@ -647,6 +761,37 @@ export class SessionRevocationStore extends DurableObject<Env> {
     accountId: string,
     revokedAfterMs: number
   ): Promise<number> {
+    return (await this.revokeAll(tenantId, userId, accountId, revokedAfterMs, null)).revokedAfterMs;
+  }
+
+  /**
+   * As `revokeAllRpc`, also returning the unexpired sessions this revocation ended, read in the
+   * same transaction as the epoch move.
+   */
+  async revokeAllEndingSessionsRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    revokedAfterMs: number,
+    nowMs: number
+  ): Promise<{ revokedAfterMs: number; endedSessions: UserSessionIndexEntry[] }> {
+    return this.revokeAll(
+      tenantId,
+      userId,
+      accountId,
+      revokedAfterMs,
+      this.validateTimestamp(nowMs, 'session_list')
+    );
+  }
+
+  private async revokeAll(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    revokedAfterMs: number,
+    /** When to read the sessions it ended against; null: not read (none returned). */
+    nowMs: number | null
+  ): Promise<{ revokedAfterMs: number; endedSessions: UserSessionIndexEntry[] }> {
     const identity = this.validateIdentity(tenantId, userId, accountId);
     const requested = this.validateTimestamp(revokedAfterMs, 'session_revocation');
     return this.ctx.storage.transaction(async (storage) => {
@@ -660,7 +805,15 @@ export class SessionRevocationStore extends DurableObject<Env> {
         ...state,
         revokedAfterMs: effectiveRevokedAfterMs,
       } satisfies SessionRevocationState);
-      return effectiveRevokedAfterMs;
+      return {
+        revokedAfterMs: effectiveRevokedAfterMs,
+        endedSessions: await this.sessionsRevokedBetween(
+          storage,
+          state.revokedAfterMs,
+          effectiveRevokedAfterMs,
+          nowMs
+        ),
+      };
     });
   }
 

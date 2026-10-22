@@ -6,7 +6,9 @@
  * https://openid.net/specs/openid-connect-backchannel-1_0.html
  *
  * When a user logs out at the IdP, the IdP sends a logout token to this endpoint.
- * The RP (Authrim) validates the token and terminates associated sessions.
+ * The RP (Authrim) validates the token and terminates associated sessions, then tells the
+ * relying parties signed in through those sessions as a user logout does (Back-Channel Logout
+ * tokens and logout webhooks, after the response).
  */
 
 import type { Context } from 'hono';
@@ -24,6 +26,18 @@ import {
   getDiagnosticSessionId,
   DIAGNOSTIC_FLOW_ID_HEADER,
   resolveAccountDataContextByIdentifier,
+  buildRequestIssuerUrl,
+  createAuthContextFromHono,
+  createAuditLog,
+  resolveLogoutConfig,
+  resolveLogoutWebhookConfig,
+  resolveLogoutTargetsFromSessionClientStore,
+  sendBackchannelLogoutFanout,
+  sendLogoutWebhookFanout,
+  DEFAULT_LOGOUT_CONFIG,
+  DEFAULT_LOGOUT_WEBHOOK_CONFIG,
+  type LogoutFanoutSession,
+  type SessionClientRepository,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -57,6 +71,14 @@ interface LogoutTokenClaims {
   nonce?: never;
 }
 
+/** An Authrim session this notice ended. */
+interface EndedSession {
+  sessionId: string;
+  userId: string;
+}
+
+type ModuleLogger = ReturnType<ReturnType<typeof getLogger>['module']>;
+
 /**
  * Handle backchannel logout request from IdP
  *
@@ -73,6 +95,9 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
   c.header('Cache-Control', 'no-store');
   let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
   let logoutTokenValidated = false;
+  let providerId: string | undefined;
+  // Sessions ended so far: their relying parties are told even if a later one cannot be ended.
+  const ended: EndedSession[] = [];
 
   try {
     // 1. Get provider configuration
@@ -81,6 +106,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
       log.error('Backchannel logout: Provider not found', { providerIdOrSlug });
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    providerId = provider.id;
 
     try {
       diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
@@ -148,7 +174,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
     }
 
     // 4. Find and invalidate sessions/tokens for the subject
-    const result = await invalidateUserSessions(c.env, tenantId, provider.id, claims, log);
+    const result = await invalidateUserSessions(c.env, tenantId, provider.id, claims, log, ended);
 
     log.info('Backchannel logout processed', {
       provider: provider.name,
@@ -169,6 +195,8 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
           context: {
             identities_affected: result.identitiesAffected,
             sessions_terminated: result.sessionsTerminated,
+            // The downstream logout for these sessions carries this flow id (audit, logs).
+            downstream_logout_sessions: ended.length,
           },
         })
       );
@@ -213,7 +241,10 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
           decision: 'deny',
           reason: 'backchannel_logout_rejected',
           flow: 'backchannel_logout',
-          context: { validation_error: validationError },
+          context: {
+            validation_error: validationError,
+            ...(logoutTokenValidated ? { downstream_logout_sessions: ended.length } : {}),
+          },
         })
       );
     }
@@ -226,6 +257,14 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
       logoutTokenValidated ? AR_ERROR_CODES.INTERNAL_ERROR : AR_ERROR_CODES.VALIDATION_INVALID_VALUE
     );
   } finally {
+    if (ended.length > 0 && providerId) {
+      scheduleDownstreamLogout(c, log, {
+        tenantId,
+        providerId,
+        upstreamFlowId: flowId,
+        sessions: ended,
+      });
+    }
     try {
       await diagnosticLogger?.cleanup();
     } catch (error) {
@@ -233,6 +272,186 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+}
+
+/**
+ * Tell the relying parties signed in through the ended sessions, after the response: the
+ * upstream gets its answer when the sessions have ended, and the downstream sends (with their
+ * retries) run within the time the platform keeps work running after it.
+ */
+function scheduleDownstreamLogout(
+  c: Context<{ Bindings: Env }>,
+  log: ModuleLogger,
+  params: {
+    tenantId: string;
+    providerId: string;
+    upstreamFlowId: string;
+    sessions: EndedSession[];
+  }
+): void {
+  let waitUntil: ((promise: Promise<unknown>) => void) | undefined;
+  try {
+    const executionCtx = c.executionCtx;
+    waitUntil = executionCtx ? (promise) => executionCtx.waitUntil(promise) : undefined;
+  } catch {
+    // Hono throws when the request has no execution context.
+  }
+  if (!waitUntil) {
+    log.warn('Downstream logout not sent: no execution context', {
+      upstreamFlowId: params.upstreamFlowId,
+    });
+    return;
+  }
+  try {
+    const issuer = buildRequestIssuerUrl(c.req.raw, c.env, params.tenantId);
+    const repository = createAuthContextFromHono(c, params.tenantId).repositories.sessionClient;
+    waitUntil(notifyDownstream(c.env, log, { ...params, issuer, repository }));
+  } catch (error) {
+    log.error('Downstream logout not sent', {
+      upstreamFlowId: params.upstreamFlowId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Downstream logout for sessions an upstream notice ended: the same Back-Channel Logout tokens
+ * (each client's own sid), logout webhooks, retries and failure records as a user logout, with
+ * the upstream notice's flow id in the audit records so the two can be followed together.
+ */
+async function notifyDownstream(
+  env: Env,
+  log: ModuleLogger,
+  params: {
+    tenantId: string;
+    providerId: string;
+    upstreamFlowId: string;
+    sessions: EndedSession[];
+    issuer: string;
+    repository: SessionClientRepository;
+  }
+): Promise<void> {
+  // The retry budget counts from here: reading settings and targets uses it too.
+  const startedAt = Date.now();
+  const { tenantId, providerId, upstreamFlowId } = params;
+  try {
+    const [logoutConfig, webhookConfig, sessions] = await Promise.all([
+      resolveLogoutConfig(env, tenantId).catch((error) => {
+        log.warn('Logout settings could not be read', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return DEFAULT_LOGOUT_CONFIG;
+      }),
+      resolveLogoutWebhookConfig(env, tenantId).catch((error) => {
+        log.warn('Logout webhook settings could not be read', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return DEFAULT_LOGOUT_WEBHOOK_CONFIG;
+      }),
+      // Session invalidation leaves the SessionClientStore records, so the targets can be read
+      // after the session has ended.
+      Promise.all(
+        params.sessions.map(async ({ sessionId, userId }): Promise<LogoutFanoutSession> => {
+          const targets = await resolveLogoutTargetsFromSessionClientStore(
+            env,
+            tenantId,
+            sessionId,
+            params.repository,
+            params.issuer
+          ).catch((error) => {
+            log.warn('Failed to load logout clients from SessionClientStore', {
+              sessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
+          });
+          return {
+            sessionId,
+            userId,
+            backchannelClients: targets?.backchannelClients ?? [],
+            webhookClients: targets?.webhookClients ?? [],
+          };
+        })
+      ),
+    ]);
+
+    const audits = sessions.map((session) =>
+      createAuditLog(env, {
+        tenantId,
+        userId: session.userId,
+        action: 'user.logout',
+        resource: 'session',
+        resourceId: session.sessionId,
+        // A server-to-server notice: no user request applies.
+        ipAddress: '',
+        userAgent: '',
+        metadata: JSON.stringify({
+          reason: 'upstream_backchannel_logout',
+          provider_id: providerId,
+          upstream_flow_id: upstreamFlowId,
+          backchannel_client_ids: logoutConfig.backchannel.enabled
+            ? session.backchannelClients.map((client) => client.client_id)
+            : [],
+          webhook_client_ids: webhookConfig.enabled
+            ? session.webhookClients.map((client) => client.client_id)
+            : [],
+        }),
+        severity: 'info',
+      }).catch((error) => {
+        log.error(
+          'Failed to create audit log for upstream logout',
+          { action: 'audit_log' },
+          error as Error
+        );
+      })
+    );
+
+    const [backchannel, webhook] = await Promise.all([
+      sendBackchannelLogoutFanout(env, {
+        tenantId,
+        issuer: params.issuer,
+        sessions,
+        config: logoutConfig.backchannel,
+        startedAt,
+        log,
+        onAlert: async (details) => {
+          await createAuditLog(env, {
+            tenantId,
+            userId: details.userId,
+            action: 'backchannel_logout.failed',
+            resource: 'session',
+            resourceId: details.sessionId,
+            ipAddress: '',
+            userAgent: '',
+            metadata: JSON.stringify({
+              client_id: details.clientId,
+              attempts: details.attempts,
+              trigger: 'upstream_backchannel_logout',
+              provider_id: providerId,
+              upstream_flow_id: upstreamFlowId,
+            }),
+            severity: 'warning',
+          });
+        },
+      }),
+      sendLogoutWebhookFanout(env, {
+        issuer: params.issuer,
+        sessions,
+        config: webhookConfig,
+        log,
+      }),
+      Promise.all(audits),
+    ]);
+
+    log.info('Downstream logout for upstream notice completed', {
+      upstreamFlowId,
+      sessions: sessions.length,
+      backchannel,
+      webhook,
+    });
+  } catch (error) {
+    log.error('Downstream logout for upstream notice failed', { upstreamFlowId }, error as Error);
   }
 }
 
@@ -406,7 +625,8 @@ async function invalidateUserSessions(
   tenantId: string,
   providerId: string,
   claims: LogoutTokenClaims,
-  log: ReturnType<ReturnType<typeof getLogger>['module']>
+  log: ReturnType<ReturnType<typeof getLogger>['module']>,
+  ended: EndedSession[]
 ): Promise<{ identitiesAffected: number; sessionsTerminated: number }> {
   let identitiesAffected = 0;
   let sessionsTerminated = 0;
@@ -495,6 +715,7 @@ async function invalidateUserSessions(
           continue;
         }
         sessionsTerminated++;
+        ended.push({ sessionId: session.sessionId, userId: current.userId });
       } catch {
         terminationFailures++;
         log.warn('Failed to terminate a back-channel logout session');

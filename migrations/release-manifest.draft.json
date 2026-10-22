@@ -107,6 +107,10 @@
             {
               "path": "023_log_row_archive_indexes.sql",
               "checksum": "73dfebb14f693eb2ed41a53bbb6d40a3ee1b27f1fd7edb3d2a3fad6dcf0e796a"
+            },
+            {
+              "path": "024_organization_type_core_vocabulary.sql",
+              "checksum": "4202c5fbbc00078cbce669ed8993b1097cfca465074ba8d5088a12f2a66f4c81"
             }
           ]
         },
@@ -358,6 +362,10 @@
             {
               "path": "047_log_row_archive.sql",
               "checksum": "9016348aa878b2f500436ad817943c76f58d970f5b1ce42647ada2249e203656"
+            },
+            {
+              "path": "048_tenant_backup_import_discards.sql",
+              "checksum": "df10ebed09bf42e58ab18751274a71d867d4f8f553b0ddc0ca26a04a85c2e3f0"
             }
           ]
         },
@@ -664,6 +672,10 @@
         {
           "path": "023_log_row_archive_indexes.sql",
           "checksum": "73dfebb14f693eb2ed41a53bbb6d40a3ee1b27f1fd7edb3d2a3fad6dcf0e796a"
+        },
+        {
+          "path": "024_organization_type_core_vocabulary.sql",
+          "checksum": "4202c5fbbc00078cbce669ed8993b1097cfca465074ba8d5088a12f2a66f4c81"
         }
       ]
     },
@@ -923,6 +935,10 @@
         {
           "path": "047_log_row_archive.sql",
           "checksum": "9016348aa878b2f500436ad817943c76f58d970f5b1ce42647ada2249e203656"
+        },
+        {
+          "path": "048_tenant_backup_import_discards.sql",
+          "checksum": "df10ebed09bf42e58ab18751274a71d867d4f8f553b0ddc0ca26a04a85c2e3f0"
         }
       ]
     },

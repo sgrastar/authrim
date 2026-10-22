@@ -198,6 +198,15 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 		'The default binding of logout requests, used when the metadata offers both or names none. A provider profile that sets its own (the legacy profile) keeps it.',
 	'set.k.federation.saml_slo_binding.HTTP-POST': 'HTTP-POST',
 	'set.k.federation.saml_slo_binding.HTTP-Redirect': 'HTTP-Redirect',
+	'set.section.samlInstitution': 'Institution',
+	'set.section.samlInstitution.desc':
+		'The institution this tenant stands for: the domains its identifiers are issued under, and its name. Only the platform can change them; tenant administrators can read them. Until they are set, nothing in the SAML assertions or metadata changes.',
+	'set.k.institution.scopes': 'Scopes',
+	'set.k.institution.scopes.desc':
+		'Domain names, separated by commas, the first being the default (for example example.ac.jp,med.example.ac.jp). Lowercase, no wildcards, up to 20. Once set, SAML assertions carry eduPersonScopedAffiliation and eduPersonPrincipalName only under these domains: a value under another domain is left out and recorded in the audit log, and a value with no domain gets the default. The metadata lists them (shibmd:Scope), and a service provider can be given the default as schacHomeOrganization. Do not change them while service providers rely on the old ones: they cache the metadata for up to a day. OIDC is not affected.',
+	'set.k.institution.display_names': 'Names',
+	'set.k.institution.display_names.desc':
+		'The institution’s name in each language, as JSON text with ja and en at least (for example {"ja": "例大学", "en": "Example University"}). Once set, the SAML metadata names the institution with it, and a service provider can be given the English name as the organization name (o). OIDC is not affected.',
 	'set.k.oauth.id_token_signing_alg.RS256': 'RS256',
 	'set.k.oauth.id_token_signing_alg.ES256': 'ES256',
 	'set.k.oauth.id_token_signing_alg.PS256': 'PS256',

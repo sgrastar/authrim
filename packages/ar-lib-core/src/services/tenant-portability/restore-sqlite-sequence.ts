@@ -245,6 +245,11 @@ function isJob(value: unknown): value is Job {
   );
 }
 
+/** Decode the sealed sequence item; also read by cleanup, which must not reload the plan. */
+export function decodeSqliteRestoreSequenceJobs(value: string): PlannedSqliteRestoreSequenceJob[] {
+  return decodeJobs(value);
+}
+
 function decodeJobs(value: string): Job[] {
   let decoded: unknown;
   try {

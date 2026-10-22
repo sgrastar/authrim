@@ -5,6 +5,7 @@ import { SessionRevocationStore } from '../SessionRevocationStore';
 class MockDurableObjectState implements Partial<DurableObjectState> {
   private readonly data: Map<string, unknown>;
   storage: DurableObjectStorage;
+  listCalls = 0;
 
   constructor(data = new Map<string, unknown>()) {
     this.data = data;
@@ -16,6 +17,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         return Promise.resolve();
       },
       delete: (key: string | string[]): Promise<boolean | number> => {
+        // Durable Object storage takes at most 128 keys per delete.
+        if (Array.isArray(key) && key.length > 128) {
+          return Promise.reject(new Error('delete takes at most 128 keys'));
+        }
         if (Array.isArray(key)) {
           let deleted = 0;
           for (const item of key) deleted += this.data.delete(item) ? 1 : 0;
@@ -23,15 +28,22 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         }
         return Promise.resolve(this.data.delete(key));
       },
-      list: <T>(options?: { prefix?: string; limit?: number }): Promise<Map<string, T>> =>
-        Promise.resolve(
+      list: <T>(options?: {
+        prefix?: string;
+        limit?: number;
+        startAfter?: string;
+      }): Promise<Map<string, T>> => {
+        this.listCalls++;
+        return Promise.resolve(
           new Map(
             [...this.data.entries()]
               .filter(([key]) => (options?.prefix ? key.startsWith(options.prefix) : true))
-              .sort(([left], [right]) => left.localeCompare(right))
+              .filter(([key]) => (options?.startAfter ? key > options.startAfter : true))
+              .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
               .slice(0, options?.limit) as [string, T][]
           )
-        ),
+        );
+      },
       transaction: <T>(closure: (txn: DurableObjectStorage) => Promise<T>): Promise<T> =>
         closure(this.storage),
     } as unknown as DurableObjectStorage;
@@ -44,9 +56,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 
 describe('SessionRevocationStore', () => {
   let store: SessionRevocationStore;
+  let state: MockDurableObjectState;
 
   beforeEach(() => {
-    const state = new MockDurableObjectState();
+    state = new MockDurableObjectState();
     store = new SessionRevocationStore(state as unknown as DurableObjectState, {} as Env);
   });
 
@@ -207,6 +220,198 @@ describe('SessionRevocationStore', () => {
     await store.revokeAllRpc('tenant-a', 'user-a', 'account:user-a', 2_000);
     await expect(
       store.listActiveSessionsRpc('tenant-a', 'user-a', 'account:user-a', 2_100)
+    ).resolves.toEqual([]);
+  });
+
+  it('returns the unexpired sessions a revocation ended, not those of an earlier one', async () => {
+    const register = (sessionId: string, atMs: number, expiresAtMs: number) =>
+      store.registerSessionRpc(
+        'tenant-a',
+        'user-a',
+        'account:user-a',
+        atMs,
+        sessionId,
+        expiresAtMs
+      );
+    await register('session-old', 1_000, 9_000);
+    await expect(
+      store.revokeAllEndingSessionsRpc('tenant-a', 'user-a', 'account:user-a', 1_500, 1_600)
+    ).resolves.toEqual({
+      revokedAfterMs: 1_500,
+      endedSessions: [expect.objectContaining({ sessionId: 'session-old' })],
+    });
+    await register('session-1', 2_000, 9_000);
+    await register('session-2', 2_500, 9_000);
+    await register('session-expired', 2_200, 2_900);
+
+    const suspended = await store.setAccountLifecycleEndingSessionsRpc(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      'suspended',
+      3_000,
+      'op-1',
+      true,
+      3_000
+    );
+    expect(suspended.state).toMatchObject({ lifecycle: 'suspended', revokedAfterMs: 3_000 });
+    expect(suspended.endedSessions.map((entry) => entry.sessionId).sort()).toEqual([
+      'session-1',
+      'session-2',
+    ]);
+    // The expired entry met on the way is gone.
+    await expect(
+      store.listActiveSessionsRpc('tenant-a', 'user-a', 'account:user-a', 1_000)
+    ).resolves.not.toContainEqual(expect.objectContaining({ sessionId: 'session-expired' }));
+
+    // A retry of the same transition ended nothing more; the epoch not moving ends nothing.
+    await expect(
+      store.setAccountLifecycleEndingSessionsRpc(
+        'tenant-a',
+        'user-a',
+        'account:user-a',
+        'suspended',
+        3_000,
+        'op-1',
+        true,
+        3_100
+      )
+    ).resolves.toMatchObject({ endedSessions: [] });
+    await expect(
+      store.revokeAllEndingSessionsRpc('tenant-a', 'user-a', 'account:user-a', 2_000, 3_100)
+    ).resolves.toEqual({ revokedAfterMs: 3_000, endedSessions: [] });
+    // A transition that does not revoke ends nothing.
+    await expect(
+      store.setAccountLifecycleEndingSessionsRpc(
+        'tenant-a',
+        'user-a',
+        'account:user-a',
+        'active',
+        4_000,
+        'op-2',
+        false,
+        4_000
+      )
+    ).resolves.toMatchObject({ endedSessions: [] });
+    await expect(
+      store.revokeAllEndingSessionsRpc('tenant-b', 'user-a', 'account:user-a', 5_000, 5_000)
+    ).rejects.toThrow('session_revocation_identity_mismatch');
+  });
+
+  it('ends the last session signed in when the epoch moves to its sign-in time', async () => {
+    // A transition of a version older than the last sign-in moves the epoch to that sign-in, the
+    // revocation bound of the last session: that session ended too.
+    await store.registerSessionRpc(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      5_000,
+      'session-last',
+      9_000
+    );
+    const result = await store.setAccountLifecycleEndingSessionsRpc(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      'locked',
+      3_000,
+      'op-lock',
+      true,
+      5_100
+    );
+    expect(result.state.revokedAfterMs).toBe(5_000);
+    expect(result.endedSessions.map((entry) => entry.sessionId)).toEqual(['session-last']);
+  });
+
+  it('does not read the session index on revocations that do not ask for the ended sessions', async () => {
+    await store.registerSessionRpc(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      1_000,
+      'session-1',
+      9_000
+    );
+    state.listCalls = 0;
+    await store.revokeAllRpc('tenant-a', 'user-a', 'account:user-a', 2_000);
+    await store.setAccountLifecycleRpc(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      'suspended',
+      3_000,
+      'op-1',
+      true
+    );
+    expect(state.listCalls).toBe(0);
+  });
+
+  it('finds a session that ended behind any number of expired index entries', async () => {
+    const data = new Map<string, unknown>();
+    const seeded = new SessionRevocationStore(
+      new MockDurableObjectState(data) as unknown as DurableObjectState,
+      {} as Env
+    );
+    await seeded.registerSessionRpc(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      1_000,
+      'zz-live',
+      9_000
+    );
+    // Entries sorting before the live one, all expired (left behind by sessions never listed).
+    for (let i = 0; i < 20_600; i++) {
+      const sessionId = `expired-${String(i).padStart(5, '0')}`;
+      data.set(`session-index:${sessionId}`, {
+        sessionId,
+        tenantId: 'tenant-a',
+        userId: 'user-a',
+        accountId: 'account:user-a',
+        createdAtMs: 1_000,
+        expiresAtMs: 1_500,
+        revocationBoundAtMs: 1_000,
+        ipAddress: null,
+        userAgent: null,
+      });
+    }
+
+    const result = await seeded.revokeAllEndingSessionsRpc(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      2_000,
+      2_000
+    );
+    expect(result.endedSessions.map((entry) => entry.sessionId)).toEqual(['zz-live']);
+    expect([...data.keys()].filter((key) => key.startsWith('session-index:'))).toEqual([
+      'session-index:zz-live',
+    ]);
+  });
+
+  it('finds the ended sessions behind more than a page of expired index entries', async () => {
+    for (let i = 0; i < 1_200; i++) {
+      await store.registerSessionRpc(
+        'tenant-a',
+        'user-a',
+        'account:user-a',
+        1_000,
+        `expired-${String(i).padStart(4, '0')}`,
+        1_500
+      );
+    }
+    await store.registerSessionRpc('tenant-a', 'user-a', 'account:user-a', 1_000, 'zz-live', 9_000);
+
+    const result = await store.revokeAllEndingSessionsRpc(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      2_000,
+      2_000
+    );
+    expect(result.endedSessions.map((entry) => entry.sessionId)).toEqual(['zz-live']);
+    await expect(
+      store.listActiveSessionsRpc('tenant-a', 'user-a', 'account:user-a', 2_000)
     ).resolves.toEqual([]);
   });
 

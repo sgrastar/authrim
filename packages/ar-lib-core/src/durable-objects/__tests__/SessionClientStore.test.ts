@@ -99,6 +99,28 @@ describe('SessionClientStore', () => {
     ).resolves.toEqual([second]);
   });
 
+  it("records the client's ID token sub, and keeps it when a registration gives none", async () => {
+    const register = (oidcSub: string | undefined, now: number) =>
+      store.registerClientRpc({
+        tenantId: 'tenant-a',
+        sessionId: 'session-a',
+        clientId: 'client-a',
+        oidcSid: 'sid-a',
+        ...(oidcSub !== undefined ? { oidcSub } : {}),
+        now,
+      });
+
+    await expect(register(' pairwise-sub ', 100)).resolves.toMatchObject({
+      oidc_sub: ' pairwise-sub ',
+    });
+    await expect(register(undefined, 200)).resolves.toMatchObject({ oidc_sub: ' pairwise-sub ' });
+    await expect(register('', 300)).resolves.toMatchObject({ oidc_sub: ' pairwise-sub ' });
+    await expect(register('newer-sub', 400)).resolves.toMatchObject({ oidc_sub: 'newer-sub' });
+    await expect(
+      store.listClientsRpc({ tenantId: 'tenant-a', sessionId: 'session-a' })
+    ).resolves.toEqual([expect.objectContaining({ oidc_sub: 'newer-sub', last_token_at: 400 })]);
+  });
+
   it('rejects cross-session reuse of the same durable object instance', async () => {
     await store.registerClientRpc({
       tenantId: 'tenant-a',

@@ -12,10 +12,13 @@ type SnapshotResolver = TenantBackupOperationCleanupAdapter['resolveSnapshotSour
 /** Product-specific cleanup ports; every callback is compiled into the deployed Worker. */
 export interface TenantBackupInstalledCleanupPorts {
   resolveSnapshotSource: SnapshotResolver;
+  /** Import only: settle the restore target discard before anything is removed. */
+  prepareImportCleanup?(context: TenantBackupStepContext): Promise<{ done: boolean }>;
+  /** Clean one page of one restore target; `done` only once nothing of the import remains there. */
   cleanupRestoreTarget(
     context: TenantBackupStepContext,
     target: Readonly<TenantBackupRestoreCleanupTarget>
-  ): Promise<void>;
+  ): Promise<{ done: boolean }>;
   cleanupAdditionalPage(context: TenantBackupStepContext): Promise<{ done: boolean }>;
   assertClean(context: TenantBackupStepContext): Promise<void>;
 }
@@ -29,6 +32,9 @@ export function createTenantBackupInstalledCleanupAdapter(
   const database = requireDedicatedAdminDatabaseAdapter(env, 'tenant-backup');
   return {
     abortBoundary: (context) => abortTenantBackupBoundary(env, context, now),
+    ...(ports.prepareImportCleanup
+      ? { prepareImportCleanup: (context) => ports.prepareImportCleanup!(context) }
+      : {}),
     resolveSnapshotSource: (resourceId, signal) => ports.resolveSnapshotSource(resourceId, signal),
     cleanupStagingPage: (context) =>
       cleanupTenantBackupRestoreTargetPage({

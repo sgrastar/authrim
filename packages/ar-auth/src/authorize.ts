@@ -4899,6 +4899,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Generate ID token if needed (for implicit and hybrid flows)
   let idToken: string | undefined;
+  // The sub the ID token carries for this app (its identity mapping may issue another than the
+  // user's id): recorded with the session-client so its logout token names the user the same way.
+  let idTokenSubject: string | undefined;
   if (includesIdToken) {
     try {
       // Get issuer from environment
@@ -5054,6 +5057,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         idTokenLifetimeSeconds,
         idTokenSigningAlgorithm
       );
+      idTokenSubject = typeof idTokenClaims.sub === 'string' ? idTokenClaims.sub : undefined;
 
       log.info('Generated id_token for hybrid/implicit flow', {
         action: 'id_token_generate',
@@ -5082,6 +5086,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         session_id: sessionId,
         client_id: validClientId,
         oidc_sid: oidcSid,
+        ...(idTokenSubject ? { oidc_sub: idTokenSubject } : {}),
       };
       const storeRegistrationPromise = registerSessionClientInStore(
         c.env,
