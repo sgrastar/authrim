@@ -17,6 +17,7 @@
 import {
   createAuditLog,
   createLogger,
+  purgeEndedSessionsFromSessionClientStore,
   requireDedicatedAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveLogoutConfig,
@@ -354,6 +355,15 @@ export async function sendAdminSessionEndLogout(
   ) {
     throw new Error('session_end_logout_webhook_not_sent');
   }
+
+  // Every relying party has been told: the sessions' records are no longer needed. Only here,
+  // after the checks above: a job that throws is retried and reads the targets again. A failed
+  // removal is left to the store's expiry.
+  await purgeEndedSessionsFromSessionClientStore(
+    env,
+    tenantId,
+    params.sessions.map((session) => session.sessionId)
+  );
 
   const summary = { sessions: sessions.length, backchannel, webhook };
   log.info('Downstream logout for admin session end completed', {

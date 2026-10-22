@@ -39,6 +39,7 @@ import {
   resolveSessionIdFromOidcSidStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
   resolveLogoutIssuer,
+  purgeEndedSessionsFromSessionClientStore,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
   resolveLogoutConfig,
@@ -667,7 +668,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // The logout tokens and webhooks carry the tenant's canonical issuer, not one made from the
     // host this request came in on. The lookup starts here and the sending, after the response,
-    // waits for it; when it fails nothing is sent (there is no other issuer to sign with) and the error is logged.
+    // waits for it; when it fails nothing is sent (there is no other issuer to sign with) and the
+    // error is logged.
     const logoutIssuer =
       deletedSessions.length > 0 && c.executionCtx
         ? resolveLogoutIssuer(c.env, tenantId).catch((error) => {
@@ -680,41 +682,45 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           })
         : null;
 
+    // The notices below read nothing more from the SessionClientStore (the targets were collected
+    // before the sessions ended); the ended sessions' records are removed once they have finished.
+    const logoutFanouts: Promise<unknown>[] = [];
+
     if (logoutIssuer && c.executionCtx) {
-      c.executionCtx.waitUntil(
-        (async () => {
-          // The retry budget counts from when this work starts: loading keys uses it too.
-          const startedAt = Date.now();
-          const tokenIssuer = await logoutIssuer;
-          if (!tokenIssuer) return;
-          await sendBackchannelLogoutFanout(c.env, {
-            tenantId,
-            issuer: tokenIssuer,
-            sessions: sessionsToNotify,
-            config: logoutConfig.backchannel,
-            startedAt,
-            log,
-            // A final failure with on_failure 'error' (alert) is written to the audit log.
-            onAlert: async (details) => {
-              await createAuditLog(c.env, {
-                tenantId,
-                userId: details.userId,
-                action: 'backchannel_logout.failed',
-                resource: 'session',
-                resourceId: details.sessionId,
-                // Sent from the server after the response: no client request applies.
-                ipAddress: '',
-                userAgent: '',
-                metadata: JSON.stringify({
-                  client_id: details.clientId,
-                  attempts: details.attempts,
-                }),
-                severity: 'warning',
-              });
-            },
-          });
-        })()
-      );
+      const backchannelFanout = (async () => {
+        // The retry budget counts from when this work starts: loading keys uses it too.
+        const startedAt = Date.now();
+        const tokenIssuer = await logoutIssuer;
+        if (!tokenIssuer) return;
+        await sendBackchannelLogoutFanout(c.env, {
+          tenantId,
+          issuer: tokenIssuer,
+          sessions: sessionsToNotify,
+          config: logoutConfig.backchannel,
+          startedAt,
+          log,
+          // A final failure with on_failure 'error' (alert) is written to the audit log.
+          onAlert: async (details) => {
+            await createAuditLog(c.env, {
+              tenantId,
+              userId: details.userId,
+              action: 'backchannel_logout.failed',
+              resource: 'session',
+              resourceId: details.sessionId,
+              // Sent from the server after the response: no client request applies.
+              ipAddress: '',
+              userAgent: '',
+              metadata: JSON.stringify({
+                client_id: details.clientId,
+                attempts: details.attempts,
+              }),
+              severity: 'warning',
+            });
+          },
+        });
+      })();
+      logoutFanouts.push(backchannelFanout);
+      c.executionCtx.waitUntil(backchannelFanout);
     }
 
     // ========================================
@@ -723,18 +729,34 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Use waitUntil() to send webhook notifications without blocking the response
     // This is an Authrim extension for clients that don't support OIDC Back-Channel Logout
     if (logoutIssuer && c.executionCtx) {
+      const webhookFanout = (async () => {
+        const webhookConfig = await getLogoutWebhookConfig(c.env, tenantId);
+        const webhookIssuer = await logoutIssuer;
+        if (!webhookIssuer) return;
+        await sendLogoutWebhookFanout(c.env, {
+          issuer: webhookIssuer,
+          sessions: sessionsToNotify,
+          config: webhookConfig,
+          log,
+        });
+      })();
+      logoutFanouts.push(webhookFanout);
+      c.executionCtx.waitUntil(webhookFanout);
+    }
+
+    // ========================================
+    // Step 2.7: Remove the ended sessions from the SessionClientStore (async)
+    // ========================================
+    // Only after both notices have finished (with their retries): a removal before them would
+    // leave a later read of the targets with nothing. A failed removal does not touch the notices'
+    // results; the store's expiry removes what it leaves. When the tenant issuer could not be
+    // resolved nothing was sent, so nothing is removed either: the records stay until they expire.
+    if (logoutIssuer && c.executionCtx) {
       c.executionCtx.waitUntil(
-        (async () => {
-          const webhookConfig = await getLogoutWebhookConfig(c.env, tenantId);
-          const webhookIssuer = await logoutIssuer;
-          if (!webhookIssuer) return;
-          await sendLogoutWebhookFanout(c.env, {
-            issuer: webhookIssuer,
-            sessions: sessionsToNotify,
-            config: webhookConfig,
-            log,
-          });
-        })()
+        Promise.allSettled(logoutFanouts).then(async () => {
+          if (!(await logoutIssuer)) return;
+          await purgeEndedSessionsFromSessionClientStore(c.env, tenantId, deletedSessions);
+        })
       );
     }
 

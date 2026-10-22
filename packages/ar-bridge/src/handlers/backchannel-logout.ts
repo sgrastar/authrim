@@ -33,6 +33,7 @@ import {
   resolveLogoutWebhookConfig,
   resolveLogoutTargetsFromSessionClientStore,
   resolveLogoutIssuer,
+  purgeEndedSessionsFromSessionClientStore,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
   DEFAULT_LOGOUT_CONFIG,
@@ -458,6 +459,14 @@ async function notifyDownstream(
       backchannel,
       webhook,
     });
+
+    // The notices (with their retries) have finished: the ended sessions' records are no longer
+    // needed. A failed removal is left to the store's expiry.
+    await purgeEndedSessionsFromSessionClientStore(
+      env,
+      tenantId,
+      params.sessions.map((session) => session.sessionId)
+    );
   } catch (error) {
     log.error('Downstream logout for upstream notice failed', { upstreamFlowId }, error as Error);
   }

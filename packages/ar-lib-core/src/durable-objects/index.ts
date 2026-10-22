@@ -45,6 +45,7 @@ export type {
   SessionRegistrationResult,
 } from './SessionRevocationStore';
 export type {
+  DeletedSessionClients,
   RegisterSessionClientRequest,
   SessionClientRecord,
   UpdateSessionClientActivityRequest,
