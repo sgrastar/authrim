@@ -32,7 +32,7 @@
     "@hono/node-server": "^1.19.13",
     "@inquirer/prompts": "^7.2.1",
     "chalk": "^6.0.1",
-    "commander": "^12.1.0",
+    "commander": "^15.0.0",
     "degit": "^2.8.6",
     "execa": "^10.0.1",
     "hono": "4.13.2",
@@ -67,6 +67,6 @@
     "directory": "packages/setup"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   }
 }

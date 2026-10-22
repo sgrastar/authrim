@@ -160,7 +160,7 @@
     "globals": "^15.15.0",
     "prettier": "^3.6.2",
     "tsx": "^4.23.15",
-    "turbo": "^2.9.17",
+    "turbo": "^2.11.9",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
     "wrangler": "^4.148.0",
@@ -170,7 +170,7 @@
     "@esbuild/linux-x64": "^0.25.12"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "pnpm": {
     "overrides": {
