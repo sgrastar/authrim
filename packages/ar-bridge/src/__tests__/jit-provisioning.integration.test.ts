@@ -164,7 +164,7 @@ const {
 
   // Mock functions for role/org operations
   const joinOrgMock = vi.fn().mockResolvedValue({ success: true });
-  const assignRoleMock = vi.fn().mockResolvedValue(undefined);
+  const assignRoleMock = vi.fn().mockResolvedValue({ success: true });
   const resolveAccountDataContextByIdentifierMock = vi.fn();
   const resolveTenantMetadataContextMock = vi.fn();
   type ProvisioningRequest = {
@@ -265,7 +265,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveOrgByDomainHash: mockResolveOrgByDomainHash,
     resolveAllOrgsByDomainHash: vi.fn().mockResolvedValue([]),
     joinOrganization: mockJoinOrganization,
-    assignRoleToUser: mockAssignRoleToUser,
+    assignScopedRoleToUser: mockAssignRoleToUser,
     generateEmailDomainHashWithVersion: mockGenerateEmailDomainHash,
     getEmailDomainHashConfig: vi.fn().mockResolvedValue({
       current_version: 1,
@@ -309,8 +309,9 @@ vi.mock('../services/linked-identity-store', () => ({
   activatePendingLinkedIdentity: mockActivatePendingIdentity,
 }));
 
-import { handleIdentity } from '../services/identity-stitching';
+import { completeTenantD1ExternalIdpJIT, handleIdentity } from '../services/identity-stitching';
 import * as linkedIdentityStore from '../services/linked-identity-store';
+import { decrypt, encrypt, getEncryptionKey } from '../utils/crypto';
 
 // =============================================================================
 // Test Fixtures
@@ -384,6 +385,8 @@ describe('JIT Provisioning Integration', () => {
       denied: false,
     });
     mockResolveOrgByDomainHash.mockResolvedValue(null);
+    mockJoinOrganization.mockReset().mockResolvedValue({ success: true });
+    mockAssignRoleToUser.mockReset().mockResolvedValue({ success: true });
     mockGenerateEmailDomainHash.mockResolvedValue({
       hash: 'mock-domain-hash-abc123',
       version: 1,
@@ -545,6 +548,211 @@ describe('JIT Provisioning Integration', () => {
           allow_unverified_domain_mappings: false,
         })
       );
+    });
+
+    it('gives the role a matched domain mapping names, scoped to its organisation', async () => {
+      vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+      mockCoreQueryOne.mockResolvedValue(null);
+      mockPiiQueryOne.mockResolvedValue(null);
+      mockResolveOrgByDomainHash.mockResolvedValue({
+        org_id: 'org-company',
+        auto_join_enabled: true,
+        auto_assign_role_id: 'role_member',
+        membership_type: 'member',
+        verified: true,
+        priority: 0,
+      });
+
+      const result = await handleIdentity(mockEnv as never, {
+        provider: mockProvider,
+        userInfo: mockUserInfo,
+        tokens: mockTokenResponse,
+        tenantId: 'default',
+      });
+
+      expect(mockAssignRoleToUser).toHaveBeenCalledTimes(1);
+      expect(mockAssignRoleToUser).toHaveBeenCalledWith(
+        mockEnv.DB,
+        result.userId,
+        'role_member',
+        'org',
+        'org:org-company',
+        'default'
+      );
+      // The mapping's role counts as assigned, so the default role is not added.
+      expect(result.roles_assigned).toEqual([
+        { role_id: 'role_member', scope_type: 'org', scope_target: 'org:org-company' },
+      ]);
+      expect(result.orgs_joined).toEqual(['org-company']);
+    });
+
+    it('gives no organisation role when the user could not join that organisation', async () => {
+      vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+      mockCoreQueryOne.mockResolvedValue(null);
+      mockPiiQueryOne.mockResolvedValue(null);
+      mockResolveOrgByDomainHash.mockResolvedValue({
+        org_id: 'org-gone',
+        auto_join_enabled: true,
+        auto_assign_role_id: 'role_member',
+        membership_type: 'member',
+        verified: true,
+        priority: 0,
+      });
+      mockJoinOrganization.mockResolvedValue({ success: false, org_id: 'org-gone' });
+
+      const result = await handleIdentity(mockEnv as never, {
+        provider: mockProvider,
+        userInfo: mockUserInfo,
+        tokens: mockTokenResponse,
+        tenantId: 'default',
+      });
+
+      expect(result.orgs_joined).toEqual([]);
+      expect(mockAssignRoleToUser).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        'role_member',
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+      // Only the default role, at global scope.
+      expect(result.roles_assigned).toEqual([
+        { role_id: 'role_end_user', scope_type: 'global', scope_target: '' },
+      ]);
+    });
+
+    it('gives a rule role and a mapping role for the same organisation once each', async () => {
+      vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+      mockCoreQueryOne.mockResolvedValue(null);
+      mockPiiQueryOne.mockResolvedValue(null);
+      mockRuleEvaluator.evaluate.mockResolvedValue({
+        matched_rules: ['rule-1'],
+        roles_to_assign: [
+          { role_id: 'role_member', scope_type: 'org', scope_target: 'auto' },
+          { role_id: 'role_reviewer', scope_type: 'global', scope_target: '' },
+        ],
+        orgs_to_join: [],
+        denied: false,
+      });
+      mockResolveOrgByDomainHash.mockResolvedValue({
+        org_id: 'org-company',
+        auto_join_enabled: true,
+        auto_assign_role_id: 'role_member',
+        membership_type: 'member',
+        verified: true,
+        priority: 0,
+      });
+
+      const result = await handleIdentity(mockEnv as never, {
+        provider: mockProvider,
+        userInfo: mockUserInfo,
+        tokens: mockTokenResponse,
+        tenantId: 'default',
+      });
+
+      expect(result.roles_assigned).toEqual([
+        { role_id: 'role_member', scope_type: 'org', scope_target: 'org:org-company' },
+        { role_id: 'role_reviewer', scope_type: 'global', scope_target: '' },
+      ]);
+      expect(mockAssignRoleToUser).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives no organisation role for an organisation the user did not join, nor a scoped role without a target', async () => {
+      vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+      mockCoreQueryOne.mockResolvedValue(null);
+      mockPiiQueryOne.mockResolvedValue(null);
+      mockRuleEvaluator.evaluate.mockResolvedValue({
+        matched_rules: ['rule-1'],
+        roles_to_assign: [
+          { role_id: 'role_other_org', scope_type: 'org', scope_target: 'org:not-joined' },
+          { role_id: 'role_empty_org', scope_type: 'org', scope_target: '' },
+          { role_id: 'role_empty_resource', scope_type: 'resource', scope_target: '' },
+          { role_id: 'role_doc', scope_type: 'resource', scope_target: 'doc:1' },
+        ],
+        orgs_to_join: ['org-joined'],
+        denied: false,
+      });
+
+      const result = await handleIdentity(mockEnv as never, {
+        provider: mockProvider,
+        userInfo: mockUserInfo,
+        tokens: mockTokenResponse,
+        tenantId: 'default',
+      });
+
+      expect(result.orgs_joined).toEqual(['org-joined']);
+      expect(result.roles_assigned).toEqual([
+        { role_id: 'role_doc', scope_type: 'resource', scope_target: 'doc:1' },
+      ]);
+      expect(mockAssignRoleToUser).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads back a plan with a global rule role when a pending account resumes', async () => {
+      vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+      mockCoreQueryOne.mockResolvedValue(null);
+      mockPiiQueryOne.mockResolvedValue(null);
+      mockRuleEvaluator.evaluate.mockResolvedValue({
+        matched_rules: ['rule-1'],
+        // role_assignment_rules gives a global role an empty target.
+        roles_to_assign: [{ role_id: 'role_reviewer', scope_type: 'global', scope_target: '' }],
+        orgs_to_join: [],
+        denied: false,
+      });
+      const provisioned = await handleIdentity(mockEnv as never, {
+        provider: mockProvider,
+        userInfo: mockUserInfo,
+        tokens: mockTokenResponse,
+        tenantId: 'default',
+      });
+      mockAssignRoleToUser.mockClear();
+
+      const resumed = await completeTenantD1ExternalIdpJIT(mockEnv as never, {
+        tenantId: 'default',
+        userId: provisioned.userId,
+        providerId: mockProvider.id,
+        providerUserId: mockUserInfo.sub,
+      });
+
+      expect(resumed.roles_assigned).toEqual([
+        { role_id: 'role_reviewer', scope_type: 'global', scope_target: '' },
+      ]);
+      expect(mockAssignRoleToUser).toHaveBeenCalledWith(
+        mockEnv.DB,
+        provisioned.userId,
+        'role_reviewer',
+        'global',
+        '',
+        'default'
+      );
+    });
+
+    it('refuses a stored plan with a scoped role that has no target', async () => {
+      vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+      mockCoreQueryOne.mockResolvedValue(null);
+      mockPiiQueryOne.mockResolvedValue(null);
+      const provisioned = await handleIdentity(mockEnv as never, {
+        provider: mockProvider,
+        userInfo: mockUserInfo,
+        tokens: mockTokenResponse,
+        tenantId: 'default',
+      });
+      const key = getEncryptionKey(mockEnv as never);
+      const identity = provisioningState.request!.externalIdentity;
+      const plan = JSON.parse(await decrypt(identity.profileDataEncrypted, key));
+      plan.roleAssignments = [{ roleId: 'role_doc', scopeType: 'resource', scopeTarget: '' }];
+      identity.profileDataEncrypted = await encrypt(JSON.stringify(plan), key);
+      mockAssignRoleToUser.mockClear();
+
+      await expect(
+        completeTenantD1ExternalIdpJIT(mockEnv as never, {
+          tenantId: 'default',
+          userId: provisioned.userId,
+          providerId: mockProvider.id,
+          providerUserId: mockUserInfo.sub,
+        })
+      ).rejects.toThrow('external_idp_jit_plan_invalid');
+      expect(mockAssignRoleToUser).not.toHaveBeenCalled();
     });
   });
 
