@@ -2223,7 +2223,10 @@ paths:
         system source Home Organization to it. While institution.display_names is set, the SAML
         IdP metadata names the organization with it and the English name is released as the
         organization name attribute (o) to a service provider whose field mapping set maps the
-        system source Organization Name to it. A tenant that has set neither is released as before.
+        system source Organization Name to it. A tenant that has set neither releases no
+        schacHomeOrganization and no organization name (o), whatever a mapping produces for them
+        (withheld, reason institution_not_registered), and releases eduPersonScopedAffiliation and
+        eduPersonPrincipalName as before.
       security:
         - adminBearer: []
         - adminSessionCookie: []

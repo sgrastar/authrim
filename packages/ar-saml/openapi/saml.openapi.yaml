@@ -61,12 +61,14 @@ paths:
         in the audit log as saml.attribute.withheld (attribute, reason code and the scope, never
         a value). Values released as schacHomeOrganization or o are held to what the tenant registered: the former only when
         it equals a registered scope, the latter only when it equals a registered name, whatever source
-        the mapping took it from (otherwise withheld, reason organization_not_registered). A service provider
+        the mapping took it from (otherwise withheld, reason organization_not_registered). A tenant
+        that has registered neither a scope nor a name has no institution to name, so neither
+        attribute is released (withheld, reason institution_not_registered). A service provider
         whose field mapping set maps the system sources Home
         Organization (schac_home_organization) or Organization Name (organization_name) to an
         attribute gets the default scope as schacHomeOrganization or the institution's English
-        name as o; nothing is added otherwise. A tenant that has set no scopes is released as
-        before.
+        name as o; nothing is added otherwise. A tenant that has set no scopes releases
+        eduPersonScopedAffiliation and eduPersonPrincipalName as before.
       responses:
         '200':
           $ref: '#/components/responses/Html'
