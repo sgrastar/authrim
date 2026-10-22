@@ -238,6 +238,18 @@ function rowJson(schema: CaptureSchema, alias: string): string {
   return chunks.reduce((previous, chunk) => `json_patch(${previous}, ${chunk})`);
 }
 
+/** A joined snapshot row alias, or a one-row CTE that statements read by scalar subquery. */
+type SnapshotSource = string | { cte: string };
+
+function snapshotColumn(
+  snapshot: SnapshotSource,
+  column: 'id' | 'tenant_id' | 'tenant_key'
+): string {
+  return typeof snapshot === 'string'
+    ? `${snapshot}.${column}`
+    : `(SELECT ${column} FROM ${snapshot.cte})`;
+}
+
 /**
  * `scan` keeps the tenant filter off secondary indexes (unary `+`) so a paged export walks the
  * primary key index in order. A tenant-leading primary key keeps the indexable equality.
@@ -245,7 +257,7 @@ function rowJson(schema: CaptureSchema, alias: string): string {
 function directlyOwned(
   schema: SnapshotTableSchema,
   alias: string,
-  snapshot: string,
+  snapshot: SnapshotSource,
   scan = false
 ): string {
   const identity = schema.tenantIdentity === 'tenantKey' ? 'tenant_key' : 'tenant_id';
@@ -253,7 +265,7 @@ function directlyOwned(
   // A scan may use the tenant equality only through an index ordered by the primary key after it.
   const tenantFilter =
     scan && (schema.primaryKey[0] === schema.tenantColumn || schema.tenantOrderIndex) ? '' : filter;
-  const tenant = `${tenantFilter}${alias}.${identifier(schema.tenantColumn)} = ${snapshot}.${identity}`;
+  const tenant = `${tenantFilter}${alias}.${identifier(schema.tenantColumn)} = ${snapshotColumn(snapshot, identity)}`;
   return schema.scopeTypeColumn
     ? `(${tenant} AND ${filter}${alias}.${identifier(schema.scopeTypeColumn)} = 'tenant')`
     : tenant;
@@ -263,7 +275,7 @@ function directlyOwned(
 function ownedAtBoundary(
   schema: CaptureSchema,
   alias: string,
-  snapshot: string,
+  snapshot: SnapshotSource,
   scan = false
 ): string {
   if (!('parent' in schema)) {
@@ -282,7 +294,7 @@ function ownedAtBoundary(
     .join(' AND ');
   return `(EXISTS (
     SELECT 1 FROM tenant_backup_preimages AS owner_previous
-    WHERE owner_previous.snapshot_id = ${snapshot}.id
+    WHERE owner_previous.snapshot_id = ${snapshotColumn(snapshot, 'id')}
       AND owner_previous.source_table = '${parent.table}'
       AND owner_previous.record_key = ${childKey} AND owner_previous.present = 1
   ) OR EXISTS (
@@ -292,7 +304,7 @@ function ownedAtBoundary(
       AND ${originalKey} = ${childKey}
       AND NOT EXISTS (
         SELECT 1 FROM tenant_backup_preimages AS owner_marker
-        WHERE owner_marker.snapshot_id = ${snapshot}.id
+        WHERE owner_marker.snapshot_id = ${snapshotColumn(snapshot, 'id')}
           AND owner_marker.source_table = '${parent.table}'
           AND owner_marker.record_key = ${originalKey}
       )
@@ -416,42 +428,80 @@ export function sqliteSnapshotPageQuery(
     !('parent' in schema) && !tenantLeading && schema.tenantOrderIndex
       ? ` INDEXED BY ${identifier(schema.tenantOrderIndex)}`
       : '';
+  // Scans read the gated snapshot row by scalar subquery instead of joining it. A joined snapshot
+  // is an outer loop the planner cannot always prove to be one row (with statistics it scans a
+  // one-row table's covering index), and ORDER BY + LIMIT then sorts the scanned rows instead of
+  // stopping on the index, which doubles the rows read.
+  const snapshot = { cte: 'snapshot_row' };
+  // Every scan has a first-page form and a later-page form. A subquery condition in WHERE is
+  // tested on each row the loop visits, while LIMIT is computed before the loop and LIMIT 0 skips
+  // it. So the page a scan serves and the snapshot gate go into its LIMIT: the inactive form and a
+  // scan of an unavailable snapshot read nothing.
   const firstPage = "(SELECT after_key FROM params) = ''";
-  // A direct unique-key lookup keeps the snapshot a one-row loop, so ORDER BY + LIMIT stops on the
-  // index instead of sorting every remaining row of the table.
-  const snapshotRow = `snapshot.id = (SELECT snapshot_id FROM params)
-      AND +snapshot.tenant_id = (SELECT tenant_id FROM params) AND +snapshot.state = 'capturing'`;
+  const laterPage = "(SELECT after_key FROM params) <> ''";
+  const rowsIf = (page: string, rows: string) =>
+    `LIMIT CASE WHEN EXISTS (SELECT 1 FROM snapshot_row) AND ${page} THEN ${rows} ELSE 0 END`;
   const limit = 'LIMIT (SELECT page_limit FROM params)';
-  const scanLimit = 'LIMIT (SELECT max(page_limit, coalesce(scan_limit, page_limit)) FROM params)';
+  const scanRows = '(SELECT max(page_limit, coalesce(scan_limit, page_limit)) FROM params)';
   // Only a tenant-leading key or a (tenant, primary key) index bounds the walk to the tenant's rows.
-  // Every other selection test is a flag, not a filter, so the LIMIT bounds the index walk itself: filtering first would walk
-  // other tenants' rows, rows of unselected partitions and replaced rows behind the cursor again
-  // on every page.
+  // Every other selection test only applies within the scan_limit keys after the cursor, so other
+  // tenants' rows, rows of unselected partitions and replaced rows bound each walk instead of being
+  // walked again on every page.
   const tenantRange =
     !('parent' in schema) &&
     (schema.primaryKey[0] === schema.tenantColumn || schema.tenantOrderIndex)
-      ? ` AND ${directlyOwned({ ...schema, scopeTypeColumn: undefined }, 'live', 'snapshot', true)}`
+      ? directlyOwned({ ...schema, scopeTypeColumn: undefined }, 'live', snapshot, true)
       : '';
   const selected = [
-    ownedAtBoundary(schema, 'live', 'snapshot', true),
+    ownedAtBoundary(schema, 'live', snapshot, true),
     ...(selectedPartitions
       ? [`+live.${identifier(partitionColumn ?? '')} IN (${selectedPartitions})`]
       : []),
   ].join(' AND ');
-  // Scans return keys only. Encoded keys, the replaced test and row bodies are written once below,
-  // which keeps the statement under D1's SQL length limit for wide tables and long keys.
-  const liveRows = (bound: string) => `SELECT ${liveKey
-    .map((term, index) => `${term} AS k${index}`)
-    .join(', ')}, (${selected}) AS selected
-    FROM tenant_backup_snapshots AS snapshot CROSS JOIN ${identifier(schema.table)} AS live${tenantIndex}
-    WHERE ${snapshotRow} AND ${bound}${tenantRange}
-    ORDER BY ${liveKey.join(', ')} ${scanLimit}`;
+  // Without a tenant range, a first-page walk still needs a range on the primary key: with no
+  // constraint the planner may read a narrower covering index whole and sort it instead.
+  const liveFirst = tenantRange
+    ? ''
+    : `${liveKey[0]} >= (SELECT min(${identifier(schema.primaryKey[0])}) FROM ${identifier(schema.table)})`;
+  const liveArms = [
+    { name: 'first', bound: liveFirst, page: firstPage },
+    { name: 'after', bound: liveAfter, page: laterPage },
+  ];
+  const order = keys.join(', ');
+  const liveColumns = liveKey.map((term, index) => `${term} AS k${index}`).join(', ');
+  const flaggedColumns = `${liveColumns}, (${selected}) AS selected`;
+  // One walk of the live key range. Each walk is its own loop over the primary key (or tenant
+  // order) index: a materialized scan would be read again by every later reference, and D1 bills
+  // each of those reads. Encoded keys and row bodies are written once below, which keeps the
+  // statement under D1's SQL length limit for wide tables and long keys.
+  const liveWalk = (
+    bound: string,
+    tail: string,
+    { columns = liveColumns, descending = false }: { columns?: string; descending?: boolean } = {}
+  ) => {
+    const where = [bound, tenantRange].filter(Boolean);
+    return `SELECT ${columns} FROM ${identifier(schema.table)} AS live${tenantIndex}
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY ${liveKey.map((term) => `${term}${descending ? ' DESC' : ''}`).join(', ')} ${tail}`;
+  };
+  // The first page_limit selected rows without a preimage among the scanned keys: only these can
+  // enter the page. The scan is a subquery with its own LIMIT, so it stops at scan_limit keys, or
+  // earlier once page_limit rows pass, and is never materialized.
+  const livePicked = (arm: { bound: string; page: string }) => `SELECT ${order}
+    FROM (${liveWalk(arm.bound, rowsIf(arm.page, scanRows), { columns: flaggedColumns })}) AS scanned
+    WHERE CASE WHEN scanned.selected THEN NOT EXISTS (
+        SELECT 1 FROM tenant_backup_preimages AS previous
+        WHERE previous.snapshot_id = ${snapshotColumn(snapshot, 'id')}
+          AND previous.source_table = '${schema.table}'
+          AND previous.record_key = ${recordKey({ primaryKey: keys }, 'scanned')}
+      ) ELSE 0 END
+    ORDER BY ${order} ${limit}`;
   // `fixed` leading terms are equality-bound; ordering by them would add a sort of the range.
-  const preimageRows = (bound: string, fixed = 0) => `SELECT previous.record_key
-    FROM tenant_backup_snapshots AS snapshot CROSS JOIN tenant_backup_preimages AS previous
-    WHERE ${snapshotRow} AND ${bound} AND previous.snapshot_id = snapshot.id
+  const preimageRows = (bound: string, page: string, fixed = 0) => `SELECT previous.record_key
+    FROM tenant_backup_preimages AS previous
+    WHERE ${bound ? `${bound} AND ` : ''}previous.snapshot_id = ${snapshotColumn(snapshot, 'id')}
       AND previous.source_table = '${schema.table}' AND previous.present = 1${selectedPartitions ? ` AND previous.row_partition IN (${selectedPartitions})` : ''}
-    ORDER BY ${preimageKey.slice(fixed).join(', ')} ${scanLimit}`;
+    ORDER BY ${preimageKey.slice(fixed).join(', ')} ${rowsIf(page, scanRows)}`;
   // SQLite cannot range-scan a row value over expression index terms. Split "key > after" into
   // disjoint ranges, each an equality prefix plus one scalar range on the index.
   const preimageAfter = preimageKey.map((term, index) =>
@@ -462,10 +512,8 @@ export function sqliteSnapshotPageQuery(
       `${term} > (SELECT k${index} FROM after_bound)`,
     ].join(' AND ')
   );
-  const order = keys.join(', ');
   const lastOf = (source: string) =>
-    `SELECT ${order}, record_key FROM ${source} ORDER BY ${order}
-    LIMIT 1 OFFSET (SELECT max(page_limit, coalesce(scan_limit, page_limit)) FROM params) - 1`;
+    `SELECT ${order}, record_key FROM ${source} ORDER BY ${order} LIMIT 1 OFFSET ${scanRows} - 1`;
   // A full source may continue past its last scanned key, so only keys up to both sources' last
   // scanned keys are complete. Beyond that a row of the other source could still sort earlier.
   const withinScan = (source: string) =>
@@ -483,53 +531,66 @@ export function sqliteSnapshotPageQuery(
   // the reader moves its cursor there and reads on. An empty page has no preimage left to merge
   // (a full preimage scan always contributes rows), so that position is safe even when the live
   // scan ended early.
+  // The live scan is never materialized. live_last walks keys only to the scan_limit-th key, which
+  // exists only when the scan is full. Otherwise the scan reached the end of the range, so its
+  // last key is the range's last key, one step from the far end. live_first/live_after walk the
+  // same keys again for the selected rows.
   // scanLimit adds a fifth bind: how many keys each source may scan. It defaults to page_limit.
   return `WITH params(snapshot_id, tenant_id, after_key, page_limit, scan_limit) AS (
     SELECT ?, ?, ?, ?, ${options.scanLimit ? '?' : 'NULL'}
+  ),
+  snapshot_row AS MATERIALIZED (
+    SELECT id, tenant_id, tenant_key FROM tenant_backup_snapshots
+    WHERE id = (SELECT snapshot_id FROM params) AND tenant_id = (SELECT tenant_id FROM params)
+      AND state = 'capturing'
   ),
   after_bound AS (
     SELECT ${keys.map((key, index) => `${nativeKeyTerm('after_key', index)} AS ${key}`).join(', ')}
     FROM params WHERE after_key <> ''
   ),
-  live_first AS (${liveRows(firstPage)}),
-  live_after AS (${liveRows(liveAfter)}),
-  live_keys AS (
-    SELECT scanned.*, ${recordKey({ primaryKey: keys }, 'scanned')} AS record_key
-    FROM (SELECT * FROM live_first UNION ALL SELECT * FROM live_after) AS scanned
+  ${liveArms
+    .map(
+      (
+        arm
+      ) => `live_last_${arm.name} AS (${liveWalk(arm.bound, `${rowsIf(arm.page, '1')} OFFSET ${scanRows} - 1`)}),
+  live_tail_${arm.name} AS (${liveWalk(arm.bound, rowsIf(arm.page, '1'), { descending: true })}),`
+    )
+    .join('\n  ')}
+  live_last AS MATERIALIZED (SELECT * FROM live_last_first UNION ALL SELECT * FROM live_last_after),
+  live_end AS MATERIALIZED (
+    SELECT ended.*, ${recordKey({ primaryKey: keys }, 'ended')} AS record_key FROM (
+      SELECT * FROM live_last
+      UNION ALL SELECT * FROM live_tail_first WHERE NOT EXISTS (SELECT 1 FROM live_last)
+      UNION ALL SELECT * FROM live_tail_after WHERE NOT EXISTS (SELECT 1 FROM live_last)
+    ) AS ended
   ),
-  live_scan AS MATERIALIZED (
-    SELECT live_keys.*, CASE WHEN selected THEN EXISTS (
-        SELECT 1 FROM tenant_backup_preimages AS previous
-        WHERE previous.snapshot_id = (SELECT snapshot_id FROM params)
-          AND previous.source_table = '${schema.table}' AND previous.record_key = live_keys.record_key
-      ) ELSE 0 END AS replaced
-    FROM live_keys
+  ${liveArms.map((arm) => `live_${arm.name} AS (${livePicked(arm)}),`).join('\n  ')}
+  live_rows AS (
+    SELECT picked.*, ${recordKey({ primaryKey: keys }, 'picked')} AS record_key
+    FROM (SELECT * FROM live_first UNION ALL SELECT * FROM live_after) AS picked
   ),
-  preimage_first AS (${preimageRows(firstPage)}),
-  ${preimageAfter.map((bound, index) => `preimage_after_${index} AS (${preimageRows(bound, index)})`).join(',\n  ')},
+  preimage_first AS (${preimageRows('', firstPage)}),
+  ${preimageAfter.map((bound, index) => `preimage_after_${index} AS (${preimageRows(bound, laterPage, index)})`).join(',\n  ')},
   preimage_scan AS MATERIALIZED (
     SELECT ${keys.map((key, index) => `${nativeKeyTerm('scanned.record_key', index)} AS ${key}`).join(', ')},
       scanned.record_key
     FROM (SELECT * FROM preimage_first
       ${preimageAfter.map((_, index) => `UNION ALL SELECT * FROM preimage_after_${index}`).join('\n      ')}
     ) AS scanned
-    ORDER BY ${order} ${scanLimit}
+    ORDER BY ${order} LIMIT ${scanRows}
   ),
-  live_last AS (${lastOf('live_scan')}),
   preimage_last AS (${lastOf('preimage_scan')}),
   page AS (
     SELECT * FROM (
-      SELECT ${order}, record_key, 1 AS live_source FROM live_scan WHERE selected AND NOT replaced
+      SELECT ${order}, record_key, 1 AS live_source FROM live_rows
       UNION ALL SELECT ${order}, record_key, 0 FROM preimage_scan
     )
     WHERE ${withinScan('live_last')} AND ${withinScan('preimage_last')}
     ORDER BY ${order} ${limit}
   ) SELECT record_key, CASE WHEN live_source THEN ${liveBody} ELSE ${preimageBody} END AS row_json,
     row_number() OVER (ORDER BY ${order}) AS page_order FROM page
-  UNION ALL SELECT (
-      SELECT record_key FROM live_scan ORDER BY ${keys.map((key) => `${key} DESC`).join(', ')} LIMIT 1
-    ), NULL, 1
-  WHERE NOT EXISTS (SELECT 1 FROM page) AND EXISTS (SELECT 1 FROM live_scan)
+  UNION ALL SELECT (SELECT record_key FROM live_end), NULL, 1
+  WHERE NOT EXISTS (SELECT 1 FROM page) AND EXISTS (SELECT 1 FROM live_end)
   ORDER BY page_order`;
 }
 
