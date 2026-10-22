@@ -120,13 +120,15 @@ async function rsaKeys(kid: string): Promise<Keys> {
   };
 }
 
-function backchannelClient(clientId: string, uri: string, oidcSid: string) {
+/** `oidcSub`: the sub the client's ID token carried, as the session-client records it. */
+function backchannelClient(clientId: string, uri: string, oidcSid: string, oidcSub?: string) {
   return {
     id: `sc-${clientId}`,
     tenant_id: 'tenant-a',
     session_id: SESSION_ID,
     client_id: clientId,
     oidc_sid: oidcSid,
+    ...(oidcSub ? { oidc_sub: oidcSub } : {}),
     first_token_at: 1,
     last_token_at: 1,
     last_seen_at: null,
@@ -275,8 +277,8 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     mockSessionInvalidate.mockResolvedValue(true);
     mockResolveTargets.mockResolvedValue({
       backchannelClients: [
-        backchannelClient('rp-a', RP_A, 'sid-for-rp-a'),
-        backchannelClient('rp-b', RP_B, 'sid-for-rp-b'),
+        backchannelClient('rp-a', RP_A, 'sid-for-rp-a', 'sub-for-rp-a'),
+        backchannelClient('rp-b', RP_B, 'sid-for-rp-b', 'sub-for-rp-b'),
       ],
       frontchannelClients: [],
       webhookClients: [],
@@ -286,7 +288,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     mockResolveLogoutWebhookConfig.mockResolvedValue(DEFAULT_LOGOUT_WEBHOOK_CONFIG);
   });
 
-  it('sends each downstream client its own logout token with that client sid', async () => {
+  it('sends each downstream client its own logout token with that client sid and sub', async () => {
     const sent = captureDownstream();
     const { c, pending } = buildContext(await upstreamLogoutToken());
 
@@ -303,7 +305,9 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
       expect(protectedHeader.kid).toBe('op-key');
       expect(payload.aud).toBe(clientId);
       expect(payload.sid).toBe(`sid-for-${clientId}`);
-      expect(payload.sub).toBe('user-1');
+      // The sub the client's ID token carried, never the user's internal id.
+      expect(payload.sub).toBe(`sub-for-${clientId}`);
+      expect(JSON.stringify(payload)).not.toContain('user-1');
       expect(payload.events).toEqual({
         'http://schemas.openid.net/event/backchannel-logout': {},
       });
@@ -317,6 +321,26 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
       expect.anything(),
       OP_ISSUER
     );
+  });
+
+  it('names the session by its sid alone for a client with no recorded sub', async () => {
+    mockResolveTargets.mockResolvedValue({
+      backchannelClients: [backchannelClient('rp-a', RP_A, 'sid-for-rp-a')],
+      frontchannelClients: [],
+      webhookClients: [],
+    });
+    const sent = captureDownstream();
+    const { c, pending } = buildContext(await upstreamLogoutToken());
+
+    expect((await handleBackchannelLogout(c as never)).status).toBe(200);
+    await Promise.all(pending);
+
+    const downstream = sent.filter((s) => s.url === RP_A);
+    expect(downstream).toHaveLength(1);
+    const { payload } = await verifyDownstream(downstream[0].token);
+    expect(payload.sid).toBe('sid-for-rp-a');
+    expect(payload).not.toHaveProperty('sub');
+    expect(JSON.stringify(payload)).not.toContain('user-1');
   });
 
   it('answers the upstream before the downstream sends finish', async () => {
