@@ -299,6 +299,18 @@ export const BUILT_IN_SYSTEM_IDENTITY_SOURCES: ReadonlyArray<{
     path: 'edu_person_assurance',
     classification: 'internal',
   },
+  {
+    catalogEntryId: 'system.identity.schac_home_organization',
+    namespace: 'authrim.profile',
+    path: 'schac_home_organization',
+    classification: 'internal',
+  },
+  {
+    catalogEntryId: 'system.identity.organization_name',
+    namespace: 'authrim.profile',
+    path: 'organization_name',
+    classification: 'internal',
+  },
 ];
 
 /**

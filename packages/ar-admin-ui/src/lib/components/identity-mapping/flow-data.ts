@@ -116,6 +116,26 @@ const systemIdentityFields = [
 		note: 'The assurance values (URIs) of every IAL up to the one the person holds, as set in the IAL Assurance Values setting; read from their evidence when the assertion is issued. Released only while Assurance Levels is enabled and values are configured; never written by a mapping.',
 		uiFieldOrder: 80,
 		derived: true
+	},
+	{
+		id: 'system.identity.schac_home_organization',
+		path: 'schac_home_organization',
+		label: 'Home Organization (schacHomeOrganization)',
+		valueType: 'string',
+		examples: ['example.ac.jp'],
+		note: "The tenant's default institution scope (the first of its Institution scopes setting), read when the assertion is issued. Released only to SAML and only while the tenant has set its scopes; never written by a mapping.",
+		uiFieldOrder: 90,
+		derived: true
+	},
+	{
+		id: 'system.identity.organization_name',
+		path: 'organization_name',
+		label: 'Organization Name (o)',
+		valueType: 'string',
+		examples: ['Example University'],
+		note: "The tenant's institution name in English (its Institution names setting), read when the assertion is issued. Released only to SAML and only while the tenant has set its names; never written by a mapping.",
+		uiFieldOrder: 100,
+		derived: true
 	}
 ] as const;
 

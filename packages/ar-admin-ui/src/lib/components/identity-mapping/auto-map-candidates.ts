@@ -787,6 +787,30 @@ export const AUTO_MAP_FIELD_CANDIDATES: AutoMapFieldCandidate[] = [
 		]
 	},
 	{
+		key: 'schac_home_organization',
+		label: 'Home Organization (schacHomeOrganization)',
+		aliases: [
+			'schacHomeOrganization',
+			'schachomeorganization',
+			'schac_home_organization',
+			'home organization',
+			'urn:oid:1.3.6.1.4.1.25178.1.2.9',
+			'urn:mace:terena.org:attribute-def:schacHomeOrganization'
+		]
+	},
+	{
+		key: 'organization_name',
+		label: 'Organization Name (o)',
+		aliases: [
+			'organization name',
+			'organisation name',
+			'organization_name',
+			'organizationName',
+			'urn:oid:2.5.4.10',
+			'urn:mace:dir:attribute-def:o'
+		]
+	},
+	{
 		key: 'linked_identity',
 		label: 'Linked Identity',
 		aliases: [

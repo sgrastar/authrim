@@ -122,7 +122,14 @@ vi.mock('../assertion', () => ({ buildSAMLResponse: mocks.buildResponse }));
 vi.mock('../signing', () => ({ applySAMLResponseSigningPolicy: mocks.applySigning }));
 vi.mock('../attributes', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../attributes')>();
-  return { ...actual, buildSAMLAttributesForSP: mocks.buildAttributes };
+  return {
+    ...actual,
+    buildSAMLAttributesForSP: mocks.buildAttributes,
+    buildSAMLAttributesForSPWithDiagnostics: (subject: unknown, config: unknown) => ({
+      attributes: mocks.buildAttributes(subject, config),
+      optionalMissingAttributes: [],
+    }),
+  };
 });
 vi.mock('../attribute-release-consent', () => ({
   enforceSAMLAttributeReleaseConsent: mocks.enforceConsent,
@@ -882,7 +889,12 @@ describe('IdP-initiated SSO and the SP minimum AAL', () => {
       context('https://sp.example.test', consentTransactionId)
     );
     expect(response.status).toBe(200);
-    expect(lib.resolveEffectiveSettings).not.toHaveBeenCalled();
+    // The assurance settings are not read; the tenant's institution is, once, for every release.
+    expect(lib.resolveEffectiveSettings).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'assurance',
+      expect.anything()
+    );
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 

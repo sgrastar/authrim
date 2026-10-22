@@ -2198,6 +2198,32 @@ paths:
         outside the range is refused with 400 on the platform and is not accepted for a tenant).
         A value in the environment or the store that is outside the range is ignored and the
         default is used.
+        The institution category (institution.scopes and institution.display_names) says which
+        institution the tenant stands for and is the platform's to change: reading it needs the
+        usual tenant view access, but saving it (set, clear, and so on) needs platform authority, a
+        role that may edit settings held through a global assignment, or a machine token that may
+        write the settings of every tenant; the tenant's own administrators (including its
+        super_admin), tokens limited to some tenants, and agents are refused with 403. It is a
+        tenant category only (400 for the platform and for apps), has no environment variable, is
+        not inherited, is not given to several tenants by the bulk apply, is not copied when a
+        tenant is cloned, and cannot be rolled back through the settings history routes (400).
+        institution.scopes is a comma-separated list of 1 to 20 distinct lowercase domain names of
+        at least two labels (letters, digits and hyphens; a non-ASCII name in its xn-- form; no
+        wildcard, port, path, trailing dot or IP address), the first being the default; an empty
+        list is refused (clear the setting for none). institution.display_names is JSON text of an
+        object from a lowercase language tag (ja, en, en-gb, ...) to the institution's name (1 to
+        200 characters, unpadded, no control characters), with at least ja and en and at most 16
+        languages. Neither can be disabled (400). Both are checked as above, or the whole PATCH is
+        refused with 400 validation_failed and nothing is saved. While institution.scopes is set,
+        the SAML IdP releases eduPersonScopedAffiliation and eduPersonPrincipalName only under one
+        of the scopes (a value under another scope is withheld and recorded in the audit log as
+        saml.attribute.withheld with a reason code and the scope, never the value; a value with no
+        scope gets the default), lists the scopes in its metadata (shibmd:Scope), and releases the
+        default as schacHomeOrganization to a service provider whose field mapping set maps the
+        system source Home Organization to it. While institution.display_names is set, the SAML
+        IdP metadata names the organization with it and the English name is released as the
+        organization name attribute (o) to a service provider whose field mapping set maps the
+        system source Organization Name to it. A tenant that has set neither is released as before.
       security:
         - adminBearer: []
         - adminSessionCookie: []

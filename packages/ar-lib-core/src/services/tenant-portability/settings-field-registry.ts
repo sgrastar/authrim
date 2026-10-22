@@ -1145,6 +1145,22 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'institution',
+      'string',
+      'url_or_asset',
+      `
+    institution.scopes
+  `,
+    ],
+    [
+      'institution',
+      'string',
+      'structured',
+      `
+    institution.display_names
+  `,
+    ],
+    [
       'bulk-apply',
       'number',
       'value',
