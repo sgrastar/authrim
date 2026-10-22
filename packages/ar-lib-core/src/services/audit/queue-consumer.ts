@@ -3604,7 +3604,11 @@ async function processRewrapChunkDeliveryPayload(input: {
 
   const object = await adapter.queryOne<LoggingRewrapCatalogRow>(
     `SELECT id, tenant_key, log_type, plane, object_key,
-            (SELECT chunk_id FROM log_chunk_record_index WHERE object_catalog_id = log_object_catalog.id LIMIT 1) AS chunk_id,
+            -- Archived row chunks have no record index; their catalog row carries the chunk id.
+            COALESCE(
+              (SELECT chunk_id FROM log_chunk_record_index WHERE object_catalog_id = log_object_catalog.id LIMIT 1),
+              log_object_catalog.chunk_id
+            ) AS chunk_id,
             object_kind, status,
             record_count, byte_count, checksum_sha256, compression, encryption_scope, key_version
      FROM log_object_catalog

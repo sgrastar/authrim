@@ -30,6 +30,7 @@ import { DISCOVERY_CATEGORY_META } from './discovery';
 import { PLUGIN_CATEGORY_META } from './plugin';
 import { ASSURANCE_LEVELS_CATEGORY_META } from './assurance-levels';
 import { CHECK_API_AUDIT_CATEGORY_META } from './check-api-audit';
+import { LOG_STORAGE_CATEGORY_META } from './log-storage';
 import { DCR_CATEGORY_META } from './dcr';
 import { LOGIN_UI_CATEGORY_META } from './login-ui';
 import { ACCOUNT_LIFECYCLE_CATEGORY_META } from './account-lifecycle';
@@ -82,6 +83,8 @@ export const ALL_CATEGORY_META = {
   assurance: ASSURANCE_LEVELS_CATEGORY_META,
   // Check API Audit
   'check-api-audit': CHECK_API_AUDIT_CATEGORY_META,
+  // Log storage (D1 retention before R2)
+  'log-storage': LOG_STORAGE_CATEGORY_META,
   // Dynamic Client Registration (RFC 7591)
   dcr: DCR_CATEGORY_META,
   // Login UI Customization
@@ -152,6 +155,10 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   },
   'check-api-audit': {
     // The Check API reads the platform's audit settings (it audits before a check's tenant is known).
+    allowedScopes: ['platform'],
+  },
+  'log-storage': {
+    // One archiver moves the rows of every tenant in the environment.
     allowedScopes: ['platform'],
   },
 

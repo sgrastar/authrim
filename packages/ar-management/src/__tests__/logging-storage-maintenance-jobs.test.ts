@@ -188,6 +188,82 @@ describe('logging/storage maintenance jobs', () => {
     );
   });
 
+  it('deletes the body of a deleted catalog row, which keeps its key, but not a served one', async () => {
+    const deleteObject = vi.fn().mockResolvedValue(undefined);
+    const retired = (id: string, reason: string, objectCatalogId: string) => ({
+      id,
+      tenant_key: 'tenant',
+      bucket_binding: 'AUDIT_ARCHIVE',
+      object_catalog_id: objectCatalogId,
+      object_key: `logs/tenant/${objectCatalogId}.bin`,
+      replacement_object_key: reason === 'rewrap' ? 'logs-rewrapped/next.bin' : null,
+      reason,
+      created_at: 1234,
+    });
+    mockAdapter.queryOne.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('tenant_backup_snapshots')) return null;
+      if (sql.includes('FROM log_object_catalog')) {
+        // Both catalog rows still name their original key.
+        return params?.[0] === 'deleted-object'
+          ? { object_key: 'logs/tenant/deleted-object.bin', status: 'deleted' }
+          : { object_key: 'logs/tenant/served-object.bin', status: 'committed' };
+      }
+      return null;
+    });
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('tenant_backup_r2_retired_generations')
+        ? [
+            retired('retired-delete', 'catalog_delete', 'deleted-object'),
+            retired('retired-rewrap', 'rewrap', 'served-object'),
+          ]
+        : []
+    );
+
+    await runScheduledRetiredR2GenerationCleanup(
+      { AUDIT_ARCHIVE: { delete: deleteObject } as unknown as R2Bucket } as Env,
+      mockAdapter as any,
+      log
+    );
+
+    expect(deleteObject).toHaveBeenCalledTimes(1);
+    expect(deleteObject).toHaveBeenCalledWith('logs/tenant/deleted-object.bin');
+  });
+
+  it('deletes a rewrapped generation whose catalog row was deleted afterwards', async () => {
+    const deleteObject = vi.fn().mockResolvedValue(undefined);
+    mockAdapter.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('tenant_backup_snapshots')) return null;
+      // The rewrap moved the chunk to v2; the chunk then expired and its catalog row was deleted.
+      if (sql.includes('FROM log_object_catalog'))
+        return { object_key: 'logs-rewrapped/tenant/object/job/v2.bin', status: 'deleted' };
+      return null;
+    });
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('tenant_backup_r2_retired_generations')
+        ? [
+            {
+              id: 'retired-rewrap',
+              tenant_key: 'tenant',
+              bucket_binding: 'AUDIT_ARCHIVE',
+              object_catalog_id: 'object',
+              object_key: 'logs/tenant/source.bin',
+              replacement_object_key: 'logs-rewrapped/tenant/object/job/v2.bin',
+              reason: 'rewrap',
+              created_at: 1234,
+            },
+          ]
+        : []
+    );
+
+    await runScheduledRetiredR2GenerationCleanup(
+      { AUDIT_ARCHIVE: { delete: deleteObject } as unknown as R2Bucket } as Env,
+      mockAdapter as any,
+      log
+    );
+
+    expect(deleteObject).toHaveBeenCalledWith('logs/tenant/source.bin');
+  });
+
   it('runs scheduled destination health checks and enqueues failure notifications', async () => {
     mockAdapter.query.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM admin_destinations')) {

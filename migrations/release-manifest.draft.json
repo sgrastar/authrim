@@ -103,6 +103,10 @@
             {
               "path": "022_account_webhook_subject_lookup.sql",
               "checksum": "22ed892a15da53592d70a4f033fe555c9515982cc7a3c074d8eec9a66f0e8967"
+            },
+            {
+              "path": "023_log_row_archive_indexes.sql",
+              "checksum": "73dfebb14f693eb2ed41a53bbb6d40a3ee1b27f1fd7edb3d2a3fad6dcf0e796a"
             }
           ]
         },
@@ -350,6 +354,10 @@
             {
               "path": "046_tenant_backup_operation_failure_reason.sql",
               "checksum": "f958b2d1e29801233e766f3ea04951e9436f42c1f4a6b8c398adce47174add97"
+            },
+            {
+              "path": "047_log_row_archive.sql",
+              "checksum": "9016348aa878b2f500436ad817943c76f58d970f5b1ce42647ada2249e203656"
             }
           ]
         },
@@ -652,6 +660,10 @@
         {
           "path": "022_account_webhook_subject_lookup.sql",
           "checksum": "22ed892a15da53592d70a4f033fe555c9515982cc7a3c074d8eec9a66f0e8967"
+        },
+        {
+          "path": "023_log_row_archive_indexes.sql",
+          "checksum": "73dfebb14f693eb2ed41a53bbb6d40a3ee1b27f1fd7edb3d2a3fad6dcf0e796a"
         }
       ]
     },
@@ -907,6 +919,10 @@
         {
           "path": "046_tenant_backup_operation_failure_reason.sql",
           "checksum": "f958b2d1e29801233e766f3ea04951e9436f42c1f4a6b8c398adce47174add97"
+        },
+        {
+          "path": "047_log_row_archive.sql",
+          "checksum": "9016348aa878b2f500436ad817943c76f58d970f5b1ce42647ada2249e203656"
         }
       ]
     },

@@ -155,31 +155,35 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     keyVersion: input.encryption?.keyVersion,
     createdAt,
     claimLeaseUntil,
+    ...(input.rowArchive && { rowArchive: { ...input.rowArchive, chunkId } }),
   };
 
-  const indexRows: LogChunkRecordIndexRow[] = input.records.map((record, index) => {
-    const location = encoded.records[index];
-    const block = location ? encoded.blocks[location.blockIndex] : undefined;
-    return {
-      recordId: record.id,
-      tenantKey: input.tenantKey,
-      logType: input.logType,
-      plane: input.plane,
-      surface: input.surface,
-      objectCatalogId,
-      chunkId,
-      lineNumber: location?.lineNumber ?? index,
-      blockOffset: block?.compressedOffset ?? null,
-      blockLength: block?.compressedLength ?? null,
-      recordOffset: location?.recordOffset ?? 0,
-      recordLength: location?.recordLength ?? 0,
-      eventAt: record.eventAt,
-      indexProfile,
-      indexedFields: filterLogChunkIndexedFields(indexProfile, record.indexedFields),
-      status: 'pending',
-      createdAt,
-    };
-  });
+  // Archived row chunks are selected by their catalog row; they get no record index.
+  const indexRows: LogChunkRecordIndexRow[] = input.rowArchive
+    ? []
+    : input.records.map((record, index) => {
+        const location = encoded.records[index];
+        const block = location ? encoded.blocks[location.blockIndex] : undefined;
+        return {
+          recordId: record.id,
+          tenantKey: input.tenantKey,
+          logType: input.logType,
+          plane: input.plane,
+          surface: input.surface,
+          objectCatalogId,
+          chunkId,
+          lineNumber: location?.lineNumber ?? index,
+          blockOffset: block?.compressedOffset ?? null,
+          blockLength: block?.compressedLength ?? null,
+          recordOffset: location?.recordOffset ?? 0,
+          recordLength: location?.recordLength ?? 0,
+          eventAt: record.eventAt,
+          indexProfile,
+          indexedFields: filterLogChunkIndexedFields(indexProfile, record.indexedFields),
+          status: 'pending',
+          createdAt,
+        };
+      });
 
   const pendingObjectCreated = await input.catalogStore?.createPendingObject(objectRow);
   if (pendingObjectCreated === false) {

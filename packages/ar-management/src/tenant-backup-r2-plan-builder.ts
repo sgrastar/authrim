@@ -302,7 +302,11 @@ async function lookup(
   return rows;
 }
 
-/** Join T0 log catalog rows with aggregates of their T0 committed record index rows. */
+/**
+ * Join T0 log catalog rows with aggregates of their T0 committed record index rows. Row archive
+ * chunks (`source_table` set) have no record index; their catalog row carries the record count,
+ * event range and chunk id.
+ */
 async function logObjectRows(
   source: SliceSource,
   planned: readonly PlannedInstalledSqliteDataset[],
@@ -317,6 +321,9 @@ async function logObjectRows(
       integer(row, 'deleted_at') === null
   );
   for (const row of candidates) if (requiredText(row, 'tenant_key') !== tenantKey) invalid();
+  // Only the Admin catalog has the archive columns (admin migration 047); Core rows lack them.
+  const archived = (row: PortableSqliteRow) =>
+    Object.hasOwn(row, 'source_table') && text(row, 'source_table') !== null;
   // Committed T0 index rows per (catalog, log type, plane, chunk), aggregated in SQL.
   const indexEntry = plannedEntry(planned, family, 'log_chunk_record_index');
   const byCatalog = new Map<
@@ -324,7 +331,7 @@ async function logObjectRows(
     { logType: string; plane: string; chunkId: string; count: number; min: number; max: number }[]
   >();
   for (const batch of chunks(
-    candidates.map((row) => requiredText(row, 'id')),
+    candidates.filter((row) => !archived(row)).map((row) => requiredText(row, 'id')),
     SQLITE_SNAPSHOT_LOOKUP_MAX_VALUES
   ))
     for (const aggregate of await withinLimit(() =>
@@ -352,9 +359,21 @@ async function logObjectRows(
     const id = requiredText(row, 'id');
     const logType = requiredText(row, 'log_type');
     const plane = requiredText(row, 'plane');
-    const committed = (byCatalog.get(id) ?? []).filter(
-      (entry) => entry.logType === logType && entry.plane === plane
-    );
+    const recordCount = integer(row, 'record_count') ?? invalid();
+    const committed = (
+      archived(row)
+        ? [
+            {
+              logType,
+              plane,
+              chunkId: requiredText(row, 'chunk_id'),
+              count: recordCount,
+              min: integer(row, 'first_event_at') ?? invalid(),
+              max: integer(row, 'last_event_at') ?? invalid(),
+            },
+          ]
+        : (byCatalog.get(id) ?? [])
+    ).filter((entry) => entry.logType === logType && entry.plane === plane);
     const chunkIds = committed.map(({ chunkId }) => chunkId).sort();
     const count = committed.reduce((total, entry) => total + entry.count, 0);
     return {
@@ -362,7 +381,7 @@ async function logObjectRows(
       log_type: logType,
       plane,
       object_key: requiredText(row, 'object_key'),
-      record_count: integer(row, 'record_count') ?? invalid(),
+      record_count: recordCount,
       byte_count: integer(row, 'byte_count') ?? invalid(),
       checksum_sha256: text(row, 'checksum_sha256'),
       compression: text(row, 'compression'),

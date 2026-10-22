@@ -794,7 +794,8 @@ export function generateWranglerConfig(
 
   if (component === 'ar-management') {
     wranglerConfig.triggers = {
-      crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
+      // */10 moves log rows past their D1 retention to R2 (log-storage.d1_retention_days).
+      crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '*/10 * * * *', '0 */6 * * *'],
     };
     // One scheduled run advances up to 16 tenant backup transitions; each reads up to ~750 D1 queries and
     // spends seconds of CPU on row decoding and hashing. The defaults are 30 s and 10,000.

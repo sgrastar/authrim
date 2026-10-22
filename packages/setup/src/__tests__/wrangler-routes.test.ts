@@ -379,7 +379,7 @@ describe('generateRoutes', () => {
       expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
     );
     expect(managementConfig.triggers).toEqual({
-      crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
+      crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '*/10 * * * *', '0 */6 * * *'],
     });
     expect(samlConfig.triggers).toEqual({ crons: ['*/5 * * * *'] });
 

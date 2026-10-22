@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { processLoggingDeliveryQueue } from '../queue-consumer';
 import { decodeStoredLogChunkRecord, writeLogChunkToR2 } from '@authrim/ar-lib-logging/chunks';
@@ -1653,6 +1654,27 @@ describe('logging delivery queue consumer', () => {
     ).toHaveLength(2);
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+
+    // The same catalog query names the chunk of an archived row chunk, which has no record index.
+    const catalogSql = (adminDb.queryOne.mock.calls as [string][])
+      .map(([sql]) => sql)
+      .find((sql) => sql.includes('FROM log_object_catalog') && sql.includes('chunk_id'));
+    const sqlite = new DatabaseSync(':memory:');
+    sqlite.exec(`
+      CREATE TABLE log_object_catalog (id TEXT PRIMARY KEY, tenant_key TEXT, log_type TEXT,
+        plane TEXT, object_key TEXT, object_kind TEXT, status TEXT, record_count INTEGER,
+        byte_count INTEGER, checksum_sha256 TEXT, compression TEXT, encryption_scope TEXT,
+        key_version INTEGER, chunk_id TEXT);
+      CREATE TABLE log_chunk_record_index (object_catalog_id TEXT, chunk_id TEXT);
+      INSERT INTO log_object_catalog (id, chunk_id) VALUES ('obj_arc_1', 'arc_1');
+      INSERT INTO log_object_catalog (id, chunk_id) VALUES ('obj_indexed', NULL);
+      INSERT INTO log_chunk_record_index VALUES ('obj_indexed', 'chk_indexed');
+    `);
+    expect(sqlite.prepare(catalogSql!).get('obj_arc_1')).toMatchObject({ chunk_id: 'arc_1' });
+    expect(sqlite.prepare(catalogSql!).get('obj_indexed')).toMatchObject({
+      chunk_id: 'chk_indexed',
+    });
+    sqlite.close();
   });
 
   it('acks unsupported schema payloads after writing DLQ metadata and replay payload', async () => {
