@@ -134,6 +134,12 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '425':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: userId
           in: path
@@ -147,7 +153,13 @@ paths:
           required: true
           schema:
             type: string
-          description: Idempotency key used for delegated write replay protection.
+          description: Idempotency key used for delegated write replay protection. Reuse the
+            key of the step_up_required response when retrying with the receipt; that response
+            (and a refused receipt) is not stored as the key's outcome, but the key stays bound to
+            the request body, so a different body with the same key is refused with 409
+            idempotency_conflict. Once the update completes, a retry with the same key and body
+            replays the stored response. A retry that arrives while another one with the same key
+            is running gets 425 idempotency_in_progress with Retry-After.
         - name: Authrim-Step-Up-Receipt
           in: header
           required: false

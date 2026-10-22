@@ -21,6 +21,7 @@ import {
   timingSafeEqual,
   verifyToken,
   importPublicKeyFromJWK,
+  tokenSubjectAccountSource,
   parseTokenHeader,
   createLogger,
   type DatabaseSource,
@@ -339,6 +340,16 @@ async function validateAccessToken(
       audience: ctx.expectedAudience,
       skipAudienceCheck: !ctx.expectedAudience, // Skip if not configured
     });
+
+    // The decision is made for the account the sub names: a pairwise or persistent sub (a token
+    // carrying the sealed account reference) or an ID token's sub not shown to be the user's id
+    // may equal another user's id.
+    if (
+      typeof payload.sub === 'string' &&
+      tokenSubjectAccountSource(payload as Record<string, unknown>) !== 'sub'
+    ) {
+      return { valid: false, error: 'invalid_token' };
+    }
 
     // Cast payload to access token type for custom claims
     const tokenPayload = payload as AccessTokenPayload;

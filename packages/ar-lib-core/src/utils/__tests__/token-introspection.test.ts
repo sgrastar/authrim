@@ -10,6 +10,9 @@ import type { Env } from '../../types/env';
 
 const TEST_TENANT_ID = 'tenant_test';
 
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
 describe('Token Introspection Utility', () => {
   let mockEnv: Env;
   let privateKey: CryptoKey;
@@ -220,6 +223,7 @@ describe('Token Introspection Utility', () => {
         aud: mockEnv.ISSUER_URL,
         scope: 'openid',
         client_id: 'test-client',
+        token_use: 'access',
         jti: 'test-jti',
         iat: Math.floor(Date.now() / 1000) - 7200,
         exp: Math.floor(Date.now() / 1000) - 3600, // Expired 1 hour ago
@@ -288,6 +292,7 @@ describe('Token Introspection Utility', () => {
         aud: mockEnv.ISSUER_URL,
         scope: 'openid',
         client_id: 'test-client',
+        token_use: 'access',
         jti: 'test-jti',
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
@@ -412,6 +417,7 @@ describe('Token Introspection Utility', () => {
         aud: 'https://oidc.example.com',
         scope: 'openid',
         client_id: 'test-client',
+        token_use: 'access',
         jti: 'test-jti',
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
@@ -449,6 +455,7 @@ describe('Token Introspection Utility', () => {
         aud: 'https://acme.oidc.example.com',
         scope: 'openid',
         client_id: 'test-client',
+        token_use: 'access',
         jti: 'test-jti',
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
@@ -486,6 +493,7 @@ describe('Token Introspection Utility', () => {
         aud: 'https://acme.oidc.example.com',
         scope: 'openid',
         client_id: 'test-client',
+        token_use: 'access',
         jti: 'test-jti',
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
@@ -507,6 +515,81 @@ describe('Token Introspection Utility', () => {
 
       expect(result.valid).toBe(true);
       expect(result.claims?.iss).toBe('https://acme.oidc.example.com');
+    });
+  });
+
+  describe('Subject that is not an account id', () => {
+    async function introspect(token: string) {
+      return introspectToken({
+        method: 'GET',
+        url: 'https://test.example.com/api/me',
+        headers: new Headers({ Authorization: `Bearer ${token}` }),
+        env: mockEnv,
+        tenantId: TEST_TENANT_ID,
+      });
+    }
+
+    async function signWithoutJti(claims: Record<string, unknown>) {
+      return new SignJWT(claims)
+        .setProtectedHeader({ alg: 'RS256', kid: mockEnv.KEY_ID! })
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(privateKey);
+    }
+
+    securityRegressionIt(
+      'rejects an exchanged token whose mapped sub carries a sealed reference',
+      async () => {
+        // The mapped sub equals another user's id; only the authorization server can open the
+        // reference to the user the token is for.
+        const { token } = await createAccessToken(
+          {
+            iss: mockEnv.ISSUER_URL,
+            sub: 'user-2',
+            aud: mockEnv.ISSUER_URL,
+            scope: 'openid',
+            client_id: 'test-client',
+            authrim_subject_ref: 'sr1.iv.ciphertext',
+          } as Parameters<typeof createAccessToken>[0],
+          privateKey as unknown as Parameters<typeof createAccessToken>[1],
+          mockEnv.KEY_ID!,
+          3600
+        );
+
+        const result = await introspect(token);
+        expect(result.valid).toBe(false);
+        expect(result.error?.error).toBe('invalid_token');
+        expect(result.error?.statusCode).toBe(401);
+      }
+    );
+
+    securityRegressionIt(
+      'rejects an ID token that does not mark its sub as the user id',
+      async () => {
+        const token = await signWithoutJti({
+          iss: mockEnv.ISSUER_URL,
+          sub: 'user-2',
+          aud: mockEnv.ISSUER_URL,
+          authrim_consent_generation: 1,
+        });
+
+        const result = await introspect(token);
+        expect(result.valid).toBe(false);
+        expect(result.error?.error).toBe('invalid_token');
+      }
+    );
+
+    it('keeps accepting an ID token that marks its sub as the user id', async () => {
+      const token = await signWithoutJti({
+        iss: mockEnv.ISSUER_URL,
+        sub: 'user-1',
+        aud: mockEnv.ISSUER_URL,
+        authrim_subject_account: true,
+      });
+
+      const result = await introspect(token);
+      expect(result.valid).toBe(true);
+      expect(result.claims?.sub).toBe('user-1');
     });
   });
 });

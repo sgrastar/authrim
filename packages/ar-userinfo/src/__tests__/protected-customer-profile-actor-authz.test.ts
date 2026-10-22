@@ -1,17 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Hono } from 'hono';
-import type {
-  Challenge,
-  ConsumeChallengeRequest,
-  Env,
-  StoreChallengeRequest,
-} from '@authrim/ar-lib-core';
-import {
-  completeStepUpAction,
-  createStepUpOperationHash,
-  issueStepUpToken,
-  startStepUpAction,
-} from '@authrim/ar-lib-core';
 
 /**
  * Actor–subject authorization for the customer-profile delegated-write route, exercised with the
@@ -46,167 +33,12 @@ vi.mock('@authrim/ar-lib-core', async () => {
 });
 
 import {
-  createCustomerProfileDelegatedWriteOperation,
-  createProtectedCustomerProfileRouter,
-} from '../protected-customer-profile';
-
-class InMemoryChallengeStore {
-  readonly challenges = new Map<string, Challenge>();
-
-  async storeChallengeRpc(request: StoreChallengeRequest): Promise<{ success: boolean }> {
-    const now = Date.now();
-    this.challenges.set(request.id, {
-      id: request.id,
-      tenantId: request.tenantId,
-      type: request.type,
-      userId: request.userId,
-      challenge: request.challenge,
-      metadata: request.metadata,
-      createdAt: now,
-      expiresAt: now + request.ttl * 1000,
-      consumed: false,
-    });
-    return { success: true };
-  }
-
-  async getChallengeRpc(id: string): Promise<Challenge | null> {
-    const challenge = this.challenges.get(id);
-    if (!challenge || challenge.expiresAt <= Date.now()) {
-      return null;
-    }
-    return challenge;
-  }
-
-  async consumeChallengeRpc(request: ConsumeChallengeRequest) {
-    const challenge = await this.getChallengeRpc(request.id);
-    if (!challenge || challenge.consumed || challenge.type !== request.type) {
-      throw new Error('Challenge not found or already consumed');
-    }
-    challenge.consumed = true;
-    return {
-      challenge: challenge.challenge,
-      userId: challenge.userId,
-      metadata: challenge.metadata,
-    };
-  }
-}
-
-function createMockKV(): KVNamespace {
-  const store = new Map<string, string>();
-  return {
-    get: async (key: string) => store.get(key) ?? null,
-    put: async (key: string, value: string) => {
-      store.set(key, value);
-    },
-    delete: async (key: string) => {
-      store.delete(key);
-    },
-    list: async () => ({ keys: [] }),
-  } as unknown as KVNamespace;
-}
-
-function createIdempotencyD1(): D1Database {
-  const entries = new Map<string, Record<string, unknown>>();
-  return {
-    prepare: (sql: string) => {
-      let params: unknown[] = [];
-      const statement = {
-        bind: (...bound: unknown[]) => {
-          params = bound;
-          return statement;
-        },
-        first: async () => {
-          if (sql.includes('FROM idempotency_keys')) {
-            const entry = entries.get(String(params[0]));
-            if (entry && Number(entry.expires_at) > Number(params[1])) {
-              return entry;
-            }
-          }
-          return null;
-        },
-        all: async () => ({ results: [] }),
-        run: async () => {
-          if (sql.trim().startsWith('UPDATE idempotency_keys')) {
-            const id = String(params[3]);
-            const entry = entries.get(id);
-            if (!entry) {
-              return { success: true, meta: { changes: 0 } };
-            }
-            entries.set(id, {
-              ...entry,
-              response_status: params[0],
-              response_body: params[1],
-              expires_at: params[2],
-            });
-            return { success: true, meta: { changes: 1 } };
-          }
-          if (sql.trim().startsWith('INSERT INTO idempotency_keys')) {
-            const id = String(params[0]);
-            if (entries.has(id)) {
-              throw new Error('UNIQUE constraint failed: idempotency_keys.id');
-            }
-            entries.set(id, {
-              id: params[0],
-              body_hash: params[7],
-              response_status: params[8],
-              response_body: params[9],
-              expires_at: params[11],
-            });
-            return { success: true, meta: { changes: 1 } };
-          }
-          return { success: true, meta: { changes: 0 } };
-        },
-      };
-      return statement;
-    },
-    batch: async () => [],
-  } as unknown as D1Database;
-}
-
-function createEnv() {
-  const challengeStore = new InMemoryChallengeStore();
-  const env = {
-    DEFAULT_TENANT_ID: 'tenant-a',
-    ISSUER_URL: 'https://tenant.example.com',
-    DB: createIdempotencyD1(),
-    AUTHRIM_CONFIG: createMockKV(),
-    SETTINGS: createMockKV(),
-    CHALLENGE_STORE: {
-      idFromName: (name: string) => name,
-      get: () => challengeStore,
-    },
-  } as unknown as Env;
-  return { env, challengeStore };
-}
-
-function createApp() {
-  const app = new Hono<{ Bindings: Env }>();
-  const tenantMetadataDb = createIdempotencyD1();
-  app.use('*', async (c, next) => {
-    (c as any).set('tenantId', 'tenant-a');
-    (c as any).set('tenantMetadataContext', { tenantId: 'tenant-a', coreDb: tenantMetadataDb });
-    await next();
-  });
-  app.route('/api/protected/customer-profiles', createProtectedCustomerProfileRouter());
-  return app;
-}
-
-function projection(id: string) {
-  return {
-    id,
-    tenant_id: 'tenant-a',
-    email: `${id}@example.com`,
-    email_verified: 1,
-    name: `Name ${id}`,
-    phone_number: '+819012345678',
-    phone_number_verified: 1,
-    address_json: JSON.stringify({ formatted: '1 Test Street', country: 'JP' }),
-    active: 1,
-    account_type: 'end_user',
-    created_at: '2026-01-01T00:00:00.000Z',
-    updated_at: '2026-01-02T00:00:00.000Z',
-  };
-}
+  createApp,
+  createEnv,
+  mintReceipt,
+  patch,
+  projection,
+} from './helpers/customer-profile-write-harness';
 
 /** An ordinary issuer-audience user access token for `sub`. */
 function signInAs(sub: string) {
@@ -214,64 +46,6 @@ function signInAs(sub: string) {
     valid: true,
     claims: { sub, aud: 'https://tenant.example.com', client_id: 'rp-1', scope: 'openid' },
   });
-}
-
-/** Mints a receipt bound to (actor, subject, operation) through the real step-up flow. */
-async function mintReceipt(input: {
-  env: Env;
-  actorId: string;
-  subjectUserId: string;
-  idempotencyKey: string;
-  bodyInput: Record<string, unknown>;
-}): Promise<string> {
-  const operationHash = await createStepUpOperationHash(
-    createCustomerProfileDelegatedWriteOperation({
-      subjectUserId: input.subjectUserId,
-      input: input.bodyInput,
-    })
-  );
-  const requirement = await issueStepUpToken(input.env, {
-    tenantId: 'tenant-a',
-    actorId: input.actorId,
-    subjectId: input.subjectUserId,
-    operationHash,
-    idempotencyKey: input.idempotencyKey,
-  });
-  const action = await startStepUpAction(input.env, {
-    stepUpToken: requirement.step_up_token,
-    tenantId: 'tenant-a',
-  });
-  const completed = await completeStepUpAction(input.env, {
-    actionId: action.action_id,
-    tenantId: 'tenant-a',
-    method: 'portal_confirm',
-    input: { confirmed: true },
-  });
-  if (!completed.step_up_receipt) {
-    throw new Error('expected a step-up receipt');
-  }
-  return completed.step_up_receipt;
-}
-
-function patch(
-  app: Hono<{ Bindings: Env }>,
-  env: Env,
-  input: { userId: string; idempotencyKey: string; body: unknown; receipt?: string }
-) {
-  return app.request(
-    `http://localhost/api/protected/customer-profiles/users/${encodeURIComponent(input.userId)}`,
-    {
-      method: 'PATCH',
-      headers: {
-        Authorization: 'Bearer user-access-token',
-        'Content-Type': 'application/json',
-        'Idempotency-Key': input.idempotencyKey,
-        ...(input.receipt ? { 'Authrim-Step-Up-Receipt': input.receipt } : {}),
-      },
-      body: JSON.stringify(input.body),
-    },
-    env
-  );
 }
 
 describe('customer profile delegated write: actor–subject authorization', () => {
@@ -406,8 +180,6 @@ describe('customer profile delegated write: actor–subject authorization', () =
     expect(mocks.syncUser).not.toHaveBeenCalled();
   });
 
-  // Covers the authorization path only: a retry that reuses the Idempotency-Key of the
-  // step_up_required response is answered from the idempotency cache, which predates this check.
   securityRegressionIt('lets a user update their own profile with a receipt for it', async () => {
     const { env } = createEnv();
     const app = createApp();
@@ -426,12 +198,12 @@ describe('customer profile delegated write: actor–subject authorization', () =
       env,
       actorId: 'user-self',
       subjectUserId: 'user-self',
-      idempotencyKey: 'self-update-2',
+      idempotencyKey: 'self-update',
       bodyInput: input,
     });
     const response = await patch(app, env, {
       userId: 'user-self',
-      idempotencyKey: 'self-update-2',
+      idempotencyKey: 'self-update',
       body: { input },
       receipt,
     });

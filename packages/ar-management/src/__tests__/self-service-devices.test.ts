@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import { exportJWK, generateKeyPair } from 'jose';
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 const {
   mockRepo,
@@ -611,5 +615,91 @@ describe('/me/devices handlers', () => {
       signed_out_required: false,
       status: 'completed',
     });
+  });
+});
+
+describe('/me/devices with a token whose sub is not an account id', () => {
+  // The resource's own token check (introspectToken), as deployed: a signed token, not a mock.
+  // One key pair for the block: the verification key is cached per tenant and key id.
+  const keyPair = generateKeyPair('RS256');
+  async function signedTokenSetup() {
+    const actual =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+    const { privateKey, publicKey } = await keyPair;
+    const kv = {
+      get: async () => null,
+      put: async () => {},
+      delete: async () => {},
+    } as unknown as KVNamespace;
+    const env = {
+      ISSUER_URL: 'https://op.example.com',
+      PUBLIC_JWK_JSON: JSON.stringify(await exportJWK(publicKey)),
+      KEY_ID: 'kid-1',
+      REVOKED_TOKENS: kv,
+      NONCE_STORE: kv,
+    } as Partial<Env>;
+    mockIntrospectTokenFromContext.mockImplementation((c: ReturnType<typeof createMockContext>) =>
+      actual.introspectToken({
+        method: c.req.method,
+        url: c.req.url,
+        headers: c.req.raw.headers,
+        env: c.env,
+        tenantId: 'default',
+      })
+    );
+    const sign = async (claims: Record<string, unknown>) =>
+      (
+        await actual.createAccessToken(
+          {
+            iss: 'https://op.example.com',
+            aud: 'https://op.example.com',
+            scope: 'openid',
+            client_id: 'native-client-001',
+            ...claims,
+          } as Parameters<typeof actual.createAccessToken>[0],
+          privateKey as unknown as Parameters<typeof actual.createAccessToken>[1],
+          'kid-1',
+          3600
+        )
+      ).token;
+    return { env, sign };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveAccountDataContextFromHono.mockResolvedValue({});
+    mockRepo.findByUserId.mockResolvedValue([]);
+    mockInstallationRepo.findByUserId.mockResolvedValue([]);
+  });
+
+  securityRegressionIt(
+    'does not act on the account a mapped sub equals when the token carries a sealed reference',
+    async () => {
+      // A Token Exchange of an ID token whose identity mapping chose "user-002", another user's
+      // account id: the token is user-001's, which only the authorization server can tell.
+      const { env, sign } = await signedTokenSetup();
+      const token = await sign({ sub: 'user-002', authrim_subject_ref: 'sr1.iv.ciphertext' });
+
+      const response = await listMyDevicesHandler(
+        createMockContext({ authHeader: `Bearer ${token}`, env })
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: 'invalid_token' });
+      expect(mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+      expect(mockRepo.findByUserId).not.toHaveBeenCalled();
+    }
+  );
+
+  it("acts on the account of a token whose sub is the user's id", async () => {
+    const { env, sign } = await signedTokenSetup();
+    const token = await sign({ sub: 'user-001' });
+
+    const response = await listMyDevicesHandler(
+      createMockContext({ authHeader: `Bearer ${token}`, env })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockRepo.findByUserId).toHaveBeenCalledWith('user-001', 'default', true);
   });
 });
