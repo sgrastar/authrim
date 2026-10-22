@@ -38,7 +38,8 @@ import {
   resolveLogoutTargetsFromSessionClientStore,
   resolveSessionIdFromOidcSidStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
-  resolveLogoutIssuer,
+  resolveLogoutIssuerWithRetry,
+  reportLogoutNotSent,
   purgeEndedSessionsFromSessionClientStore,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
@@ -667,19 +668,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     const logoutConfig = await getLogoutConfig(c.env, getTenantIdFromContext(c));
 
     // The logout tokens and webhooks carry the tenant's canonical issuer, not one made from the
-    // host this request came in on. The lookup starts here and the sending, after the response,
-    // waits for it; when it fails nothing is sent (there is no other issuer to sign with) and the
-    // error is logged.
+    // host this request came in on. The lookup starts here (tried again a few times if it fails)
+    // and the sending, after the response, waits for it. When it still fails there is no other
+    // issuer to sign with: nothing is sent, and the apps not told are recorded (see below).
     const logoutIssuer =
       deletedSessions.length > 0 && c.executionCtx
-        ? resolveLogoutIssuer(c.env, tenantId).catch((error) => {
-            log.error(
-              'Downstream logout not sent: the tenant issuer could not be resolved',
-              { action: 'Logout' },
-              error as Error
-            );
-            return null;
-          })
+        ? resolveLogoutIssuerWithRetry(c.env, tenantId, { log })
         : null;
 
     // The notices below read nothing more from the SessionClientStore (the targets were collected
@@ -753,10 +747,25 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // resolved nothing was sent, so nothing is removed either: the records stay until they expire.
     if (logoutIssuer && c.executionCtx) {
       c.executionCtx.waitUntil(
-        Promise.allSettled(logoutFanouts).then(async () => {
-          if (!(await logoutIssuer)) return;
+        (async () => {
+          if (!(await logoutIssuer)) {
+            // Nothing was sent: make the apps that were not told visible to the admin (the
+            // failure list and the audit log), and keep the records.
+            const webhookConfig = await getLogoutWebhookConfig(c.env, tenantId).catch(() => null);
+            await reportLogoutNotSent(c.env, {
+              tenantId,
+              trigger: 'user_logout',
+              sessions: sessionsToNotify,
+              backchannelEnabled: logoutConfig.backchannel.enabled,
+              // Settings that cannot be read: report the webhook apps too.
+              webhookEnabled: webhookConfig ? webhookConfig.enabled : true,
+              log,
+            });
+            return;
+          }
+          await Promise.allSettled(logoutFanouts);
           await purgeEndedSessionsFromSessionClientStore(c.env, tenantId, deletedSessions);
-        })
+        })()
       );
     }
 

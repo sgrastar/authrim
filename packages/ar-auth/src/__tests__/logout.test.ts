@@ -61,7 +61,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
     }),
     resolveLogoutTargetsFromSessionClientStore: vi.fn().mockResolvedValue(null),
     // The tenant's canonical issuer, which is not the host the request came in on.
-    resolveLogoutIssuer: vi.fn(async () => 'https://canonical.example.com'),
+    // (its retries are tested in ar-lib-core)
+    resolveLogoutIssuerWithRetry: vi.fn(async () => 'https://canonical.example.com'),
+    reportLogoutNotSent: vi.fn().mockResolvedValue({ sessions: 0, clients: 0 }),
     sendBackchannelLogoutFanout: vi.fn().mockResolvedValue(null),
     sendLogoutWebhookFanout: vi.fn().mockResolvedValue(null),
     purgeEndedSessionsFromSessionClientStore: vi.fn().mockResolvedValue(undefined),
@@ -86,7 +88,8 @@ import {
   recordHybridUserSessionRevocationEpoch,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
-  resolveLogoutIssuer,
+  resolveLogoutIssuerWithRetry,
+  reportLogoutNotSent,
   purgeEndedSessionsFromSessionClientStore,
   DEFAULT_LOGOUT_CONFIG,
 } from '@authrim/ar-lib-core';
@@ -399,6 +402,7 @@ describe('Front-channel Logout', () => {
       await frontChannelLogoutHandler(c);
       await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
 
+      expect(reportLogoutNotSent).not.toHaveBeenCalled();
       expect(sendBackchannelLogoutFanout).toHaveBeenCalledWith(
         c.env,
         expect.objectContaining({
@@ -440,7 +444,7 @@ describe('Front-channel Logout', () => {
         frontchannelClients: [],
         webhookClients: [{ client_id: 'rp-webhook' }],
       } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
-      vi.mocked(resolveLogoutIssuer).mockRejectedValueOnce(new Error('lookup failed'));
+      vi.mocked(resolveLogoutIssuerWithRetry).mockResolvedValueOnce(null);
 
       const response = await frontChannelLogoutHandler(c);
       await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
@@ -452,6 +456,22 @@ describe('Front-channel Logout', () => {
       expect(sendLogoutWebhookFanout).not.toHaveBeenCalled();
       // Nothing was told, so the records of the ended session stay until they expire.
       expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+      // The apps that were not told are recorded for the admin, with the path.
+      expect(reportLogoutNotSent).toHaveBeenCalledWith(
+        c.env,
+        expect.objectContaining({
+          tenantId: 'default',
+          trigger: 'user_logout',
+          backchannelEnabled: DEFAULT_LOGOUT_CONFIG.backchannel.enabled,
+          sessions: [
+            expect.objectContaining({
+              sessionId: '0_session_123',
+              backchannelClients: [expect.objectContaining({ client_id: 'rp-client' })],
+              webhookClients: [expect.objectContaining({ client_id: 'rp-webhook' })],
+            }),
+          ],
+        })
+      );
     });
 
     describe('removing the ended session from the SessionClientStore', () => {

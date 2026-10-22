@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db';
-import { resolveLogoutIssuer } from '../logout-fanout';
+import { resolveLogoutIssuer, resolveLogoutIssuerWithRetry } from '../logout-fanout';
 
 function adapterReturning(queryOne: ReturnType<typeof vi.fn>): DatabaseAdapter {
   return {
@@ -77,5 +77,55 @@ describe('resolveLogoutIssuer', () => {
     await expect(resolveLogoutIssuer(env as never, 'tenant-a')).rejects.toThrow(
       'logout_issuer_unavailable'
     );
+  });
+});
+
+describe('resolveLogoutIssuerWithRetry', () => {
+  const failing = (times: number, row: unknown = primaryDomainRow) => {
+    let calls = 0;
+    const queryOne = vi.fn(async () => {
+      calls += 1;
+      if (calls <= times) throw new Error('d1 unavailable');
+      return row;
+    });
+    return {
+      env: { BASE_DOMAIN: 'op.example', tenantCoreDb: adapterReturning(queryOne) },
+      queryOne,
+    };
+  };
+  const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+
+  it('gives the issuer at once when the first lookup works', async () => {
+    const sleep = vi.fn(async () => undefined);
+    const { env, queryOne } = failing(0);
+    await expect(
+      resolveLogoutIssuerWithRetry(env as never, 'tenant-a', { sleep, log: log as never })
+    ).resolves.toBe('https://login.tenant-a.example');
+    expect(queryOne).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('tries again after short pauses and gives the issuer when a later attempt works', async () => {
+    const sleep = vi.fn(async () => undefined);
+    const { env, queryOne } = failing(2);
+    await expect(
+      resolveLogoutIssuerWithRetry(env as never, 'tenant-a', { sleep, log: log as never })
+    ).resolves.toBe('https://login.tenant-a.example');
+    expect(queryOne).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    for (const [ms] of sleep.mock.calls as unknown as number[][]) {
+      expect(ms).toBeLessThanOrEqual(1000);
+    }
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('gives null, and logs it, when every attempt fails; it never throws', async () => {
+    const sleep = vi.fn(async () => undefined);
+    const { env, queryOne } = failing(10);
+    await expect(
+      resolveLogoutIssuerWithRetry(env as never, 'tenant-a', { sleep, log: log as never })
+    ).resolves.toBeNull();
+    expect(queryOne).toHaveBeenCalledTimes(3);
+    expect(log.error).toHaveBeenCalledTimes(1);
   });
 });

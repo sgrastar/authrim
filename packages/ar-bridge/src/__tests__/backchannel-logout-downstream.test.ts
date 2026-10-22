@@ -34,6 +34,7 @@ const {
   mockResolveLogoutConfig,
   mockResolveLogoutWebhookConfig,
   mockResolveLogoutIssuer,
+  mockReportNotSent,
   mockSafeFetchJson,
   mockDiagnosticAuthDecision,
   mockPurgeEndedSessions,
@@ -47,6 +48,7 @@ const {
   mockResolveLogoutConfig: vi.fn(),
   mockResolveLogoutWebhookConfig: vi.fn(),
   mockResolveLogoutIssuer: vi.fn(),
+  mockReportNotSent: vi.fn(),
   mockSafeFetchJson: vi.fn(),
   mockDiagnosticAuthDecision: vi.fn(),
   mockPurgeEndedSessions: vi.fn(),
@@ -91,7 +93,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     purgeEndedSessionsFromSessionClientStore: mockPurgeEndedSessions,
     resolveLogoutConfig: mockResolveLogoutConfig,
     resolveLogoutWebhookConfig: mockResolveLogoutWebhookConfig,
-    resolveLogoutIssuer: mockResolveLogoutIssuer,
+    // (its retries are tested in ar-lib-core)
+    resolveLogoutIssuerWithRetry: mockResolveLogoutIssuer,
+    reportLogoutNotSent: mockReportNotSent,
     createAuditLog: mockCreateAuditLog,
   };
 });
@@ -299,6 +303,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     mockResolveLogoutConfig.mockResolvedValue(config());
     mockResolveLogoutWebhookConfig.mockResolvedValue(DEFAULT_LOGOUT_WEBHOOK_CONFIG);
     mockResolveLogoutIssuer.mockResolvedValue(CANONICAL_ISSUER);
+    mockReportNotSent.mockResolvedValue({ sessions: 0, clients: 0 });
     mockPurgeEndedSessions.mockResolvedValue(undefined);
   });
 
@@ -328,7 +333,8 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
       expect(payload.nonce).toBeUndefined();
     }
     // The tokens are signed for the tenant's canonical issuer, whatever host the notice came in on.
-    expect(mockResolveLogoutIssuer).toHaveBeenCalledWith(c.env, 'tenant-a');
+    expect(mockResolveLogoutIssuer).toHaveBeenCalledWith(c.env, 'tenant-a', expect.anything());
+    expect(mockReportNotSent).not.toHaveBeenCalled();
     // The targets are read for the session that was ended, with the issuer the request is on
     // (it derives the sid of an old record as it was when issued).
     expect(mockResolveTargets).toHaveBeenCalledWith(
@@ -612,7 +618,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
   });
 
   it('sends nothing downstream when the tenant issuer cannot be resolved, and still answers the upstream', async () => {
-    mockResolveLogoutIssuer.mockRejectedValue(new Error('lookup failed'));
+    mockResolveLogoutIssuer.mockResolvedValue(null);
     mockResolveLogoutWebhookConfig.mockResolvedValue({
       ...DEFAULT_LOGOUT_WEBHOOK_CONFIG,
       enabled: true,
@@ -629,6 +635,26 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     expect(sent).toEqual([]);
     // Nothing was told, so the records of the ended session stay until they expire.
     expect(mockPurgeEndedSessions).not.toHaveBeenCalled();
+    // The apps that were not told are recorded for the admin, with the path and the notice.
+    expect(mockReportNotSent).toHaveBeenCalledWith(
+      c.env,
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        trigger: 'upstream_backchannel_logout',
+        backchannelEnabled: true,
+        webhookEnabled: true,
+        sessions: [
+          expect.objectContaining({
+            sessionId: SESSION_ID,
+            backchannelClients: [
+              expect.objectContaining({ client_id: 'rp-a' }),
+              expect.objectContaining({ client_id: 'rp-b' }),
+            ],
+          }),
+        ],
+        metadata: expect.objectContaining({ provider_id: 'provider-upstream' }),
+      })
+    );
   });
 
   it('keeps notifying the other sessions when one session fails, and waits for them', async () => {

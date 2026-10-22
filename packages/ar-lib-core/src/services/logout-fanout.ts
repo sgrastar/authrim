@@ -28,8 +28,10 @@ import { createLogger, type Logger } from '../utils/logger';
 import { buildIssuerUrl } from '../utils/issuer';
 import { buildCanonicalTenantIssuerUrl } from './tenant-vanity-domain-resolver';
 import { decryptValue } from '../utils/pii-encryption';
+import { createAuditLog } from '../utils/audit-log';
 import {
   createBackchannelLogoutOrchestrator,
+  LogoutKVHelpers,
   type BackchannelRetryOptions,
 } from './backchannel-logout-sender';
 import { createLogoutWebhookOrchestrator } from './logout-webhook-sender';
@@ -56,6 +58,135 @@ export async function resolveLogoutIssuer(
     throw new Error('logout_issuer_unavailable');
   }
   return issuer;
+}
+
+/** Pauses before the second and third attempt to resolve the issuer (short: the work runs after the response). */
+const ISSUER_RETRY_DELAYS_MS: readonly number[] = [200, 500];
+
+/**
+ * `resolveLogoutIssuer`, tried again after a short pause when the lookup fails (twice more by
+ * default), for the paths that cannot hand the work to a retrying job. Gives null when every
+ * attempt failed (the last error is logged); it never throws.
+ */
+export async function resolveLogoutIssuerWithRetry(
+  env: Parameters<typeof resolveLogoutIssuer>[0],
+  tenantId: string,
+  options: {
+    delaysMs?: readonly number[];
+    sleep?: (ms: number) => Promise<void>;
+    log?: Logger;
+  } = {}
+): Promise<string | null> {
+  const delays = options.delaysMs ?? ISSUER_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const log = options.log ?? defaultLog;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    if (attempt > 0) await sleep(delays[attempt - 1]);
+    try {
+      return await resolveLogoutIssuer(env, tenantId);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  log.error(
+    'The tenant issuer could not be resolved: downstream logout not sent',
+    { action: 'LogoutFanout', attempts: delays.length + 1 },
+    lastError as Error
+  );
+  return null;
+}
+
+/** What `reportLogoutNotSent` recorded, for the caller's own log. */
+export interface LogoutNotSentSummary {
+  sessions: number;
+  clients: number;
+}
+
+/**
+ * The downstream logout could not be sent at all (no issuer to sign with): make that visible.
+ * Each relying party that was to be told (back-channel when `backchannelEnabled`, webhook when
+ * `webhookEnabled`) gets a failure record with the reason `issuer_unresolved`, which
+ * `/api/admin/logout-failures` lists, and the audit log gets one `user.downstream_logout_failed`
+ * entry per user with the path (`trigger`) and the number of sessions and apps not told. No
+ * value, client id or internal id is put in the audit entry. Never throws.
+ */
+export async function reportLogoutNotSent(
+  env: Env,
+  params: {
+    tenantId: string;
+    /** The path that could not send: 'user_logout' or 'upstream_backchannel_logout'. */
+    trigger: string;
+    sessions: LogoutFanoutSession[];
+    backchannelEnabled: boolean;
+    webhookEnabled: boolean;
+    /** More metadata for the audit entry (ids of the notice, no personal data). */
+    metadata?: Record<string, string>;
+    log?: Logger;
+  }
+): Promise<LogoutNotSentSummary> {
+  const log = params.log ?? defaultLog;
+  const targets = (session: LogoutFanoutSession): string[] => [
+    ...(params.backchannelEnabled ? session.backchannelClients.map((c) => c.client_id) : []),
+    ...(params.webhookEnabled ? session.webhookClients.map((c) => c.client_id) : []),
+  ];
+  const clientIds = new Set(params.sessions.flatMap(targets));
+  const summary = {
+    sessions: params.sessions.filter((s) => targets(s).length > 0).length,
+    clients: clientIds.size,
+  };
+  if (clientIds.size === 0) return summary;
+
+  const kv = env.SETTINGS || env.STATE_STORE;
+  if (kv) {
+    await Promise.all(
+      [...clientIds].map((clientId) =>
+        LogoutKVHelpers.recordFailure(kv, clientId, { error: 'issuer_unresolved' }).catch((error) =>
+          log.error('Failed to record a logout failure', { action: 'LogoutFanout' }, error as Error)
+        )
+      )
+    );
+  } else {
+    log.error('No KV to record logout failures in', { action: 'LogoutFanout' });
+  }
+
+  const perUser = new Map<string, { sessions: number; clients: Set<string> }>();
+  for (const session of params.sessions) {
+    const ids = targets(session);
+    if (ids.length === 0) continue;
+    const entry = perUser.get(session.userId) ?? { sessions: 0, clients: new Set<string>() };
+    entry.sessions += 1;
+    ids.forEach((id) => entry.clients.add(id));
+    perUser.set(session.userId, entry);
+  }
+  await Promise.all(
+    [...perUser].map(([userId, entry]) =>
+      createAuditLog(env, {
+        tenantId: params.tenantId,
+        userId: userId || 'system',
+        action: 'user.downstream_logout_failed',
+        resource: 'user',
+        resourceId: userId || 'system',
+        ipAddress: '',
+        userAgent: '',
+        metadata: JSON.stringify({
+          trigger: params.trigger,
+          error_code: 'issuer_unresolved',
+          session_count: entry.sessions,
+          client_count: entry.clients.size,
+          ...params.metadata,
+        }),
+        severity: 'warning',
+      }).catch((error) =>
+        log.error(
+          'Failed to create audit log for an unsent logout',
+          { action: 'audit_log' },
+          error as Error
+        )
+      )
+    )
+  );
+  return summary;
 }
 
 /** An ended session and the relying parties to tell. */
