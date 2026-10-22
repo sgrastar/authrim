@@ -28,6 +28,7 @@
       "kind": "durable_object_namespace",
       "required": true
     },
+    { "name": "SESSION_CLIENT_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "AUTH_CODE_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "CHALLENGE_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
