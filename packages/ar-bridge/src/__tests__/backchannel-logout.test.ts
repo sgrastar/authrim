@@ -520,7 +520,7 @@ describe('backchannel logout', () => {
     expect(mockDiagnosticAuthDecision).toHaveBeenCalledWith(
       expect.objectContaining({
         decision: 'deny',
-        context: { validation_error: 'session_invalidation_failed' },
+        context: { validation_error: 'session_invalidation_failed', downstream_logout_sessions: 0 },
       })
     );
     expect(mockDiagnosticCleanup).toHaveBeenCalledOnce();

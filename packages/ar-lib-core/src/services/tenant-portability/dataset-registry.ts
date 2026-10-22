@@ -217,7 +217,7 @@ const TABLE_GROUPS: Partial<
       tenant_backup_admin_mapping_heads tenant_backup_admin_mappings
       tenant_backup_restored_holds
       tenant_backup_r2_retired_generations
-      tenant_backup_restored_hold_objects
+      tenant_backup_restored_hold_objects tenant_backup_import_discards
       log_archive_batches
     `,
   },

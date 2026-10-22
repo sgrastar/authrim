@@ -12,10 +12,12 @@ import {
   AR_ERROR_CODES,
   createAuditLogFromContext,
   getLogger,
-  recordHybridUserSessionRevocationEpoch,
+  recordUserSessionRevocationEndingSessions,
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './admin-shared';
+import { adminActorIdFromContext, startAdminSessionEndLogout } from './admin-session-end';
+import { endedSessionsOf } from './session-end-logout';
 
 const AVATAR_CONTENT_TYPES: Record<string, string> = {
   gif: 'image/gif',
@@ -637,13 +639,20 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
 
     const log = getLogger(c).module('ADMIN');
     const revokedAfterMs = Date.now();
-    await recordHybridUserSessionRevocationEpoch(
+    // The sessions this revocation ended (read with the epoch move): their relying parties are
+    // told after the response.
+    const { endedSessionIds } = await recordUserSessionRevocationEndingSessions(
       c.env,
-      authCtx.coreAdapter,
       tenantId,
       userId,
       revokedAfterMs
     );
+    await startAdminSessionEndLogout(c, {
+      tenantId,
+      sessions: endedSessionsOf(userId, endedSessionIds),
+      trigger: { action: 'user.sessions_revoked', actorId: adminActorIdFromContext(c) },
+      log,
+    });
 
     const sessions = await authCtx.coreAdapter.query<{ id: string }>(
       'SELECT id FROM sessions WHERE tenant_id = ? AND user_id = ?',

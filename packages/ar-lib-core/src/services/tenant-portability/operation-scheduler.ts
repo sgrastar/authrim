@@ -100,8 +100,8 @@ export async function runTenantBackupScheduler(
         };
         const permanent = isTenantBackupPermanentFailure(errorCode) ? errorCode : null;
         // Retrying cannot fix these; clean the operation up and keep the reason instead. An import
-        // that already wrote to its restore targets cannot be cleaned up yet, so it keeps the
-        // usual retries (ending in 'waiting') and only records the reason.
+        // past its last cleanable phase cannot be cleaned up, so it keeps the usual retries
+        // (ending in 'waiting') and only records the reason.
         if (
           permanent &&
           current.state === 'running' &&

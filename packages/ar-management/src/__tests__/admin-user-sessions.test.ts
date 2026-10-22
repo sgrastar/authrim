@@ -12,7 +12,7 @@ const {
   mockIsShardedSessionId,
   mockDetectImageType,
   mockLogSanitizedError,
-  mockRecordHybridUserSessionRevocationEpoch,
+  mockRecordRevocationEndingSessions,
 } = vi.hoisted(() => {
   const logger = {
     module: vi.fn().mockReturnThis(),
@@ -41,7 +41,7 @@ const {
     mockIsShardedSessionId: vi.fn(),
     mockDetectImageType: vi.fn(),
     mockLogSanitizedError: vi.fn(),
-    mockRecordHybridUserSessionRevocationEpoch: vi.fn(),
+    mockRecordRevocationEndingSessions: vi.fn(),
   };
 });
 
@@ -64,7 +64,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: mockGetLogger,
     invalidateUserCache: mockInvalidateUserCache,
     isShardedSessionId: mockIsShardedSessionId,
-    recordHybridUserSessionRevocationEpoch: mockRecordHybridUserSessionRevocationEpoch,
+    recordUserSessionRevocationEndingSessions: mockRecordRevocationEndingSessions,
     createErrorResponse: vi.fn((c, code) =>
       c.json({ error: code }, code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND ? 404 : 500)
     ),
@@ -154,7 +154,10 @@ describe('admin user session revocation', () => {
     mockInvalidateUserCache.mockResolvedValue(undefined);
     mockIsShardedSessionId.mockImplementation((id: string) => id.startsWith('g1:'));
     mockSessionStore.getSessionRpc.mockResolvedValue(null);
-    mockRecordHybridUserSessionRevocationEpoch.mockResolvedValue(1_750_000_000_000);
+    mockRecordRevocationEndingSessions.mockResolvedValue({
+      revokedAfterMs: 1_750_000_000_000,
+      endedSessionIds: [],
+    });
     mockDetectImageType.mockReturnValue({ extension: 'png', mimeType: 'image/png' });
   });
 
@@ -173,9 +176,8 @@ describe('admin user session revocation', () => {
       'tenant-1'
     );
     expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('g1:apac:3:session_one');
-    expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledWith(
+    expect(mockRecordRevocationEndingSessions).toHaveBeenCalledWith(
       expect.anything(),
-      mockCoreAdapter,
       'tenant-1',
       'user-1',
       expect.any(Number)
@@ -638,7 +640,7 @@ describe('admin user session revocation', () => {
         .mockResolvedValueOnce(false);
       const response = await adminUserRevokeAllSessionsHandler(createContext());
       await expect(response.json()).resolves.toMatchObject({ storeRevokedCount: 1 });
-      expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledOnce();
+      expect(mockRecordRevocationEndingSessions).toHaveBeenCalledOnce();
     });
 
     it('continues bulk revocation when one DO route fails and defaults missing row count to zero', async () => {

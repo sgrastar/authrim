@@ -3,6 +3,7 @@ import {
   inspectPhase4SqliteReferences,
   phase4SqliteRestoreDependencies,
   phase4SqliteRestoreOverrides,
+  phase4SqliteRestoreTransform,
   phase4SqliteVerificationIgnoredColumns,
 } from './phase4-sqlite-references.js';
 import { PHASE4_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from './phase4-sqlite-modules.js';
@@ -281,6 +282,14 @@ export function phase5SqliteRestoreOverrides(
   return undefined;
 }
 
+export function phase5SqliteRestoreTransform(
+  datasetId: string
+): SqliteDatasetInspectionPolicy['restoreTransform'] {
+  if (previousIds.has(datasetId)) return phase4SqliteRestoreTransform(datasetId);
+  if (!phase5Ids.has(datasetId)) invalid();
+  return undefined;
+}
+
 export function phase5SqliteVerificationIgnoredColumns(datasetId: string): readonly string[] {
   if (previousIds.has(datasetId)) return phase4SqliteVerificationIgnoredColumns(datasetId);
   if (!phase5Ids.has(datasetId)) invalid();
@@ -325,6 +334,7 @@ export function createPhase5SqliteInspectionPolicies(
     const deferredColumns = entry.dataset.id === 'core.flows' ? ['published_version_id'] : [];
     const restoreOverrides = phase5SqliteRestoreOverrides(entry.dataset.id);
     const verificationIgnoredColumns = phase5SqliteVerificationIgnoredColumns(entry.dataset.id);
+    const restoreTransform = phase5SqliteRestoreTransform(entry.dataset.id);
     const parentDataset =
       'parent' in entry.capture
         ? byTable.get(`${entry.family}:${entry.capture.parent.schema.table}`)
@@ -349,6 +359,7 @@ export function createPhase5SqliteInspectionPolicies(
       ...(deferredColumns.length ? { deferredColumns } : {}),
       ...(restoreOverrides ? { restoreOverrides } : {}),
       ...(verificationIgnoredColumns.length ? { verificationIgnoredColumns } : {}),
+      ...(restoreTransform ? { restoreTransform } : {}),
       ...(isTenantKeyOwned(entry.capture) ? { tenantKey: input.tenantKey } : {}),
       ...(parentDataset
         ? { parentDataset: { id: parentDataset.id, module: parentDataset.module } }

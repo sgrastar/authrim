@@ -31,6 +31,16 @@ paths:
       tags:
         - SAML IdP
       summary: Return SAML IdP metadata XML.
+      description: >-
+        For a tenant that has set its institution (the institution.scopes and
+        institution.display_names settings, which only the platform can change), the
+        IDPSSODescriptor starts with md:Extensions holding one shibmd:Scope (xmlns:shibmd
+        urn:mace:shibboleth:metadata:1.0, regexp="false") per registered scope, and md:Organization
+        names the institution in each language it was given (the name and the display name are the
+        institution's name). A tenant that has set none gets the metadata it always had (no scope,
+        an organization named Authrim). The metadata is signed as before, with these in it, and its
+        ETag changes with them; a service provider may keep it for up to a day. If the tenant's
+        settings cannot be read the endpoint answers 500 rather than metadata without its scopes.
       responses:
         '200':
           $ref: '#/components/responses/Xml'
@@ -39,6 +49,26 @@ paths:
       tags:
         - SAML IdP
       summary: Handle IdP SSO redirect binding.
+      description: >-
+        While the tenant has registered institution scopes (institution.scopes), the attributes
+        eduPersonScopedAffiliation and eduPersonPrincipalName (recognised on what the mapping
+        produced, by whatever rule or transform: the name, friendly name or OID of the attribute,
+        the short forms eppn and epsa, the destination's catalog entry and path, and the fields the
+        value is read from, through transforms) are released only with values under one of those scopes: a value
+        under another scope, with nothing before or after the @, with more than one @, or empty,
+        is withheld, a value with no scope gets the default (the first scope), and if the settings cannot be read none is released. A required attribute left
+        without a value is answered as a missing required attribute. What was withheld is recorded
+        in the audit log as saml.attribute.withheld (attribute, reason code and the scope, never
+        a value). Values released as schacHomeOrganization or o are held to what the tenant registered: the former only when
+        it equals a registered scope, the latter only when it equals a registered name, whatever source
+        the mapping took it from (otherwise withheld, reason organization_not_registered). A tenant
+        that has registered neither a scope nor a name has no institution to name, so neither
+        attribute is released (withheld, reason institution_not_registered). A service provider
+        whose field mapping set maps the system sources Home
+        Organization (schac_home_organization) or Organization Name (organization_name) to an
+        attribute gets the default scope as schacHomeOrganization or the institution's English
+        name as o; nothing is added otherwise. A tenant that has set no scopes releases
+        eduPersonScopedAffiliation and eduPersonPrincipalName as before.
       responses:
         '200':
           $ref: '#/components/responses/Html'

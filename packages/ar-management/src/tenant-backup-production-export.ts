@@ -36,6 +36,7 @@ import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-obje
 import { createTenantBackupSamlPorts } from './tenant-backup-saml-port';
 import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupRestoreTargets } from './tenant-backup-production-restore-targets';
+import { createTenantBackupImportDiscard } from './tenant-backup-import-discard';
 import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 import {
   activateProvisionedTenantLifecycle,
@@ -109,9 +110,10 @@ async function resolveRestoreTenantKey(
   env: Env,
   context: TenantBackupStepContext
 ): Promise<string> {
+  // A cancelling import may be resumed after its discard already marked the tenant deleted.
   const lifecycleStates =
     context.operation.state === 'cancelling'
-      ? ['provisioning', 'active']
+      ? ['provisioning', 'active', 'deleted']
       : [context.operation.phase === 'verify_restore_activation' ? 'active' : 'provisioning'];
   const row = await ensureDatabaseAdapter(env.DB, 'tenant-backup-restore-platform').queryOne<{
     tenant_key: string;
@@ -240,6 +242,17 @@ export async function createProductionTenantBackupExportAdapter(
     })());
   const piiLog = createTenantBackupPiiLogTransformPort(env, async () => unavailable());
   const restore = importing ? createProductionTenantBackupRestoreTargets({ env, tenantKey }) : null;
+  // A cancelled or permanently failed import that already wrote discards its restored tenant.
+  const discard = restore
+    ? createTenantBackupImportDiscard({
+        env,
+        tenantKey,
+        platform: restore.platform,
+        resolveCoreDefault: (cleanupContext) =>
+          restore.databaseForRole(cleanupContext, 'tenant_core/default'),
+        now,
+      })
+    : null;
   let routedResources: ReturnType<typeof resolveBackupTenantDatabaseResources> | null = null;
   const loadRoutedResources = () =>
     (routedResources ??= resolveBackupTenantDatabaseResources(env, {
@@ -385,11 +398,13 @@ export async function createProductionTenantBackupExportAdapter(
       cleanup: {
         resolveSnapshotSource: (resourceId) =>
           resolveRecordedDatabase(env, currentContext(), resourceId),
-        async cleanupRestoreTarget() {
-          unavailable();
-        },
+        ...(discard
+          ? { prepareImportCleanup: (cleanupContext) => discard.prepare(cleanupContext) }
+          : {}),
+        cleanupRestoreTarget: async (cleanupContext, target) =>
+          discard ? discard.cleanupTarget(cleanupContext, target) : unavailable(),
         async cleanupAdditionalPage(cleanupContext) {
-          if (importing) return { done: true };
+          if (discard) return discard.cleanupAdditional(cleanupContext);
           const inventoryDigest = await loadCancellationInventoryDigest(env, cleanupContext, now);
           const adapterContext = { context: cleanupContext } as never;
           await keyManager.release(
@@ -417,7 +432,7 @@ export async function createProductionTenantBackupExportAdapter(
           return { done: true };
         },
         async assertClean(cleanupContext) {
-          if (importing) return;
+          if (discard) return discard.assertClean(cleanupContext);
           const inventoryDigest = await loadCancellationInventoryDigest(env, cleanupContext, now);
           const adapterContext = { context: cleanupContext } as never;
           await keyManager.assertReleased(

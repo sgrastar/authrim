@@ -65,6 +65,25 @@ const {
   };
 });
 
+const {
+  mockTransitionEndingSessions,
+  mockEnqueueSessionEndLogout,
+  mockSendSessionEndLogout,
+  mockAuditSessionEndLogout,
+} = vi.hoisted(() => ({
+  mockTransitionEndingSessions: vi.fn(),
+  mockEnqueueSessionEndLogout: vi.fn(),
+  mockSendSessionEndLogout: vi.fn(),
+  mockAuditSessionEndLogout: vi.fn(),
+}));
+
+vi.mock('../session-end-logout', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../session-end-logout')>()),
+  enqueueSessionEndLogout: mockEnqueueSessionEndLogout,
+  sendAdminSessionEndLogout: mockSendSessionEndLogout,
+  auditSessionEndLogoutStarted: mockAuditSessionEndLogout,
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -79,6 +98,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       mockResolveTenantAssignedDatabaseSourcesFromRegistry,
     emitRuntimeLogRecords: mockEmitRuntimeLogRecords,
     transitionAccountAuthenticationState: mockTransition,
+    transitionAccountAuthenticationStateEndingSessions: mockTransitionEndingSessions,
     readAccountAuthenticationState: mockReadState,
     initializeAccountAuthenticationFromAccount: vi.fn(async () => ({})),
     findCanonicalAccountAuthenticationState: vi.fn(async () => ({
@@ -92,6 +112,7 @@ import { encryptObjectArtifact } from '@authrim/ar-lib-core';
 import {
   isAdminJobAllowedForTenantLifecycle,
   processPendingGenericAdminJobs as processPendingGenericAdminJobsImpl,
+  processPendingSessionEndLogoutJobs,
   validateBulkUserUpdateConfig,
 } from '../admin-job-executor';
 
@@ -185,6 +206,18 @@ describe('generic admin job executor', () => {
     );
     mockTransition.mockReset();
     mockTransition.mockResolvedValue({ lifecycle: 'suspended' });
+    // A transition that revokes sessions goes through the variant returning the ended sessions.
+    mockTransitionEndingSessions.mockReset();
+    mockTransitionEndingSessions.mockImplementation(async (env: unknown, input: unknown) => ({
+      state: await mockTransition(env, input),
+      endedSessionIds: [],
+    }));
+    mockEnqueueSessionEndLogout.mockReset();
+    mockEnqueueSessionEndLogout.mockResolvedValue(['logout-job-1']);
+    mockSendSessionEndLogout.mockReset();
+    mockSendSessionEndLogout.mockResolvedValue(null);
+    mockAuditSessionEndLogout.mockReset();
+    mockAuditSessionEndLogout.mockResolvedValue(undefined);
     mockReadState.mockReset();
     mockReadState.mockResolvedValue({ lifecycle: 'active', lifecycleOperationId: 'other' });
     mockEmitRuntimeLogRecords.mockReset();
@@ -962,6 +995,200 @@ describe('generic admin job executor', () => {
         'tenant-a',
       ])
     );
+  });
+
+  it('tells the relying parties of the sessions a suspending bulk job ended', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['status'],
+          values: { status: 'suspended' },
+          filter: { lifecycle_state: 'active' },
+          dry_run: false,
+        }),
+        created_at: 1,
+      },
+    ]);
+    mockAdapter.query.mockResolvedValueOnce([{ id: 'user-1' }, { id: 'user-2' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 2 });
+    mockTransitionEndingSessions.mockImplementation(
+      async (_env: unknown, input: { userId: string }) => ({
+        state: { lifecycle: 'suspended' },
+        endedSessionIds: [`${input.userId}-session`],
+      })
+    );
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    // Kept as admin jobs for the scheduled run (no response to answer first).
+    expect(mockEnqueueSessionEndLogout).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueSessionEndLogout).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      sessions: [
+        { userId: 'user-1', sessionId: 'user-1-session' },
+        { userId: 'user-2', sessionId: 'user-2-session' },
+      ],
+      trigger: { action: 'bulk_user_update', operationId: 'job-1' },
+    });
+    expect(mockSendSessionEndLogout).not.toHaveBeenCalled();
+    // The audit names the job that started the logout, for each user.
+    expect(mockAuditSessionEndLogout).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      sessions: [
+        { userId: 'user-1', sessionId: 'user-1-session' },
+        { userId: 'user-2', sessionId: 'user-2-session' },
+      ],
+      trigger: { action: 'bulk_user_update', operationId: 'job-1' },
+      jobIds: ['logout-job-1'],
+    });
+  });
+
+  it('runs logout jobs every minute, apart from the other admin jobs', async () => {
+    mockAdapter.query.mockResolvedValue([]);
+    await processPendingSessionEndLogoutJobs({ DB_ADMIN: mockAdminDb } as never, logger);
+    const [logoutSql, logoutParams] = mockAdapter.query.mock.calls.at(-1)! as [string, unknown[]];
+    expect(logoutSql).toContain('LIMIT ?');
+    expect(logoutParams).toContain('users/session-end-logout');
+    expect(logoutParams.at(-1)).toBe(25);
+
+    await processPendingGenericAdminJobs({} as never, logger);
+    const [, genericParams] = mockAdapter.query.mock.calls.at(-1)! as [string, unknown[]];
+    expect(genericParams).toContain('users/bulk-update');
+    expect(genericParams).not.toContain('users/session-end-logout');
+    expect(genericParams.at(-1)).toBe(5);
+  });
+
+  it('clears the run time when it claims a job, so no other run claims it too', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['status'],
+          values: { status: 'suspended' },
+          filter: { lifecycle_state: 'active' },
+          dry_run: true,
+        }),
+        created_at: 1,
+        next_run_at: 1,
+      },
+    ]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    const [claimSql] = mockAdapter.execute.mock.calls[0]! as [string];
+    expect(claimSql).toContain("SET status = 'processing'");
+    expect(claimSql).toContain('next_run_at = NULL');
+  });
+
+  it('sends the downstream logout at once when it cannot be kept as jobs', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['status'],
+          values: { status: 'suspended' },
+          filter: { lifecycle_state: 'active' },
+          dry_run: false,
+        }),
+        created_at: 1,
+      },
+    ]);
+    mockAdapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    mockTransitionEndingSessions.mockResolvedValue({
+      state: { lifecycle: 'suspended' },
+      endedSessionIds: ['session-1'],
+    });
+    mockEnqueueSessionEndLogout.mockRejectedValueOnce(new Error('admin database unavailable'));
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    expect(mockSendSessionEndLogout).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      sessions: [{ userId: 'user-1', sessionId: 'session-1' }],
+      trigger: { action: 'bulk_user_update', operationId: 'job-1' },
+    });
+  });
+
+  it('still tells the relying parties when a later step of the batch fails', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['status'],
+          values: { status: 'locked' },
+          filter: { lifecycle_state: 'active' },
+          dry_run: false,
+        }),
+        created_at: 1,
+      },
+    ]);
+    mockAdapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    mockAdapter.batch.mockRejectedValueOnce(new Error('database unavailable'));
+    mockTransitionEndingSessions.mockResolvedValue({
+      state: { lifecycle: 'locked' },
+      endedSessionIds: ['session-1'],
+    });
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    expect(mockEnqueueSessionEndLogout).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sessions: [{ userId: 'user-1', sessionId: 'session-1' }] })
+    );
+  });
+
+  it('activating accounts in bulk ends no session and tells no one', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['is_active'],
+          values: { is_active: true },
+          filter: { lifecycle_state: 'deprovisioned' },
+          dry_run: false,
+        }),
+        created_at: 1,
+      },
+    ]);
+    mockAdapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('SELECT legacy_user_id AS id') ? [{ id: 'user-1', version: 1000 }] : []
+    );
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    mockTransition.mockResolvedValue({ lifecycle: 'active' });
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    expect(mockTransition).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: 'user-1', lifecycle: 'active', revokeSessions: false })
+    );
+    expect(mockTransitionEndingSessions).not.toHaveBeenCalled();
+    expect(mockEnqueueSessionEndLogout).not.toHaveBeenCalled();
   });
 
   it('keeps bulk user update jobs processing across chunks', async () => {

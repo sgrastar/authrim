@@ -2203,6 +2203,35 @@ paths:
         outside the range is refused with 400 on the platform and is not accepted for a tenant).
         A value in the environment or the store that is outside the range is ignored and the
         default is used.
+        The institution category (institution.scopes and institution.display_names) says which
+        institution the tenant stands for and is the platform's to change: reading it needs the
+        usual tenant view access, but saving it (set, clear, and so on) needs platform authority, a
+        role that may edit settings held through a global assignment, or a machine token that may
+        write the settings of every tenant; the tenant's own administrators (including its
+        super_admin), tokens limited to some tenants, and agents are refused with 403. It is a
+        tenant category only (400 for the platform and for apps), has no environment variable, is
+        not inherited, is not given to several tenants by the bulk apply, is not copied when a
+        tenant is cloned, and cannot be rolled back through the settings history routes (400).
+        institution.scopes is a comma-separated list of 1 to 20 distinct lowercase domain names of
+        at least two labels (letters, digits and hyphens; a non-ASCII name in its xn-- form; no
+        wildcard, port, path, trailing dot or IP address), the first being the default; an empty
+        list is refused (clear the setting for none). institution.display_names is JSON text of an
+        object from a lowercase language tag (ja, en, en-gb, ...) to the institution's name (1 to
+        200 characters, unpadded, no control characters), with at least ja and en and at most 16
+        languages. Neither can be disabled (400). Both are checked as above, or the whole PATCH is
+        refused with 400 validation_failed and nothing is saved. While institution.scopes is set,
+        the SAML IdP releases eduPersonScopedAffiliation and eduPersonPrincipalName only under one
+        of the scopes (a value under another scope is withheld and recorded in the audit log as
+        saml.attribute.withheld with a reason code and the scope, never the value; a value with no
+        scope gets the default), lists the scopes in its metadata (shibmd:Scope), and releases the
+        default as schacHomeOrganization to a service provider whose field mapping set maps the
+        system source Home Organization to it. While institution.display_names is set, the SAML
+        IdP metadata names the organization with it and the English name is released as the
+        organization name attribute (o) to a service provider whose field mapping set maps the
+        system source Organization Name to it. A tenant that has set neither releases no
+        schacHomeOrganization and no organization name (o), whatever a mapping produces for them
+        (withheld, reason institution_not_registered), and releases eduPersonScopedAffiliation and
+        eduPersonPrincipalName as before.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -15595,6 +15624,10 @@ paths:
           description: Filter by organization type.
           schema:
             type: string
+            enum:
+              - distributor
+              - enterprise
+              - department
       responses:
         '200':
           $ref: '#/components/responses/AdminOrganizationList'
@@ -15615,8 +15648,9 @@ paths:
       operationId: postApiAdminOrganizations
       summary: Create an organization.
       description: >-
-        Creates a tenant organization with a unique name. Invalid or omitted plan and org_type
-        values default to free and team respectively.
+        Creates a tenant organization with a unique name. An invalid or omitted plan defaults to
+        free. An omitted org_type defaults to enterprise; any other value outside distributor,
+        enterprise and department returns invalid_request.
       responses:
         '201':
           $ref: '#/components/responses/AdminOrganization'
@@ -32029,6 +32063,7 @@ paths:
                                   'heldRecords',
                                   'progress',
                                   'preview',
+                                  'discard',
                                 ],
                               'properties':
                                 {
@@ -32054,6 +32089,7 @@ paths:
                                   'createdAt': { 'type': 'integer', 'minimum': 0 },
                                   'updatedAt': { 'type': 'integer', 'minimum': 0 },
                                   'lastErrorCode': { 'type': 'string', 'nullable': true },
+                                  'failureReason': { 'type': 'string', 'nullable': true },
                                   'selection': { 'type': 'object' },
                                   'publication':
                                     {
@@ -32111,6 +32147,44 @@ paths:
                                                   'datasetId': { 'type': 'string' },
                                                   'reason': { 'type': 'string' },
                                                   'count': { 'type': 'integer', 'minimum': 1 },
+                                                },
+                                            },
+                                        },
+                                    },
+                                  'discard':
+                                    {
+                                      'type': 'object',
+                                      'nullable': true,
+                                      'description': 'Import cleanup that discards the restored tenant: whether it does, and while it is stopped, why (for example the legal holds that keep it from deleting anything).',
+                                      'additionalProperties': false,
+                                      'required': ['decision', 'blocker'],
+                                      'properties':
+                                        {
+                                          'decision':
+                                            {
+                                              'type': 'string',
+                                              'nullable': true,
+                                              'enum': ['none', 'discard', null],
+                                            },
+                                          'blocker':
+                                            {
+                                              'type': 'object',
+                                              'nullable': true,
+                                              'additionalProperties': false,
+                                              'required': ['kind', 'detail'],
+                                              'properties':
+                                                {
+                                                  'kind':
+                                                    {
+                                                      'type': 'string',
+                                                      'enum':
+                                                        [
+                                                          'legal_hold',
+                                                          'blocked_rows',
+                                                          'schema_changed',
+                                                        ],
+                                                    },
+                                                  'detail': { 'type': 'object' },
                                                 },
                                             },
                                         },
@@ -35724,7 +35798,7 @@ components:
             $ref: '#/components/schemas/UserRelationshipCreateRequest'
           example:
             related_subject_id: user_456
-            relationship_type: manager_of
+            relationship_type: manager
             expires_at: 1770086400000
       description: Relationship to create from the path user to the related subject.
     UserRetryPii:
@@ -42236,14 +42310,14 @@ components:
               - id: rel_123
                 subject_id: user_123
                 related_subject_id: user_456
-                relationship_type: manager_of
+                relationship_type: manager
                 expires_at: 1770086400000
                 created_at: 1770000000000
                 related_email: target@example.com
                 related_name: Target User
             incoming_relationships:
               - id: rel_456
-                relationship_type: guardian_of
+                relationship_type: guardian
                 subject_id: user_789
                 subject_email: guardian@example.com
                 subject_name: Guardian User
@@ -42262,7 +42336,7 @@ components:
               id: rel_123
               subject_id: user_123
               related_subject_id: user_456
-              relationship_type: manager_of
+              relationship_type: manager
               expires_at: 1770086400000
               created_at: 1770000000000
     UserRelationshipDelete:
@@ -60039,6 +60113,10 @@ components:
           type: integer
         org_type:
           type: string
+          enum:
+            - distributor
+            - enterprise
+            - department
         metadata_json:
           type: object
           additionalProperties: true
@@ -60130,6 +60208,16 @@ components:
           type: string
         org_type:
           type: string
+          enum:
+            - distributor
+            - enterprise
+            - department
+          default: enterprise
+        parent_org_id:
+          type:
+            - string
+            - 'null'
+          description: Parent organization of the same tenant; omitted or null for a root.
         metadata_json:
           type: object
           additionalProperties: true
@@ -60156,6 +60244,10 @@ components:
           type: string
         org_type:
           type: string
+          enum:
+            - distributor
+            - enterprise
+            - department
         is_active:
           type: boolean
         metadata_json:
@@ -68295,17 +68387,23 @@ components:
           type: string
         relationship_type:
           type: string
+          description: >-
+            The path user is the side that acts (parent, guardian, delegate, manager) and
+            related_subject_id the one acted for. These are the types the acting-as consent,
+            the relationships claim and guardian approval resolution read.
           enum:
-            - parent_of
-            - guardian_of
-            - manager_of
-            - assistant_of
-            - delegate_of
+            - parent_child
+            - guardian
+            - delegate
+            - manager
         expires_at:
-          type: integer
+          type:
+            - integer
+            - 'null'
+          description: Future expiry in epoch milliseconds; omitted or null for no expiry.
       example:
         related_subject_id: user_456
-        relationship_type: manager_of
+        relationship_type: manager
         expires_at: 1770086400000
     UserRelationshipCreateResponse:
       type: object
@@ -68346,14 +68444,14 @@ components:
           - id: rel_123
             subject_id: user_123
             related_subject_id: user_456
-            relationship_type: manager_of
+            relationship_type: manager
             expires_at: 1770086400000
             created_at: 1770000000000
             related_email: target@example.com
             related_name: Target User
         incoming_relationships:
           - id: rel_456
-            relationship_type: guardian_of
+            relationship_type: guardian
             subject_id: user_789
             subject_email: guardian@example.com
             subject_name: Guardian User

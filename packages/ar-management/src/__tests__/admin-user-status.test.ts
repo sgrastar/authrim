@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   retention: vi.fn(),
   scheduleAudit: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  transition: vi.fn<(env: unknown, input: unknown) => Promise<unknown>>(async () => ({
+    lifecycle: 'active',
+  })),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -20,7 +23,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     storeOperationalLog: mocks.operationalLog,
     getOperationalLogRetentionDays: mocks.retention,
     getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
-    transitionAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
+    transitionAccountAuthenticationState: mocks.transition,
+    // Suspending and locking also read the sessions they ended: the same transition.
+    transitionAccountAuthenticationStateEndingSessions: vi.fn(
+      async (env: unknown, input: unknown) => ({
+        state: (await mocks.transition(env, input)) as unknown,
+        endedSessionIds: [],
+      })
+    ),
     readAccountAuthenticationState: vi.fn(async () => ({
       lifecycle: 'active',
       lifecycleOperationId: null,

@@ -60,6 +60,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
       matchedInstallations: 0,
     }),
     resolveLogoutTargetsFromSessionClientStore: vi.fn().mockResolvedValue(null),
+    sendBackchannelLogoutFanout: vi.fn().mockResolvedValue(null),
+    sendLogoutWebhookFanout: vi.fn().mockResolvedValue(null),
+    purgeEndedSessionsFromSessionClientStore: vi.fn().mockResolvedValue(undefined),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     // Return { stub: ... } to match the destructuring pattern in logout.ts
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),
@@ -79,6 +82,10 @@ import {
   validateLogoutParameters,
   resolveLogoutTargetsFromSessionClientStore,
   recordHybridUserSessionRevocationEpoch,
+  sendBackchannelLogoutFanout,
+  sendLogoutWebhookFanout,
+  purgeEndedSessionsFromSessionClientStore,
+  DEFAULT_LOGOUT_CONFIG,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -357,6 +364,174 @@ describe('Front-channel Logout', () => {
       expect(html).toContain('sid=rp-session-123');
       expect(html).not.toContain('sid=0_session_123');
       expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
+    });
+
+    it('hands the ended session clients to the shared downstream fan-out after the response', async () => {
+      const { c } = createMockContext({
+        query: {},
+        body: { confirmation_token: '0_session_123' },
+      });
+      const waitUntil = vi.fn();
+      c.executionCtx = { waitUntil };
+      const backchannelClient = {
+        client_id: 'rp-client',
+        oidc_sid: 'rp-session-123',
+        backchannel_logout_uri: 'https://rp.example.com/backchannel',
+        backchannel_logout_session_required: true,
+      };
+      const webhookClient = {
+        client_id: 'rp-webhook',
+        logout_webhook_uri: 'https://rp.example.com/webhook',
+      };
+
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+        backchannelClients: [backchannelClient],
+        frontchannelClients: [],
+        webhookClients: [webhookClient],
+      } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+
+      await frontChannelLogoutHandler(c);
+      await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+
+      expect(sendBackchannelLogoutFanout).toHaveBeenCalledWith(
+        c.env,
+        expect.objectContaining({
+          tenantId: 'default',
+          issuer: 'https://op.example.com',
+          config: DEFAULT_LOGOUT_CONFIG.backchannel,
+          onAlert: expect.any(Function),
+          sessions: [
+            expect.objectContaining({
+              sessionId: '0_session_123',
+              backchannelClients: [backchannelClient],
+              webhookClients: [webhookClient],
+            }),
+          ],
+        })
+      );
+      expect(sendLogoutWebhookFanout).toHaveBeenCalledWith(
+        c.env,
+        expect.objectContaining({
+          issuer: 'https://op.example.com',
+          sessions: [expect.objectContaining({ sessionId: '0_session_123' })],
+        })
+      );
+    });
+
+    describe('removing the ended session from the SessionClientStore', () => {
+      const backchannelClient = {
+        client_id: 'rp-client',
+        oidc_sid: 'rp-session-123',
+        backchannel_logout_uri: 'https://rp.example.com/backchannel',
+        backchannel_logout_session_required: true,
+      };
+
+      function deferred<T>() {
+        let resolve!: (value: T) => void;
+        let reject!: (error: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        return { promise, resolve, reject };
+      }
+
+      function setUp() {
+        const { c } = createMockContext({
+          query: {},
+          body: { confirmation_token: '0_session_123' },
+        });
+        const waitUntil = vi.fn();
+        c.executionCtx = { waitUntil };
+        mockShardedSessionStore.invalidateSessionRpc.mockReset();
+        mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
+        vi.mocked(getCookie).mockReturnValue('0_session_123');
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+          backchannelClients: [backchannelClient],
+          frontchannelClients: [],
+          webhookClients: [],
+        } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+        vi.mocked(purgeEndedSessionsFromSessionClientStore).mockClear();
+        return { c, waitUntil };
+      }
+
+      const settleAll = (waitUntil: ReturnType<typeof vi.fn>) =>
+        Promise.allSettled(waitUntil.mock.calls.map(([promise]) => promise));
+
+      it('removes it only after both notices have finished', async () => {
+        const { c, waitUntil } = setUp();
+        const backchannel = deferred<null>();
+        const webhook = deferred<null>();
+        vi.mocked(sendBackchannelLogoutFanout).mockReturnValueOnce(backchannel.promise);
+        vi.mocked(sendLogoutWebhookFanout).mockReturnValueOnce(webhook.promise);
+
+        await frontChannelLogoutHandler(c);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+
+        backchannel.resolve(null);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+
+        webhook.resolve(null);
+        await settleAll(waitUntil);
+        expect(purgeEndedSessionsFromSessionClientStore).toHaveBeenCalledWith(c.env, 'default', [
+          '0_session_123',
+        ]);
+        // The targets were read before the removal, and the notices got them.
+        expect(
+          vi.mocked(resolveLogoutTargetsFromSessionClientStore).mock.invocationCallOrder[0]
+        ).toBeLessThan(
+          vi.mocked(purgeEndedSessionsFromSessionClientStore).mock.invocationCallOrder[0]
+        );
+        expect(sendBackchannelLogoutFanout).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({
+            sessions: [expect.objectContaining({ backchannelClients: [backchannelClient] })],
+          })
+        );
+      });
+
+      it('still removes it when a notice fails', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(sendBackchannelLogoutFanout).mockRejectedValueOnce(new Error('send failed'));
+
+        await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(purgeEndedSessionsFromSessionClientStore).toHaveBeenCalledWith(c.env, 'default', [
+          '0_session_123',
+        ]);
+      });
+
+      it('keeps the notices when the removal fails', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(purgeEndedSessionsFromSessionClientStore).mockRejectedValueOnce(
+          new Error('storage unavailable')
+        );
+
+        const response = await frontChannelLogoutHandler(c);
+        const results = await settleAll(waitUntil);
+
+        expect(response.status).not.toBe(503);
+        expect(sendBackchannelLogoutFanout).toHaveBeenCalled();
+        expect(sendLogoutWebhookFanout).toHaveBeenCalled();
+        // Only the removal itself failed: the notices' own work after the response did not.
+        expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      });
+
+      it('removes nothing when no session ended', async () => {
+        const { c, waitUntil } = setUp();
+        mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(false);
+
+        await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+      });
     });
 
     it('should handle logout when no session exists', async () => {
