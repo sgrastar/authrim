@@ -482,6 +482,24 @@ describe('admin-rbac schema alignment', () => {
     expect(mocked.invalidateSubjectRBACCache).toHaveBeenCalledWith(rebacCache, 'default', 'user-1');
   });
 
+  it('removes an assignment of a role the tenant no longer has', async () => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM role_assignments') ? { id: 'ra-1', role_id: 'role-deleted' } : null,
+    });
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    const c = createMockContext({ params: { id: 'user-1', assignmentId: 'ra-1' } });
+    c.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 1 });
+
+    const res = await adminUserRoleRemoveHandler(c);
+
+    expect(res.status).toBe(200);
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
+      ['default', 'ra-1', 'user-1']
+    );
+  });
+
   it('rejects assigning a role at the caller hierarchy level', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {

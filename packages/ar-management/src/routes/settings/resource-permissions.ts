@@ -21,6 +21,7 @@ import {
   type ResourcePermissionInput,
   type ResourcePermissionSubjectType,
   hasIdLevelPermission,
+  invalidateIdPermissionCache,
   resolveAccountCoreDataContext,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
@@ -158,7 +159,7 @@ export async function createResourcePermission(c: Context) {
     // Invalidate cache for subject
     if (c.env.REBAC_CACHE) {
       try {
-        await c.env.REBAC_CACHE.delete(`policy:idperms:${tenantId}:${body.subject_id}`);
+        await invalidateIdPermissionCache(c.env.REBAC_CACHE, body.subject_id, tenantId);
       } catch {
         // Ignore cache invalidation errors
       }
@@ -312,7 +313,7 @@ export async function deleteResourcePermission(c: Context) {
     // Invalidate cache for subject
     if (c.env.REBAC_CACHE) {
       try {
-        await c.env.REBAC_CACHE.delete(`policy:idperms:${tenantId}:${existing.subject_id}`);
+        await invalidateIdPermissionCache(c.env.REBAC_CACHE, existing.subject_id, tenantId);
       } catch {
         // Ignore cache invalidation errors
       }

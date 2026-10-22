@@ -57,6 +57,7 @@ import {
   resolveSubjectOrganizations,
   resolveSubjectRoles,
   isSet,
+  roleAssignmentHolds,
   rolePermissions,
   type ResolvedSubjectOrganization,
   type ResolvedSubjectRole,
@@ -82,7 +83,9 @@ function requireTenantId(tenantId: string | undefined, context: string): string 
 // =============================================================================
 
 const DEFAULT_RBAC_CACHE_TTL = 600; // 10 minutes in seconds (default)
-const RBAC_CACHE_PREFIX = 'rbac:';
+// v2: roles named by the tenant metadata database, tenant-wide permissions from tenant-wide
+// assignments only. Entries computed before are not read (they expire on their own).
+const RBAC_CACHE_PREFIX = 'rbac:v2:';
 const DEFAULT_RBAC_CACHE_VERSION = 1; // Increment when CompositeRBACCache structure changes
 
 // In-memory cache for TTL value (avoid repeated KV reads)
@@ -333,7 +336,7 @@ export async function getCompositeRBACCache(
     version: cacheVersion,
     roles: roleNames(subjectRoles),
     scoped_roles: scopedRoles(subjectRoles),
-    permissions: grantedPermissions(subjectRoles),
+    permissions: grantedPermissions(subjectRoles, tenantId),
     organizations: organizationList(subjectOrganizations),
     user_type: userType,
     plan: orgInfo?.plan ?? null,
@@ -518,8 +521,25 @@ function scopedRoles(roles: ResolvedSubjectRole[]): TokenScopedRole[] {
   }));
 }
 
-function grantedPermissions(roles: ResolvedSubjectRole[]): string[] {
-  return [...new Set(roles.flatMap(({ role }) => rolePermissions(role)))].sort();
+/**
+ * The tenant-wide permissions of the subject's roles: only from assignments that hold across the
+ * tenant (global, or tenant in its own tenant). A role assigned in one organisation or on one
+ * resource gives its permissions there only, so not in a tenant-wide claim (its role is still in
+ * authrim_scoped_roles with its scope).
+ */
+function grantedPermissions(roles: ResolvedSubjectRole[], tenantId: string): string[] {
+  return [
+    ...new Set(
+      roles
+        .filter(({ assignment }) =>
+          roleAssignmentHolds(
+            { scope: assignment.scope_type, scopeTarget: assignment.scope_target },
+            { tenantId }
+          )
+        )
+        .flatMap(({ role }) => rolePermissions(role))
+    ),
+  ].sort();
 }
 
 function primaryOrganization(
@@ -837,7 +857,7 @@ async function getAccessTokenRBACClaimsInternal(
   const names = needsRoles ? roleNames(roles) : [];
   const scoped = needsScopedRoles ? scopedRoles(roles) : [];
   const orgInfo = needsOrgInfo ? organizationInfo(organizations) : null;
-  const permissions = needsPermissions ? grantedPermissions(roles) : [];
+  const permissions = needsPermissions ? grantedPermissions(roles, tenantId) : [];
 
   // Add claims based on configuration
   if (needsRoles && names.length > 0) {
@@ -961,7 +981,7 @@ export async function resolvePermissions(
   subjectId: string,
   tenantId: string
 ): Promise<string[]> {
-  return grantedPermissions(await resolveSubjectRoles(dbs, tenantId, subjectId));
+  return grantedPermissions(await resolveSubjectRoles(dbs, tenantId, subjectId), tenantId);
 }
 
 /**

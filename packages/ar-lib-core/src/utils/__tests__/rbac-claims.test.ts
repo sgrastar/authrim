@@ -240,10 +240,30 @@ describe('RBAC token claims', () => {
       } as never)
     ).resolves.toEqual({ authrim_org_id: 'o' });
     expect(cache.get.mock.calls.map(([key]) => key)).toEqual([
-      expect.stringContaining('rbac:tenant-a:id:user-1:'),
-      expect.stringContaining('rbac:tenant-a:access:user-1:'),
+      expect.stringContaining('rbac:v2:tenant-a:id:user-1:'),
+      expect.stringContaining('rbac:v2:tenant-a:access:user-1:'),
     ]);
     expect(cache.put).not.toHaveBeenCalled();
+  });
+
+  it('does not read claims cached under the earlier key generation', async () => {
+    const one = adapter(() => []);
+    const cache = {
+      get: vi.fn(async (key: string) =>
+        key.startsWith('rbac:v2:')
+          ? null
+          : JSON.stringify({ authrim_permissions: ['reports:write'] })
+      ),
+      put: vi.fn(),
+    };
+    await expect(
+      getAccessTokenRBACClaims({ metadata: one, account: one }, 'user-1', {
+        cache,
+        tenantId: 'tenant-a',
+        claimsConfig: 'permissions',
+      } as never)
+    ).resolves.toEqual({});
+    expect(cache.get).toHaveBeenCalledWith(expect.stringMatching(/^rbac:v2:tenant-a:access:/));
   });
 
   it('uses a versioned composite cache entry without database access', async () => {

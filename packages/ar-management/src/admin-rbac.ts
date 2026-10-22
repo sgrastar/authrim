@@ -1448,10 +1448,8 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
           id: assigned.role_id,
         })
       : null;
-    const assignment =
-      assigned && role ? { id: assigned.id, hierarchy_level: role.hierarchy_level } : null;
 
-    if (!assignment) {
+    if (!assigned) {
       return c.json(
         {
           error: 'not_found',
@@ -1461,7 +1459,9 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    if (!canManageRoleHierarchy(adminAuth, assignment.hierarchy_level)) {
+    // An assignment of a role the tenant no longer has grants nothing: it can be removed without a
+    // hierarchy to check.
+    if (role && !canManageRoleHierarchy(adminAuth, role.hierarchy_level)) {
       return insufficientAdminPermissions(c);
     }
 

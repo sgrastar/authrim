@@ -151,9 +151,9 @@ describe('RBAC claims across the metadata and account databases', () => {
       { name: 'editor', scope: 'org', scopeTarget: 'org:org-1' },
       { name: 'viewer', scope: 'global' },
     ]);
+    // Tenant-wide permissions only: editor is assigned in org-1 alone (its global one expired).
     await expect(resolvePermissions(dbs, 'user-1', 'tenant-a')).resolves.toEqual([
       'documents:read',
-      'documents:write',
       'users:read',
       'users:write',
     ]);
@@ -198,7 +198,7 @@ describe('RBAC claims across the metadata and account databases', () => {
     ).resolves.toEqual({
       authrim_roles: ['admin', 'editor', 'viewer'],
       authrim_org_id: 'org-1',
-      authrim_permissions: ['documents:read', 'documents:write', 'users:read', 'users:write'],
+      authrim_permissions: ['documents:read', 'users:read', 'users:write'],
     });
     await expect(getCompositeRBACCache(dbs, 'user-1', { tenantId: 'tenant-a' })).resolves.toEqual(
       expect.objectContaining({

@@ -164,7 +164,9 @@ export function formatIdLevelPermission(resource: string, id: string, action: st
 /**
  * Cache key prefix for ID-level permissions
  */
-const ID_PERMISSION_CACHE_PREFIX = 'policy:idperms:';
+// v2: a role's grants only for resources its assignment covers. Entries computed before are not
+// read (they expire on their own).
+const ID_PERMISSION_CACHE_PREFIX = 'policy:idperms:v2:';
 
 /**
  * Convert database row to ResourcePermission object
