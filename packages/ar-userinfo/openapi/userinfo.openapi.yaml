@@ -117,9 +117,14 @@ paths:
         - Customer Profiles
       operationId: patchApiProtectedCustomerProfilesUsersByUserId
       summary: Update a protected customer profile through delegated write access.
-      description: Applies an approved delegated customer-profile update. The request requires an
-        Idempotency-Key header and an Authrim step-up receipt for the operation hash before the
-        profile is mutated.
+      description: Applies a customer-profile update for the authenticated actor. No delegated-write
+        authority is defined for this route, so the path userId must equal the access token
+        subject, and that subject must be the local account id itself (tokens with a mapped
+        pairwise or persistent sub, an externally asserted subject, an act claim, or a client or
+        admin principal subject are refused). Any other request returns 403 access_denied before a
+        step-up token is issued, whether or not that user exists. The request requires an Idempotency-Key header and an
+        Authrim step-up receipt for the operation hash before the profile is mutated. The step-up
+        confirmation is an additional requirement and never grants access to another user.
       responses:
         '200':
           $ref: '#/components/responses/CustomerProfileWrite'
@@ -135,7 +140,8 @@ paths:
           required: true
           schema:
             type: string
-          description: Subject user id whose customer profile is updated.
+          description: Subject user id whose customer profile is updated. Must equal the access
+            token subject.
         - name: Idempotency-Key
           in: header
           required: true
