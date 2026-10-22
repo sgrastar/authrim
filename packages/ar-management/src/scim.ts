@@ -84,6 +84,8 @@ import { applyScimInboundIdentityMapping, ScimIdentityMappingError } from './sci
 import { getScimInboundSettings } from './scim-settings';
 import { syncScimIdentifierReplacements } from './scim-identifier-replacement';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { withAdminSessionEndLogout } from './admin-session-end';
+import { transitionEndingSessions } from './session-end-logout';
 import {
   applyScimAssurance,
   claimOf,
@@ -305,14 +307,24 @@ async function maybeSyncCanonicalRuntimeUser(
   const active = internalUser.active === undefined ? true : internalUser.active !== 0;
   const lifecycleVersionMs = Date.now();
   if (!active) {
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'inactive',
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
+    // The sessions the deactivation ends: their relying parties are told after the response.
+    const operationId = crypto.randomUUID();
+    await withAdminSessionEndLogout(
+      c,
+      {
+        tenantId,
+        trigger: { action: 'scim.user.deactivate', operationId, actorId: await scimActorRef(c) },
+        audit: 'tenant',
+      },
+      (ended) =>
+        transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'inactive',
+          sourceVersionMs: lifecycleVersionMs,
+          operationId,
+        })
+    );
   }
   const writer = new CanonicalRuntimeUserWriter(
     new CanonicalIdentityRepository(coreAdapter, tenantId),
@@ -387,28 +399,44 @@ async function maybeDeleteCanonicalRuntimeUser(
   tenantId: string,
   userId: string
 ): Promise<void> {
-  const deletingVersionMs = Date.now();
-  await transitionAccountAuthenticationState(c.env, {
-    tenantId,
-    userId,
-    lifecycle: 'deleting',
-    sourceVersionMs: deletingVersionMs,
-    operationId: crypto.randomUUID(),
-    revokeSessions: true,
-  });
-  const writer = new CanonicalRuntimeUserWriter(
-    new CanonicalIdentityRepository(coreAdapter, tenantId),
-    piiAdapter
+  // The sessions the deletion ends: their relying parties are told after the response (each
+  // logout token carries the sub recorded with its session-client, not one read from the account
+  // being removed), also when a later step fails.
+  const deletingOperationId = crypto.randomUUID();
+  await withAdminSessionEndLogout(
+    c,
+    {
+      tenantId,
+      trigger: {
+        action: 'scim.user.delete',
+        operationId: deletingOperationId,
+        actorId: await scimActorRef(c),
+      },
+      audit: 'tenant',
+    },
+    async (ended) => {
+      const deletingVersionMs = Date.now();
+      await transitionEndingSessions(c.env, ended, {
+        tenantId,
+        userId,
+        lifecycle: 'deleting',
+        sourceVersionMs: deletingVersionMs,
+        operationId: deletingOperationId,
+      });
+      const writer = new CanonicalRuntimeUserWriter(
+        new CanonicalIdentityRepository(coreAdapter, tenantId),
+        piiAdapter
+      );
+      await writer.deleteRuntimeUser(userId);
+      await transitionEndingSessions(c.env, ended, {
+        tenantId,
+        userId,
+        lifecycle: 'deleted',
+        sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+        operationId: crypto.randomUUID(),
+      });
+    }
   );
-  await writer.deleteRuntimeUser(userId);
-  await transitionAccountAuthenticationState(c.env, {
-    tenantId,
-    userId,
-    lifecycle: 'deleted',
-    sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-    operationId: crypto.randomUUID(),
-    revokeSessions: true,
-  });
 }
 
 /**
@@ -556,6 +584,11 @@ async function scimActorId(c: ScimContext): Promise<string> {
   const match = authorization?.match(/^Bearer ([^\s]+)$/u);
   if (!match) throw new Error('scim_account_actor_unavailable');
   return `scim-token:${await sha256Hex(match[1])}`;
+}
+
+/** The SCIM token that acted, for the records of a downstream logout (none when unreadable). */
+async function scimActorRef(c: ScimContext): Promise<string | undefined> {
+  return scimActorId(c).catch(() => undefined);
 }
 
 function explicitScimIdempotencyKey(c: ScimContext): string | null {

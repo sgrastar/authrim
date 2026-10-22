@@ -183,6 +183,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     transitionAccountAuthenticationState: vi.fn(async (_env, input) => ({
       lifecycle: input.lifecycle,
     })),
+    transitionAccountAuthenticationStateEndingSessions: vi.fn(async (_env, input) => ({
+      state: { lifecycle: input.lifecycle },
+      endedSessionIds: [],
+    })),
     produceNotificationDelivery,
     validateOidcMappingSetReference: validateMappingSetReference,
     resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
