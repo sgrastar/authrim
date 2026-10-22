@@ -148,6 +148,7 @@ export class SessionClientRepository {
             session_id: client.session_id,
             client_id: client.client_id,
             oidc_sid: client.oidc_sid,
+            ...(client.oidc_sub ? { oidc_sub: client.oidc_sub } : {}),
             client_name: details.client_name,
             logout_webhook_uri: details.logout_webhook_uri,
             logout_webhook_secret_encrypted: details.logout_webhook_secret_encrypted,

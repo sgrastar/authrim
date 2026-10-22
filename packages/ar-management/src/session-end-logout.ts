@@ -15,13 +15,13 @@
  * run.
  */
 import {
-  buildCanonicalTenantIssuerUrl,
   createAuditLog,
   createLogger,
   purgeEndedSessionsFromSessionClientStore,
   requireDedicatedAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveLogoutConfig,
+  resolveLogoutIssuer,
   resolveLogoutTargetsFromSessionClientStore,
   resolveLogoutWebhookConfig,
   sendBackchannelLogoutFanout,
@@ -33,7 +33,6 @@ import {
   type LogoutFanoutSession,
   type LogoutFanoutSummary,
 } from '@authrim/ar-lib-core';
-import { getCanonicalTenantBaseUrl } from './request-issuer';
 
 export const SESSION_END_LOGOUT_JOB_TYPE = 'users/session-end-logout';
 
@@ -219,16 +218,6 @@ export async function enqueueSessionEndLogout(
 }
 
 /**
- * The tenant's issuer, as the relying parties know it. A failed lookup of the tenant's primary
- * domain throws (the job is retried) instead of signing with another issuer.
- */
-async function resolveLogoutIssuer(env: Env, tenantId: string): Promise<string> {
-  return buildCanonicalTenantIssuerUrl(env, tenantId, getCanonicalTenantBaseUrl(env, tenantId), {
-    strict: true,
-  });
-}
-
-/**
  * Tell the relying parties signed in through these sessions. Throws, before anything is sent,
  * when the issuer or a session's logout targets cannot be read: the job is then retried. Once
  * sending starts, each relying party's failure is recorded by the fan-out (failure list, alert)
@@ -251,6 +240,8 @@ export async function sendAdminSessionEndLogout(
   const metadata = triggerMetadata(trigger);
 
   const [issuer, coreAdapter, logoutConfig, webhookConfig] = await Promise.all([
+    // A lookup of the tenant's primary domain that fails fails the job (retried) instead of
+    // signing with another issuer.
     resolveLogoutIssuer(env, tenantId),
     resolveAuthCorePersistenceAdapterFromEnv(env, 'management-session-end-logout', { tenantId }),
     // Settings that cannot be read fail the job (retried): defaults could send what the tenant
