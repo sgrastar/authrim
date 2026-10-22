@@ -742,6 +742,8 @@ export function describeScimTestHarness(
       string,
       { lifecycle: string; lifecycleVersionMs: number | null }
     >;
+    /** The sessions the next transition that ends sessions ends. */
+    let endedSessionsOnTransition: Array<{ sessionId: string }>;
 
     function createCustomClaimSchemaRow(overrides: Record<string, unknown> = {}) {
       return {
@@ -813,6 +815,7 @@ export function describeScimTestHarness(
       mockUserRoles = new Map();
       mockCustomClaimSchemas = [];
       sessionRevocationStates = new Map();
+      endedSessionsOnTransition = [];
 
       // Seed some test data (timestamps as Unix seconds, matching D1 database format)
       const jan15 = Math.floor(new Date('2024-01-15T10:00:00Z').getTime() / 1000);
@@ -1324,6 +1327,16 @@ export function describeScimTestHarness(
               async (_tenant, _user, account, lifecycle, lifecycleVersionMs) => {
                 sessionRevocationStates.set(account, { lifecycle, lifecycleVersionMs });
                 return { lifecycle, lifecycleVersionMs };
+              }
+            ),
+            // A transition that ends sessions returns those it ended (none were registered here).
+            setAccountLifecycleEndingSessionsRpc: vi.fn(
+              async (_tenant, _user, account, lifecycle, lifecycleVersionMs) => {
+                sessionRevocationStates.set(account, { lifecycle, lifecycleVersionMs });
+                return {
+                  state: { lifecycle, lifecycleVersionMs },
+                  endedSessions: endedSessionsOnTransition.splice(0),
+                };
               }
             ),
           })),
