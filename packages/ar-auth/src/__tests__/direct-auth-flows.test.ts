@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { invitationHolderForEmail } from '@authrim/ar-lib-core/services/invitation-auth-core';
 
 const mocks = vi.hoisted(() => {
   const authCodeStore = {
@@ -81,6 +82,13 @@ const mocks = vi.hoisted(() => {
     provisionTenantD1EmailAccount: vi.fn(),
     publishTenantD1PasskeyRoute: vi.fn(),
     findActiveInvitationByToken: vi.fn(),
+    reserveInvitationUse: vi.fn(),
+    findInvitationReservation: vi.fn(),
+    findInvitationById: vi.fn(),
+    bindInvitationReservation: vi.fn(),
+    claimInvitationReservation: vi.fn(),
+    releaseInvitationReservation: vi.fn(),
+    applyInvitationAssignments: vi.fn(),
     getCookie: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -145,6 +153,13 @@ vi.mock('@authrim/ar-lib-core/services/invitation-auth-core', async (importOrigi
   return {
     ...actual,
     findActiveInvitationByToken: mocks.findActiveInvitationByToken,
+    reserveInvitationUse: mocks.reserveInvitationUse,
+    findInvitationReservation: mocks.findInvitationReservation,
+    findInvitationById: mocks.findInvitationById,
+    bindInvitationReservation: mocks.bindInvitationReservation,
+    claimInvitationReservation: mocks.claimInvitationReservation,
+    releaseInvitationReservation: mocks.releaseInvitationReservation,
+    applyInvitationAssignments: mocks.applyInvitationAssignments,
   };
 });
 
@@ -216,11 +231,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           sourceVersionMs: 1_000,
         };
       }
-      async syncUser(input: { userId: string; email?: string | null; name?: string | null }) {
+      async syncUser(input: {
+        userId: string;
+        email?: string | null;
+        name?: string | null;
+        emailVerified?: boolean;
+      }) {
         await mocks.userCore.createUser({
           id: input.userId,
           tenant_id: 'tenant_test',
-          email_verified: false,
+          email_verified: input.emailVerified === true,
           user_type: 'end_user',
         });
         await mocks.userPII.createPII({
@@ -2191,6 +2211,445 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.passkey.create).toHaveBeenCalledWith(
       expect.objectContaining({ user_id: 'user_new' })
     );
+  });
+
+  describe('an invitation carried by passkey signup', () => {
+    const anonymousInvitation = {
+      id: 'invite_1',
+      token: 'invite-token',
+      tenant_id: 'tenant_test',
+      invited_email: null as string | null,
+      role_id: 'role_member',
+      org_id: null,
+      max_uses: 1000,
+      use_count: 3,
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+    };
+    const proof = 'P'.repeat(43);
+
+    function signupStartContext(extra: Record<string, unknown> = {}) {
+      return createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'signup-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+          invite_token: 'invite-token',
+          ...extra,
+        },
+        webHeaders()
+      );
+    }
+
+    function requireInvitationEmailVerification(context: ReturnType<typeof createContext>) {
+      context.env.SETTINGS = createMockKV({
+        'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+          'authentication-methods.invitation.email_verification': 'required',
+        }),
+      }) as never;
+      return context;
+    }
+
+    function storedProof(overrides: Record<string, unknown> = {}) {
+      return {
+        id: `invitation_email_proof:${proof}`,
+        tenantId: 'tenant_test',
+        type: 'invitation_email_proof',
+        email: 'new@example.com',
+        metadata: { invitation_id: 'invite_1' },
+        ...overrides,
+      };
+    }
+
+    async function finishInvitedSignup(metadata: Record<string, unknown>) {
+      const codeVerifier = 'invited-passkey-signup-code-verifier';
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue({ userId: 'user_new' });
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: 'passkey-signup-challenge',
+        email: 'new@example.com',
+        metadata: {
+          code_challenge: await s256Challenge(codeVerifier),
+          client_id: 'web-client',
+          channel: 'browser',
+          origin: 'https://app.example.com',
+          rpID: 'app.example.com',
+          ...metadata,
+        },
+      });
+      mocks.userCore.findById.mockResolvedValue({
+        id: 'user_new',
+        is_active: true,
+        created_at: Date.now(),
+      });
+      mocks.publishTenantD1PasskeyRoute.mockResolvedValue(201);
+      const { directPasskeySignupFinishHandler } = await import('../direct-auth');
+      return directPasskeySignupFinishHandler(
+        createContext({
+          challenge_id: 'signup_challenge',
+          credential: {
+            id: 'new-credential',
+            rawId: 'new-credential',
+            response: { transports: ['internal'] },
+            type: 'public-key',
+          },
+          code_verifier: codeVerifier,
+          channel: 'browser',
+          // Ignored: the account an invitation is applied to is the one the challenge names.
+          user_id: 'victim_user',
+        }) as never
+      );
+    }
+
+    const reserved = { invite_id: 'invite_1', invite_reservation_id: 'inr_1' };
+
+    beforeEach(() => {
+      mocks.findActiveInvitationByToken.mockResolvedValue(anonymousInvitation);
+      mocks.reserveInvitationUse.mockResolvedValue({ status: 'reserved', reservationId: 'inr_1' });
+      mocks.bindInvitationReservation.mockResolvedValue(true);
+      mocks.findInvitationById.mockResolvedValue(anonymousInvitation);
+      mocks.claimInvitationReservation.mockResolvedValue(true);
+      mocks.applyInvitationAssignments.mockResolvedValue({
+        roleAssignment: { success: true, assignment_id: 'ra_1' },
+      });
+    });
+
+    it('reserves a use, held by the email, before the account exists and records it on the challenge', async () => {
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(signupStartContext() as never);
+
+      expect(response.status).toBe(200);
+      expect(mocks.findActiveInvitationByToken).toHaveBeenCalledWith(
+        mocks.coreAdapter,
+        'invite-token',
+        expect.any(Number)
+      );
+      expect(mocks.reserveInvitationUse).toHaveBeenCalledWith(mocks.coreAdapter, {
+        invitationId: 'invite_1',
+        tenantId: 'tenant_test',
+        holder: await invitationHolderForEmail('new@example.com'),
+        now: expect.any(Number),
+      });
+      expect(mocks.reserveInvitationUse.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.userCore.createUser.mock.invocationCallOrder[0]
+      );
+      expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'direct_passkey_signup:user_new',
+          userId: 'user_new',
+          metadata: expect.objectContaining(reserved),
+        })
+      );
+      // Bound to the account once it exists, so it can only be applied to that account.
+      expect(mocks.bindInvitationReservation).toHaveBeenCalledWith(mocks.coreAdapter, {
+        reservationId: 'inr_1',
+        invitationId: 'invite_1',
+        tenantId: 'tenant_test',
+        userId: 'user_new',
+      });
+      expect(mocks.userCore.createUser.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.bindInvitationReservation.mock.invocationCallOrder[0]
+      );
+      // Nothing is applied before the passkey is registered.
+      expect(mocks.claimInvitationReservation).not.toHaveBeenCalled();
+      expect(mocks.applyInvitationAssignments).not.toHaveBeenCalled();
+      expect(mocks.userCore.createUser).toHaveBeenCalledWith(
+        expect.objectContaining({ email_verified: false })
+      );
+    });
+
+    it('holds the use by the account it creates when the sign-up gives no email', async () => {
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(
+        signupStartContext({ email: undefined }) as never
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.reserveInvitationUse).toHaveBeenCalledWith(
+        mocks.coreAdapter,
+        expect.objectContaining({ holder: 'user:user_new' })
+      );
+    });
+
+    it.each([
+      ['an unknown invitation', null, {}, 404, false],
+      [
+        "another tenant's invitation",
+        { ...anonymousInvitation, tenant_id: 'tenant_other' },
+        {},
+        404,
+        false,
+      ],
+      [
+        'an invitation for another email',
+        { ...anonymousInvitation, invited_email: 'Invited@Example.com' },
+        {},
+        400,
+        false,
+      ],
+      [
+        'an email-restricted invitation without an email',
+        { ...anonymousInvitation, invited_email: 'invited@example.com' },
+        { email: undefined },
+        400,
+        false,
+      ],
+      ['an invitation without a use left', anonymousInvitation, {}, 404, true],
+    ])(
+      'refuses %s before an account is created',
+      async (_label, invitation, extra, status, reservationTried) => {
+        mocks.findActiveInvitationByToken.mockResolvedValue(invitation);
+        mocks.reserveInvitationUse.mockResolvedValue({ status: 'unavailable' });
+        const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+        const response = await directPasskeySignupStartHandler(signupStartContext(extra) as never);
+
+        expect(response.status).toBe(status);
+        expect(mocks.reserveInvitationUse).toHaveBeenCalledTimes(reservationTried ? 1 : 0);
+        expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+        expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['', 42])('rejects a malformed invitation token %j', async (inviteToken) => {
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(
+        signupStartContext({ invite_token: inviteToken }) as never
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.findActiveInvitationByToken).not.toHaveBeenCalled();
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    });
+
+    it('accepts the email an invitation names, in any case, when the tenant does not require proof', async () => {
+      mocks.findActiveInvitationByToken.mockResolvedValue({
+        ...anonymousInvitation,
+        invited_email: 'New@Example.com',
+      });
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(signupStartContext() as never);
+
+      expect(response.status).toBe(200);
+      expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: expect.objectContaining(reserved) })
+      );
+    });
+
+    it('asks for the invited email to be proved when the tenant requires it', async () => {
+      mocks.findActiveInvitationByToken.mockResolvedValue({
+        ...anonymousInvitation,
+        invited_email: 'new@example.com',
+      });
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(
+        requireInvitationEmailVerification(signupStartContext()) as never
+      );
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({
+        error: 'interaction_required',
+        reason: 'invitation_email_verification_required',
+      });
+      expect(mocks.reserveInvitationUse).not.toHaveBeenCalled();
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a proof of another invitation', storedProof({ metadata: { invitation_id: 'invite_2' } })],
+      ['a proof of another email', storedProof({ email: 'other@example.com' })],
+      ["another tenant's proof", storedProof({ tenantId: 'tenant_other' })],
+      ['an unknown proof', null],
+    ])('does not take %s as the invited email proved', async (_label, stored) => {
+      mocks.findActiveInvitationByToken.mockResolvedValue({
+        ...anonymousInvitation,
+        invited_email: 'new@example.com',
+      });
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(stored);
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(
+        requireInvitationEmailVerification(
+          signupStartContext({ invitation_email_proof: proof })
+        ) as never
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.reserveInvitationUse).not.toHaveBeenCalled();
+    });
+
+    it('accepts a proof of the invited email and records the email as verified', async () => {
+      mocks.findActiveInvitationByToken.mockResolvedValue({
+        ...anonymousInvitation,
+        invited_email: 'New@Example.com',
+      });
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(storedProof());
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(
+        requireInvitationEmailVerification(
+          signupStartContext({ invitation_email_proof: proof })
+        ) as never
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.challengeStore.getChallengeRpc).toHaveBeenCalledWith(
+        `invitation_email_proof:${proof}`
+      );
+      expect(mocks.userCore.createUser).toHaveBeenCalledWith(
+        expect.objectContaining({ email_verified: true })
+      );
+    });
+
+    it('gives the reserved use back when the account cannot be created', async () => {
+      mocks.userCore.createUser.mockRejectedValueOnce(new Error('write failed'));
+      const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+      const response = await directPasskeySignupStartHandler(signupStartContext() as never);
+
+      expect(response.status).toBe(500);
+      expect(mocks.releaseInvitationReservation).toHaveBeenCalledWith(mocks.coreAdapter, {
+        reservationId: 'inr_1',
+        invitationId: 'invite_1',
+        tenantId: 'tenant_test',
+      });
+    });
+
+    it('applies the reserved use to the account the signup challenge is bound to', async () => {
+      const response = await finishInvitedSignup(reserved);
+
+      expect(response.status).toBe(200);
+      expect(mocks.claimInvitationReservation).toHaveBeenCalledWith(mocks.coreAdapter, {
+        reservationId: 'inr_1',
+        invitationId: 'invite_1',
+        tenantId: 'tenant_test',
+        userId: 'user_new',
+        now: expect.any(Number),
+      });
+      expect(mocks.applyInvitationAssignments).toHaveBeenCalledTimes(1);
+      expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(mocks.coreAdapter, {
+        userId: 'user_new',
+        tenantId: 'tenant_test',
+        roleId: 'role_member',
+        orgId: null,
+      });
+      // Claimed before anything is assigned, and assigned before the artifact is issued so the
+      // first tokens can carry the role.
+      expect(mocks.claimInvitationReservation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.applyInvitationAssignments.mock.invocationCallOrder[0]
+      );
+      expect(mocks.applyInvitationAssignments.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.authCodeStore.storeCodeRpc.mock.invocationCallOrder[0]
+      );
+      expect(mocks.reserveInvitationUse).not.toHaveBeenCalled();
+    });
+
+    it('uses the tenant database for the reservation and the account database for assignments when routed', async () => {
+      const accountAdapter = { execute: vi.fn(), queryOne: vi.fn() };
+      const original = mocks.createAccountAuthContextFromHono.getMockImplementation();
+      mocks.createAccountAuthContextFromHono.mockImplementation(() => ({
+        coreAdapter: accountAdapter,
+        repositories: { userCore: mocks.userCore, passkey: mocks.passkey },
+      }));
+      try {
+        const codeVerifier = 'routed-invited-passkey-code-verifier';
+        mocks.challengeStore.getChallengeRpc.mockResolvedValue({ userId: 'user_new' });
+        mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+          challenge: 'passkey-signup-challenge',
+          metadata: {
+            code_challenge: await s256Challenge(codeVerifier),
+            client_id: 'web-client',
+            channel: 'browser',
+            origin: 'https://app.example.com',
+            rpID: 'app.example.com',
+            ...reserved,
+          },
+        });
+        mocks.userCore.findById.mockResolvedValue({
+          id: 'user_new',
+          is_active: true,
+          created_at: Date.now(),
+        });
+        mocks.publishTenantD1PasskeyRoute.mockResolvedValue(201);
+        const context = createContext({
+          challenge_id: 'routed_signup_challenge',
+          credential: {
+            id: 'routed-credential',
+            rawId: 'routed-credential',
+            response: { transports: ['internal'] },
+            type: 'public-key',
+          },
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        });
+        context.get = vi.fn((key: string) => {
+          if (key === 'tenantId') return 'tenant_test';
+          if (key === 'tenantMetadataContext') {
+            return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+          }
+          return undefined;
+        }) as never;
+        const { directPasskeySignupFinishHandler } = await import('../direct-auth');
+
+        const response = await directPasskeySignupFinishHandler(context as never);
+
+        expect(response.status).toBe(200);
+        expect(mocks.claimInvitationReservation).toHaveBeenCalledWith(
+          mocks.coreAdapter,
+          expect.objectContaining({ userId: 'user_new' })
+        );
+        expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(
+          accountAdapter,
+          expect.objectContaining({ userId: 'user_new', roleId: 'role_member' })
+        );
+      } finally {
+        mocks.createAccountAuthContextFromHono.mockImplementation(original!);
+      }
+    });
+
+    it('applies nothing when the reservation is no longer held', async () => {
+      mocks.claimInvitationReservation.mockResolvedValue(false);
+
+      const response = await finishInvitedSignup(reserved);
+
+      expect(response.status).toBe(200);
+      expect(mocks.applyInvitationAssignments).not.toHaveBeenCalled();
+      expect(mocks.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Invitation'),
+        expect.objectContaining({ invite_id: 'invite_1', reason: 'reservation_lost' })
+      );
+    });
+
+    it('applies nothing when the invitation was deleted', async () => {
+      mocks.findInvitationById.mockResolvedValue(null);
+
+      const response = await finishInvitedSignup(reserved);
+
+      expect(response.status).toBe(200);
+      expect(mocks.claimInvitationReservation).not.toHaveBeenCalled();
+      expect(mocks.applyInvitationAssignments).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a signup that carried no invitation', {}],
+      [
+        'a challenge from before reservations (token only)',
+        { invite_id: 'invite_1', invite_token: 'invite-token' },
+      ],
+    ])('does not look an invitation up for %s', async (_label, metadata) => {
+      const response = await finishInvitedSignup(metadata);
+
+      expect(response.status).toBe(200);
+      expect(mocks.findInvitationById).not.toHaveBeenCalled();
+      expect(mocks.claimInvitationReservation).not.toHaveBeenCalled();
+      expect(mocks.applyInvitationAssignments).not.toHaveBeenCalled();
+    });
   });
 
   it('starts authenticated passkey registration with existing credentials excluded', async () => {
@@ -4912,6 +5371,327 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         codeChallenge,
       })
     );
+  });
+
+  describe('an invitation carried by email-code signup', () => {
+    const invitation = {
+      id: 'invite_1',
+      token: 'invite-token',
+      tenant_id: 'tenant_test',
+      invited_email: null,
+      role_id: null,
+      org_id: 'org_1',
+      max_uses: -1,
+      use_count: 7,
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+    };
+    const reserved = { invite_id: 'invite_1', invite_reservation_id: 'inr_1' };
+
+    function sendContext(email: string) {
+      return enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email,
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+            invite_token: 'invite-token',
+          },
+          webHeaders()
+        ),
+        {
+          'settings:tenant:tenant_test:authentication-methods': JSON.stringify({
+            'authentication-methods.email_otp.login_enabled': true,
+            'authentication-methods.email_otp.signup_enabled': true,
+            // The code proves the email, so even a tenant that requires proof asks for nothing more.
+            'authentication-methods.invitation.email_verification': 'required',
+          }),
+        }
+      );
+    }
+
+    function storedCodeMetadata() {
+      const stored = mocks.challengeStore.storeChallengeRpc.mock.calls
+        .map(([request]) => request as { type?: string; metadata?: Record<string, unknown> })
+        .find((request) => request.type === 'direct_email_code');
+      return stored?.metadata ?? {};
+    }
+
+    beforeEach(() => {
+      mocks.findActiveInvitationByToken.mockResolvedValue(invitation);
+      mocks.reserveInvitationUse.mockResolvedValue({ status: 'reserved', reservationId: 'inr_1' });
+      mocks.findInvitationReservation.mockResolvedValue(null);
+      mocks.bindInvitationReservation.mockResolvedValue(true);
+      mocks.findInvitationById.mockResolvedValue(invitation);
+      mocks.claimInvitationReservation.mockResolvedValue(true);
+      mocks.applyInvitationAssignments.mockResolvedValue({ orgMembership: { success: true } });
+    });
+
+    it('reserves a use, held by the address, for a new address and records it on the code', async () => {
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(sendContext('new@example.com') as never);
+
+      expect(response.status).toBe(200);
+      expect(mocks.reserveInvitationUse).toHaveBeenCalledWith(mocks.coreAdapter, {
+        invitationId: 'invite_1',
+        tenantId: 'tenant_test',
+        holder: await invitationHolderForEmail('new@example.com'),
+        now: expect.any(Number),
+      });
+      expect(mocks.reserveInvitationUse.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.userCore.createUser.mock.invocationCallOrder[0]
+      );
+      expect(storedCodeMetadata()).toMatchObject({ ...reserved, usage: 'signup' });
+      expect(storedCodeMetadata()).not.toHaveProperty('invite_token');
+      expect(mocks.bindInvitationReservation).toHaveBeenCalledWith(mocks.coreAdapter, {
+        reservationId: 'inr_1',
+        invitationId: 'invite_1',
+        tenantId: 'tenant_test',
+        userId: 'user_new',
+      });
+    });
+
+    it('signs an existing account in without the invitation, answering as for any address', async () => {
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_existing',
+        email: 'user@example.com',
+      });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(sendContext('user@example.com') as never);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({ attempt_id: expect.any(String), expires_in: 300 });
+      expect(mocks.findInvitationReservation).toHaveBeenCalledWith(mocks.coreAdapter, {
+        invitationId: 'invite_1',
+        tenantId: 'tenant_test',
+        holder: await invitationHolderForEmail('user@example.com'),
+      });
+      expect(mocks.reserveInvitationUse).not.toHaveBeenCalled();
+      expect(storedCodeMetadata()).not.toHaveProperty('invite_id');
+      expect(storedCodeMetadata()).not.toHaveProperty('invite_reservation_id');
+    });
+
+    it('keeps the invitation for a resent code to the account its own sign-up created', async () => {
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_existing',
+        email: 'user@example.com',
+      });
+      mocks.findInvitationReservation.mockResolvedValue({
+        id: 'inr_1',
+        status: 'reserved',
+        user_id: 'user_existing',
+        expires_at: Math.floor(Date.now() / 1000) + 600,
+      });
+      mocks.reserveInvitationUse.mockResolvedValue({ status: 'held', reservationId: 'inr_1' });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(sendContext('user@example.com') as never);
+
+      expect(response.status).toBe(200);
+      expect(mocks.reserveInvitationUse).toHaveBeenCalledTimes(1);
+      expect(storedCodeMetadata()).toMatchObject(reserved);
+    });
+
+    it.each([
+      [
+        'a use another sign-up holds by the address, never bound to this account',
+        { user_id: null, expires_at: Math.floor(Date.now() / 1000) + 600 },
+      ],
+      [
+        'a use bound to another account',
+        { user_id: 'user_other', expires_at: Math.floor(Date.now() / 1000) + 600 },
+      ],
+      [
+        'a use that expired unapplied',
+        { user_id: 'user_existing', expires_at: Math.floor(Date.now() / 1000) - 1 },
+      ],
+    ])('does not give an existing account %s', async (_label, held) => {
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_existing',
+        email: 'user@example.com',
+      });
+      mocks.findInvitationReservation.mockResolvedValue({
+        id: 'inr_1',
+        status: 'reserved',
+        ...held,
+      });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(sendContext('user@example.com') as never);
+
+      expect(response.status).toBe(200);
+      expect(mocks.reserveInvitationUse).not.toHaveBeenCalled();
+      expect(storedCodeMetadata()).not.toHaveProperty('invite_id');
+    });
+
+    it('keeps the invitation for the resumed send of a sign-up whose account was being provisioned', async () => {
+      mocks.challengeStore.consumeChallengeRpc.mockImplementationOnce(async () => ({
+        metadata: { usage: 'signup' },
+      }));
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_existing',
+        email: 'user@example.com',
+      });
+      mocks.findInvitationReservation.mockResolvedValue({
+        id: 'inr_1',
+        status: 'reserved',
+        user_id: null,
+        expires_at: Math.floor(Date.now() / 1000) + 600,
+      });
+      mocks.reserveInvitationUse.mockResolvedValue({ status: 'held', reservationId: 'inr_1' });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(sendContext('user@example.com') as never);
+
+      expect(response.status).toBe(200);
+      expect(storedCodeMetadata()).toMatchObject(reserved);
+      expect(mocks.bindInvitationReservation).toHaveBeenCalledWith(
+        mocks.coreAdapter,
+        expect.objectContaining({ userId: 'user_existing' })
+      );
+    });
+
+    it('does not take an applied use for an existing account', async () => {
+      mocks.userPII.findByTenantAndEmail.mockResolvedValue({
+        id: 'user_existing',
+        email: 'user@example.com',
+      });
+      mocks.findInvitationReservation.mockResolvedValue({
+        id: 'inr_1',
+        status: 'applied',
+        expires_at: 0,
+      });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(sendContext('user@example.com') as never);
+
+      expect(response.status).toBe(200);
+      expect(mocks.reserveInvitationUse).not.toHaveBeenCalled();
+      expect(storedCodeMetadata()).not.toHaveProperty('invite_id');
+    });
+
+    it('answers a new address whose invitation has no use left as any send, creating and sending nothing', async () => {
+      mocks.reserveInvitationUse.mockResolvedValue({ status: 'unavailable' });
+      const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeSendHandler(sendContext('new@example.com') as never);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      // The same answer an existing address gets, so the invitation reveals no account.
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({ attempt_id: expect.any(String), expires_in: 300 });
+      expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+      expect(storedCodeMetadata()).toEqual({});
+      expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+    });
+
+    it('applies the reserved use to the user the code was sent to', async () => {
+      const codeVerifier = 'invited-email-code-verifier';
+      const challengeData = {
+        challenge: 'hashed-email-code',
+        userId: 'user_existing',
+        email: 'user@example.com',
+        metadata: {
+          code_challenge: await s256Challenge(codeVerifier),
+          client_id: 'web-client',
+          channel: 'browser',
+          usage: 'signup',
+          transaction_id: 'attempt_invited',
+          issued_at: Date.now() - 10_000,
+          ...reserved,
+        },
+      };
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+      mocks.applyInvitationAssignments.mockResolvedValue({
+        orgMembership: { success: false, error: 'Organization not found' },
+      });
+      const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeVerifyHandler(
+        enableEmailOtp(
+          createContext({
+            attempt_id: 'attempt_invited',
+            code: '123456',
+            code_verifier: codeVerifier,
+            channel: 'browser',
+            user_id: 'victim_user',
+          })
+        ) as never
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.claimInvitationReservation).toHaveBeenCalledWith(mocks.coreAdapter, {
+        reservationId: 'inr_1',
+        invitationId: 'invite_1',
+        tenantId: 'tenant_test',
+        userId: 'user_existing',
+        now: expect.any(Number),
+      });
+      expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(mocks.coreAdapter, {
+        userId: 'user_existing',
+        tenantId: 'tenant_test',
+        roleId: null,
+        orgId: 'org_1',
+      });
+      // A failed optional assignment is logged; the sign-in still completes.
+      expect(mocks.warn).toHaveBeenCalledWith(
+        'Failed to assign organization from invitation',
+        expect.objectContaining({ invite_id: 'invite_1', error: 'Organization not found' })
+      );
+    });
+
+    it('uses the tenant database for the reservation and the account database for assignments when routed', async () => {
+      const codeVerifier = 'routed-invited-email-code-verifier';
+      const challengeData = {
+        challenge: 'hashed-email-code',
+        userId: 'user_existing',
+        email: 'user@example.com',
+        metadata: {
+          code_challenge: await s256Challenge(codeVerifier),
+          client_id: 'web-client',
+          channel: 'browser',
+          usage: 'signup',
+          transaction_id: 'attempt_routed_invited',
+          issued_at: Date.now() - 10_000,
+          ...reserved,
+        },
+      };
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+      mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+      const context = enableEmailOtp(
+        createContext({
+          attempt_id: 'attempt_routed_invited',
+          code: '123456',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        })
+      );
+      context.get = vi.fn((key: string) => {
+        if (key === 'tenantId') return 'tenant_test';
+        if (key === 'tenantMetadataContext') {
+          return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        }
+        return undefined;
+      }) as never;
+      const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+
+      const response = await directEmailCodeVerifyHandler(context as never);
+
+      expect(response.status).toBe(200);
+      expect(mocks.claimInvitationReservation).toHaveBeenCalledWith(
+        mocks.coreAdapter,
+        expect.objectContaining({ userId: 'user_existing' })
+      );
+      expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(
+        { adapter: 'tenant-core' },
+        expect.objectContaining({ userId: 'user_existing', orgId: 'org_1' })
+      );
+    });
   });
 
   it('verifies tenant-D1 email OTP with the routed Core projection and one focused update', async () => {

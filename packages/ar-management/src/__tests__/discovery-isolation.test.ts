@@ -49,6 +49,7 @@ const mocked = vi.hoisted(() => {
       { client_id: 'beta-app', tenant_id: 'beta' },
       { client_id: 'inactive-app', tenant_id: 'inactive' },
     ],
+    expiredReservations: [] as { invitationId: string; expiresAt: number }[],
     invitations: [
       {
         id: 'inv-1',
@@ -99,6 +100,24 @@ const mocked = vi.hoisted(() => {
   class FakeD1Adapter {
     constructor(_options: { db: unknown }) {}
 
+    // The rest of the adapter interface, so shared services take this adapter as it is.
+    async execute() {
+      return { success: true, rowsAffected: 0 };
+    }
+    async batch() {
+      return [];
+    }
+    async transaction<T>(fn: (tx: unknown) => Promise<T>) {
+      return fn(this);
+    }
+    async isHealthy() {
+      return { healthy: true, latencyMs: 0 };
+    }
+    getType() {
+      return 'fake';
+    }
+    async close() {}
+
     async query<T>(query: string, params: unknown[]): Promise<T[]> {
       if (query.includes('FROM users_pii WHERE email = ?')) {
         const email = String(params[0] ?? '');
@@ -136,6 +155,16 @@ const mocked = vi.hoisted(() => {
           null) as T | null;
       }
 
+      // Reservations that expired unapplied (their uses count as returned)
+      if (query.includes('FROM tenant_invitation_redemptions')) {
+        const [, invitationId, now] = params;
+        return {
+          count: state.expiredReservations.filter(
+            (reservation) =>
+              reservation.invitationId === invitationId && reservation.expiresAt <= Number(now)
+          ).length,
+        } as T;
+      }
       // Invitation lookup — expires_at > now filter applied
       if (query.includes('FROM tenant_invitations')) {
         const token = params[0];
@@ -920,6 +949,26 @@ describe('Discovery API: data isolation', () => {
 
       expect(body.result).toBe('not_found');
       expect(body.code).toBe('invitation_not_found');
+    });
+
+    it('resolves a used-up token again once its last use expired unapplied', async () => {
+      mocked.state.expiredReservations.push({
+        invitationId: 'inv-3',
+        expiresAt: Math.floor(Date.now() / 1000) - 1,
+      });
+      try {
+        const { app, env } = createDiscoveryApp();
+
+        const res = await postDiscovery(app, env, {
+          mode: 'invite_token',
+          value: 'exhausted-token',
+        });
+        const body = (await res.json()) as { result: string };
+
+        expect(body.result).toBe('resolved');
+      } finally {
+        mocked.state.expiredReservations.length = 0;
+      }
     });
 
     it('returns not_found for a token targeting an inactive tenant', async () => {

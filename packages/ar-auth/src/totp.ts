@@ -51,6 +51,15 @@ import {
   usesTenantD1AccountStorage,
 } from './account-provisioning';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
+import { invitationHolderForEmail } from '@authrim/ar-lib-core/services/invitation-auth-core';
+import {
+  completeSignupInvitation,
+  invitationDatabase,
+  signupInvitationErrorResponse,
+  signupInvitationFromMetadata,
+  startSignupInvitation,
+  type SignupInvitationStart,
+} from './invitation-redemption';
 
 const TOTP_LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60;
 const TOTP_SIGNUP_CHALLENGE_TTL_SECONDS = 10 * 60;
@@ -89,6 +98,10 @@ interface TotpSignupChallenge {
     period?: TotpProfile['period'];
     window?: TotpProfile['window'];
     custom_fields?: Record<string, unknown>;
+    invite_id?: string;
+    invite_reservation_id?: string;
+    /** The invitation email-code step proved the sign-up controls this email. */
+    email_verified_by_invitation?: boolean;
   };
 }
 
@@ -340,8 +353,18 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       authorization_challenge_id?: unknown;
       human_verification_response?: unknown;
       cf_turnstile_response?: unknown;
+      invite_token?: unknown;
+      invitation_email_proof?: unknown;
     }>();
     const email = normalizeSignupEmail(body.email);
+    if (
+      body.invite_token !== undefined &&
+      (typeof body.invite_token !== 'string' || !body.invite_token)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'invite_token' },
+      });
+    }
     if (!email) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: { field: 'email' },
@@ -414,6 +437,23 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
+    // An invitation is checked and one use reserved for this sign-up (held by its email, so
+    // starting again keeps it) before any account exists; activation applies it to the account
+    // the activation creates.
+    let signupInvitation: Extract<SignupInvitationStart, { ok: true }> | null = null;
+    if (typeof body.invite_token === 'string') {
+      const started = await startSignupInvitation(c, {
+        token: body.invite_token,
+        tenantId,
+        email,
+        holder: await invitationHolderForEmail(email),
+        emailProof:
+          typeof body.invitation_email_proof === 'string' ? body.invitation_email_proof : undefined,
+      });
+      if (!started.ok) return signupInvitationErrorResponse(c, started.reason);
+      signupInvitation = started;
+    }
+
     const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
     const profile = await resolveTotpProfile(c.env, tenantId);
     const secret = generateTotpSecret();
@@ -468,6 +508,12 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
         period: profile.period,
         window: profile.window,
         custom_fields: customFieldValidation.values,
+        ...(signupInvitation
+          ? {
+              ...signupInvitation.reservation,
+              email_verified_by_invitation: signupInvitation.emailVerified,
+            }
+          : {}),
       },
     });
 
@@ -596,6 +642,8 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
     if (!runtimeUser || runtimeUser.active !== 1) {
+      const signupEmailVerified =
+        runtimeUser?.email_verified === 1 || metadata.email_verified_by_invitation === true;
       const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
         ...customFields,
         email: signupEmail,
@@ -616,7 +664,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
           email: signupEmail,
           runtimeUser: {
             active: true,
-            emailVerified: runtimeUser?.email_verified === 1,
+            emailVerified: signupEmailVerified,
             userType: 'end_user',
             displayName: signupName,
             sourceRef: 'auth:totp',
@@ -644,7 +692,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
           email: signupEmail,
           name: signupName,
           active: true,
-          emailVerified: runtimeUser?.email_verified === 1,
+          emailVerified: signupEmailVerified,
           userType: 'end_user',
           sourceRef: 'direct_auth_totp',
           piiFields: canonicalProfileFields.piiFields,
@@ -710,6 +758,17 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
 
     if (customFields && Object.keys(customFields).length > 0) {
       await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
+    }
+
+    // The use the options step reserved goes to the account this activation created.
+    const signupInvitation = signupInvitationFromMetadata(metadata);
+    if (signupInvitation) {
+      activationStage = 'invitation_apply';
+      await completeSignupInvitation(
+        { invitations: () => invitationDatabase(c, tenantId), assignments: authCtx.coreAdapter },
+        log,
+        { reservation: signupInvitation, tenantId, userId }
+      );
     }
 
     activationStage = 'backup_codes';

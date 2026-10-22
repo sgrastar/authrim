@@ -26,6 +26,8 @@ const {
   mockUsesTenantD1AccountStorage,
   mockEnsureAccountAuthenticationState,
   mockConsumeTotpTimeStepRpc,
+  mockStartSignupInvitation,
+  mockCompleteSignupInvitation,
 } = vi.hoisted(() => {
   const challengeStore = {
     storeChallengeRpc: vi.fn(),
@@ -92,6 +94,8 @@ const {
     mockUsesTenantD1AccountStorage: vi.fn(),
     mockEnsureAccountAuthenticationState: vi.fn(),
     mockConsumeTotpTimeStepRpc: vi.fn(),
+    mockStartSignupInvitation: vi.fn(),
+    mockCompleteSignupInvitation: vi.fn(),
   };
 });
 
@@ -150,6 +154,12 @@ vi.mock('../registration-field-utils', () => ({
   buildCanonicalProfileRuntimeUserFields: mockBuildCanonicalProfileRuntimeUserFields,
 }));
 
+vi.mock('../invitation-redemption', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../invitation-redemption')>()),
+  startSignupInvitation: mockStartSignupInvitation,
+  completeSignupInvitation: mockCompleteSignupInvitation,
+}));
+
 vi.mock('../account-provisioning', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../account-provisioning')>();
   return {
@@ -165,6 +175,7 @@ import {
   getTotpTimeStep,
   type TotpProfile,
 } from '@authrim/ar-lib-core';
+import { invitationHolderForEmail } from '@authrim/ar-lib-core/services/invitation-auth-core';
 import {
   totpLoginStartHandler,
   totpLoginVerifyHandler,
@@ -1089,5 +1100,180 @@ describe('TOTP login handlers', () => {
       'totp_signup:signup-challenge'
     );
     expect(response.headers.get('Set-Cookie')).toContain('authrim_session=');
+  });
+
+  describe('an invitation carried by TOTP signup', () => {
+    const reservation = { invite_id: 'invite_1', invite_reservation_id: 'inr_1' };
+    const signupEnv = () =>
+      createEnv({
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.totp.signup_enabled': true,
+        },
+      });
+
+    function requestOptions(extra: Record<string, unknown>) {
+      return createApp().request(
+        '/api/auth/totp/signup/options',
+        {
+          method: 'POST',
+          body: JSON.stringify({ email: 'New@Example.com', ...extra }),
+          headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.10' },
+        },
+        signupEnv(),
+        { waitUntil: vi.fn() } as unknown as ExecutionContext
+      );
+    }
+
+    async function activate(metadataExtra: Record<string, unknown>) {
+      const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+      const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
+      const profile: TotpProfile = { algorithm: 'SHA1', digits: 6, period: 30, window: 1 };
+      const timeStep = getTotpTimeStep(Date.now(), profile.period);
+      const pendingCredential = {
+        id: 'totp-signup-001',
+        tenant_id: 'default',
+        user_id: 'user-signup-001',
+        secret_encrypted: encrypted.encrypted,
+        secret_key_version: 1,
+        label: 'Authenticator app',
+        ...profile,
+        status: 'pending',
+        last_used_time_step: null,
+        created_at: Date.now(),
+        activated_at: null,
+        last_used_at: null,
+      };
+      mockChallengeStore.getChallengeRpc.mockResolvedValue({
+        userId: 'user-signup-001',
+        challenge: 'signup-challenge',
+        metadata: {
+          credential_id: 'totp-signup-001',
+          email: 'new@example.com',
+          label: 'Authenticator app',
+          secret_encrypted: encrypted.encrypted,
+          secret_key_version: 1,
+          ...profile,
+          custom_fields: {},
+          ...metadataExtra,
+        },
+      });
+      mockRuntimeUserStore.findById.mockResolvedValueOnce(null).mockResolvedValueOnce({
+        id: 'user-signup-001',
+        email: 'new@example.com',
+        active: 1,
+      });
+      mockTotpRepo.create.mockResolvedValue(pendingCredential);
+      mockTotpRepo.activate.mockResolvedValue({
+        ...pendingCredential,
+        status: 'active',
+        last_used_time_step: timeStep,
+      });
+      const responsePromise = createApp().request(
+        '/api/auth/totp/signup/activate',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            challenge_id: 'signup-challenge',
+            code: await generateTotpCode(secret, profile, timeStep),
+            user_id: 'victim_user',
+          }),
+          headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.10' },
+        },
+        signupEnv(),
+        { waitUntil: vi.fn() } as unknown as ExecutionContext
+      );
+      return resolveConstantTimeResponse(responsePromise);
+    }
+
+    beforeEach(() => {
+      mockStartSignupInvitation.mockResolvedValue({
+        ok: true,
+        invitation: { id: 'invite_1' },
+        reservation,
+        emailVerified: true,
+      });
+      mockCompleteSignupInvitation.mockResolvedValue(true);
+    });
+
+    it('reserves a use, held by the email, and records it on the signup challenge', async () => {
+      const response = await requestOptions({
+        invite_token: 'invite-token',
+        invitation_email_proof: 'P'.repeat(43),
+      });
+
+      expect(response.status).toBe(201);
+      expect(mockStartSignupInvitation).toHaveBeenCalledWith(expect.anything(), {
+        token: 'invite-token',
+        tenantId: 'default',
+        email: 'new@example.com',
+        holder: await invitationHolderForEmail('new@example.com'),
+        emailProof: 'P'.repeat(43),
+      });
+      expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'totp_signup',
+          metadata: expect.objectContaining({
+            ...reservation,
+            email_verified_by_invitation: true,
+          }),
+        })
+      );
+    });
+
+    it.each([
+      ['not_found', 404, 'invalid_request', undefined],
+      ['email_mismatch', 400, 'interaction_required', undefined],
+      // Told apart from a mismatch by its reason, which sends the client to the email-code step.
+      [
+        'email_verification_required',
+        400,
+        'interaction_required',
+        'invitation_email_verification_required',
+      ],
+    ])('refuses the signup when the invitation is %s', async (reason, status, error, explained) => {
+      mockStartSignupInvitation.mockResolvedValue({ ok: false, reason });
+
+      const response = await requestOptions({ invite_token: 'invite-token' });
+      const body = (await response.json()) as { error: string; reason?: string };
+
+      expect(response.status).toBe(status);
+      expect(body.error).toBe(error);
+      expect(body.reason).toBe(explained);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each(['', 42])('rejects a malformed invitation token %j', async (inviteToken) => {
+      const response = await requestOptions({ invite_token: inviteToken });
+
+      expect(response.status).toBe(400);
+      expect(mockStartSignupInvitation).not.toHaveBeenCalled();
+    });
+
+    it('applies the reserved use to the account the activation created', async () => {
+      const response = await activate({ ...reservation, email_verified_by_invitation: true });
+
+      expect(response.status).toBe(200);
+      expect(mockCompleteSignupInvitation).toHaveBeenCalledWith(
+        { invitations: expect.any(Function), assignments: {} },
+        expect.anything(),
+        { reservation, tenantId: 'default', userId: 'user-signup-001' }
+      );
+      expect(mockTotpRepo.activate.mock.invocationCallOrder[0]).toBeLessThan(
+        mockCompleteSignupInvitation.mock.invocationCallOrder[0]
+      );
+      expect(mockRuntimeUserStore.syncUser).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-signup-001', emailVerified: true })
+      );
+    });
+
+    it('applies nothing to a signup that carried no invitation', async () => {
+      const response = await activate({});
+
+      expect(response.status).toBe(200);
+      expect(mockCompleteSignupInvitation).not.toHaveBeenCalled();
+      expect(mockRuntimeUserStore.syncUser).toHaveBeenCalledWith(
+        expect.objectContaining({ emailVerified: false })
+      );
+    });
   });
 });

@@ -107,6 +107,14 @@
             {
               "path": "023_log_row_archive_indexes.sql",
               "checksum": "73dfebb14f693eb2ed41a53bbb6d40a3ee1b27f1fd7edb3d2a3fad6dcf0e796a"
+            },
+            {
+              "path": "024_tenant_invitation_redemptions.sql",
+              "checksum": "d22b18e47276dae42e079e5e0434c88c3062e9e33582c67ac29a514c065b68ab"
+            },
+            {
+              "path": "025_external_idp_auth_state_invitation.sql",
+              "checksum": "65fb32122c4d5f632a410cfa866d42d1f8471bc1d0996f235430b9fbd272b317"
             }
           ]
         },
@@ -664,6 +672,14 @@
         {
           "path": "023_log_row_archive_indexes.sql",
           "checksum": "73dfebb14f693eb2ed41a53bbb6d40a3ee1b27f1fd7edb3d2a3fad6dcf0e796a"
+        },
+        {
+          "path": "024_tenant_invitation_redemptions.sql",
+          "checksum": "d22b18e47276dae42e079e5e0434c88c3062e9e33582c67ac29a514c065b68ab"
+        },
+        {
+          "path": "025_external_idp_auth_state_invitation.sql",
+          "checksum": "65fb32122c4d5f632a410cfa866d42d1f8471bc1d0996f235430b9fbd272b317"
         }
       ]
     },

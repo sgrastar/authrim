@@ -415,6 +415,154 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		expect(replayBody.code_challenge).toBe(initialBody.code_challenge);
 	});
 
+	it('sends the invitation with Passkey signup start and keeps it on a provisioning replay', async () => {
+		const token = 'B'.repeat(43);
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						status: 'provisioning',
+						provisioning_token: token,
+						status_endpoint: '/api/v1/auth/account-provisioning/status',
+						retry_after_ms: 250,
+						resume_user_id: 'user_invited_resume'
+					}),
+					{ status: 202, headers: { 'Content-Type': 'application/json' } }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'ready' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						challenge_id: 'challenge_invited',
+						options: { challenge: 'passkey-challenge' }
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { passkeyAPI } = await loadClient();
+
+		await passkeyAPI.getRegisterOptions({ email: 'new@example.com', inviteToken: 'invite-abc' });
+
+		const initialBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+		const replayBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
+			'/api/v1/auth/direct/passkey/signup/start'
+		);
+		expect(initialBody).toMatchObject({ email: 'new@example.com', invite_token: 'invite-abc' });
+		expect(replayBody).toMatchObject({
+			invite_token: 'invite-abc',
+			provisioning_token: token,
+			resume_user_id: 'user_invited_resume'
+		});
+		// The status poll carries only the provisioning token.
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+			provisioning_token: token
+		});
+	});
+
+	it('sends the invitation and the proof of its email with an authenticator-app signup start', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({ challenge_id: 'totp-chal', secret: 'S', otpauth_uri: 'otpauth://x' }),
+					{ status: 201, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { totpAPI } = await loadClient();
+
+		await totpAPI.createSignupOptions({
+			email: 'new@example.com',
+			inviteToken: 'invite-abc',
+			invitationEmailProof: 'P'.repeat(43)
+		});
+
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain('/api/auth/totp/signup/options');
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			email: 'new@example.com',
+			invite_token: 'invite-abc',
+			invitation_email_proof: 'P'.repeat(43)
+		});
+	});
+
+	it('sends the proof of the invited email with a Passkey signup start', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			new Response(JSON.stringify({ challenge_id: 'chal', options: { challenge: 'c' } }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { passkeyAPI } = await loadClient();
+
+		await passkeyAPI.getRegisterOptions({
+			email: 'new@example.com',
+			inviteToken: 'invite-abc',
+			invitationEmailProof: 'P'.repeat(43)
+		});
+
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			invite_token: 'invite-abc',
+			invitation_email_proof: 'P'.repeat(43)
+		});
+	});
+
+	it('asks the invitation endpoints, and never names an address to send the code to', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockImplementation(
+				async () =>
+					new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { invitationAPI } = await loadClient();
+
+		await invitationAPI.validate('tok en');
+		await invitationAPI.sendEmailCode('tok');
+		await invitationAPI.verifyEmailCode({ token: 'tok', verificationId: 'v-1', code: '123456' });
+
+		const calls = fetchMock.mock.calls.map(([url, init]) => [
+			new URL(url.toString()).pathname + new URL(url.toString()).search,
+			init?.method,
+			init?.body ? JSON.parse(String(init.body)) : undefined
+		]);
+		expect(calls).toEqual([
+			['/api/v1/invitations/validate?token=tok%20en', 'GET', undefined],
+			['/api/v1/invitations/email-verification/send', 'POST', { token: 'tok' }],
+			[
+				'/api/v1/invitations/email-verification/verify',
+				'POST',
+				{ token: 'tok', verification_id: 'v-1', code: '123456' }
+			]
+		]);
+	});
+
+	it('leaves Passkey signup start without an invitation when none is given', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			new Response(JSON.stringify({ challenge_id: 'chal', options: { challenge: 'c' } }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { passkeyAPI } = await loadClient();
+
+		await passkeyAPI.getRegisterOptions({ email: 'new@example.com' });
+
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).not.toHaveProperty(
+			'invite_token'
+		);
+	});
+
 	it('continues polling when the resumed request returns a second provisioning operation', async () => {
 		const firstToken = 'A'.repeat(43);
 		const secondToken = 'B'.repeat(43);
@@ -1046,6 +1194,44 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(url.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
 		expect(url.searchParams.has('code_verifier')).toBe(false);
 		expect(result).not.toHaveProperty('codeVerifier');
+	});
+
+	it('carries an invitation to an OAuth start, and never to a SAML start', async () => {
+		const { externalIdpAPI } = await loadClient();
+
+		const oauth = new URL(
+			(
+				await externalIdpAPI.startLogin(
+					'github',
+					'https://login.example.com/callback',
+					undefined,
+					'oauth_redirect',
+					undefined,
+					undefined,
+					'invite-abc'
+				)
+			).url
+		);
+		const saml = new URL(
+			(
+				await externalIdpAPI.startLogin(
+					'corp',
+					'https://login.example.com/',
+					'/saml/sp/login?idp=corp',
+					'saml_sp',
+					undefined,
+					undefined,
+					'invite-abc'
+				)
+			).url
+		);
+		const plain = new URL(
+			(await externalIdpAPI.startLogin('github', 'https://login.example.com/callback')).url
+		);
+
+		expect(oauth.searchParams.get('invite_token')).toBe('invite-abc');
+		expect(saml.searchParams.has('invite_token')).toBe(false);
+		expect(plain.searchParams.has('invite_token')).toBe(false);
 	});
 
 	it('encodes the provider id as a single path segment', async () => {

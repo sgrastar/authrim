@@ -8,6 +8,10 @@
  * - Linking from the account page (a one-use link intent)
  */
 
+import {
+  reserveExternalSignupInvitation,
+  type ExternalSignupInvitation,
+} from '../services/signup-invitation';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { AccountSession, Env, Session } from '@authrim/ar-lib-core';
@@ -396,6 +400,35 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     c.header(DIAGNOSTIC_FLOW_ID_HEADER, flowId);
     c.header('Cache-Control', 'no-store');
 
+    // 4b. A sign-in started from an invitation reserves one use of it now, so the use is there
+    // when the callback creates the account. A link, a re-authentication or a silent sign-in
+    // creates no account, so it carries no invitation.
+    const inviteToken = c.req.query('invite_token');
+    const silent = (prompt ?? '').split(' ').includes('none');
+    let signupInvitation: ExternalSignupInvitation | null = null;
+    if (inviteToken !== undefined && !link && !reauth && !silent) {
+      if (!inviteToken || inviteToken.length > 512) {
+        return c.json(
+          { error: 'invalid_request', error_description: 'invite_token is invalid' },
+          400
+        );
+      }
+      signupInvitation = await reserveExternalSignupInvitation(c.env, {
+        token: inviteToken,
+        tenantId: tenantIdResolved,
+        flowId,
+      });
+      if (!signupInvitation) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'The invitation is invalid, expired, or has no use left',
+          },
+          404
+        );
+      }
+    }
+
     // 5. Decrypt client secret
     let clientSecret = await decryptClientSecret(c.env, provider.clientSecretEncrypted);
 
@@ -446,6 +479,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       ...(reauth
         ? { reauthChallengeId: reauth.challengeId, reauthRequestedAt: reauth.requestedAt }
         : {}),
+      ...(signupInvitation ?? {}),
       expiresAt: getStateExpiresAt(),
     });
 

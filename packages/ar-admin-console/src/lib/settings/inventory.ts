@@ -162,6 +162,9 @@ place('authentication/methods', 'Guests', {
 		'authentication-methods.passkey.guest_upgrade_enabled'
 	]
 });
+place('authentication/methods', 'Invitations', {
+	primary: ['authentication-methods.invitation.email_verification']
+});
 place('authentication/methods', 'Authenticator app (TOTP)', {
 	advanced: [
 		'authentication-methods.totp.preset',

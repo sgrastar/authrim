@@ -265,6 +265,52 @@ describe('Auth State Management', () => {
     });
   });
 
+  describe('the invitation a sign-in carries', () => {
+    it('is stored with the state and read back when the state is consumed', async () => {
+      const mockEnv = { DB: {} } as unknown as Env;
+      const now = Date.now();
+
+      await storeAuthState(mockEnv, {
+        tenantId: 'default',
+        clientId: 'authrim-client',
+        providerId: 'google',
+        state: 'invited-state',
+        redirectUri: 'https://example.com/callback',
+        inviteId: 'invite-1',
+        inviteReservationId: 'inr-1',
+        expiresAt: now + 600000,
+      });
+      const insert = sqlTracker.calls.find((c) =>
+        c.sql.includes('INSERT INTO external_idp_auth_states')
+      );
+      const columns = insert!.sql
+        .slice(insert!.sql.indexOf('(') + 1, insert!.sql.indexOf(')'))
+        .split(',')
+        .map((column) => column.trim());
+      expect(insert!.params[columns.indexOf('invite_id')]).toBe('invite-1');
+      expect(insert!.params[columns.indexOf('invite_reservation_id')]).toBe('inr-1');
+      expect(columns).toHaveLength(insert!.params.length);
+
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 1 });
+      mockQueryOne.mockResolvedValueOnce({
+        id: 'state-id',
+        tenant_id: 'default',
+        client_id: 'authrim-client',
+        provider_id: 'google',
+        state: 'invited-state',
+        redirect_uri: 'https://example.com/callback',
+        invite_id: 'invite-1',
+        invite_reservation_id: 'inr-1',
+        expires_at: now + 300000,
+        created_at: now - 60000,
+        consumed_at: now,
+      });
+      const consumed = await consumeAuthState(mockEnv, 'default', 'invited-state');
+
+      expect(consumed).toMatchObject({ inviteId: 'invite-1', inviteReservationId: 'inr-1' });
+    });
+  });
+
   describe('consumeAuthState', () => {
     it('should consume valid state atomically', async () => {
       const mockEnv = { DB: {} } as unknown as Env;

@@ -692,6 +692,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     ],
     [
       'authentication-methods',
+      'enum',
+      'value',
+      `
+    authentication-methods.invitation.email_verification
+  `,
+    ],
+    [
+      'authentication-methods',
       'json',
       'structured',
       `

@@ -36,6 +36,7 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.external_provider_usage': string;
   'authentication-methods.external_providers': string;
   'authentication-methods.directory_password.enabled': boolean;
+  'authentication-methods.invitation.email_verification': 'optional' | 'required';
 }
 
 export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
@@ -263,6 +264,16 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Enable organization directory password login via Authrim Wordwarden',
     visibility: 'admin',
   },
+  'authentication-methods.invitation.email_verification': {
+    key: 'authentication-methods.invitation.email_verification',
+    type: 'enum',
+    enum: ['optional', 'required'],
+    default: 'optional',
+    label: 'Invitation Email Verification',
+    description:
+      'For an invitation that names an email: optional accepts the email a sign-up gives; required has the person prove it (an email code before a passkey or authenticator-app sign-up, an external IdP that reports the email verified)',
+    visibility: 'admin',
+  },
 };
 
 export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
@@ -301,4 +312,5 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.external_provider_usage': '[]',
   'authentication-methods.external_providers': '[]',
   'authentication-methods.directory_password.enabled': false,
+  'authentication-methods.invitation.email_verification': 'optional',
 };
