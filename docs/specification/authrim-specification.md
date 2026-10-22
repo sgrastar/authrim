@@ -976,6 +976,13 @@ Self-service and delegated operations use different path families:
 
 Downstream elevation grants are product-specific protected-resource flows. They are not accepted as the standard delegated write credential unless a route explicitly opts into that product-specific flow.
 
+Actor–subject authorization:
+
+- A delegated route MUST authorize the actor against `subject_user_id` before it issues a step-up token. A route with no explicit delegated-write authority (scope, grant, or admin permission over that subject) permits only `actor == subject`.
+- Any other subject returns `403 access_denied`, with the same response whether or not the subject exists.
+- Step-up is an additional requirement on an already authorized actor. Completing step-up never grants authority over another subject.
+- `PATCH /api/protected/customer-profiles/users/{subject_user_id}` defines no delegated-write authority, so only the token subject's own profile can be updated. The token's `sub` must itself be the local account id: tokens with a mapped (pairwise or persistent) `sub`, an externally asserted subject, an `act` claim, or a client or admin principal subject are refused with the same `403 access_denied`.
+
 ### 11.2 Delegated Write Envelope
 
 Delegated write requests use:

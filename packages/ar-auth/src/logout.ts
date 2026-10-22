@@ -38,6 +38,11 @@ import {
   resolveLogoutTargetsFromSessionClientStore,
   resolveSessionIdFromOidcSidStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
+  resolveLogoutIssuerWithRetry,
+  reportLogoutNotSent,
+  reportIncompleteLogouts,
+  reportLogoutTargetsUnavailable,
+  type LogoutIncomplete,
   purgeEndedSessionsFromSessionClientStore,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
@@ -99,6 +104,25 @@ function escapeLogoutHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * The page a confirmed logout answers with: it moves on to `redirectUrl` at once (a meta refresh,
+ * which needs no script), with a link for a browser that does not follow it. The refresh takes
+ * the rest of its content as the URL, so the escaped URL needs no quoting.
+ */
+export function renderLogoutContinuationPage(redirectUrl: string): string {
+  const url = escapeLogoutHtml(redirectUrl);
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=${url}"><title>Signed out</title></head>
+<body>
+  <main>
+    <h1>Signed out</h1>
+    <p><a href="${url}">Continue</a></p>
+  </main>
+</body>
+</html>`;
+}
+
 function renderLogoutConfirmationForm(
   confirmationToken: string,
   params: {
@@ -155,15 +179,21 @@ async function getLogoutConfig(env: Env, tenantId: string): Promise<LogoutConfig
   }
 }
 
-/** The tenant's logout webhook settings; the code defaults (off) when they cannot be read. */
-async function getLogoutWebhookConfig(env: Env, tenantId: string): Promise<LogoutWebhookConfig> {
+/**
+ * The tenant's logout webhook settings; null when they cannot be read (not the same as off: the
+ * apps with a webhook are then not told, and that is recorded).
+ */
+async function getLogoutWebhookConfig(
+  env: Env,
+  tenantId: string
+): Promise<LogoutWebhookConfig | null> {
   try {
     return await resolveLogoutWebhookConfig(env, tenantId);
   } catch (error) {
     moduleLogger.warn('Logout webhook settings could not be read', {
       error: error instanceof Error ? error.message : String(error),
     });
-    return DEFAULT_LOGOUT_WEBHOOK_CONFIG;
+    return null;
   }
 }
 
@@ -327,6 +357,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       webhookClients: SessionClientWithWebhook[];
     };
     const sessionsToNotify: SessionNotificationTarget[] = [];
+    // Sessions whose clients could not be read: they are not told, and their records are kept.
+    const targetReadFailed = new Set<string>();
 
     const collectSessionData = async (sessId: string, fallbackUserId?: string) => {
       // Avoid duplicate work if the same session is encountered twice
@@ -350,6 +382,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             error: (error as Error).message,
             action: 'Logout',
           });
+          targetReadFailed.add(sessId);
           return null;
         });
         const targetClients = storeTargets ?? {
@@ -382,6 +415,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.debug('No logout clients found for session', { sessionId: sessId });
         }
       } catch (error) {
+        targetReadFailed.add(sessId);
         log.warn('Failed to load session data', {
           sessionId: sessId,
           error: (error as Error).message,
@@ -665,37 +699,58 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Get logout config for both backchannel and frontchannel
     const logoutConfig = await getLogoutConfig(c.env, getTenantIdFromContext(c));
 
+    // The logout tokens and webhooks carry the tenant's canonical issuer, not one made from the
+    // host this request came in on. The lookup starts here (tried again a few times if it fails)
+    // and the sending, after the response, waits for it. When it still fails there is no other
+    // issuer to sign with: nothing is sent, and the apps not told are recorded (see below).
+    const logoutIssuer =
+      deletedSessions.length > 0 && c.executionCtx
+        ? resolveLogoutIssuerWithRetry(c.env, tenantId, { log })
+        : null;
+
     // The notices below read nothing more from the SessionClientStore (the targets were collected
     // before the sessions ended); the ended sessions' records are removed once they have finished.
     const logoutFanouts: Promise<unknown>[] = [];
+    // What the notices could not send before sending (no signing key, unreadable settings, ...).
+    const incompleteNotices: LogoutIncomplete[] = [];
+    const onIncomplete = (incomplete: LogoutIncomplete) => incompleteNotices.push(incomplete);
+    // Read once for the webhook notice and for the report of what was not sent.
+    const logoutWebhookConfig = logoutIssuer ? getLogoutWebhookConfig(c.env, tenantId) : null;
 
-    if (deletedSessions.length > 0 && c.executionCtx) {
-      // The retry budget counts from when this work starts: loading keys uses it too.
-      const backchannelFanout = sendBackchannelLogoutFanout(c.env, {
-        tenantId,
-        issuer,
-        sessions: sessionsToNotify,
-        config: logoutConfig.backchannel,
-        log,
-        // A final failure with on_failure 'error' (alert) is written to the audit log.
-        onAlert: async (details) => {
-          await createAuditLog(c.env, {
-            tenantId,
-            userId: details.userId,
-            action: 'backchannel_logout.failed',
-            resource: 'session',
-            resourceId: details.sessionId,
-            // Sent from the server after the response: no client request applies.
-            ipAddress: '',
-            userAgent: '',
-            metadata: JSON.stringify({
-              client_id: details.clientId,
-              attempts: details.attempts,
-            }),
-            severity: 'warning',
-          });
-        },
-      });
+    if (logoutIssuer && c.executionCtx) {
+      const backchannelFanout = (async () => {
+        // The retry budget counts from when this work starts: loading keys uses it too.
+        const startedAt = Date.now();
+        const tokenIssuer = await logoutIssuer;
+        if (!tokenIssuer) return;
+        await sendBackchannelLogoutFanout(c.env, {
+          tenantId,
+          issuer: tokenIssuer,
+          sessions: sessionsToNotify,
+          config: logoutConfig.backchannel,
+          startedAt,
+          log,
+          onIncomplete,
+          // A final failure with on_failure 'error' (alert) is written to the audit log.
+          onAlert: async (details) => {
+            await createAuditLog(c.env, {
+              tenantId,
+              userId: details.userId,
+              action: 'backchannel_logout.failed',
+              resource: 'session',
+              resourceId: details.sessionId,
+              // Sent from the server after the response: no client request applies.
+              ipAddress: '',
+              userAgent: '',
+              metadata: JSON.stringify({
+                client_id: details.clientId,
+                attempts: details.attempts,
+              }),
+              severity: 'warning',
+            });
+          },
+        });
+      })();
       logoutFanouts.push(backchannelFanout);
       c.executionCtx.waitUntil(backchannelFanout);
     }
@@ -705,14 +760,28 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // Use waitUntil() to send webhook notifications without blocking the response
     // This is an Authrim extension for clients that don't support OIDC Back-Channel Logout
-    if (deletedSessions.length > 0 && c.executionCtx) {
+    if (logoutIssuer && c.executionCtx) {
       const webhookFanout = (async () => {
-        const webhookConfig = await getLogoutWebhookConfig(c.env, tenantId);
+        const webhookConfig = await logoutWebhookConfig;
+        const webhookIssuer = await logoutIssuer;
+        if (!webhookIssuer) return;
+        if (!webhookConfig) {
+          // Not known whether the webhook is on: the apps with a webhook are not told.
+          onIncomplete({
+            kind: 'webhook',
+            sessionIds: sessionsToNotify
+              .filter((session) => session.webhookClients.length > 0)
+              .map((session) => session.sessionId),
+            reason: 'webhook_settings_unavailable',
+          });
+          return;
+        }
         await sendLogoutWebhookFanout(c.env, {
-          issuer,
+          issuer: webhookIssuer,
           sessions: sessionsToNotify,
           config: webhookConfig,
           log,
+          onIncomplete,
         });
       })();
       logoutFanouts.push(webhookFanout);
@@ -724,12 +793,52 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // Only after both notices have finished (with their retries): a removal before them would
     // leave a later read of the targets with nothing. A failed removal does not touch the notices'
-    // results; the store's expiry removes what it leaves.
-    if (deletedSessions.length > 0 && c.executionCtx) {
+    // results; the store's expiry removes what it leaves. A session whose notice did not get as
+    // far as sending (no issuer, no signing key, unreadable settings or clients, the sending
+    // broke off) is not removed: its records stay until they expire. The apps that were not told
+    // are made visible to the admin (the failure list and the audit log).
+    if (logoutIssuer && c.executionCtx) {
       c.executionCtx.waitUntil(
-        Promise.allSettled(logoutFanouts).then(() =>
-          purgeEndedSessionsFromSessionClientStore(c.env, tenantId, deletedSessions)
-        )
+        (async () => {
+          // Sessions whose apps could not be looked up were not told either: counted for the admin.
+          await reportLogoutTargetsUnavailable(c.env, {
+            tenantId,
+            trigger: 'user_logout',
+            sessionCount: targetReadFailed.size,
+            log,
+          });
+          if (!(await logoutIssuer)) {
+            const webhookConfig = await logoutWebhookConfig;
+            await reportLogoutNotSent(c.env, {
+              tenantId,
+              trigger: 'user_logout',
+              sessions: sessionsToNotify,
+              backchannelEnabled: logoutConfig.backchannel.enabled,
+              // Settings that cannot be read: report the webhook apps too.
+              webhookEnabled: webhookConfig ? webhookConfig.enabled : true,
+              log,
+            });
+            return;
+          }
+          await Promise.allSettled(logoutFanouts);
+          if (incompleteNotices.length > 0) {
+            await reportIncompleteLogouts(c.env, {
+              tenantId,
+              trigger: 'user_logout',
+              sessions: sessionsToNotify,
+              incomplete: incompleteNotices,
+              log,
+            });
+          }
+          const kept = new Set<string>([
+            ...targetReadFailed,
+            ...incompleteNotices.flatMap((incomplete) => incomplete.sessionIds),
+          ]);
+          const removable = deletedSessions.filter((sessionId) => !kept.has(sessionId));
+          if (removable.length > 0) {
+            await purgeEndedSessionsFromSessionClientStore(c.env, tenantId, removable);
+          }
+        })()
       );
     }
 
@@ -949,17 +1058,24 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Step 6: Redirect to post-logout URI (no frontchannel clients)
-    // IMPORTANT: Hono's c.redirect() creates a new Response that doesn't include
-    // headers set via setCookie(). We need to manually add the Set-Cookie header
-    // to ensure the session cookie is properly cleared in the browser.
-    const response = c.redirect(redirectUrl, 302);
-
-    // Clone the response and add the Set-Cookie headers (need append for multiple cookies)
+    // Step 6: Send the browser on to the post-logout URI (no frontchannel clients)
+    // This answers the confirmation form's POST, and browsers apply that page's form-action
+    // ('self') to the redirects that follow a form submission: a 302 to the RP (or to a logged-out
+    // or error page served from another origin) would be aborted. A same-origin page that moves
+    // on by itself ends the form submission here, as the frontchannel page above does.
+    // The response is built by hand: Set-Cookie headers set via setCookie() are not carried over
+    // to a Response made here, so the cookies are cleared explicitly below.
     // SameSite is determined dynamically based on origin configuration
     const sessionSameSiteRedirect = getSessionCookieSameSite(c.env);
     const browserStateSameSiteRedirect = getBrowserStateCookieSameSite(c.env);
-    const headers = new Headers(response.headers);
+    const headers = new Headers({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy':
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    });
     headers.append(
       'Set-Cookie',
       `${GUEST_RESUME_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
@@ -977,8 +1093,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       `${LOGOUT_CONFIRMATION_COOKIE_NAME}=; Path=/logout; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
     );
 
-    return new Response(response.body, {
-      status: response.status,
+    return new Response(renderLogoutContinuationPage(redirectUrl), {
+      status: 200,
       headers,
     });
   } catch (error) {

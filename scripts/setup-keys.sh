@@ -127,6 +127,21 @@ echo -e "${GREEN}✅ OTP HMAC Secret generated${NC}"
 echo "📝 Saved to: $OTP_HMAC_SECRET_PATH"
 echo ""
 
+# Generate the tombstone keyring (deleted accounts' email fingerprints; separate from the lookup
+# keys). JSON: {"current": <generation>, "keys": {"<generation>": "<32-byte base64url>"}}.
+# An existing keyring is kept: its keys must stay readable for as long as deletion records last.
+TOMBSTONE_HMAC_KEYRING_PATH="$KEYS_DIR/tombstone_hmac_keyring.json"
+if [ ! -f "$TOMBSTONE_HMAC_KEYRING_PATH" ]; then
+    TOMBSTONE_HMAC_KEY=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n')
+    printf '{"current":1,"keys":{"1":"%s"}}' "$TOMBSTONE_HMAC_KEY" > "$TOMBSTONE_HMAC_KEYRING_PATH"
+    chmod 600 "$TOMBSTONE_HMAC_KEYRING_PATH"
+    echo -e "${GREEN}✅ Tombstone HMAC keyring generated${NC}"
+else
+    echo -e "${YELLOW}ℹ️  Tombstone HMAC keyring kept${NC}"
+fi
+echo "📝 Saved to: $TOMBSTONE_HMAC_KEYRING_PATH"
+echo ""
+
 # Extract public key from private key
 TEMP_PUBLIC_KEY=$(mktemp)
 openssl rsa -in "$PRIVATE_KEY_PATH" -pubout -out "$TEMP_PUBLIC_KEY" 2>/dev/null

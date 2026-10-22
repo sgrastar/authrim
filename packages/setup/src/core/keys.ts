@@ -79,6 +79,7 @@ export interface KeyMetadata {
     otpHmacSecret?: string;
     loggingCursorHmacSecret?: string;
     lookupHmacKeySlotA?: string;
+    tombstoneHmacKeyring?: string;
     flowRuntimeHmacSecret?: string;
     vcTransactionCodeHmacSecret?: string;
     vcEvidenceHmacSecret?: string;
@@ -434,6 +435,44 @@ export function generateBase64Secret(bytes: number = 32): string {
 /**
  * Generate all required secrets for Authrim
  */
+/**
+ * A new tombstone keyring (TOMBSTONE_HMAC_KEYRING): one 256-bit key, generation 1, current.
+ * Deleted accounts' email fingerprints are made with it; see ar-lib-core tombstone-hmac-keyring
+ * for its format and how it is rotated (keys are added, never replaced in place).
+ */
+export function generateTombstoneHmacKeyring(): string {
+  return JSON.stringify({ current: 1, keys: { '1': generateBase64Secret(32) } });
+}
+
+/** Whether a stored tombstone keyring has the shape the Workers accept. */
+export function isValidTombstoneHmacKeyring(value: string): boolean {
+  try {
+    const parsed = JSON.parse(value) as { current?: unknown; keys?: unknown };
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    if (Object.keys(parsed).some((key) => key !== 'current' && key !== 'keys')) return false;
+    const keys = parsed.keys;
+    if (!keys || typeof keys !== 'object' || Array.isArray(keys)) return false;
+    const entries = Object.entries(keys as Record<string, unknown>);
+    const secrets = entries.map(([, secret]) => secret);
+    return (
+      typeof parsed.current === 'number' &&
+      Number.isSafeInteger(parsed.current) &&
+      entries.length >= 1 &&
+      entries.length <= 32 &&
+      entries.every(
+        ([generation, secret]) =>
+          /^[1-9][0-9]{0,8}$/u.test(generation) &&
+          typeof secret === 'string' &&
+          /^[A-Za-z0-9_-]{43,512}$/u.test(secret)
+      ) &&
+      new Set(secrets).size === secrets.length &&
+      Object.hasOwn(keys, String(parsed.current))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function generateAllSecrets(keyId?: string): GeneratedSecrets {
   const keyPair = generateRsaKeyPair(keyId);
   const setupMachineKeyPair = generateEs256KeyPair(`${keyPair.keyId}-setup`);
@@ -1236,6 +1275,9 @@ export async function saveKeysToDirectory(
     await chmod(paths.loggingCursorHmacSecret, SENSITIVE_FILE_MODE);
     await writeFile(paths.lookupHmacKeySlotA, secrets.lookupHmacKeySlotA, 'utf-8');
     await chmod(paths.lookupHmacKeySlotA, SENSITIVE_FILE_MODE);
+    const tombstoneHmacKeyring = join(stagingDir, 'tombstone_hmac_keyring.json');
+    await writeFile(tombstoneHmacKeyring, generateTombstoneHmacKeyring(), 'utf-8');
+    await chmod(tombstoneHmacKeyring, SENSITIVE_FILE_MODE);
     await writeFile(paths.flowRuntimeHmacSecret, secrets.flowRuntimeHmacSecret, 'utf-8');
     await chmod(paths.flowRuntimeHmacSecret, SENSITIVE_FILE_MODE);
     await writeFile(
@@ -1713,6 +1755,7 @@ export async function ensureSupplementalKeyFiles(
     otpHmacSecret: join(keysDir, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
     lookupHmacKeySlotA: join(keysDir, 'lookup_hmac_key_slot_a.txt'),
+    tombstoneHmacKeyring: join(keysDir, 'tombstone_hmac_keyring.json'),
     flowRuntimeHmacSecret: join(keysDir, 'flow_runtime_hmac_secret.txt'),
     vcTransactionCodeHmacSecret: join(keysDir, 'vc_transaction_code_hmac_secret.txt'),
     vcEvidenceHmacSecret: join(keysDir, 'vc_evidence_hmac_secret.txt'),
@@ -1786,6 +1829,14 @@ export async function ensureSupplementalKeyFiles(
       createdFiles
     );
   }
+  // Installs from before deletion records had their own keys get a keyring on the next update or
+  // deploy; an existing one is kept as it is (rotating it adds keys by hand, see its format).
+  await ensureSupplementalSecret(
+    paths.tombstoneHmacKeyring,
+    generateTombstoneHmacKeyring,
+    isValidTombstoneHmacKeyring,
+    createdFiles
+  );
   await ensureNotificationPayloadKeySet(
     {
       privateSlotA: paths.notificationPayloadDecryptJwkSlotA,
@@ -1841,6 +1892,7 @@ export async function ensureSupplementalKeyFiles(
     piiEncryptionKey: paths.piiEncryptionKey,
     otpHmacSecret: paths.otpHmacSecret,
     loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
+    tombstoneHmacKeyring: paths.tombstoneHmacKeyring,
     flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
     vcTransactionCodeHmacSecret: paths.vcTransactionCodeHmacSecret,
     vcEvidenceHmacSecret: paths.vcEvidenceHmacSecret,

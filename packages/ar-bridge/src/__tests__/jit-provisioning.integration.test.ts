@@ -232,6 +232,8 @@ const {
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
+    // The real deleted-account check (re-registration blocking is off by default).
+    checkEmailRegistration: actual.checkEmailRegistration,
     D1Adapter: MockD1Adapter,
     // JIT settings as the Settings API resolves them with nothing set for the tenant or platform:
     // the saved document (as the older reader maps it), else the defaults.

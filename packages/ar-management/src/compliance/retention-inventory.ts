@@ -9,6 +9,7 @@
  * falls back to a default the runtime would not use.
  */
 import {
+  resolveAccountTombstonePolicy,
   resolveEffectiveSettings,
   resolvePlatformSettingsWithSources,
   resolveTenantRuntimeProfilesFromEnv,
@@ -167,8 +168,6 @@ const FIXED_SESSION_LIFETIMES: ReadonlyArray<{ key: string; seconds: number; fix
   // ar-bridge handlers/handoff.ts
   { key: 'session_handoff', seconds: 60 * 60, fixed: true },
 ];
-/** Deleted users' tombstones get this retention unless the deletion asks for another. */
-export const USER_TOMBSTONE_RETENTION_DAYS = 90;
 const LOOKUP_RETENTION_MIN_DAYS = 30;
 const LOOKUP_RETENTION_MAX_DAYS = 3650;
 
@@ -280,7 +279,7 @@ export async function buildRetentionInventory(
     input.auditProfile ??
     (await resolveTenantRuntimeProfilesFromEnv(env, tenantId, { strict: true })).auditProfile;
 
-  const [audit, checkAudit, diagnostic, oauth, sessionSettings, lookup, tenantProfile] =
+  const [audit, checkAudit, diagnostic, oauth, sessionSettings, lookup, tenantProfile, tombstones] =
     await Promise.all([
       resolveTenantAuditRetentionFromEnv(env, tenantId, { auditProfile }),
       // Not the runtime cache: an admin sees a change as soon as it is saved.
@@ -291,6 +290,7 @@ export async function buildRetentionInventory(
       lookupPolicy(coreAdapter, tenantId),
       // Its max_token_ttl_seconds caps every access token issued for the tenant.
       loadTenantProfileStrict(env.AUTHRIM_CONFIG, env, tenantId),
+      resolveAccountTombstonePolicy(env, tenantId, { fresh: true }),
     ]);
   // Whole days: a write adds them to the calendar date, dropping any fraction.
   const auditEventDays = positiveInteger(audit.event.days, 'audit_event_retention_days');
@@ -447,9 +447,20 @@ export async function buildRetentionInventory(
     },
     {
       id: 'user_tombstones',
-      retention: { value: USER_TOMBSTONE_RETENTION_DAYS, unit: 'days' },
-      source: { kind: 'default' },
-      edit: { kind: 'none' },
+      // New tombstones get this retention unless the deletion asks for another.
+      retention: { value: tombstones.retentionDays, unit: 'days' },
+      source: {
+        kind: 'setting',
+        category: 'account-lifecycle',
+        key: 'account-lifecycle.deletion.tombstone_retention_days',
+        level: 'tenant',
+      },
+      edit: {
+        kind: 'settings',
+        category: 'account-lifecycle',
+        key: 'account-lifecycle.deletion.tombstone_retention_days',
+        level: 'tenant',
+      },
       deletion: tombstoneTask,
       // An erasure request may set its own retention; each tombstone keeps its retention_until.
       varies: 'by_request',

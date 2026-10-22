@@ -42,6 +42,7 @@ import {
   readExternalProviderReauthPolicy,
   readExternalProviderUsagePolicy,
   resolveSessionTtl,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
   applyExternalSignupInvitation,
@@ -404,6 +405,13 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
             }
           : undefined,
       });
+    }
+
+    if (error instanceof SamlRegistrationBlockedError) {
+      log.warn('SAML sign-up refused: re-registration of a deleted account is blocked', {
+        issuer: auditProviderId,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
     if (error instanceof SamlSignupDisabledError) {
@@ -1404,6 +1412,17 @@ class SamlProvisioningError extends Error {
   }
 }
 
+/**
+ * The address belongs to an account deleted within the retention period and the tenant blocks
+ * re-registration. Answered as sign-up turned off is, without saying the address was deleted.
+ */
+class SamlRegistrationBlockedError extends Error {
+  constructor() {
+    super('SAML sign-up refused for this address');
+    this.name = 'SamlRegistrationBlockedError';
+  }
+}
+
 /** The tenant turned sign-up off for the IdP, so a first sign-in cannot create the account. */
 class SamlSignupDisabledError extends Error {
   constructor() {
@@ -1650,6 +1669,10 @@ async function findOrCreateUser(
         'invitation_email_mismatch'
       );
     }
+
+    const registration = await checkEmailRegistration(env, { tenantId, email: normalizedEmail });
+    if (registration === 'unavailable') throw new Error('saml_reregistration_check_unavailable');
+    if (registration === 'blocked') throw new SamlRegistrationBlockedError();
     return provisionSamlJitAccount(env, {
       tenantId,
       providerId,

@@ -60,6 +60,16 @@ vi.mock('@authrim/ar-lib-core', async () => {
       matchedInstallations: 0,
     }),
     resolveLogoutTargetsFromSessionClientStore: vi.fn().mockResolvedValue(null),
+    // The tenant's canonical issuer, which is not the host the request came in on.
+    // (its retries are tested in ar-lib-core)
+    resolveLogoutIssuerWithRetry: vi.fn(async () => 'https://canonical.example.com'),
+    reportLogoutNotSent: vi.fn().mockResolvedValue({ sessions: 0, clients: 0 }),
+    reportIncompleteLogouts: vi.fn().mockResolvedValue(undefined),
+    reportLogoutTargetsUnavailable: vi.fn().mockResolvedValue(undefined),
+    resolveLogoutWebhookConfig: vi.fn(
+      (actual as { resolveLogoutWebhookConfig: (...args: unknown[]) => unknown })
+        .resolveLogoutWebhookConfig
+    ),
     sendBackchannelLogoutFanout: vi.fn().mockResolvedValue(null),
     sendLogoutWebhookFanout: vi.fn().mockResolvedValue(null),
     purgeEndedSessionsFromSessionClientStore: vi.fn().mockResolvedValue(undefined),
@@ -70,7 +80,11 @@ vi.mock('@authrim/ar-lib-core', async () => {
   };
 });
 
-import { frontChannelLogoutHandler, backChannelLogoutHandler } from '../logout';
+import {
+  frontChannelLogoutHandler,
+  backChannelLogoutHandler,
+  renderLogoutContinuationPage,
+} from '../logout';
 import { getCookie, setCookie } from 'hono/cookie';
 import { jwtVerify, importJWK } from 'jose';
 import {
@@ -84,6 +98,11 @@ import {
   recordHybridUserSessionRevocationEpoch,
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
+  resolveLogoutIssuerWithRetry,
+  reportLogoutNotSent,
+  reportIncompleteLogouts,
+  reportLogoutTargetsUnavailable,
+  resolveLogoutWebhookConfig,
   purgeEndedSessionsFromSessionClientStore,
   DEFAULT_LOGOUT_CONFIG,
 } from '@authrim/ar-lib-core';
@@ -165,6 +184,23 @@ function createMockContext(options: {
   return { c, mockSessionStore, mockKeyManager };
 }
 
+/**
+ * Where the page a confirmed logout answers with sends the browser on to (its meta refresh). A
+ * confirmed logout answers the confirmation form's POST, so it must not redirect (see logout.ts).
+ */
+async function continuedTo(response: Response): Promise<string> {
+  expect(response.status).toBe(200);
+  const html = await response.text();
+  const match = /<meta http-equiv="refresh" content="0;url=([^"]*)">/u.exec(html);
+  expect(match).not.toBeNull();
+  return match![1]
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
 const VALID_BACKCHANNEL_AUTH_HEADER = {
   Authorization: 'Basic ' + btoa('client-123:client-secret'),
 };
@@ -210,7 +246,7 @@ describe('Front-channel Logout', () => {
 
       const response = await frontChannelLogoutHandler(c);
 
-      expect(c.redirect).toHaveBeenCalledWith('https://op.example.com/logged-out', 302);
+      expect(await continuedTo(response)).toBe('https://op.example.com/logged-out');
     });
 
     it('should clear session cookie on logout', async () => {
@@ -220,7 +256,7 @@ describe('Front-channel Logout', () => {
 
       vi.mocked(getCookie).mockReturnValue('session-123');
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       expect(setCookie).toHaveBeenCalledWith(
         c,
@@ -241,7 +277,7 @@ describe('Front-channel Logout', () => {
       vi.mocked(getCookie).mockReturnValue('0_session_123');
       mockShardedSessionStore.getSessionRpc.mockRejectedValue(new Error('storage_unavailable'));
       try {
-        await frontChannelLogoutHandler(c);
+        const response = await frontChannelLogoutHandler(c);
         expect(c.json).toHaveBeenCalledWith(
           expect.objectContaining({ error: 'temporarily_unavailable' }),
           503
@@ -258,7 +294,7 @@ describe('Front-channel Logout', () => {
       vi.mocked(revokeGuestResumeForSession).mockRejectedValueOnce(
         new Error('guest_resume_revocation_failed')
       );
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({ error: 'temporarily_unavailable' }),
         503
@@ -279,7 +315,7 @@ describe('Front-channel Logout', () => {
       // Use sharded session ID format
       vi.mocked(getCookie).mockReturnValue('0_session_123');
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       // Should call sharded session store's invalidateSessionRpc
       expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
@@ -300,7 +336,7 @@ describe('Front-channel Logout', () => {
         mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
         vi.mocked(getCookie).mockReturnValue('0_session_csrf_victim');
 
-        await frontChannelLogoutHandler(c);
+        const response = await frontChannelLogoutHandler(c);
 
         expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
         expect(setCookie).not.toHaveBeenCalledWith(c, 'authrim_session', '', expect.anything());
@@ -393,14 +429,15 @@ describe('Front-channel Logout', () => {
         webhookClients: [webhookClient],
       } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
       await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
 
+      expect(reportLogoutNotSent).not.toHaveBeenCalled();
       expect(sendBackchannelLogoutFanout).toHaveBeenCalledWith(
         c.env,
         expect.objectContaining({
           tenantId: 'default',
-          issuer: 'https://op.example.com',
+          issuer: 'https://canonical.example.com',
           config: DEFAULT_LOGOUT_CONFIG.backchannel,
           onAlert: expect.any(Function),
           sessions: [
@@ -415,8 +452,54 @@ describe('Front-channel Logout', () => {
       expect(sendLogoutWebhookFanout).toHaveBeenCalledWith(
         c.env,
         expect.objectContaining({
-          issuer: 'https://op.example.com',
+          issuer: 'https://canonical.example.com',
           sessions: [expect.objectContaining({ sessionId: '0_session_123' })],
+        })
+      );
+    });
+
+    it('sends nothing downstream, and still logs the user out, when the tenant issuer cannot be resolved', async () => {
+      const { c } = createMockContext({
+        query: {},
+        body: { confirmation_token: '0_session_123' },
+      });
+      const waitUntil = vi.fn();
+      c.executionCtx = { waitUntil };
+
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+        backchannelClients: [{ client_id: 'rp-client', oidc_sid: 'rp-session-123' }],
+        frontchannelClients: [],
+        webhookClients: [{ client_id: 'rp-webhook' }],
+      } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+      vi.mocked(resolveLogoutIssuerWithRetry).mockResolvedValueOnce(null);
+
+      const response = await frontChannelLogoutHandler(c);
+      await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+
+      expect(response.status).toBeLessThan(500);
+      expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
+      // No other issuer is made up from the request's host: nothing is sent.
+      expect(sendBackchannelLogoutFanout).not.toHaveBeenCalled();
+      expect(sendLogoutWebhookFanout).not.toHaveBeenCalled();
+      // Nothing was told, so the records of the ended session stay until they expire.
+      expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+      // The apps that were not told are recorded for the admin, with the path.
+      expect(reportLogoutNotSent).toHaveBeenCalledWith(
+        c.env,
+        expect.objectContaining({
+          tenantId: 'default',
+          trigger: 'user_logout',
+          backchannelEnabled: DEFAULT_LOGOUT_CONFIG.backchannel.enabled,
+          sessions: [
+            expect.objectContaining({
+              sessionId: '0_session_123',
+              backchannelClients: [expect.objectContaining({ client_id: 'rp-client' })],
+              webhookClients: [expect.objectContaining({ client_id: 'rp-webhook' })],
+            }),
+          ],
         })
       );
     });
@@ -468,7 +551,7 @@ describe('Front-channel Logout', () => {
         vi.mocked(sendBackchannelLogoutFanout).mockReturnValueOnce(backchannel.promise);
         vi.mocked(sendLogoutWebhookFanout).mockReturnValueOnce(webhook.promise);
 
-        await frontChannelLogoutHandler(c);
+        const response = await frontChannelLogoutHandler(c);
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
 
@@ -499,7 +582,7 @@ describe('Front-channel Logout', () => {
         const { c, waitUntil } = setUp();
         vi.mocked(sendBackchannelLogoutFanout).mockRejectedValueOnce(new Error('send failed'));
 
-        await frontChannelLogoutHandler(c);
+        const response = await frontChannelLogoutHandler(c);
         await settleAll(waitUntil);
 
         expect(purgeEndedSessionsFromSessionClientStore).toHaveBeenCalledWith(c.env, 'default', [
@@ -523,11 +606,124 @@ describe('Front-channel Logout', () => {
         expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
       });
 
+      it('keeps it, and records the apps not told, when a notice broke off before sending', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(sendBackchannelLogoutFanout).mockImplementationOnce(async (_env, params) => {
+          params.onIncomplete?.({
+            kind: 'backchannel',
+            sessionIds: ['0_session_123'],
+            reason: 'signing_key_unavailable',
+          });
+          return null;
+        });
+
+        const response = await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(reportLogoutTargetsUnavailable).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({ sessionCount: 0 })
+        );
+        expect(reportIncompleteLogouts).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({
+            tenantId: 'default',
+            trigger: 'user_logout',
+            incomplete: [
+              {
+                kind: 'backchannel',
+                sessionIds: ['0_session_123'],
+                reason: 'signing_key_unavailable',
+              },
+            ],
+          })
+        );
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+      });
+
+      it('keeps it when its clients could not be read', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore)
+          .mockReset()
+          .mockRejectedValueOnce(new Error('store unavailable'));
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValue(null);
+
+        const response = await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+        // The admin can see how many sessions ended without their apps being told.
+        expect(reportLogoutTargetsUnavailable).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({
+            tenantId: 'default',
+            trigger: 'user_logout',
+            sessionCount: 1,
+          })
+        );
+      });
+
+      it('does not treat unreadable webhook settings as off: the webhook apps are recorded and kept', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockReset();
+        vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+          backchannelClients: [],
+          frontchannelClients: [],
+          webhookClients: [{ client_id: 'rp-webhook' }],
+        } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+        vi.mocked(resolveLogoutWebhookConfig).mockRejectedValueOnce(new Error('kv down'));
+
+        const response = await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(sendLogoutWebhookFanout).not.toHaveBeenCalled();
+        expect(reportIncompleteLogouts).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({
+            incomplete: [
+              {
+                kind: 'webhook',
+                sessionIds: ['0_session_123'],
+                reason: 'webhook_settings_unavailable',
+              },
+            ],
+          })
+        );
+        expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+      });
+
+      it('includes the webhook apps in the report of an unresolved issuer when the webhook settings are unreadable', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(resolveLogoutIssuerWithRetry).mockResolvedValueOnce(null);
+        vi.mocked(resolveLogoutWebhookConfig).mockRejectedValueOnce(new Error('kv down'));
+
+        const response = await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(reportLogoutNotSent).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({ trigger: 'user_logout', webhookEnabled: true })
+        );
+      });
+
+      it('leaves the webhook apps out of that report when the webhook is explicitly off', async () => {
+        const { c, waitUntil } = setUp();
+        vi.mocked(resolveLogoutIssuerWithRetry).mockResolvedValueOnce(null);
+
+        const response = await frontChannelLogoutHandler(c);
+        await settleAll(waitUntil);
+
+        expect(reportLogoutNotSent).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({ webhookEnabled: false })
+        );
+      });
+
       it('removes nothing when no session ended', async () => {
         const { c, waitUntil } = setUp();
         mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(false);
 
-        await frontChannelLogoutHandler(c);
+        const response = await frontChannelLogoutHandler(c);
         await settleAll(waitUntil);
 
         expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
@@ -548,6 +744,82 @@ describe('Front-channel Logout', () => {
     });
   });
 
+  describe('a confirmed logout does not redirect the confirmation form', () => {
+    // Browsers apply the confirmation page's form-action ('self') to the redirects after its form
+    // is submitted: a 302 to the RP's post_logout_redirect_uri was aborted (net::ERR_ABORTED), so
+    // the browser never got back to the RP.
+    const confirmedLogoutToRp = () => {
+      const { c } = createMockContext({
+        query: {
+          id_token_hint: 'valid.id.token',
+          post_logout_redirect_uri: 'https://app.example.com/logout-callback',
+          state: 'state-1',
+        },
+      });
+      vi.mocked(getCookie).mockReturnValue('session-123');
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: true,
+        userId: 'user-123',
+        clientId: 'client-123',
+      });
+      c.env.DB.prepare = vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnValue({
+          first: vi.fn().mockResolvedValue({
+            post_logout_redirect_uris: JSON.stringify(['https://app.example.com/logout-callback']),
+          }),
+        }),
+      });
+      return c;
+    };
+
+    it('answers with a same-origin page that moves on to the RP', async () => {
+      const c = confirmedLogoutToRp();
+      const response = await frontChannelLogoutHandler(c);
+
+      expect(c.redirect).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Location')).toBeNull();
+      expect(response.headers.get('Content-Type')).toBe('text/html; charset=utf-8');
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'none'");
+      expect(await continuedTo(response)).toBe(
+        'https://app.example.com/logout-callback?state=state-1'
+      );
+    });
+
+    it('still clears the session cookies on that page', async () => {
+      const response = await frontChannelLogoutHandler(confirmedLogoutToRp());
+      const cookies = response.headers.get('Set-Cookie') ?? '';
+      expect(cookies).toContain('authrim_session=;');
+      expect(cookies).toContain('Max-Age=0');
+    });
+
+    it("keeps form-action 'self' on the confirmation page", async () => {
+      const { c } = createMockContext({
+        method: 'GET',
+        query: {
+          id_token_hint: 'valid.id.token',
+          post_logout_redirect_uri: 'https://app.example.com/logout-callback',
+        },
+      });
+      vi.mocked(getCookie).mockReturnValue('session-123');
+      await frontChannelLogoutHandler(c);
+      const headers = vi.mocked(c.body).mock.calls[0][2] as Record<string, string>;
+      expect(headers['Content-Security-Policy']).toContain("form-action 'self';");
+    });
+
+    it('escapes the URL it moves on to', () => {
+      const html = renderLogoutContinuationPage(
+        'https://app.example.com/cb?a=1&b="><script>x</script>'
+      );
+      const escaped =
+        'https://app.example.com/cb?a=1&amp;b=&quot;&gt;&lt;script&gt;x&lt;/script&gt;';
+      expect(html).not.toContain('<script>');
+      expect(html).toContain(`content="0;url=${escaped}"`);
+      expect(html).toContain(`href="${escaped}"`);
+    });
+  });
+
   describe('ID Token Hint Validation', () => {
     it('should validate id_token_hint and extract user info', async () => {
       const { c } = createMockContext({
@@ -563,10 +835,10 @@ describe('Front-channel Logout', () => {
         clientId: 'client-123',
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       expect(validateIdTokenHint).toHaveBeenCalled();
-      expect(c.redirect).toHaveBeenCalled();
+      expect(await continuedTo(response)).toEqual(expect.any(String));
     });
 
     it('should redirect to default page when id_token_hint validation fails (without post_logout_redirect_uri)', async () => {
@@ -583,11 +855,11 @@ describe('Front-channel Logout', () => {
         errorCode: 'invalid_token',
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       // Session should still be invalidated even with invalid id_token_hint
       // Without post_logout_redirect_uri, no validation error - just go to logged-out page
-      expect(c.redirect).toHaveBeenCalledWith('https://op.example.com/logged-out', 302);
+      expect(await continuedTo(response)).toBe('https://op.example.com/logged-out');
     });
 
     it('should redirect to error page when id_token_hint validation fails (with post_logout_redirect_uri)', async () => {
@@ -605,13 +877,12 @@ describe('Front-channel Logout', () => {
         errorCode: 'invalid_token',
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       // Session should still be invalidated even with invalid id_token_hint
       // With post_logout_redirect_uri, invalid id_token_hint is an error
-      expect(c.redirect).toHaveBeenCalledWith(
-        'https://op.example.com/logout-error?error=invalid_id_token_hint',
-        302
+      expect(await continuedTo(response)).toBe(
+        'https://op.example.com/logout-error?error=invalid_id_token_hint'
       );
     });
 
@@ -629,11 +900,11 @@ describe('Front-channel Logout', () => {
         errorCode: 'invalid_token',
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       // Session should still be invalidated even with invalid format
       // Redirect to default logout page instead of returning error
-      expect(c.redirect).toHaveBeenCalledWith('https://op.example.com/logged-out', 302);
+      expect(await continuedTo(response)).toBe('https://op.example.com/logged-out');
     });
   });
 
@@ -666,9 +937,9 @@ describe('Front-channel Logout', () => {
         }),
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
-      expect(c.redirect).toHaveBeenCalledWith('https://app.example.com/logout-callback', 302);
+      expect(await continuedTo(response)).toBe('https://app.example.com/logout-callback');
     });
 
     it('should redirect to error page for unregistered post_logout_redirect_uri', async () => {
@@ -699,13 +970,12 @@ describe('Front-channel Logout', () => {
         }),
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       // Session should still be invalidated, but redirect to error page
       // instead of malicious URI - per OIDC conformance requirements
-      expect(c.redirect).toHaveBeenCalledWith(
-        'https://op.example.com/logout-error?error=unregistered_post_logout_redirect_uri',
-        302
+      expect(await continuedTo(response)).toBe(
+        'https://op.example.com/logout-error?error=unregistered_post_logout_redirect_uri'
       );
     });
 
@@ -735,13 +1005,12 @@ describe('Front-channel Logout', () => {
         }),
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       // Session should still be invalidated, redirect to error page
       // since no post_logout_redirect_uris are registered - this is a validation error
-      expect(c.redirect).toHaveBeenCalledWith(
-        'https://op.example.com/logout-error?error=unregistered_post_logout_redirect_uri',
-        302
+      expect(await continuedTo(response)).toBe(
+        'https://op.example.com/logout-error?error=unregistered_post_logout_redirect_uri'
       );
     });
 
@@ -773,11 +1042,10 @@ describe('Front-channel Logout', () => {
         }),
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
-      expect(c.redirect).toHaveBeenCalledWith(
-        'https://app.example.com/logout-callback?state=state-value-123',
-        302
+      expect(await continuedTo(response)).toBe(
+        'https://app.example.com/logout-callback?state=state-value-123'
       );
     });
 
@@ -795,14 +1063,13 @@ describe('Front-channel Logout', () => {
         error: 'id_token_hint is required when post_logout_redirect_uri is provided',
       });
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
       // Session should still be invalidated, but redirect to error page
       // since we can't validate post_logout_redirect_uri without id_token_hint
       // Per OIDC RP-Initiated Logout spec, this is a validation error
-      expect(c.redirect).toHaveBeenCalledWith(
-        'https://op.example.com/logout-error?error=id_token_hint_required',
-        302
+      expect(await continuedTo(response)).toBe(
+        'https://op.example.com/logout-error?error=id_token_hint_required'
       );
     });
 
@@ -815,9 +1082,9 @@ describe('Front-channel Logout', () => {
 
       vi.mocked(getCookie).mockReturnValue('session-123');
 
-      await frontChannelLogoutHandler(c);
+      const response = await frontChannelLogoutHandler(c);
 
-      expect(c.redirect).toHaveBeenCalledWith('https://op.example.com/logged-out', 302);
+      expect(await continuedTo(response)).toBe('https://op.example.com/logged-out');
     });
   });
 

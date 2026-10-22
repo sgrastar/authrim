@@ -374,6 +374,19 @@ export function usesRoutedAccountStorage(c: Context<{ Bindings: Env }>): boolean
   return Boolean(getTenantMetadataContextFromHono(c)?.route) || usesTenantD1AccountStorage(c);
 }
 
+/**
+ * The failure of an address lookup whose route (cached from before) points at an account that is
+ * no longer active there, such as one just deleted. Other failures (an unreachable store, a
+ * missing binding) are not.
+ */
+export function isDeletedDestinationRouteError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message === 'lookup_destination_revalidation_failed' &&
+    error.cause === 'account_inactive'
+  );
+}
+
 export async function resolveTenantD1EmailAccountRoute(
   c: Context<{ Bindings: Env }>,
   email: string

@@ -95,6 +95,10 @@ function d1(input: {
   accountId?: string;
   subjectLifecycleState?: string;
   emailVerified?: number;
+  /** The account row's lifecycle state, or null for no row (deleted at the destination). */
+  accountLifecycleState?: string | null;
+  /** The shard metadata's binding (default: the one routed to). */
+  metadataBindingRef?: string;
 }): D1Database {
   const session = {
     prepare: vi.fn((sql: string) => {
@@ -104,16 +108,19 @@ function d1(input: {
         first: vi.fn(async () => {
           if (sql.includes('authrim_control_plane_shard_metadata')) {
             return {
-              binding_ref: input.role === 'tenant_pii' ? 'TDB_PII_A' : 'TDB_USERS_A',
+              binding_ref:
+                input.metadataBindingRef ??
+                (input.role === 'tenant_pii' ? 'TDB_PII_A' : 'TDB_USERS_A'),
               data_role: input.role,
               residency_partition: 'default',
             };
           }
           if (sql.includes('FROM identity_accounts')) {
+            if (input.accountLifecycleState === null) return null;
             return {
               id: input.accountId ?? 'account:user-a',
               legacy_user_id: input.legacyUserId ?? 'user-a',
-              lifecycle_state: 'active',
+              lifecycle_state: input.accountLifecycleState ?? 'active',
               directory_publication_state: 'active',
               account_route_generation: input.accountRouteGeneration ?? 3,
               account_type: 'end_user',
@@ -424,6 +431,59 @@ describe('runtime account data context', () => {
       })
     ).rejects.toThrow('lookup_destination_revalidation_failed');
   });
+
+  it.each([
+    ['deleted', 'deleted'],
+    ['gone from the destination', null],
+  ])(
+    'tells a cached route to an account %s apart from a mismatched destination',
+    async (_case, accountLifecycleState) => {
+      const inactive = env();
+      (inactive as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+      });
+      const failure = await resolveAccountDataContext(inactive, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+      }).catch((error: unknown) => error as Error);
+      expect(failure).toMatchObject({
+        message: 'lookup_destination_revalidation_failed',
+        cause: 'account_inactive',
+      });
+
+      // Another shard answering for the route: an integrity failure, not an inactive account.
+      const mismatched = env();
+      (mismatched as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+        metadataBindingRef: 'TDB_USERS_B',
+      });
+      const integrity = await resolveAccountDataContext(mismatched, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+      }).catch((error: unknown) => error as Error);
+      expect(integrity).toMatchObject({ message: 'lookup_destination_revalidation_failed' });
+      expect(integrity.cause).toBeUndefined();
+
+      // A mismatched PII destination is reported first, even with the core account inactive.
+      const piiMismatch = env();
+      (piiMismatch as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+      });
+      (piiMismatch as unknown as Record<string, unknown>).TDB_PII_A = d1({
+        role: 'tenant_pii',
+        metadataBindingRef: 'TDB_PII_B',
+      });
+      const pii = await resolveAccountDataContext(piiMismatch, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+      }).catch((error: unknown) => error as Error);
+      expect(pii).toMatchObject({ message: 'lookup_destination_revalidation_failed' });
+      expect(pii.cause).toBeUndefined();
+    }
+  );
 
   it('rejects a Lookup membership owned by another tenant', async () => {
     mocks.tenantId = 'tenant-b';

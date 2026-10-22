@@ -75,6 +75,11 @@
       "required": false
     },
     {
+      "name": "TOMBSTONE_HMAC_KEYRING",
+      "capability": "account_tombstone.email_index",
+      "required": true
+    },
+    {
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
       "capability": "control_smoke.verify",
       "required": true

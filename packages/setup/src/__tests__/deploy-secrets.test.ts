@@ -6,7 +6,7 @@ import {
   loadDeploySecretsFromKeys,
   SECRET_UPLOAD_PLAN,
 } from '../core/deploy.js';
-import { getMissingRequiredDeploySecrets } from '../core/secrets.js';
+import { getMissingRequiredDeploySecrets, SECRET_KEY_FILES } from '../core/secrets.js';
 import { WORKER_COMPONENTS, getRequiredDataRolesForComponent } from '../core/naming.js';
 
 describe('DEFAULT_SECRET_TARGET_WORKERS', () => {
@@ -342,8 +342,19 @@ describe('SECRET_UPLOAD_PLAN', () => {
       'LOOKUP_HMAC_KEY_SLOT_A',
       'LOOKUP_HMAC_KEY_SLOT_B',
       'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+      'TOMBSTONE_HMAC_KEYRING',
     ]);
     expect(getSecretNamesForWorker('ar-bridge')).not.toContain('ADMIN_API_SECRET');
+  });
+
+  it("gives the tombstone keyring to the Workers that write or check deleted accounts' records only", () => {
+    for (const worker of ['ar-auth', 'ar-management', 'ar-bridge', 'ar-saml'] as const) {
+      expect(getSecretNamesForWorker(worker)).toContain('TOMBSTONE_HMAC_KEYRING');
+    }
+    for (const worker of ['ar-token', 'ar-userinfo', 'ar-discovery', 'ar-control'] as const) {
+      expect(getSecretNamesForWorker(worker)).not.toContain('TOMBSTONE_HMAC_KEYRING');
+    }
+    expect(SECRET_KEY_FILES.TOMBSTONE_HMAC_KEYRING).toBe('tombstone_hmac_keyring.json');
   });
 
   it('keeps runtime registry private signing material exclusive to Control', () => {

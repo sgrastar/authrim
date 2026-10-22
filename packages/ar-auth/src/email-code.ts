@@ -58,6 +58,7 @@ import {
   type OtpAccountCoreDataContext,
   resolveEmailCodeTtlSeconds,
   resolveEmailSendLimit,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
@@ -324,6 +325,19 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           !(await isAuthenticationMethodUsageEnabled(c.env, tenantId, 'email_otp', 'signup'))
         ) {
           log.warn('Suppressing email-code send because email OTP signup is disabled', {
+            action: 'email_code_send_suppressed',
+          });
+          return suppressedSendResponse(c, tenantId);
+        }
+
+        // The address of an account deleted within the retention period, where the tenant blocks
+        // re-registration: nothing is created or sent, and the reply is the usual one. No audit
+        // entry carries the address (not even its hash) to link it to the deleted account.
+        if (
+          !user &&
+          (await checkEmailRegistration(c.env, { tenantId, email: normalizedEmail })) !== 'allowed'
+        ) {
+          log.warn('Suppressing email-code send because re-registration is not allowed', {
             action: 'email_code_send_suppressed',
           });
           return suppressedSendResponse(c, tenantId);

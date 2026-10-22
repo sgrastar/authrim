@@ -193,6 +193,16 @@ refuses.
 | `DEFAULT_FAL`                  | string  | `fal1`  | Default Federation Assurance Level     |
 | `DEFAULT_IAL`                  | string  | `ial1`  | Default Identity Assurance Level       |
 
+### Deleted Accounts
+
+Defaults for the tenant settings `account-lifecycle.deletion.*` (a value saved in the Settings API
+takes precedence).
+
+| Variable                                 | Type    | Default | Description                                                                                        |
+| ---------------------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `ACCOUNT_TOMBSTONE_RETENTION_DAYS`       | number  | `90`    | Days a deleted account's record (tombstone) is kept, 1–3650                                        |
+| `ACCOUNT_TOMBSTONE_BLOCK_REREGISTRATION` | boolean | `false` | Refuse sign-up and admin creation with the email of an account deleted within the retention period |
+
 ### Sharding Configuration
 
 | Variable                   | Type   | Default | Description                                  |

@@ -801,6 +801,11 @@ function lookupHmacControlError(c: AdminContext, value: unknown): Response {
   if (code === 'lookup_hmac_rotation_not_found') {
     return error(c, 404, 'CONTROL_PLANE_LOOKUP_HMAC_ROTATION_NOT_FOUND');
   }
+  if (code === 'lookup_hmac_dual_write_dwell_incomplete') {
+    // Workers may still hold the key state from before the activation; ask again shortly.
+    c.header('Retry-After', '15');
+    return error(c, 409, 'CONTROL_PLANE_LOOKUP_HMAC_DUAL_WRITE_DWELL_INCOMPLETE');
+  }
   if (
     code.startsWith('lookup_hmac_') ||
     code.startsWith('directory_rewrite_') ||
