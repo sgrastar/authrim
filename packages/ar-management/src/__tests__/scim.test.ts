@@ -17,6 +17,26 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
 
+/** The downstream logouts SCIM started: kept as admin jobs, and recorded in the tenant audit. */
+const sessionEndLogout = vi.hoisted(() => ({
+  enqueued: [] as unknown[],
+  audited: [] as unknown[],
+}));
+
+vi.mock('../session-end-logout', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../session-end-logout')>();
+  return {
+    ...actual,
+    enqueueSessionEndLogout: vi.fn(async (_env: unknown, params: unknown) => {
+      sessionEndLogout.enqueued.push(params);
+      return ['job-1'];
+    }),
+    auditSessionEndLogoutStarted: vi.fn(async (_env: unknown, params: unknown) => {
+      sessionEndLogout.audited.push(params);
+    }),
+  };
+});
+
 vi.mock('../scim-identifier-replacement', () => ({
   syncScimIdentifierReplacements: vi.fn(async () => {}),
 }));
@@ -588,6 +608,8 @@ describe('SCIM 2.0 Endpoints', () => {
     string,
     { lifecycle: string; lifecycleVersionMs: number | null }
   >;
+  /** The sessions the next transition that ends sessions ends. */
+  let endedSessionsOnTransition: Array<{ sessionId: string }>;
 
   function createCustomClaimSchemaRow(overrides: Record<string, unknown> = {}) {
     return {
@@ -643,6 +665,7 @@ describe('SCIM 2.0 Endpoints', () => {
     mockCustomClaimSchemas = [];
     activeLegalHolds = new Map();
     sessionRevocationStates = new Map();
+    endedSessionsOnTransition = [];
 
     // Seed some test data (timestamps as Unix seconds, matching D1 database format)
     const jan15 = Math.floor(new Date('2024-01-15T10:00:00Z').getTime() / 1000);
@@ -1158,6 +1181,16 @@ describe('SCIM 2.0 Endpoints', () => {
             async (_tenant, _user, account, lifecycle, lifecycleVersionMs) => {
               sessionRevocationStates.set(account, { lifecycle, lifecycleVersionMs });
               return { lifecycle, lifecycleVersionMs };
+            }
+          ),
+          // A transition that ends sessions returns those it ended (none were registered here).
+          setAccountLifecycleEndingSessionsRpc: vi.fn(
+            async (_tenant, _user, account, lifecycle, lifecycleVersionMs) => {
+              sessionRevocationStates.set(account, { lifecycle, lifecycleVersionMs });
+              return {
+                state: { lifecycle, lifecycleVersionMs },
+                endedSessions: endedSessionsOnTransition.splice(0),
+              };
             }
           ),
         })),
@@ -2117,9 +2150,9 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.id).toBe('user-001');
       const namespace = mockEnv.SESSION_REVOCATION_STORE as any;
       expect(namespace.get).toHaveBeenCalledOnce();
-      expect(namespace.get.mock.results[0].value.setAccountLifecycleRpc.mock.calls[0][3]).toBe(
-        'inactive'
-      );
+      expect(
+        namespace.get.mock.results[0].value.setAccountLifecycleEndingSessionsRpc.mock.calls[0][3]
+      ).toBe('inactive');
     });
 
     it('reactivates an inactive user', async () => {
@@ -2250,8 +2283,8 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(namespace.get).toHaveBeenCalledTimes(2);
       expect(
         namespace.get.mock.results.map(
-          (result: { value: { setAccountLifecycleRpc: ReturnType<typeof vi.fn> } }) =>
-            result.value.setAccountLifecycleRpc.mock.calls[0][3]
+          (result: { value: { setAccountLifecycleEndingSessionsRpc: ReturnType<typeof vi.fn> } }) =>
+            result.value.setAccountLifecycleEndingSessionsRpc.mock.calls[0][3]
         )
       ).toEqual(['deleting', 'deleted']);
 
@@ -2260,6 +2293,68 @@ describe('SCIM 2.0 Endpoints', () => {
         mockEnv as Env
       );
       expect(getAfterDelete.status).toBe(404);
+    });
+
+    it('tells the relying parties of the sessions a deletion ends', async () => {
+      sessionEndLogout.enqueued.length = 0;
+      sessionEndLogout.audited.length = 0;
+      endedSessionsOnTransition.push({ sessionId: 'session-1' }, { sessionId: 'session-2' });
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001', { method: 'DELETE' }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(204);
+      const started = {
+        tenantId: 'default',
+        sessions: [
+          { userId: 'user-001', sessionId: 'session-1' },
+          { userId: 'user-001', sessionId: 'session-2' },
+        ],
+        trigger: {
+          action: 'scim.user.delete',
+          operationId: expect.any(String),
+          actorId: expect.stringMatching(/^scim-token:[0-9a-f]{64}$/u),
+        },
+      };
+      expect(sessionEndLogout.enqueued).toEqual([started]);
+      // No admin acts here: the start is recorded in the tenant audit, with the job.
+      expect(sessionEndLogout.audited).toEqual([
+        expect.objectContaining({ ...started, jobIds: ['job-1'] }),
+      ]);
+    });
+
+    it('tells the relying parties of the sessions a deactivation ends', async () => {
+      sessionEndLogout.enqueued.length = 0;
+      sessionEndLogout.audited.length = 0;
+      endedSessionsOnTransition.push({ sessionId: 'session-1' });
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+            Operations: [{ op: 'replace', path: 'active', value: false }],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      expect(sessionEndLogout.enqueued).toEqual([
+        {
+          tenantId: 'default',
+          sessions: [{ userId: 'user-001', sessionId: 'session-1' }],
+          trigger: expect.objectContaining({ action: 'scim.user.deactivate' }),
+        },
+      ]);
+      expect(sessionEndLogout.audited).toEqual([
+        expect.objectContaining({
+          sessions: [{ userId: 'user-001', sessionId: 'session-1' }],
+          jobIds: ['job-1'],
+        }),
+      ]);
     });
 
     it('should delete a user after SCIM deactivation', async () => {
