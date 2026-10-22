@@ -44,6 +44,11 @@ export interface LogoutFanoutSession {
 export interface LogoutFanoutSummary {
   succeeded: number;
   failed: number;
+  /**
+   * Sessions whose sending broke off with an error before every client of theirs had a result
+   * (logged, not in `failed`): a caller that can retry the whole notice does so.
+   */
+  sessionErrors: number;
 }
 
 type FanoutEnv = Pick<
@@ -153,6 +158,7 @@ export async function sendBackchannelLogoutFanout(
 
     // Retries run behind the first attempts: they are waited for even when a send fails.
     let retried: LogoutSendResult[] = [];
+    let sessionErrors = 0;
     try {
       await forEachConcurrently(
         params.sessions,
@@ -181,6 +187,7 @@ export async function sendBackchannelLogoutFanout(
           allResults.push(...results);
         },
         (session, error) => {
+          sessionErrors++;
           log.error(
             'Error sending notifications for session',
             { sessionId: session.sessionId, action: 'BackchannelLogout' },
@@ -198,6 +205,7 @@ export async function sendBackchannelLogoutFanout(
       failed:
         allResults.filter((r) => !r.success && !r.retryScheduled).length +
         retried.filter((r) => !r.success).length,
+      sessionErrors,
     };
     log.info('Backchannel logout completed', { ...summary, action: 'BackchannelLogout' });
     return summary;
@@ -257,6 +265,7 @@ export async function sendLogoutWebhookFanout(
 
     // Send webhook notifications for each ended session
     const allResults: LogoutWebhookSendResult[] = [];
+    let sessionErrors = 0;
 
     await forEachConcurrently(
       params.sessions,
@@ -282,6 +291,7 @@ export async function sendLogoutWebhookFanout(
         allResults.push(...results);
       },
       (session, error) => {
+        sessionErrors++;
         log.error(
           'Error sending notifications for session',
           { sessionId: session.sessionId, action: 'LogoutWebhook' },
@@ -293,6 +303,7 @@ export async function sendLogoutWebhookFanout(
     const summary = {
       succeeded: allResults.filter((r) => r.success).length,
       failed: allResults.filter((r) => !r.success).length,
+      sessionErrors,
     };
     log.info('Logout webhook completed', { ...summary, action: 'LogoutWebhook' });
     return summary;

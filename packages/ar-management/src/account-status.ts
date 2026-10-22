@@ -8,6 +8,7 @@ import {
   readAccountAuthenticationState,
   SUBJECT_UPDATED_AT_FORWARD_SQL,
   transitionAccountAuthenticationState,
+  transitionAccountAuthenticationStateEndingSessions,
   type AccountAuthenticationLifecycle,
   type DatabaseAdapter,
   type Env,
@@ -206,6 +207,11 @@ export async function initializeFromAccount(
  * `superseded`: a newer transition (or another of the same version) decides the account instead.
  * For an activation the account may already show active while the authentication state, holding
  * the other transition, still refuses sign-in: activating again settles both.
+ *
+ * `onSessionsEnded`: called once the authentication state took a transition that revokes
+ * sessions, with the sessions it ended (so their relying parties can be told), also when the
+ * account then turns out superseded: the sessions ended all the same. A transition taken before
+ * (a retry) ended none.
  */
 export async function transitionAccountLifecycle(
   env: Env,
@@ -220,19 +226,29 @@ export async function transitionAccountLifecycle(
     versionMs: number;
     operationId: string;
     revokeSessions: boolean;
+    onSessionsEnded?: (sessionIds: string[]) => void;
   }
 ): Promise<'taken' | 'superseded'> {
   /** The authentication state takes it; null when it holds another transition. */
   const authentication = async (versionMs: number): Promise<number | null> => {
+    const transition = {
+      tenantId: input.tenantId,
+      userId: input.userId,
+      lifecycle: input.lifecycle,
+      sourceVersionMs: versionMs,
+      operationId: input.operationId,
+      revokeSessions: input.revokeSessions,
+    };
     try {
-      await transitionAccountAuthenticationState(env, {
-        tenantId: input.tenantId,
-        userId: input.userId,
-        lifecycle: input.lifecycle,
-        sourceVersionMs: versionMs,
-        operationId: input.operationId,
-        revokeSessions: input.revokeSessions,
-      });
+      if (input.revokeSessions && input.onSessionsEnded) {
+        const { endedSessionIds } = await transitionAccountAuthenticationStateEndingSessions(
+          env,
+          transition
+        );
+        input.onSessionsEnded(endedSessionIds);
+      } else {
+        await transitionAccountAuthenticationState(env, transition);
+      }
       return versionMs;
     } catch (error) {
       if (!isLifecycleTransitionRefused(error)) throw error;

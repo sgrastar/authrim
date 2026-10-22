@@ -206,6 +206,55 @@ export async function transitionAccountAuthenticationState(
   );
 }
 
+/**
+ * As `transitionAccountAuthenticationState`, also returning the sessions the transition ended
+ * (unexpired, revoked by this epoch move and not an earlier one), for telling the relying parties
+ * signed in through them.
+ */
+export async function transitionAccountAuthenticationStateEndingSessions(
+  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  input: Parameters<typeof transitionAccountAuthenticationState>[1]
+): Promise<{ state: AccountAuthenticationSnapshot; endedSessionIds: string[] }> {
+  const { state, endedSessions } = await getSessionRevocationStore(
+    env,
+    input.tenantId,
+    input.userId
+  ).setAccountLifecycleEndingSessionsRpc(
+    input.tenantId,
+    input.userId,
+    `account:${input.userId}`,
+    input.lifecycle,
+    input.sourceVersionMs,
+    input.operationId,
+    input.revokeSessions,
+    Date.now()
+  );
+  return { state, endedSessionIds: endedSessions.map((entry) => entry.sessionId) };
+}
+
+/**
+ * As `recordUserSessionRevocation`, also returning the sessions the revocation ended (see
+ * `transitionAccountAuthenticationStateEndingSessions`).
+ */
+export async function recordUserSessionRevocationEndingSessions(
+  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  tenantId: string,
+  userId: string,
+  revokedAfterMs = Date.now()
+): Promise<{ revokedAfterMs: number; endedSessionIds: string[] }> {
+  const result = await getSessionRevocationStore(env, tenantId, userId).revokeAllEndingSessionsRpc(
+    tenantId,
+    userId,
+    `account:${userId}`,
+    revokedAfterMs,
+    Date.now()
+  );
+  return {
+    revokedAfterMs: result.revokedAfterMs,
+    endedSessionIds: result.endedSessions.map((entry) => entry.sessionId),
+  };
+}
+
 /** Advance the sole per-user session revocation authority. */
 export async function recordUserSessionRevocation(
   env: Pick<Env, 'SESSION_REVOCATION_STORE'>,

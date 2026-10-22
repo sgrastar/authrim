@@ -17,6 +17,7 @@ import {
   putTenantExistsCache,
   deleteTenantExistsCache,
   transitionAccountAuthenticationState,
+  transitionAccountAuthenticationStateEndingSessions,
   readAccountAuthenticationState,
   getTenantSettingsDocument,
   SUBJECT_UPDATED_AT_FORWARD_SQL,
@@ -27,6 +28,16 @@ import {
   transitionAccountLifecycle,
 } from './account-status';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
+import {
+  auditSessionEndLogoutFailed,
+  auditSessionEndLogoutStarted,
+  endedSessionsOf,
+  enqueueSessionEndLogout,
+  processSessionEndLogoutJob,
+  sendAdminSessionEndLogout,
+  SESSION_END_LOGOUT_JOB_TYPE,
+  type EndedSession,
+} from './session-end-logout';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
 import { listScimTokens } from '@authrim/ar-lib-scim';
 
@@ -176,6 +187,7 @@ const GENERIC_ADMIN_JOB_TYPES = [
   'users/bulk-update',
   'reports/generate',
   'organizations/bulk-members',
+  SESSION_END_LOGOUT_JOB_TYPE,
 ] as const;
 
 type GenericAdminJobType = (typeof GENERIC_ADMIN_JOB_TYPES)[number];
@@ -185,6 +197,9 @@ export function isAdminJobAllowedForTenantLifecycle(
   jobType: string
 ): boolean {
   if (lifecycleState === 'active') return true;
+  // Telling relying parties that sessions ended goes on whatever the tenant's state; a tenant
+  // whose state could not be read is retried (see processGenericAdminJob).
+  if (jobType === SESSION_END_LOGOUT_JOB_TYPE) return lifecycleState !== 'missing';
   if (lifecycleState === 'deleting') {
     return jobType === 'tenant-database/export';
   }
@@ -1623,6 +1638,26 @@ function bulkLifecycleVersionMs(config: BulkUserUpdateConfig, job: AdminJobRow):
   return job.created_at < 1e12 ? job.created_at * 1000 : job.created_at;
 }
 
+/**
+ * Keep the downstream logout for sessions a job ended as admin jobs (the scheduled run sends
+ * them). If they cannot be kept, they are sent now, once.
+ */
+async function keepSessionEndLogout(
+  env: Env,
+  tenantId: string,
+  sessions: EndedSession[],
+  trigger: Parameters<typeof enqueueSessionEndLogout>[1]['trigger']
+): Promise<void> {
+  if (sessions.length === 0) return;
+  let jobIds: string[] = [];
+  try {
+    jobIds = await enqueueSessionEndLogout(env, { tenantId, sessions, trigger });
+  } catch {
+    await sendAdminSessionEndLogout(env, { tenantId, sessions, trigger }).catch(() => undefined);
+  }
+  await auditSessionEndLogoutStarted(env, { tenantId, sessions, trigger, jobIds });
+}
+
 async function processBulkUserUpdateJob(
   env: Env,
   adapter: DatabaseAdapter,
@@ -1701,19 +1736,29 @@ async function processBulkUserUpdateJob(
   // then their authentication state, anything else the authentication state first, so sign-in
   // stays refused while the two disagree.
   const operationPrefix = `bulk-job:${job.id}:`;
+  // Sessions this batch ended, for telling their relying parties.
+  const ended: EndedSession[] = [];
+  const revokeSessions = target.authentication !== 'active';
   /** Each account's authentication state takes it, under the version given (else the job's). */
   const authentication = (userIds: string[], versions?: Map<string, number>) =>
     Promise.allSettled(
-      userIds.map((userId) =>
-        transitionAccountAuthenticationState(env, {
+      userIds.map(async (userId) => {
+        const transition = {
           tenantId: job.tenant_id,
           userId,
           lifecycle: target.authentication,
           sourceVersionMs: versions?.get(userId) ?? versionMs,
           operationId: `${operationPrefix}${userId}`,
-          revokeSessions: target.authentication !== 'active',
-        })
-      )
+          revokeSessions,
+        };
+        if (!revokeSessions) return transitionAccountAuthenticationState(env, transition);
+        const { state, endedSessionIds } = await transitionAccountAuthenticationStateEndingSessions(
+          env,
+          transition
+        );
+        ended.push(...endedSessionsOf(userId, endedSessionIds));
+        return state;
+      })
     );
   /** Accounts whose authentication state refused it: those this very job took before stand. */
   const takenBefore = async (userIds: string[]) => {
@@ -1813,47 +1858,57 @@ async function processBulkUserUpdateJob(
   };
 
   let batchSucceeded = 0;
-  if (target.authentication === 'active') {
-    // Authentication states not initialized yet start from the accounts as they are now (as a
-    // single activation does), not from the accounts this job is about to activate.
-    await Promise.all(
-      ids.map((userId) => initializeFromAccount(env, adapter, job.tenant_id, userId))
-    );
-    await accounts(ids);
-    const tookRows = await accountsTaken(ids);
-    const took = tookRows.map((row) => row.id);
-    // Each under the version its account took it (an earlier attempt's, for a job started
-    // before versions were stored).
-    const versions = new Map(tookRows.map((row) => [row.id, Number(row.version)]));
-    const { accepted, refused } = await settle(took, await authentication(took, versions));
-    // An activation crossed by another transition keeps sign-in refused (activating again
-    // settles it). One whose state is active already (this job's earlier attempt, or a state
-    // initialized from the account that attempt activated) is done.
-    const active = await Promise.all(
-      refused.map(
-        async (userId) =>
-          (await readAccountAuthenticationState(env, job.tenant_id, userId)).lifecycle === 'active'
-      )
-    );
-    batchSucceeded = accepted.length + active.filter(Boolean).length;
-  } else {
-    const { accepted, refused } = await settle(ids, await authentication(ids));
-    // Taken by an earlier attempt of this job (under the version it had then): finish those
-    // accounts under that version.
-    for (const { userId, state } of await takenBefore(refused)) {
-      await transitionAccountLifecycle(env, adapter, {
-        tenantId: job.tenant_id,
-        userId,
-        lifecycle: target.authentication,
-        status: target.state,
-        metadataPatch: target.metadataPatch,
-        versionMs: state.lifecycleVersionMs ?? versionMs,
-        operationId: `${operationPrefix}${userId}`,
-        revokeSessions: true,
-      });
+  try {
+    if (target.authentication === 'active') {
+      // Authentication states not initialized yet start from the accounts as they are now (as a
+      // single activation does), not from the accounts this job is about to activate.
+      await Promise.all(
+        ids.map((userId) => initializeFromAccount(env, adapter, job.tenant_id, userId))
+      );
+      await accounts(ids);
+      const tookRows = await accountsTaken(ids);
+      const took = tookRows.map((row) => row.id);
+      // Each under the version its account took it (an earlier attempt's, for a job started
+      // before versions were stored).
+      const versions = new Map(tookRows.map((row) => [row.id, Number(row.version)]));
+      const { accepted, refused } = await settle(took, await authentication(took, versions));
+      // An activation crossed by another transition keeps sign-in refused (activating again
+      // settles it). One whose state is active already (this job's earlier attempt, or a state
+      // initialized from the account that attempt activated) is done.
+      const active = await Promise.all(
+        refused.map(
+          async (userId) =>
+            (await readAccountAuthenticationState(env, job.tenant_id, userId)).lifecycle ===
+            'active'
+        )
+      );
+      batchSucceeded = accepted.length + active.filter(Boolean).length;
+    } else {
+      const { accepted, refused } = await settle(ids, await authentication(ids));
+      // Taken by an earlier attempt of this job (under the version it had then): finish those
+      // accounts under that version.
+      for (const { userId, state } of await takenBefore(refused)) {
+        await transitionAccountLifecycle(env, adapter, {
+          tenantId: job.tenant_id,
+          userId,
+          lifecycle: target.authentication,
+          status: target.state,
+          metadataPatch: target.metadataPatch,
+          versionMs: state.lifecycleVersionMs ?? versionMs,
+          operationId: `${operationPrefix}${userId}`,
+          revokeSessions: true,
+        });
+      }
+      await accounts(accepted);
+      batchSucceeded = (await accountsTaken(ids)).length;
     }
-    await accounts(accepted);
-    batchSucceeded = (await accountsTaken(ids)).length;
+  } finally {
+    // Also when a later step of the batch fails: these sessions ended (a retry of the batch ends
+    // none again).
+    await keepSessionEndLogout(env, job.tenant_id, ended, {
+      action: 'bulk_user_update',
+      operationId: job.id,
+    });
   }
   const processed = (previous.processed ?? 0) + selected.length;
   const succeeded = (previous.succeeded ?? 0) + batchSucceeded;
@@ -2103,6 +2158,7 @@ const ADMIN_JOB_PROCESSORS: Record<GenericAdminJobType, AdminJobProcessor> = {
   'tenant-database/restore-dry-run': processTenantDatabaseRestoreDryRunJob,
   'tenant-database/purge-backup': processTenantDatabasePurgeBackupJob,
   'users/bulk-update': processBulkUserUpdateJob,
+  [SESSION_END_LOGOUT_JOB_TYPE]: processSessionEndLogoutJob,
   'reports/generate': processReportGenerateJob,
   'organizations/bulk-members': processOrganizationBulkMembersJob,
 };
@@ -2250,15 +2306,27 @@ function buildFailureResult(job: AdminJobRow, error: unknown, attemptCount: numb
   });
 }
 
+/** The job types the scheduled admin job run handles (logout jobs have their own, every minute). */
+const SCHEDULED_GENERIC_ADMIN_JOB_TYPES = GENERIC_ADMIN_JOB_TYPES.filter(
+  (jobType) => jobType !== SESSION_END_LOGOUT_JOB_TYPE
+);
+
 export async function processPendingGenericAdminJobs(
   env: Env,
-  logger: AdminJobLogger
+  logger: AdminJobLogger,
+  options: {
+    jobTypes?: readonly GenericAdminJobType[];
+    limit?: number;
+    /** No job is started after this time (ms since the epoch). */
+    deadlineMs?: number;
+  } = {}
 ): Promise<void> {
   if (!env.DB_ADMIN) throw new Error('management_admin_jobs_database_unavailable');
   const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'management-generic-jobs');
   const nowTs = Math.floor(Date.now() / 1000);
   const staleCutoffTs = nowTs - 15 * 60;
-  const placeholders = GENERIC_ADMIN_JOB_TYPES.map(() => '?').join(', ');
+  const jobTypes = options.jobTypes ?? SCHEDULED_GENERIC_ADMIN_JOB_TYPES;
+  const placeholders = jobTypes.map(() => '?').join(', ');
   const jobs = await adapter.query<AdminJobRow>(
     `SELECT id, tenant_id, job_type, status, progress, config, created_at,
             COALESCE(attempt_count, 0) AS attempt_count,
@@ -2272,247 +2340,305 @@ export async function processPendingGenericAdminJobs(
           OR (status = 'processing' AND updated_at < ?)
         )
       ORDER BY created_at ASC
-      LIMIT 5`,
-    [DEFAULT_JOB_MAX_ATTEMPTS, ...GENERIC_ADMIN_JOB_TYPES, nowTs, nowTs, staleCutoffTs]
+      LIMIT ?`,
+    [DEFAULT_JOB_MAX_ATTEMPTS, ...jobTypes, nowTs, nowTs, staleCutoffTs, options.limit ?? 5]
   );
 
   for (const job of jobs) {
-    const processor = ADMIN_JOB_PROCESSORS[job.job_type as GenericAdminJobType];
-    if (!processor) continue;
+    if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) break;
+    await processGenericAdminJob(env, adapter, logger, job, staleCutoffTs);
+  }
+}
 
-    if (!job.tenant_lifecycle_state) {
-      try {
-        const tenantAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-          env,
-          'management-generic-job-lifecycle',
-          { tenantId: job.tenant_id }
-        );
-        const tenant = await tenantAdapter.queryOne<{ lifecycle_state: string }>(
-          'SELECT lifecycle_state FROM tenants WHERE id = ? LIMIT 1',
-          [job.tenant_id]
-        );
-        job.tenant_lifecycle_state = tenant?.lifecycle_state ?? 'missing';
-      } catch {
-        job.tenant_lifecycle_state = 'route_unavailable';
-      }
-    }
+/** Logout jobs run each minute, up to this many per run, started within this time. */
+const SESSION_END_LOGOUT_JOBS_PER_RUN = 25;
+const SESSION_END_LOGOUT_RUN_BUDGET_MS = 45_000;
 
-    if (
-      typeof job.tenant_lifecycle_state === 'string' &&
-      !isAdminJobAllowedForTenantLifecycle(job.tenant_lifecycle_state, job.job_type)
-    ) {
-      const blockedAt = Math.floor(Date.now() / 1000);
-      await adapter.execute(
-        `UPDATE admin_jobs
-            SET status = 'partial_failure', progress = ?, error_message = ?, completed_at = ?, updated_at = ?
-          WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
-        [
-          JSON.stringify({ stage: 'blocked_by_tenant_lifecycle', processed: 0, failed: 1 }),
-          `tenant_lifecycle_blocked:${job.tenant_lifecycle_state}`,
-          blockedAt,
-          blockedAt,
-          job.id,
-          job.tenant_id,
-        ]
-      );
-      continue;
-    }
+/**
+ * The downstream logout jobs admin actions left (those not sent right after the admin response,
+ * and those to retry). Run every minute.
+ */
+export async function processPendingSessionEndLogoutJobs(
+  env: Env,
+  logger: AdminJobLogger
+): Promise<void> {
+  await processPendingGenericAdminJobs(env, logger, {
+    jobTypes: [SESSION_END_LOGOUT_JOB_TYPE],
+    limit: SESSION_END_LOGOUT_JOBS_PER_RUN,
+    deadlineMs: Date.now() + SESSION_END_LOGOUT_RUN_BUDGET_MS,
+  });
+}
 
-    const startedTs = Math.floor(Date.now() / 1000);
-    const transition = await adapter.execute(
-      `UPDATE admin_jobs
-          SET status = 'processing', started_at = COALESCE(started_at, ?), updated_at = ?
-        WHERE id = ? AND tenant_id = ?
-          AND (
-            (status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?))
-            OR (status = 'processing' AND (next_run_at IS NOT NULL AND next_run_at <= ?))
-            OR (status = 'processing' AND updated_at < ?)
-          )`,
-      [startedTs, startedTs, job.id, job.tenant_id, startedTs, startedTs, staleCutoffTs]
-    );
-    if (transition.rowsAffected === 0) continue;
-    await emitAdminJobRuntimeLog(env, adapter, logger, {
-      job,
-      status: 'processing',
-      eventAt: startedTs * 1000,
-      attemptCount: getAttemptCount(job),
-    });
+/**
+ * Claim and run one job now, outside the scheduled run (for work that should start at once, such
+ * as a downstream logout). Claimed as the scheduled run claims it, so the two never run it both;
+ * one not run to its end is retried by the scheduled run.
+ */
+export async function processGenericAdminJobNow(
+  env: Env,
+  logger: AdminJobLogger,
+  tenantId: string,
+  jobId: string
+): Promise<void> {
+  if (!env.DB_ADMIN) throw new Error('management_admin_jobs_database_unavailable');
+  const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'management-generic-jobs');
+  const job = await adapter.queryOne<AdminJobRow>(
+    `SELECT id, tenant_id, job_type, status, progress, config, created_at,
+            COALESCE(attempt_count, 0) AS attempt_count,
+            COALESCE(max_attempts, ?) AS max_attempts,
+            next_run_at
+       FROM admin_jobs
+      WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
+    [DEFAULT_JOB_MAX_ATTEMPTS, jobId, tenantId]
+  );
+  if (!job) return;
+  await processGenericAdminJob(env, adapter, logger, job, Math.floor(Date.now() / 1000) - 15 * 60);
+}
 
+async function processGenericAdminJob(
+  env: Env,
+  adapter: DatabaseAdapter,
+  logger: AdminJobLogger,
+  job: AdminJobRow,
+  staleCutoffTs: number
+): Promise<void> {
+  const processor = ADMIN_JOB_PROCESSORS[job.job_type as GenericAdminJobType];
+  if (!processor) return;
+
+  if (!job.tenant_lifecycle_state) {
     try {
-      const result = await processor(env, adapter, job);
-      if (result.status === 'processing') {
-        const continuationTs = Math.floor(Date.now() / 1000);
-        await adapter.execute(
-          `UPDATE admin_jobs
-              SET status = 'processing', progress = ?, next_run_at = ?, updated_at = ?
-            WHERE id = ? AND tenant_id = ?`,
-          [
-            JSON.stringify(result.progress),
-            result.nextRunAt ?? continuationTs,
-            continuationTs,
-            job.id,
-            job.tenant_id,
-          ]
-        );
-        logger.info('Generic admin job chunk completed', {
-          job_id: job.id,
-          tenant_id: job.tenant_id,
-          job_type: job.job_type,
-        });
-        await emitAdminJobRuntimeLog(env, adapter, logger, {
-          job,
-          status: 'processing',
-          eventAt: continuationTs * 1000,
-          attemptCount: getAttemptCount(job),
-          nextRunAt: result.nextRunAt ?? continuationTs,
-        });
-        continue;
-      }
+      const tenantAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'management-generic-job-lifecycle',
+        { tenantId: job.tenant_id }
+      );
+      const tenant = await tenantAdapter.queryOne<{ lifecycle_state: string }>(
+        'SELECT lifecycle_state FROM tenants WHERE id = ? LIMIT 1',
+        [job.tenant_id]
+      );
+      job.tenant_lifecycle_state = tenant?.lifecycle_state ?? 'missing';
+    } catch {
+      job.tenant_lifecycle_state = 'route_unavailable';
+    }
+  }
 
-      const finalized = await finalizeGenericJobResult(env, adapter, job, result);
-      const completedTs = Math.floor(Date.now() / 1000);
+  if (
+    typeof job.tenant_lifecycle_state === 'string' &&
+    !isAdminJobAllowedForTenantLifecycle(job.tenant_lifecycle_state, job.job_type)
+  ) {
+    const blockedAt = Math.floor(Date.now() / 1000);
+    await adapter.execute(
+      `UPDATE admin_jobs
+          SET status = 'partial_failure', progress = ?, error_message = ?, completed_at = ?, updated_at = ?
+        WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
+      [
+        JSON.stringify({ stage: 'blocked_by_tenant_lifecycle', processed: 0, failed: 1 }),
+        `tenant_lifecycle_blocked:${job.tenant_lifecycle_state}`,
+        blockedAt,
+        blockedAt,
+        job.id,
+        job.tenant_id,
+      ]
+    );
+    return;
+  }
+
+  const startedTs = Math.floor(Date.now() / 1000);
+  const transition = await adapter.execute(
+    // next_run_at is cleared: a claimed job no longer matches another run's claim.
+    `UPDATE admin_jobs
+        SET status = 'processing', started_at = COALESCE(started_at, ?), updated_at = ?,
+            next_run_at = NULL
+      WHERE id = ? AND tenant_id = ?
+        AND (
+          (status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?))
+          OR (status = 'processing' AND (next_run_at IS NOT NULL AND next_run_at <= ?))
+          OR (status = 'processing' AND updated_at < ?)
+        )`,
+    [startedTs, startedTs, job.id, job.tenant_id, startedTs, startedTs, staleCutoffTs]
+  );
+  if (transition.rowsAffected === 0) return;
+  await emitAdminJobRuntimeLog(env, adapter, logger, {
+    job,
+    status: 'processing',
+    eventAt: startedTs * 1000,
+    attemptCount: getAttemptCount(job),
+  });
+
+  try {
+    // Only jobs that go on whatever the tenant's state get here with it unread: retried.
+    if (job.tenant_lifecycle_state === 'route_unavailable') {
+      throw new Error('tenant_lifecycle_unavailable');
+    }
+    const result = await processor(env, adapter, job);
+    if (result.status === 'processing') {
+      const continuationTs = Math.floor(Date.now() / 1000);
       await adapter.execute(
         `UPDATE admin_jobs
-            SET status = ?, progress = ?, result = ?, result_r2_key = COALESCE(?, result_r2_key),
-                object_catalog_id = COALESCE(?, object_catalog_id),
-                next_run_at = NULL, completed_at = ?, updated_at = ?
+            SET status = 'processing', progress = ?, next_run_at = ?, updated_at = ?
           WHERE id = ? AND tenant_id = ?`,
         [
-          result.status,
           JSON.stringify(result.progress),
-          finalized.resultJson,
-          finalized.resultR2Key,
-          finalized.objectCatalogId,
-          completedTs,
-          completedTs,
+          result.nextRunAt ?? continuationTs,
+          continuationTs,
           job.id,
           job.tenant_id,
         ]
       );
-      logger.info('Generic admin job completed', {
+      logger.info('Generic admin job chunk completed', {
         job_id: job.id,
         tenant_id: job.tenant_id,
         job_type: job.job_type,
-        status: result.status,
       });
       await emitAdminJobRuntimeLog(env, adapter, logger, {
         job,
-        status: result.status,
-        eventAt: completedTs * 1000,
+        status: 'processing',
+        eventAt: continuationTs * 1000,
         attemptCount: getAttemptCount(job),
-        completedAt: completedTs,
-        objectCatalogId: finalized.objectCatalogId,
+        nextRunAt: result.nextRunAt ?? continuationTs,
       });
-    } catch (error) {
-      const failedTs = Math.floor(Date.now() / 1000);
-      const nextAttemptCount = getAttemptCount(job) + 1;
-      const maxAttempts = getMaxAttempts(job);
-      const exhausted = nextAttemptCount >= maxAttempts;
-      const nextRunAt = exhausted ? null : failedTs + getRetryDelaySeconds(nextAttemptCount - 1);
-      if (exhausted) {
+      return;
+    }
+
+    const finalized = await finalizeGenericJobResult(env, adapter, job, result);
+    const completedTs = Math.floor(Date.now() / 1000);
+    await adapter.execute(
+      `UPDATE admin_jobs
+          SET status = ?, progress = ?, result = ?, result_r2_key = COALESCE(?, result_r2_key),
+              object_catalog_id = COALESCE(?, object_catalog_id),
+              next_run_at = NULL, completed_at = ?, updated_at = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [
+        result.status,
+        JSON.stringify(result.progress),
+        finalized.resultJson,
+        finalized.resultR2Key,
+        finalized.objectCatalogId,
+        completedTs,
+        completedTs,
+        job.id,
+        job.tenant_id,
+      ]
+    );
+    logger.info('Generic admin job completed', {
+      job_id: job.id,
+      tenant_id: job.tenant_id,
+      job_type: job.job_type,
+      status: result.status,
+    });
+    await emitAdminJobRuntimeLog(env, adapter, logger, {
+      job,
+      status: result.status,
+      eventAt: completedTs * 1000,
+      attemptCount: getAttemptCount(job),
+      completedAt: completedTs,
+      objectCatalogId: finalized.objectCatalogId,
+    });
+  } catch (error) {
+    const failedTs = Math.floor(Date.now() / 1000);
+    const nextAttemptCount = getAttemptCount(job) + 1;
+    const maxAttempts = getMaxAttempts(job);
+    const exhausted = nextAttemptCount >= maxAttempts;
+    const nextRunAt = exhausted ? null : failedTs + getRetryDelaySeconds(nextAttemptCount - 1);
+    if (exhausted) {
+      await adapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'failed', error_message = ?, result = ?, attempt_count = ?,
+                max_attempts = COALESCE(max_attempts, ?), next_run_at = NULL,
+                dead_lettered_at = ?, completed_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ?`,
+        [
+          String(error),
+          buildFailureResult(job, error, nextAttemptCount),
+          nextAttemptCount,
+          maxAttempts,
+          failedTs,
+          failedTs,
+          failedTs,
+          job.id,
+          job.tenant_id,
+        ]
+      );
+    } else {
+      if (job.job_type === 'tenants/lifecycle-validation') {
+        const failureResult = JSON.parse(
+          buildFailureResult(job, error, nextAttemptCount)
+        ) as Record<string, unknown>;
         await adapter.execute(
           `UPDATE admin_jobs
-              SET status = 'failed', error_message = ?, result = ?, attempt_count = ?,
-                  max_attempts = COALESCE(max_attempts, ?), next_run_at = NULL,
-                  dead_lettered_at = ?, completed_at = ?, updated_at = ?
-            WHERE id = ? AND tenant_id = ?`,
+            SET status = 'pending', progress = ?, error_message = ?, attempt_count = ?,
+                max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ?`,
           [
+            JSON.stringify({
+              stage: 'validation_failed_retry_scheduled',
+              checks: failureResult.checks ?? [],
+            }),
             String(error),
-            buildFailureResult(job, error, nextAttemptCount),
             nextAttemptCount,
             maxAttempts,
-            failedTs,
-            failedTs,
+            nextRunAt,
             failedTs,
             job.id,
             job.tenant_id,
           ]
         );
       } else {
-        if (job.job_type === 'tenants/lifecycle-validation') {
-          const failureResult = JSON.parse(
-            buildFailureResult(job, error, nextAttemptCount)
-          ) as Record<string, unknown>;
-          await adapter.execute(
-            `UPDATE admin_jobs
-              SET status = 'pending', progress = ?, error_message = ?, attempt_count = ?,
+        await adapter.execute(
+          `UPDATE admin_jobs
+              SET status = 'pending', error_message = ?, attempt_count = ?,
                   max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
             WHERE id = ? AND tenant_id = ?`,
-            [
-              JSON.stringify({
-                stage: 'validation_failed_retry_scheduled',
-                checks: failureResult.checks ?? [],
-              }),
-              String(error),
-              nextAttemptCount,
-              maxAttempts,
-              nextRunAt,
-              failedTs,
-              job.id,
-              job.tenant_id,
-            ]
-          );
-        } else {
-          await adapter.execute(
-            `UPDATE admin_jobs
-                SET status = 'pending', error_message = ?, attempt_count = ?,
-                    max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
-              WHERE id = ? AND tenant_id = ?`,
-            [
-              String(error),
-              nextAttemptCount,
-              maxAttempts,
-              nextRunAt,
-              failedTs,
-              job.id,
-              job.tenant_id,
-            ]
-          );
-        }
+          [String(error), nextAttemptCount, maxAttempts, nextRunAt, failedTs, job.id, job.tenant_id]
+        );
       }
-      logger.error(
-        exhausted ? 'Generic admin job dead-lettered' : 'Generic admin job retry scheduled',
-        {
-          job_id: job.id,
-          tenant_id: job.tenant_id,
-          job_type: job.job_type,
+    }
+    logger.error(
+      exhausted ? 'Generic admin job dead-lettered' : 'Generic admin job retry scheduled',
+      {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        job_type: job.job_type,
+        attempt_count: nextAttemptCount,
+        max_attempts: maxAttempts,
+        next_run_at: nextRunAt,
+      },
+      error as Error
+    );
+    if (exhausted && job.job_type === SESSION_END_LOGOUT_JOB_TYPE) {
+      // Its relying parties may not have been told: the audit says so, with the job.
+      await auditSessionEndLogoutFailed(env, job, error);
+    }
+    if (job.job_type === 'tenants/lifecycle-validation') {
+      await writeTenantLifecycleJobAudit(env, adapter, job, {
+        action: exhausted
+          ? 'tenant.lifecycle.validation_failed'
+          : 'tenant.lifecycle.validation_retry_scheduled',
+        result: 'failure',
+        severity: 'error',
+        error,
+        metadata: {
           attempt_count: nextAttemptCount,
           max_attempts: maxAttempts,
           next_run_at: nextRunAt,
+          safe_state_preserved: true,
         },
-        error as Error
-      );
-      if (job.job_type === 'tenants/lifecycle-validation') {
-        await writeTenantLifecycleJobAudit(env, adapter, job, {
-          action: exhausted
-            ? 'tenant.lifecycle.validation_failed'
-            : 'tenant.lifecycle.validation_retry_scheduled',
-          result: 'failure',
-          severity: 'error',
-          error,
-          metadata: {
-            attempt_count: nextAttemptCount,
-            max_attempts: maxAttempts,
-            next_run_at: nextRunAt,
-            safe_state_preserved: true,
-          },
-        }).catch((auditError) => {
-          logger.error(
-            'Failed to write tenant lifecycle validation audit',
-            { job_id: job.id, tenant_id: job.tenant_id },
-            auditError as Error
-          );
-        });
-      }
-      await emitAdminJobRuntimeLog(env, adapter, logger, {
-        job,
-        status: exhausted ? 'failed' : 'retrying',
-        eventAt: failedTs * 1000,
-        attemptCount: nextAttemptCount,
-        nextRunAt,
-        completedAt: exhausted ? failedTs : null,
-        errorClass: error instanceof Error ? error.name : 'Error',
+      }).catch((auditError) => {
+        logger.error(
+          'Failed to write tenant lifecycle validation audit',
+          { job_id: job.id, tenant_id: job.tenant_id },
+          auditError as Error
+        );
       });
     }
+    await emitAdminJobRuntimeLog(env, adapter, logger, {
+      job,
+      status: exhausted ? 'failed' : 'retrying',
+      eventAt: failedTs * 1000,
+      attemptCount: nextAttemptCount,
+      nextRunAt,
+      completedAt: exhausted ? failedTs : null,
+      errorClass: error instanceof Error ? error.name : 'Error',
+    });
   }
 }

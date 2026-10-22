@@ -441,12 +441,15 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'DPOP_JTI_STORE',
     'TOKEN_REVOCATION_STORE',
   ],
+  // SESSION_CLIENT_STORE: suspending, locking or revoking a user's sessions tells the relying
+  // parties signed in through the sessions it ends; their logout targets are read from this store.
   'ar-management': [
     'KEY_MANAGER',
     'REFRESH_TOKEN_ROTATOR',
     'RATE_LIMITER',
     'SESSION_STORE',
     'SESSION_REVOCATION_STORE',
+    'SESSION_CLIENT_STORE',
     'TOKEN_REVOCATION_STORE',
     'VERSION_MANAGER',
     'CHALLENGE_STORE',

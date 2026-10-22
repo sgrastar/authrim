@@ -289,7 +289,9 @@ describe('worker capability manifests', () => {
   it('binds the session-client store to every Worker that records or reads logout targets', async () => {
     // Without the binding, session-client registration is a silent no-op and logout finds no
     // relying party to notify, so Back-Channel, Front-Channel and webhook logout send nothing.
-    const requiredComponents = ['ar-auth', 'ar-token'];
+    // Bridge (upstream back-channel logout) and Management (admin suspend / lock / session
+    // revocation) read the logout targets of the sessions they end.
+    const requiredComponents = ['ar-auth', 'ar-token', 'ar-bridge', 'ar-management'];
     const manifests = await loadWorkerCapabilityManifests({
       baseDir: ROOT_DIR,
       components: CORE_WORKER_COMPONENTS,
