@@ -229,8 +229,13 @@ export function setupApp(mount: Mount, envExtras: Record<string, unknown> = {}) 
     headers?: Record<string, string>
   ) => send({ Cookie: cookie }, method, path, body, headers);
   /** The same with an Admin API access token of a machine credential. */
-  const callWithToken = (token: string, method: string, path: string, body?: unknown) =>
-    send({ Authorization: `Bearer ${token}` }, method, path, body);
+  const callWithToken = (
+    token: string,
+    method: string,
+    path: string,
+    body?: unknown,
+    headers?: Record<string, string>
+  ) => send({ Authorization: `Bearer ${token}` }, method, path, body, headers);
   return { db, adapter, app, call, callWithToken, hooks };
 }
 
@@ -241,12 +246,15 @@ export const ISSUER_URL = 'https://test.example.com';
  * the permissions are the principal's narrowed by the credential's, and the tenant scope is the
  * principal's narrowed by the credential's.
  */
-export async function createTokenKit() {
+export async function createTokenKit(
+  /** The issuer the tokens carry; the request's own issuer when the app derives it from a base domain. */
+  issuer: string = ISSUER_URL
+) {
   const { privateKey, publicKey } = await generateKeyPair('RS256');
   const publicJwk = await exportJWK(publicKey);
   publicJwk.kid = 'admin-token-key';
   publicJwk.alg = 'RS256';
-  const env = { PUBLIC_JWK_JSON: JSON.stringify(publicJwk), ISSUER_URL };
+  const env = { PUBLIC_JWK_JSON: JSON.stringify(publicJwk), ISSUER_URL: issuer };
 
   const scopesOf = (
     db: SQLiteDatabase,
@@ -315,7 +323,7 @@ export async function createTokenKit() {
       tenant_scope: grant.tenantScope,
     })
       .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: 'admin-token-key' })
-      .setIssuer(ISSUER_URL)
+      .setIssuer(issuer)
       .setIssuedAt()
       .setExpirationTime('10m')
       .sign(privateKey);
@@ -340,7 +348,7 @@ export async function createTokenKit() {
       tenant_scope: tenantScope,
     })
       .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: 'admin-token-key' })
-      .setIssuer(ISSUER_URL)
+      .setIssuer(issuer)
       .setIssuedAt()
       .setExpirationTime('10m')
       .sign(privateKey);

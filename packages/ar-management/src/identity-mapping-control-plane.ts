@@ -1,5 +1,10 @@
 import type { Context } from 'hono';
-import type { Env, DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core';
+import type {
+  Env,
+  DatabaseAdapter,
+  PlatformStoredMapping,
+  PreparedStatement,
+} from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   findConflictingSourceIds,
@@ -11,6 +16,7 @@ import {
   mappingReferenceProfileId,
   normalizePlatformActivationScope,
   OIDC_STANDARD_CLAIM_SCOPE,
+  catalogReferenceResolver,
   PLATFORM_MAPPING_TENANT_ID,
   platformDestinationProfileRefs,
   EDUPERSON_ASSURANCE_CLAIM,
@@ -52,7 +58,7 @@ import {
   type MappingSetConflict,
 } from './identity-mapping-set-reference-guard';
 
-type AdminContext = Context<{ Bindings: Env }>;
+export type AdminContext = Context<{ Bindings: Env }>;
 
 type LifecycleState = 'draft' | 'published' | 'active' | 'scheduled' | 'retired';
 
@@ -72,8 +78,8 @@ const POLICY_VERSION_MAX_RULES = 250;
 const POLICY_RULE_MAX_EDGES = 500;
 const POLICY_RULE_MAX_TRANSFORMS = 500;
 const POLICY_RULE_MAX_VALIDATION_RULES = 250;
-const POLICY_RULE_MAX_RELEASE_RULES = 250;
-const POLICY_RULE_MAX_CONFLICT_RULES = 100;
+export const POLICY_RULE_MAX_RELEASE_RULES = 250;
+export const POLICY_RULE_MAX_CONFLICT_RULES = 100;
 const POLICY_SYMBOL_MAX_CHARS = 128;
 const POLICY_SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$/;
 const SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS = 15 * 60;
@@ -907,7 +913,7 @@ interface CreateAttributeFieldRequest {
   surfaces?: string[];
 }
 
-interface FieldMappingVersionRuleInput {
+export interface FieldMappingVersionRuleInput {
   ruleKey: string;
   ruleKind: string;
   action: string;
@@ -949,7 +955,7 @@ interface FieldMappingVersionRuleInput {
   }>;
 }
 
-interface CreateFieldMappingVersionRequest {
+export interface CreateFieldMappingVersionRequest {
   versionLabel: string;
   compatibilityRange?: string;
   authorId?: string;
@@ -1424,7 +1430,18 @@ interface SqlQueryExecutor extends SqlExecutor {
   queryOne<T>(sql: string, params?: unknown[]): Promise<T | null>;
 }
 
-class IdentityMappingControlPlaneError extends Error {
+/**
+ * A write that the set facade made failed with an error, and what it did could not be found out
+ * (the database could not be read afterwards): neither done nor not done can be said, so nothing
+ * is cleaned up and the caller is told that the result is not known.
+ */
+export class MappingSaveOutcomeUnknownError extends Error {
+  constructor(readonly cause: unknown) {
+    super('mapping_save_outcome_unknown');
+  }
+}
+
+export class IdentityMappingControlPlaneError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -3426,103 +3443,13 @@ export class IdentityMappingControlPlaneRepository {
     }
 
     await this.adapter.transaction(async (tx) => {
-      await tx.execute(
-        `DELETE FROM mapping_transform_steps
-          WHERE tenant_id = ?
-            AND rule_id IN (
-              SELECT r.id
-                FROM mapping_rules r
-                JOIN field_mapping_versions v
-                  ON v.tenant_id = r.tenant_id
-                 AND v.id = r.field_mapping_version_id
-               WHERE v.tenant_id = ?
-                 AND v.field_mapping_set_id = ?
-            )`,
-        [tenantId, tenantId, fieldMappingSetId]
-      );
-      await tx.execute(
-        `DELETE FROM mapping_rule_edges
-          WHERE tenant_id = ?
-            AND rule_id IN (
-              SELECT r.id
-                FROM mapping_rules r
-                JOIN field_mapping_versions v
-                  ON v.tenant_id = r.tenant_id
-                 AND v.id = r.field_mapping_version_id
-               WHERE v.tenant_id = ?
-                 AND v.field_mapping_set_id = ?
-            )`,
-        [tenantId, tenantId, fieldMappingSetId]
-      );
-      await tx.execute(
-        `DELETE FROM mapping_validation_rules
-          WHERE tenant_id = ?
-            AND rule_id IN (
-              SELECT r.id
-                FROM mapping_rules r
-                JOIN field_mapping_versions v
-                  ON v.tenant_id = r.tenant_id
-                 AND v.id = r.field_mapping_version_id
-               WHERE v.tenant_id = ?
-                 AND v.field_mapping_set_id = ?
-            )`,
-        [tenantId, tenantId, fieldMappingSetId]
-      );
-      await tx.execute(
-        `DELETE FROM mapping_release_rules
-          WHERE tenant_id = ?
-            AND field_mapping_version_id IN (
-              SELECT id
-                FROM field_mapping_versions
-               WHERE tenant_id = ?
-                 AND field_mapping_set_id = ?
-            )`,
-        [tenantId, tenantId, fieldMappingSetId]
-      );
-      await tx.execute(
-        `DELETE FROM mapping_conflict_rules
-          WHERE tenant_id = ?
-            AND field_mapping_version_id IN (
-              SELECT id
-                FROM field_mapping_versions
-               WHERE tenant_id = ?
-                 AND field_mapping_set_id = ?
-            )`,
-        [tenantId, tenantId, fieldMappingSetId]
-      );
-      await tx.execute(
-        `DELETE FROM dependency_graph_snapshots
-          WHERE tenant_id = ?
-            AND field_mapping_version_id IN (
-              SELECT id
-                FROM field_mapping_versions
-               WHERE tenant_id = ?
-                 AND field_mapping_set_id = ?
-            )`,
-        [tenantId, tenantId, fieldMappingSetId]
-      );
-      await tx.execute(
-        `DELETE FROM compiled_mapping_snapshots
-          WHERE tenant_id = ?
-            AND field_mapping_version_id IN (
-              SELECT id
-                FROM field_mapping_versions
-               WHERE tenant_id = ?
-                 AND field_mapping_set_id = ?
-            )`,
-        [tenantId, tenantId, fieldMappingSetId]
-      );
-      await tx.execute(
-        `DELETE FROM mapping_rules
-          WHERE tenant_id = ?
-            AND field_mapping_version_id IN (
-              SELECT id
-                FROM field_mapping_versions
-               WHERE tenant_id = ?
-                 AND field_mapping_set_id = ?
-            )`,
-        [tenantId, tenantId, fieldMappingSetId]
-      );
+      for (const statement of this.fieldMappingVersionRowDeletes(
+        tenantId,
+        fieldMappingSetId,
+        null
+      )) {
+        await tx.execute(statement.sql, statement.params);
+      }
       await tx.execute(
         `DELETE FROM field_mapping_activations WHERE tenant_id = ? AND field_mapping_set_id = ?`,
         [tenantId, fieldMappingSetId]
@@ -3544,7 +3471,366 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
-  async listFieldMappingVersions(tenantId: string, fieldMappingSetId: string) {
+  /**
+   * Deletes a set that may be switched on, in one atomic batch: the set facade's DELETE, which asks
+   * for no separate "switch it off" step. The batch starts with a check that the set is still as
+   * the caller read it (the version in use, else the latest saved: the content version of the
+   * facade); when someone saved or switched it since, the check fails, nothing is deleted, and the
+   * answer is a conflict. Everything that belongs to the set goes in the same batch (the
+   * activations, the snapshots, the versions and their rules), so a request that is repeated finds
+   * either all of it or none. What names the set from elsewhere is judged by the caller.
+   */
+  async deleteFieldMappingSetEndingActivation(
+    tenantId: string,
+    fieldMappingSetId: string,
+    input: {
+      /** The set's current version when the caller read it; null: it had none. */
+      expectedCurrentVersionId: string | null;
+      /** The version in use when the caller read the set; null: it was switched off. */
+      expectedActiveVersionId: string | null;
+    }
+  ): Promise<{ id: string; tenantId: string; deleted: true; endedActiveVersionId: string | null }> {
+    const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
+    if (!fieldMappingSet) {
+      throw notFound('field mapping set not found');
+    }
+    const currentVersion = `COALESCE(
+        (SELECT field_mapping_version_id FROM field_mapping_activations
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = 'active'
+          ORDER BY activated_at DESC, created_at DESC, id DESC LIMIT 1),
+        (SELECT lv.id FROM field_mapping_versions lv
+          WHERE lv.tenant_id = ? AND lv.field_mapping_set_id = ?
+          ORDER BY (lv.lifecycle_state = 'draft') ASC, lv.created_at DESC, lv.rowid DESC LIMIT 1),
+        '')`;
+    const currentParams = [tenantId, fieldMappingSetId, tenantId, fieldMappingSetId];
+    const switchedOnBefore = input.expectedActiveVersionId === null ? 0 : 1;
+    // The version alone does not tell a set that was switched on since from one that was not (the
+    // version in use and the latest saved can be the same one), so the check holds whether the
+    // set is switched on as well.
+    const isSwitchedOn = `EXISTS(SELECT 1 FROM field_mapping_activations
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = 'active')`;
+    const guard = {
+      sql: `SELECT CASE WHEN ${currentVersion} = ? AND ${isSwitchedOn} = ?
+              THEN 0 ELSE abs(-9223372036854775807 - 1) END AS deletion_check`,
+      params: [
+        ...currentParams,
+        input.expectedCurrentVersionId ?? '',
+        tenantId,
+        fieldMappingSetId,
+        switchedOnBefore,
+      ],
+    };
+    try {
+      await this.adapter.batch([
+        guard,
+        ...this.fieldMappingVersionRowDeletes(tenantId, fieldMappingSetId, null),
+        {
+          sql: `DELETE FROM field_mapping_activations WHERE tenant_id = ? AND field_mapping_set_id = ?`,
+          params: [tenantId, fieldMappingSetId],
+        },
+        {
+          sql: `DELETE FROM field_mapping_versions WHERE tenant_id = ? AND field_mapping_set_id = ?`,
+          params: [tenantId, fieldMappingSetId],
+        },
+        {
+          sql: `DELETE FROM field_mapping_sets WHERE tenant_id = ? AND id = ?`,
+          params: [tenantId, fieldMappingSetId],
+        },
+      ]);
+    } catch (error) {
+      await this.settleFailedBatch(error, async () => {
+        const remaining = await this.adapter.queryOne<{
+          current: string;
+          present: number;
+          switched_on: number;
+        }>(
+          `SELECT ${currentVersion} AS current,
+                  (SELECT COUNT(*) FROM field_mapping_sets WHERE tenant_id = ? AND id = ?) AS present,
+                  ${isSwitchedOn} AS switched_on`,
+          [...currentParams, tenantId, fieldMappingSetId, tenantId, fieldMappingSetId]
+        );
+        if (!remaining || remaining.present === 0) return 'done';
+        return remaining.current !== (input.expectedCurrentVersionId ?? '') ||
+          Number(remaining.switched_on) !== switchedOnBefore
+          ? 'conflict'
+          : 'not_done';
+      });
+    }
+    return {
+      id: fieldMappingSetId,
+      tenantId,
+      deleted: true,
+      endedActiveVersionId: input.expectedActiveVersionId,
+    };
+  }
+
+  /**
+   * The kind of each Destination Profile a mapping's edges release into, as the set facade
+   * judges what a set can be switched on for. A profile is read from the owner's namespace or the
+   * platform's; one that is not there is `null`. Keys are the references as the edges wrote them.
+   */
+  async findDestinationProfileTypes(
+    ownerTenantId: string,
+    profileRefs: readonly string[]
+  ): Promise<Map<string, string | null>> {
+    const types = new Map<string, string | null>();
+    for (const profileRef of profileRefs) {
+      const candidates = destinationProfileReferenceCandidates(profileRef);
+      const row = await this.adapter.queryOne<{ destination_type: string }>(
+        `SELECT destination_type FROM destination_profiles
+          WHERE tenant_id IN (?, ?) AND id IN (${candidates.map(() => '?').join(', ')}) LIMIT 1`,
+        [ownerTenantId, PLATFORM_MAPPING_TENANT_ID, ...candidates]
+      );
+      types.set(profileRef, row?.destination_type ?? null);
+    }
+    return types;
+  }
+
+  /**
+   * Each set the caller can see (the tenant's own and the platform's) with the version in use:
+   * the active activation's, else none. `current_version_id` is what the set is now: the version
+   * in use, else the latest one that was saved (a draft only when nothing else exists).
+   */
+  async listFieldMappingSetStates(tenantId: string) {
+    return this.queryFieldMappingSetStates([tenantId, PLATFORM_MAPPING_TENANT_ID], null);
+  }
+
+  /**
+   * One set with its state. `excludingVersionId` leaves a version out when the set's current
+   * version is worked out (the facade asks what the set was before the version it is building).
+   */
+  async findFieldMappingSetState(
+    ownerTenantId: string,
+    fieldMappingSetId: string,
+    options: { excludingVersionId?: string } = {}
+  ) {
+    const rows = await this.queryFieldMappingSetStates(
+      [ownerTenantId],
+      fieldMappingSetId,
+      options.excludingVersionId ?? null
+    );
+    return rows[0] ?? null;
+  }
+
+  private async queryFieldMappingSetStates(
+    tenantIds: string[],
+    fieldMappingSetId: string | null,
+    excludingVersionId: string | null = null
+  ) {
+    const rows = await this.adapter.query<
+      FieldMappingSetRow & {
+        active_version_id: string | null;
+        active_version_label: string | null;
+        active_scope_json: string | null;
+        current_version_id: string | null;
+        current_version_label: string | null;
+      }
+    >(
+      `SELECT s.*,
+              a.field_mapping_version_id AS active_version_id,
+              av.version_label AS active_version_label,
+              a.activation_scope_json AS active_scope_json,
+              cv.id AS current_version_id,
+              cv.version_label AS current_version_label
+         FROM field_mapping_sets s
+         LEFT JOIN field_mapping_activations a
+           ON a.tenant_id = s.tenant_id
+          AND a.field_mapping_set_id = s.id
+          AND a.lifecycle_state = 'active'
+         LEFT JOIN field_mapping_versions av
+           ON av.tenant_id = a.tenant_id AND av.id = a.field_mapping_version_id
+         LEFT JOIN field_mapping_versions cv
+           ON cv.tenant_id = s.tenant_id
+          AND cv.id = COALESCE(
+            a.field_mapping_version_id,
+            (SELECT lv.id FROM field_mapping_versions lv
+              WHERE lv.tenant_id = s.tenant_id AND lv.field_mapping_set_id = s.id
+                ${excludingVersionId ? 'AND lv.id <> ?' : ''}
+              ORDER BY (lv.lifecycle_state = 'draft') ASC, lv.created_at DESC, lv.rowid DESC LIMIT 1)
+          )
+        WHERE s.tenant_id IN (${tenantIds.map(() => '?').join(', ')})
+          ${fieldMappingSetId ? 'AND s.id = ?' : ''}
+        ORDER BY s.updated_at DESC, s.id ASC`,
+      [
+        ...(excludingVersionId ? [excludingVersionId] : []),
+        ...tenantIds,
+        ...(fieldMappingSetId ? [fieldMappingSetId] : []),
+      ]
+    );
+    const seen = new Set<string>();
+    return rows.filter((row) => {
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
+    });
+  }
+
+  /** Whether the namespace already has a set with this key (the key is unique in it). */
+  async fieldMappingKeyExists(ownerTenantId: string, fieldMappingKey: string): Promise<boolean> {
+    const row = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id FROM field_mapping_sets WHERE tenant_id = ? AND field_mapping_key = ? LIMIT 1`,
+      [ownerTenantId, fieldMappingKey]
+    );
+    return row !== null;
+  }
+
+  /** The name and description of a set; its key does not change. */
+  async updateFieldMappingSetDetails(
+    tenantId: string,
+    fieldMappingSetId: string,
+    details: { displayName: string; description: string | null }
+  ): Promise<void> {
+    validateRequiredString(details.displayName, 'displayName');
+    await this.adapter.execute(
+      `UPDATE field_mapping_sets SET display_name = ?, description = ?, updated_at = ?
+        WHERE tenant_id = ? AND id = ?`,
+      [details.displayName, details.description, this.now(), tenantId, fieldMappingSetId]
+    );
+  }
+
+  /** Lets go of the lock an activation took (the facade does not leave it for its 60 seconds). */
+  async releaseActivationLease(
+    tenantId: string,
+    fieldMappingSetId: string,
+    holderId: string
+  ): Promise<void> {
+    await this.adapter.execute(
+      `DELETE FROM mapping_activation_leases
+        WHERE tenant_id = ? AND lease_key = ? AND holder_id = ?`,
+      [tenantId, `field_mapping:${fieldMappingSetId}:activate`, holderId]
+    );
+  }
+
+  /**
+   * The rows under the versions of a set (or under one version of it): the rules and what hangs
+   * off them, the release and conflict rules, the dependency graphs and the compiled snapshots.
+   * The version rows, the activations and the set itself are removed by the caller.
+   */
+  private fieldMappingVersionRowDeletes(
+    tenantId: string,
+    fieldMappingSetId: string,
+    fieldMappingVersionId: string | null
+  ): Array<{ sql: string; params: unknown[] }> {
+    const versionIds = `SELECT id
+                FROM field_mapping_versions
+               WHERE tenant_id = ?
+                 AND field_mapping_set_id = ?${fieldMappingVersionId ? '\n                 AND id = ?' : ''}`;
+    const versionParams = fieldMappingVersionId
+      ? [tenantId, fieldMappingSetId, fieldMappingVersionId]
+      : [tenantId, fieldMappingSetId];
+    const ruleIds = `SELECT id FROM mapping_rules WHERE tenant_id = ? AND field_mapping_version_id IN (${versionIds})`;
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    for (const table of [
+      'mapping_transform_steps',
+      'mapping_rule_edges',
+      'mapping_validation_rules',
+    ]) {
+      statements.push({
+        sql: `DELETE FROM ${table} WHERE tenant_id = ? AND rule_id IN (${ruleIds})`,
+        params: [tenantId, tenantId, ...versionParams],
+      });
+    }
+    for (const table of [
+      'mapping_release_rules',
+      'mapping_conflict_rules',
+      'dependency_graph_snapshots',
+      'compiled_mapping_snapshots',
+      'mapping_rules',
+    ]) {
+      statements.push({
+        sql: `DELETE FROM ${table} WHERE tenant_id = ? AND field_mapping_version_id IN (${versionIds})`,
+        params: [tenantId, ...versionParams],
+      });
+    }
+    return statements;
+  }
+
+  /**
+   * Removes a version that was never put in use (the set facade, when a save fails after it
+   * created one). The removal is one atomic batch that starts with a check that nothing names the
+   * version (no activation, not active, no active snapshot): when someone put it in use after
+   * the caller looked, the check fails, the batch changes nothing, and the answer is false. A
+   * version that is not there is already gone (true).
+   */
+  async discardUnusedFieldMappingVersion(
+    tenantId: string,
+    fieldMappingSetId: string,
+    fieldMappingVersionId: string
+  ): Promise<boolean> {
+    const version = await this.getFieldMappingVersion(
+      tenantId,
+      fieldMappingSetId,
+      fieldMappingVersionId
+    );
+    if (!version) return true;
+    if (version.lifecycle_state === 'active') return false;
+    const inUse = () =>
+      this.adapter.queryOne<{ n: number }>(
+        `SELECT (
+           (SELECT COUNT(*) FROM field_mapping_activations
+             WHERE tenant_id = ? AND field_mapping_set_id = ? AND field_mapping_version_id = ?)
+           + (SELECT COUNT(*) FROM field_mapping_versions
+               WHERE tenant_id = ? AND id = ? AND lifecycle_state = 'active')
+           + (SELECT COUNT(*) FROM compiled_mapping_snapshots
+               WHERE tenant_id = ? AND field_mapping_version_id = ? AND lifecycle_state = 'active')
+         ) AS n`,
+        [
+          tenantId,
+          fieldMappingSetId,
+          fieldMappingVersionId,
+          tenantId,
+          fieldMappingVersionId,
+          tenantId,
+          fieldMappingVersionId,
+        ]
+      );
+    if (((await inUse())?.n ?? 0) > 0) return false;
+    try {
+      await this.adapter.batch([
+        {
+          // The batch is applied as one: a version that was put in use meanwhile fails it here.
+          sql: `SELECT CASE WHEN (
+                   (SELECT COUNT(*) FROM field_mapping_activations
+                     WHERE tenant_id = ? AND field_mapping_set_id = ? AND field_mapping_version_id = ?)
+                   + (SELECT COUNT(*) FROM field_mapping_versions
+                       WHERE tenant_id = ? AND id = ? AND lifecycle_state = 'active')
+                   + (SELECT COUNT(*) FROM compiled_mapping_snapshots
+                       WHERE tenant_id = ? AND field_mapping_version_id = ? AND lifecycle_state = 'active')
+                 ) = 0 THEN 0 ELSE abs(-9223372036854775807 - 1) END AS in_use_check`,
+          params: [
+            tenantId,
+            fieldMappingSetId,
+            fieldMappingVersionId,
+            tenantId,
+            fieldMappingVersionId,
+            tenantId,
+            fieldMappingVersionId,
+          ],
+        },
+        ...this.fieldMappingVersionRowDeletes(tenantId, fieldMappingSetId, fieldMappingVersionId),
+        {
+          sql: `DELETE FROM field_mapping_versions
+                 WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+          params: [tenantId, fieldMappingSetId, fieldMappingVersionId],
+        },
+      ]);
+    } catch (error) {
+      if (((await inUse())?.n ?? 0) > 0) return false;
+      throw error;
+    }
+    return true;
+  }
+
+  async listFieldMappingVersions(
+    tenantId: string,
+    fieldMappingSetId: string,
+    options: { versionId?: string } = {}
+  ) {
+    // One version of the set, when asked: the facade reads the one in use, not the history.
+    const versionFilter = options.versionId ? ' AND v.id = ?' : '';
+    const versionParams = options.versionId
+      ? [tenantId, fieldMappingSetId, options.versionId]
+      : [tenantId, fieldMappingSetId];
     const rows = await this.adapter.query<FieldMappingVersionListRow>(
       `SELECT v.*,
               s.id AS snapshot_id,
@@ -3561,9 +3847,9 @@ export class IdentityMappingControlPlaneRepository {
                  WHERE latest.tenant_id = v.tenant_id
                    AND latest.field_mapping_version_id = v.id
               )
-        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
         ORDER BY v.updated_at DESC, v.created_at DESC`,
-      [tenantId, fieldMappingSetId]
+      versionParams
     );
     const ruleRows = await this.adapter.query<FieldMappingRuleSummaryRow>(
       `SELECT v.id AS field_mapping_version_id,
@@ -3587,9 +3873,9 @@ export class IdentityMappingControlPlaneRepository {
          LEFT JOIN mapping_rule_edges e
           ON e.tenant_id = r.tenant_id
           AND e.rule_id = r.id
-        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
-        ORDER BY v.id, r.priority ASC, r.created_at ASC, e.display_order ASC`,
-      [tenantId, fieldMappingSetId]
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
+        ORDER BY v.id, r.priority ASC, r.created_at ASC, r.rowid ASC, e.display_order ASC`,
+      versionParams
     );
     const transformRows = await this.adapter.query<FieldMappingTransformSummaryRow>(
       `SELECT v.id AS field_mapping_version_id,
@@ -3606,9 +3892,9 @@ export class IdentityMappingControlPlaneRepository {
          JOIN mapping_transform_steps t
            ON t.tenant_id = r.tenant_id
           AND t.rule_id = r.id
-        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
-        ORDER BY v.id, r.priority ASC, t.step_order ASC`,
-      [tenantId, fieldMappingSetId]
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
+        ORDER BY v.id, r.priority ASC, r.rowid ASC, t.step_order ASC`,
+      versionParams
     );
     const validationRows = await this.adapter.query<FieldMappingValidationSummaryRow>(
       `SELECT v.id AS field_mapping_version_id,
@@ -3625,9 +3911,9 @@ export class IdentityMappingControlPlaneRepository {
          JOIN mapping_validation_rules vr
            ON vr.tenant_id = r.tenant_id
           AND vr.rule_id = r.id
-        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
-        ORDER BY v.id, r.priority ASC, vr.created_at ASC, vr.id ASC`,
-      [tenantId, fieldMappingSetId]
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
+        ORDER BY v.id, r.priority ASC, r.rowid ASC, vr.created_at ASC, vr.rowid ASC`,
+      versionParams
     );
     const releaseRows = await this.adapter.query<FieldMappingReleaseSummaryRow>(
       `SELECT v.id AS field_mapping_version_id,
@@ -3644,9 +3930,9 @@ export class IdentityMappingControlPlaneRepository {
          JOIN mapping_release_rules rr
            ON rr.tenant_id = v.tenant_id
           AND rr.field_mapping_version_id = v.id
-        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
-        ORDER BY v.id, rr.priority ASC, rr.created_at ASC, rr.id ASC`,
-      [tenantId, fieldMappingSetId]
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
+        ORDER BY v.id, rr.priority ASC, rr.created_at ASC, rr.rowid ASC`,
+      versionParams
     );
     const conflictRows = await this.adapter.query<FieldMappingConflictSummaryRow>(
       `SELECT v.id AS field_mapping_version_id,
@@ -3659,9 +3945,9 @@ export class IdentityMappingControlPlaneRepository {
          JOIN mapping_conflict_rules cr
            ON cr.tenant_id = v.tenant_id
           AND cr.field_mapping_version_id = v.id
-        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
-        ORDER BY v.id, cr.created_at ASC, cr.id ASC`,
-      [tenantId, fieldMappingSetId]
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
+        ORDER BY v.id, cr.created_at ASC, cr.rowid ASC`,
+      versionParams
     );
     const summariesByVersion = new Map<
       string,
@@ -3874,32 +4160,12 @@ export class IdentityMappingControlPlaneRepository {
   async createFieldMappingVersion(
     tenantId: string,
     fieldMappingSetId: string,
-    input: CreateFieldMappingVersionRequest
+    input: CreateFieldMappingVersionRequest,
+    /** The ID of the version, when the caller must know it before the write (to clean up after). */
+    options: { versionId?: string } = {}
   ) {
     validateRequiredString(fieldMappingSetId, 'fieldMappingSetId');
-    validateRequiredString(input.versionLabel, 'versionLabel');
-    if (!Array.isArray(input.rules)) {
-      throw badRequest('rules must be an array');
-    }
-    if (
-      input.sourceProfileIds !== undefined &&
-      (!Array.isArray(input.sourceProfileIds) ||
-        input.sourceProfileIds.some(
-          (profileId) => typeof profileId !== 'string' || !profileId.trim()
-        ))
-    ) {
-      throw badRequest('sourceProfileIds must be an array of non-empty strings');
-    }
-    assertFieldMappingVersionRequestSafe(input);
-    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
-      const violation = findPlatformMappingVersionViolation(input.rules, input.sourceProfileIds);
-      if (violation) throw badRequest(violation);
-      await this.assertPlatformOidcDestinationProfile(
-        tenantId,
-        input.rules.flatMap((rule) => (rule.edges ?? []).map((edge) => edge.targetRef)),
-        false
-      );
-    }
+    await this.assertFieldMappingVersionShape(tenantId, input);
 
     const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
     if (!fieldMappingSet) {
@@ -3916,7 +4182,7 @@ export class IdentityMappingControlPlaneRepository {
     }
 
     const now = this.now();
-    const versionId = createId('field_mapping_version');
+    const versionId = options.versionId ?? createId('field_mapping_version');
     const fieldMappingHash = await hashStableJson({
       fieldMappingSetId,
       versionLabel: input.versionLabel,
@@ -3959,7 +4225,41 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
-  private async assertMappingRequiredSourceFieldsConnected(
+  /**
+   * What a version's content has to be before it is stored (its shape, its size, and for a
+   * platform set what the platform may hold). The version create and the set facade
+   * (`identity-mapping-set-facade.ts`) judge a version by this one check.
+   */
+  async assertFieldMappingVersionShape(
+    tenantId: string,
+    input: CreateFieldMappingVersionRequest
+  ): Promise<void> {
+    validateRequiredString(input.versionLabel, 'versionLabel');
+    if (!Array.isArray(input.rules)) {
+      throw badRequest('rules must be an array');
+    }
+    if (
+      input.sourceProfileIds !== undefined &&
+      (!Array.isArray(input.sourceProfileIds) ||
+        input.sourceProfileIds.some(
+          (profileId) => typeof profileId !== 'string' || !profileId.trim()
+        ))
+    ) {
+      throw badRequest('sourceProfileIds must be an array of non-empty strings');
+    }
+    assertFieldMappingVersionRequestSafe(input);
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
+      const violation = findPlatformMappingVersionViolation(input.rules, input.sourceProfileIds);
+      if (violation) throw badRequest(violation);
+      await this.assertPlatformOidcDestinationProfile(
+        tenantId,
+        input.rules.flatMap((rule) => (rule.edges ?? []).map((edge) => edge.targetRef)),
+        false
+      );
+    }
+  }
+
+  async assertMappingRequiredSourceFieldsConnected(
     tenantId: string,
     input: CreateFieldMappingVersionRequest
   ): Promise<void> {
@@ -4158,11 +4458,159 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  /**
+   * A statement that fails the batch it starts when the set's version in use is not the one the
+   * caller decided on (`null`: none in use). D1 does not stop a batch on an update that changed
+   * no row, so the check is a read whose value overflows when it does not hold (the same device
+   * as the machine access writes), which aborts the whole batch.
+   */
+  private expectedActiveVersionGuard(
+    tenantId: string,
+    fieldMappingSetId: string,
+    expectedVersionId: string | null
+  ): { sql: string; params: unknown[] } {
+    return {
+      sql: `SELECT CASE WHEN COALESCE((
+                   SELECT field_mapping_version_id FROM field_mapping_activations
+                    WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = 'active'
+                    ORDER BY activated_at DESC, created_at DESC, id DESC LIMIT 1
+                 ), '') = ? AND (
+                   SELECT COUNT(*) FROM field_mapping_activations
+                    WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = 'active'
+                 ) <= 1 THEN 0 ELSE abs(-9223372036854775807 - 1) END AS active_version_check`,
+      params: [tenantId, fieldMappingSetId, expectedVersionId ?? '', tenantId, fieldMappingSetId],
+    };
+  }
+
+  private async currentActiveVersionId(
+    tenantId: string,
+    fieldMappingSetId: string
+  ): Promise<string | null> {
+    const row = await this.adapter.queryOne<{ field_mapping_version_id: string }>(
+      `SELECT field_mapping_version_id FROM field_mapping_activations
+        WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = 'active'
+        ORDER BY activated_at DESC, created_at DESC, id DESC LIMIT 1`,
+      [tenantId, fieldMappingSetId]
+    );
+    return row?.field_mapping_version_id ?? null;
+  }
+
+  /** The statement that gives the set a new name and description, in the batch that confirms the save. */
+  private setDetailsStatement(
+    tenantId: string,
+    fieldMappingSetId: string,
+    details: { displayName: string; description: string | null },
+    now: number
+  ): { sql: string; params: unknown[] } {
+    return {
+      sql: `UPDATE field_mapping_sets SET display_name = ?, description = ?, updated_at = ?
+             WHERE tenant_id = ? AND id = ?`,
+      params: [details.displayName, details.description, now, tenantId, fieldMappingSetId],
+    };
+  }
+
+  /**
+   * A batch the facade wrote guarded failed with an error. The error does not say whether the
+   * batch was applied (a database can commit and lose the answer, and the D1 adapter then applies
+   * the batch again, which this guard refuses), so the state is looked at: if the batch's own mark
+   * is there it was done, and the write stands; if the set is in the state of someone else's save
+   * it was not done and this is a conflict; if it is as before, the batch changed nothing and the
+   * error stands. If the state cannot be read, the outcome is not known.
+   */
+  private async settleFailedBatch(
+    error: unknown,
+    check: () => Promise<'done' | 'conflict' | 'not_done'>
+  ): Promise<void> {
+    let verdict: 'done' | 'conflict' | 'not_done';
+    try {
+      verdict = await check();
+    } catch {
+      throw new MappingSaveOutcomeUnknownError(error);
+    }
+    if (verdict === 'done') return;
+    if (verdict === 'conflict')
+      throw conflict('The Mapping Set was changed while it was being saved');
+    throw error;
+  }
+
+  /**
+   * The facade's last write for a set that stays off: a batch that checks that the set is still as
+   * the save found it (nothing in use, and the version that was the set's before this save's own
+   * is still the latest), and writes the name and description. Without the check a save that is
+   * overtaken by another would succeed and mix its name with the other's content.
+   */
+  async confirmUnchangedOffSet(
+    tenantId: string,
+    fieldMappingSetId: string,
+    input: {
+      /** The version this save created: not counted as the set's own. */
+      ownVersionId: string;
+      /** What the set was when the save looked (its current version before the save); null: none. */
+      expectedCurrentVersionId: string | null;
+      setDetails?: { displayName: string; description: string | null };
+    }
+  ): Promise<void> {
+    const now = this.now();
+    const latestOther = `COALESCE((
+        SELECT lv.id FROM field_mapping_versions lv
+         WHERE lv.tenant_id = ? AND lv.field_mapping_set_id = ? AND lv.id <> ?
+         ORDER BY (lv.lifecycle_state = 'draft') ASC, lv.created_at DESC, lv.rowid DESC LIMIT 1
+      ), '')`;
+    const activeCount = `(SELECT COUNT(*) FROM field_mapping_activations
+        WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = 'active')`;
+    const guard = {
+      sql: `SELECT CASE WHEN ${latestOther} = ? AND ${activeCount} = 0
+              THEN 0 ELSE abs(-9223372036854775807 - 1) END AS unchanged_check`,
+      params: [
+        tenantId,
+        fieldMappingSetId,
+        input.ownVersionId,
+        input.expectedCurrentVersionId ?? '',
+        tenantId,
+        fieldMappingSetId,
+      ],
+    };
+    // The write is the set's own mark of the save: its update time is this save's.
+    const write = input.setDetails
+      ? this.setDetailsStatement(tenantId, fieldMappingSetId, input.setDetails, now)
+      : {
+          sql: 'UPDATE field_mapping_sets SET updated_at = ? WHERE tenant_id = ? AND id = ?',
+          params: [now, tenantId, fieldMappingSetId],
+        };
+    try {
+      await this.adapter.batch([guard, write]);
+    } catch (error) {
+      await this.settleFailedBatch(error, async () => {
+        const set = await this.adapter.queryOne<{ updated_at: number }>(
+          'SELECT updated_at FROM field_mapping_sets WHERE tenant_id = ? AND id = ?',
+          [tenantId, fieldMappingSetId]
+        );
+        if (set?.updated_at === now) return 'done';
+        const state = await this.adapter.queryOne<{ latest: string; active: number }>(
+          `SELECT ${latestOther} AS latest, ${activeCount} AS active`,
+          [tenantId, fieldMappingSetId, input.ownVersionId, tenantId, fieldMappingSetId]
+        );
+        return state?.latest !== (input.expectedCurrentVersionId ?? '') || (state?.active ?? 0) > 0
+          ? 'conflict'
+          : 'not_done';
+      });
+    }
+  }
+
   async activateFieldMappingVersion(
     tenantId: string,
     fieldMappingSetId: string,
     fieldMappingVersionId: string,
-    input: ActivateFieldMappingRequest
+    input: ActivateFieldMappingRequest,
+    /**
+     * What the set facade adds (the endpoints of the five steps do not): the version in use that
+     * the activation was decided against (`null`: none), checked again under the lock and inside
+     * the batch that switches, and the name and description confirmed by the same batch.
+     */
+    options: {
+      expectedActiveVersionId?: string | null;
+      setDetails?: { displayName: string; description: string | null };
+    } = {}
   ) {
     validateRequiredString(input.snapshotId, 'snapshotId');
     let activationScope = input.activationScope;
@@ -4198,7 +4646,9 @@ export class IdentityMappingControlPlaneRepository {
       );
     }
     const now = this.now();
-    if (snapshot.lifecycle_state === 'active') {
+    // A save that decided against a version in use (the facade) is not let through the
+    // already-active path: that path checks nothing and keeps the scope of whoever activated.
+    if (snapshot.lifecycle_state === 'active' && options.expectedActiveVersionId === undefined) {
       const existingActivation = await this.adapter.queryOne<{ id: string }>(
         `SELECT id
            FROM field_mapping_activations
@@ -4210,18 +4660,25 @@ export class IdentityMappingControlPlaneRepository {
         [tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
       );
       if (existingActivation) {
-        await this.adapter.transaction(async (tx) => {
-          await tx.execute(
-            `UPDATE field_mapping_versions
+        await this.adapter.batch([
+          {
+            sql: `UPDATE field_mapping_versions
                 SET lifecycle_state = ?, updated_at = ?
               WHERE tenant_id = ?
                 AND field_mapping_set_id = ?
                 AND id <> ?
                 AND lifecycle_state = ?`,
-            ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
-          );
-          await tx.execute(
-            `UPDATE compiled_mapping_snapshots
+            params: [
+              'published',
+              now,
+              tenantId,
+              fieldMappingSetId,
+              fieldMappingVersionId,
+              'active',
+            ],
+          },
+          {
+            sql: `UPDATE compiled_mapping_snapshots
                 SET lifecycle_state = ?, activated_at = ?
               WHERE tenant_id = ?
                 AND field_mapping_version_id IN (
@@ -4232,21 +4689,32 @@ export class IdentityMappingControlPlaneRepository {
                      AND id <> ?
                 )
                 AND lifecycle_state = ?`,
-            ['retired', now, tenantId, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
-          );
-          await tx.execute(
-            `UPDATE field_mapping_versions
+            params: [
+              'retired',
+              now,
+              tenantId,
+              tenantId,
+              fieldMappingSetId,
+              fieldMappingVersionId,
+              'active',
+            ],
+          },
+          {
+            sql: `UPDATE field_mapping_versions
                 SET lifecycle_state = ?, updated_at = ?
               WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
-            ['active', now, tenantId, fieldMappingSetId, fieldMappingVersionId]
-          );
-          await tx.execute(
-            `UPDATE field_mapping_sets
+            params: ['active', now, tenantId, fieldMappingSetId, fieldMappingVersionId],
+          },
+          {
+            sql: `UPDATE field_mapping_sets
                 SET lifecycle_state = ?, updated_at = ?
               WHERE tenant_id = ? AND id = ?`,
-            ['active', now, tenantId, fieldMappingSetId]
-          );
-        });
+            params: ['active', now, tenantId, fieldMappingSetId],
+          },
+          ...(options.setDetails
+            ? [this.setDetailsStatement(tenantId, fieldMappingSetId, options.setDetails, now)]
+            : []),
+        ]);
         return {
           id: existingActivation.id,
           tenantId,
@@ -4265,16 +4733,25 @@ export class IdentityMappingControlPlaneRepository {
     const leaseKey = `field_mapping:${fieldMappingSetId}:activate`;
     await this.acquireActivationLease(tenantId, leaseKey, holderId, now);
 
+    const expectActive = options.expectedActiveVersionId;
+    if (
+      expectActive !== undefined &&
+      (await this.currentActiveVersionId(tenantId, fieldMappingSetId)) !== expectActive
+    ) {
+      // Looked at with the lock held: whoever switched the set before us has finished.
+      throw conflict('The Mapping Set was changed while it was being saved');
+    }
+
     const activationId = createId('mapping_activation');
-    await this.adapter.transaction(async (tx) => {
-      await tx.execute(
-        `UPDATE field_mapping_activations
+    const activationStatements = [
+      {
+        sql: `UPDATE field_mapping_activations
             SET lifecycle_state = ?, active_until = ?, updated_at = ?
           WHERE tenant_id = ? AND field_mapping_set_id = ? AND lifecycle_state = ?`,
-        ['retired', now, now, tenantId, fieldMappingSetId, 'active']
-      );
-      await tx.execute(
-        `UPDATE compiled_mapping_snapshots
+        params: ['retired', now, now, tenantId, fieldMappingSetId, 'active'],
+      },
+      {
+        sql: `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
           WHERE tenant_id = ?
             AND field_mapping_version_id IN (
@@ -4283,14 +4760,14 @@ export class IdentityMappingControlPlaneRepository {
                WHERE tenant_id = ? AND field_mapping_set_id = ?
             )
             AND lifecycle_state = ?`,
-        ['retired', now, tenantId, tenantId, fieldMappingSetId, 'active']
-      );
-      await tx.execute(
-        `INSERT INTO field_mapping_activations (
+        params: ['retired', now, tenantId, tenantId, fieldMappingSetId, 'active'],
+      },
+      {
+        sql: `INSERT INTO field_mapping_activations (
           id, tenant_id, field_mapping_set_id, field_mapping_version_id, activation_scope_json,
           lifecycle_state, active_from, active_until, activated_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+        params: [
           activationId,
           tenantId,
           fieldMappingSetId,
@@ -4302,36 +4779,63 @@ export class IdentityMappingControlPlaneRepository {
           now,
           now,
           now,
-        ]
-      );
-      await tx.execute(
-        `UPDATE field_mapping_versions
+        ],
+      },
+      {
+        sql: `UPDATE field_mapping_versions
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ?
             AND field_mapping_set_id = ?
             AND id <> ?
             AND lifecycle_state = ?`,
-        ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
-      );
-      await tx.execute(
-        `UPDATE field_mapping_versions
+        params: ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active'],
+      },
+      {
+        sql: `UPDATE field_mapping_versions
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
-        ['active', now, tenantId, fieldMappingSetId, fieldMappingVersionId]
-      );
-      await tx.execute(
-        `UPDATE field_mapping_sets
+        params: ['active', now, tenantId, fieldMappingSetId, fieldMappingVersionId],
+      },
+      {
+        sql: `UPDATE field_mapping_sets
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
-        ['active', now, tenantId, fieldMappingSetId]
-      );
-      await tx.execute(
-        `UPDATE compiled_mapping_snapshots
+        params: ['active', now, tenantId, fieldMappingSetId],
+      },
+      {
+        sql: `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
           WHERE tenant_id = ? AND field_mapping_version_id = ? AND id = ?`,
-        ['active', now, tenantId, fieldMappingVersionId, input.snapshotId]
-      );
-    });
+        params: ['active', now, tenantId, fieldMappingVersionId, input.snapshotId],
+      },
+      ...(options.setDetails
+        ? [this.setDetailsStatement(tenantId, fieldMappingSetId, options.setDetails, now)]
+        : []),
+    ];
+    if (expectActive === undefined) {
+      await this.adapter.batch(activationStatements);
+    } else {
+      // The check is part of the switch: a set that was switched by someone else between the look
+      // above and this batch fails the batch, which then changes nothing.
+      try {
+        await this.adapter.batch([
+          this.expectedActiveVersionGuard(tenantId, fieldMappingSetId, expectActive),
+          ...activationStatements,
+        ]);
+      } catch (error) {
+        await this.settleFailedBatch(error, async () => {
+          // This save's own activation is there: the batch was applied.
+          const mine = await this.adapter.queryOne<{ id: string }>(
+            'SELECT id FROM field_mapping_activations WHERE tenant_id = ? AND id = ?',
+            [tenantId, activationId]
+          );
+          if (mine) return 'done';
+          return (await this.currentActiveVersionId(tenantId, fieldMappingSetId)) !== expectActive
+            ? 'conflict'
+            : 'not_done';
+        });
+      }
+    }
 
     return {
       id: activationId,
@@ -4348,7 +4852,16 @@ export class IdentityMappingControlPlaneRepository {
   async deactivateFieldMappingVersion(
     tenantId: string,
     fieldMappingSetId: string,
-    fieldMappingVersionId: string
+    fieldMappingVersionId: string,
+    /**
+     * What the set facade adds: the version in use must still be this one when the batch is
+     * applied (else nothing is changed and the answer is a conflict), and the name and description
+     * are confirmed by the same batch.
+     */
+    options: {
+      requireActive?: boolean;
+      setDetails?: { displayName: string; description: string | null };
+    } = {}
   ) {
     // The version must be one of this set: its snapshots are found by the version alone.
     const version = await this.getFieldMappingVersion(
@@ -4360,15 +4873,15 @@ export class IdentityMappingControlPlaneRepository {
       throw notFound('field mapping version not found');
     }
     const now = this.now();
-    await this.adapter.transaction(async (tx) => {
-      await tx.execute(
-        `UPDATE field_mapping_activations
+    const deactivationStatements = [
+      {
+        sql: `UPDATE field_mapping_activations
             SET lifecycle_state = ?, active_until = ?, updated_at = ?
           WHERE tenant_id = ? AND field_mapping_set_id = ? AND field_mapping_version_id = ? AND lifecycle_state = ?`,
-        ['retired', now, now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
-      );
-      await tx.execute(
-        `UPDATE compiled_mapping_snapshots
+        params: ['retired', now, now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active'],
+      },
+      {
+        sql: `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
           WHERE tenant_id = ?
             AND field_mapping_version_id IN (
@@ -4377,16 +4890,24 @@ export class IdentityMappingControlPlaneRepository {
                WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?
             )
             AND lifecycle_state = ?`,
-        ['retired', now, tenantId, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
-      );
-      await tx.execute(
-        `UPDATE field_mapping_versions
+        params: [
+          'retired',
+          now,
+          tenantId,
+          tenantId,
+          fieldMappingSetId,
+          fieldMappingVersionId,
+          'active',
+        ],
+      },
+      {
+        sql: `UPDATE field_mapping_versions
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ? AND lifecycle_state = ?`,
-        ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
-      );
-      await tx.execute(
-        `UPDATE field_mapping_sets
+        params: ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active'],
+      },
+      {
+        sql: `UPDATE field_mapping_sets
             SET lifecycle_state = CASE
                   WHEN EXISTS (
                     SELECT 1
@@ -4399,7 +4920,7 @@ export class IdentityMappingControlPlaneRepository {
                 END,
                 updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
-        [
+        params: [
           tenantId,
           fieldMappingSetId,
           'active',
@@ -4408,9 +4929,47 @@ export class IdentityMappingControlPlaneRepository {
           now,
           tenantId,
           fieldMappingSetId,
-        ]
+        ],
+      },
+      ...(options.setDetails
+        ? [this.setDetailsStatement(tenantId, fieldMappingSetId, options.setDetails, now)]
+        : []),
+    ];
+    if (options.requireActive) {
+      const activationToEnd = await this.adapter.queryOne<{ id: string }>(
+        `SELECT id FROM field_mapping_activations
+          WHERE tenant_id = ? AND field_mapping_set_id = ? AND field_mapping_version_id = ?
+            AND lifecycle_state = 'active' LIMIT 1`,
+        [tenantId, fieldMappingSetId, fieldMappingVersionId]
       );
-    });
+      if (!activationToEnd) {
+        throw conflict('The Mapping Set was changed while it was being saved');
+      }
+      try {
+        await this.adapter.batch([
+          this.expectedActiveVersionGuard(tenantId, fieldMappingSetId, fieldMappingVersionId),
+          ...deactivationStatements,
+        ]);
+      } catch (error) {
+        await this.settleFailedBatch(error, async () => {
+          // The activation that was in use is ended at this save's time: the batch was applied.
+          const ended = await this.adapter.queryOne<{
+            lifecycle_state: string;
+            active_until: number;
+          }>(
+            'SELECT lifecycle_state, active_until FROM field_mapping_activations WHERE tenant_id = ? AND id = ?',
+            [tenantId, activationToEnd.id]
+          );
+          if (ended?.lifecycle_state === 'retired' && ended.active_until === now) return 'done';
+          return (await this.currentActiveVersionId(tenantId, fieldMappingSetId)) !==
+            fieldMappingVersionId
+            ? 'conflict'
+            : 'not_done';
+        });
+      }
+    } else {
+      await this.adapter.batch(deactivationStatements);
+    }
     return {
       id: fieldMappingVersionId,
       tenantId,
@@ -6820,7 +7379,7 @@ export class IdentityMappingControlPlaneRepository {
     );
   }
 
-  private async getCatalogVersion(tenantId: string, catalogVersionId: string) {
+  async getCatalogVersion(tenantId: string, catalogVersionId: string) {
     const storedCatalogVersion = await this.adapter.queryOne<FieldCatalogVersionRow>(
       `SELECT * FROM field_catalog_versions WHERE tenant_id = ? AND id = ?`,
       [tenantId, catalogVersionId]
@@ -6876,24 +7435,42 @@ export class IdentityMappingControlPlaneRepository {
           AND r.field_mapping_version_id = ?`,
       [tenantId, fieldMappingVersionId]
     );
-    const releaseEdges = edgeRows
-      .map((row) => ({
+    await this.assertSensitiveEdgesReleaseSafety(
+      tenantId,
+      edgeRows.map((row) => ({
         sourceRef: parseJsonObject(row.source_ref_json, {}),
         targetRef: parseJsonObject(row.target_ref_json, {}),
-      }))
-      .filter(({ targetRef }) =>
-        // The edges that release to a destination (the cut the SAML IdP runs); the rules that
-        // bring a source profile's fields into the canonical ones are not judged here.
-        isOutputGraphTarget({
-          namespace: readStringValue(targetRef.namespace) ?? undefined,
-          profileId: mappingReferenceProfileId(targetRef),
-        })
-      );
+      })),
+      catalogVersionId
+    );
+  }
+
+  /**
+   * The release safety of a mapping's edges, as they are stored or as they are about to be (the
+   * activation judges the stored ones; the set facade judges the content it is given before it
+   * writes anything, so that what cannot be activated is not saved).
+   */
+  async assertSensitiveEdgesReleaseSafety(
+    tenantId: string,
+    edges: ReadonlyArray<{
+      sourceRef: Record<string, unknown>;
+      targetRef: Record<string, unknown>;
+    }>,
+    catalogVersionId: string | null
+  ): Promise<void> {
+    const releaseEdges = edges.filter(({ targetRef }) =>
+      // The edges that release to a destination (the cut the SAML IdP runs); the rules that
+      // bring a source profile's fields into the canonical ones are not judged here.
+      isOutputGraphTarget({
+        namespace: readStringValue(targetRef.namespace) ?? undefined,
+        profileId: mappingReferenceProfileId(targetRef),
+      })
+    );
     if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
       // The runtime counts the profile of every edge, not only the ones judged below.
       await this.assertPlatformOidcDestinationProfile(
         tenantId,
-        edgeRows.map((row) => parseJsonObject(row.target_ref_json, {})),
+        edges.map((edge) => edge.targetRef),
         true
       );
     }
@@ -6921,8 +7498,16 @@ export class IdentityMappingControlPlaneRepository {
         );
       }
     }
+    // A platform set is resolved against its catalog as the compile check and the runtime do (a
+    // source that names only its catalog entry reads the entry's place); a tenant's is judged as
+    // it is written.
+    const resolveReference = catalogReferenceResolver(classifyingEntries);
+    const sourceReference = (sourceRef: Record<string, unknown>) =>
+      tenantId === PLATFORM_MAPPING_TENANT_ID
+        ? resolveReference(toMappingSourceReference(sourceRef), { completePlace: true })
+        : toMappingSourceReference(sourceRef);
     const conflictingSourceId = findConflictingSourceIds(
-      releaseEdges.map(({ sourceRef }) => toMappingSourceReference(sourceRef))
+      releaseEdges.map(({ sourceRef }) => sourceReference(sourceRef))
     )[0];
     if (conflictingSourceId) {
       throw badRequest(
@@ -6933,7 +7518,7 @@ export class IdentityMappingControlPlaneRepository {
     for (const { sourceRef, targetRef } of releaseEdges) {
       const sourceClassification = resolveSourceClassification(
         classifyingEntries,
-        toMappingSourceReference(sourceRef)
+        sourceReference(sourceRef)
       );
       const sourceNamespace = readStringValue(sourceRef.namespace);
       if (sourceClassification === null) {
@@ -7059,7 +7644,7 @@ export class IdentityMappingControlPlaneRepository {
     catalogVersionId: string
   ): Promise<void> {
     const params = [platformTenantId, fieldMappingVersionId];
-    const [edgeRows, validationRows, transformRows, entries] = await Promise.all([
+    const [edgeRows, validationRows, transformRows] = await Promise.all([
       this.adapter.query<{ source_ref_json: string; target_ref_json: string }>(
         `SELECT e.source_ref_json, e.target_ref_json
            FROM mapping_rules r
@@ -7081,9 +7666,9 @@ export class IdentityMappingControlPlaneRepository {
           WHERE r.tenant_id = ? AND r.field_mapping_version_id = ?`,
         params
       ),
-      this.loadCatalogEntriesForActivation(platformTenantId, catalogVersionId),
     ]);
-    const violation = findPlatformMappingCompileViolation(
+    await this.assertPlatformMappingContentCompilable(
+      platformTenantId,
       {
         edges: edgeRows.map((row) => ({
           sourceRef: parseJsonObject(row.source_ref_json, {}),
@@ -7097,6 +7682,22 @@ export class IdentityMappingControlPlaneRepository {
           parameters: parseJsonObject(row.parameters_json ?? '{}', {}),
         })),
       },
+      catalogVersionId
+    );
+  }
+
+  /**
+   * What the platform catalog backs of a platform mapping's content, stored or about to be (see
+   * findPlatformMappingCompileViolation).
+   */
+  async assertPlatformMappingContentCompilable(
+    platformTenantId: string,
+    mapping: PlatformStoredMapping,
+    catalogVersionId: string
+  ): Promise<void> {
+    const entries = await this.loadCatalogEntriesForActivation(platformTenantId, catalogVersionId);
+    const violation = findPlatformMappingCompileViolation(
+      mapping,
       entries.map((entry) => ({
         ids: [entry.id, entry.stableFieldId],
         namespace: entry.namespace,
@@ -7109,7 +7710,7 @@ export class IdentityMappingControlPlaneRepository {
     if (violation) throw badRequest(violation);
     await this.assertPlatformOidcDestinationProfile(
       platformTenantId,
-      edgeRows.map((row) => parseJsonObject(row.target_ref_json, {})),
+      mapping.edges.map((edge) => edge.targetRef),
       false
     );
   }
@@ -8134,7 +8735,7 @@ async function handleMutation<T>(
   }
 }
 
-function createRepository(c: AdminContext): IdentityMappingControlPlaneRepository {
+export function createRepository(c: AdminContext): IdentityMappingControlPlaneRepository {
   const tenantId = getTenantIdFromContext(c);
   const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
   return new IdentityMappingControlPlaneRepository(
@@ -8161,7 +8762,7 @@ function createRepository(c: AdminContext): IdentityMappingControlPlaneRepositor
   );
 }
 
-function assertPlatformOwnerScopeAllowed(c: AdminContext, body: unknown): void {
+export function assertPlatformOwnerScopeAllowed(c: AdminContext, body: unknown): void {
   if (!isRecord(body) || body.ownerScopeType !== 'platform') {
     return;
   }
@@ -8177,7 +8778,7 @@ function assertPlatformOwnerScopeAllowed(c: AdminContext, body: unknown): void {
  * owns are both "not found". The platform's sets are readable by every tenant admin, and changed
  * only with platform authority.
  */
-async function resolveFieldMappingSetOwner(
+export async function resolveFieldMappingSetOwner(
   c: AdminContext,
   repository: IdentityMappingControlPlaneRepository,
   contextTenantId: string,
@@ -8210,7 +8811,7 @@ async function resolveFieldMappingSetOwner(
  * (or a token whose tenant scope is global) feed. (`is_platform_admin` is a field of the session
  * status response and is not part of the auth context, so it is not read.)
  */
-function hasPlatformOwnerScopeAuthority(c: AdminContext): boolean {
+export function hasPlatformOwnerScopeAuthority(c: AdminContext): boolean {
   const auth = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
     | {
         globalRoles?: string[];
@@ -8247,7 +8848,7 @@ async function readJsonBody(c: AdminContext): Promise<unknown> {
   }
 }
 
-function controlPlaneErrorResponse(c: AdminContext, error: unknown): Response {
+export function controlPlaneErrorResponse(c: AdminContext, error: unknown): Response {
   if (error instanceof IdentityMappingControlPlaneError) {
     return c.json(
       {
@@ -8830,7 +9431,7 @@ function validateSamlDestinationProfileSchema(schema: Record<string, unknown>) {
   };
 }
 
-function requiredParam(c: AdminContext, name: string): string {
+export function requiredParam(c: AdminContext, name: string): string {
   const value = c.req.param(name);
   validateRequiredString(value, name);
   return value;
@@ -9336,7 +9937,7 @@ function resolveSchemaReadinessGateState(
   return 'pass';
 }
 
-function createId(prefix: string): string {
+export function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
@@ -9495,7 +10096,7 @@ function assertSafeMaterialBackend(backendType: string): void {
   }
 }
 
-async function hashStableJson(value: unknown): Promise<string> {
+export async function hashStableJson(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(stableJson(value));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest))
@@ -9503,7 +10104,7 @@ async function hashStableJson(value: unknown): Promise<string> {
     .join('');
 }
 
-function stableJson(value: unknown): string {
+export function stableJson(value: unknown): string {
   return JSON.stringify(sortForStableJson(value));
 }
 
@@ -9525,28 +10126,28 @@ function sortForStableJson(value: unknown): unknown {
     }, {});
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function badRequest(message: string): IdentityMappingControlPlaneError {
+export function badRequest(message: string): IdentityMappingControlPlaneError {
   return new IdentityMappingControlPlaneError(message, 400, 'invalid_request');
 }
 
-function notFound(message: string): IdentityMappingControlPlaneError {
+export function notFound(message: string): IdentityMappingControlPlaneError {
   return new IdentityMappingControlPlaneError(message, 404, 'not_found');
 }
 
-function forbidden(message: string): IdentityMappingControlPlaneError {
+export function forbidden(message: string): IdentityMappingControlPlaneError {
   return new IdentityMappingControlPlaneError(message, 403, 'forbidden');
 }
 
-function conflict(message: string): IdentityMappingControlPlaneError {
+export function conflict(message: string): IdentityMappingControlPlaneError {
   return new IdentityMappingControlPlaneError(message, 409, 'conflict');
 }
 
 /** Refuses the change when the reference check found a reason to (see the reference guard). */
-function refuseIfInUse(conflicted: MappingSetConflict | null): void {
+export function refuseIfInUse(conflicted: MappingSetConflict | null): void {
   if (conflicted) {
     throw new IdentityMappingControlPlaneError(
       conflicted.message,

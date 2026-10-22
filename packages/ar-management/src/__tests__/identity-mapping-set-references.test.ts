@@ -779,6 +779,80 @@ describe('the usage API', () => {
   });
 });
 
+describe('the limits of the search are platform settings', () => {
+  /** Saves the platform's identity-mapping settings through the Settings API. */
+  async function savePlatform(t: ReturnType<typeof setup>, set: Record<string, unknown>) {
+    const admin = t.cookie(GLOBAL_SUPER_ADMIN);
+    const current = await t.call(admin, 'GET', PLATFORM_SETTINGS);
+    return t.call(admin, 'PATCH', PLATFORM_SETTINGS, { ifMatch: current.json.version, set });
+  }
+
+  it('list as many references as the display limit says, and count all of them', async () => {
+    const t = setup();
+    for (let index = 0; index < 25; index += 1) {
+      t.refs.client(t.coreA, 'set-a', TENANT, `app-${String(index).padStart(2, '0')}`);
+    }
+    expect((await savePlatform(t, { 'identity_mapping.reference_display_limit': 5 })).status).toBe(
+      200
+    );
+
+    const refused = await t.deactivate(t.cookie(), 'set-a', 'ver-a');
+    const usage = await t.usage(t.cookie(), 'set-a');
+
+    for (const references of [refused.json.references, usage.json.usage]) {
+      expect(references).toMatchObject({ count: 25, itemsTruncated: true });
+      expect(references.items).toHaveLength(5);
+    }
+  });
+
+  it('cut a place at the row limit, and give the count as a lower bound', async () => {
+    const t = setup();
+    for (let index = 0; index < 15; index += 1) {
+      t.refs.client(t.coreA, 'set-a', TENANT, `app-${String(index).padStart(2, '0')}`);
+    }
+    await savePlatform(t, { 'identity_mapping.reference_scan_row_limit': 10 });
+
+    const refused = await t.deactivate(t.cookie(), 'set-a', 'ver-a');
+
+    expect(refused.status).toBe(409);
+    expect(refused.json.references).toMatchObject({ count: 10, countIsLowerBound: true });
+  });
+
+  it('refuse a platform set’s change when there are more tenants than the tenant limit, though nothing names it', async () => {
+    const t = setup();
+    const global = t.cookie(GLOBAL_SUPER_ADMIN);
+    await savePlatform(t, { 'identity_mapping.reference_scan_tenant_limit': 1 });
+
+    const refused = await t.deactivate(global, 'set-plat', 'ver-plat');
+
+    expect(refused.status).toBe(409);
+    expect(refused.json.reason).toBe('scan_incomplete');
+    expect(refused.json.references.unscanned.items).toContainEqual(
+      expect.objectContaining({ area: 'tenant_limit' })
+    );
+    expect(activeActivations(t, 'set-plat')).toBe(1);
+
+    // With the limit raised the same request goes through.
+    await savePlatform(t, { 'identity_mapping.reference_scan_tenant_limit': 50 });
+    expect((await t.deactivate(global, 'set-plat', 'ver-plat')).status).toBe(200);
+  });
+
+  it('are refused outside their range, and to a tenant', async () => {
+    const t = setup();
+    for (const value of [0, 101, 2.5, '5']) {
+      const saved = await savePlatform(t, { 'identity_mapping.reference_display_limit': value });
+      expect(saved.status, String(value)).toBe(400);
+    }
+    const admin = t.cookie(GLOBAL_SUPER_ADMIN);
+    const current = await t.call(admin, 'GET', TENANT_SETTINGS);
+    const tenantSaved = await t.call(admin, 'PATCH', TENANT_SETTINGS, {
+      ifMatch: current.json.version,
+      set: { 'identity_mapping.reference_display_limit': 5 },
+    });
+    expect(tenantSaved.status).toBe(400);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------
 // Review follow-ups
 // ---------------------------------------------------------------------------------------------

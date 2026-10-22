@@ -370,6 +370,9 @@ export function sanitizeCopiedSettingsValue(
   }
 
   if (category === 'identity-mapping') {
+    // The shadow comparison of the Mapping Set selection is gone with the resolution it compared
+    // against: a saved value is dropped.
+    delete record['identity_mapping.shadow_compare_enabled'];
     // The target tenant does not have the source's Mapping Sets: a default that names one of them
     // would point at nothing (or, if the same ID ever appeared there, at another tenant's set).
     // A set the platform owns is the target's to use as well; `none` names no set.

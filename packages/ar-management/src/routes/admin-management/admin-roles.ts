@@ -34,6 +34,7 @@ import {
   callerOutranksGlobally,
   checkRoleInheritance,
   mayGiveGlobally,
+  mayRemoveAssignment,
   roleReachesGlobalAssignment,
 } from './admin-role-authority';
 
@@ -422,6 +423,16 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
+    // Moving a global assignment to a tenant takes the global access away from the person: it is
+    // judged as removing it would be.
+    if (
+      assignment.scope_type === 'global' &&
+      normalizedScope.scopeType !== 'global' &&
+      !mayRemoveAssignment(authContext, 'global', role.hierarchy_level)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
     if (
       body.expires_at !== undefined &&
       body.expires_at !== null &&
@@ -503,6 +514,10 @@ adminRolesRouter.delete('/:id/assignments/:assignmentId', async (c) => {
     const assignment = await roleAssignmentRepo.getAssignment(assignmentId);
     if (!assignment || assignment.admin_role_id !== id) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    if (!mayRemoveAssignment(authContext, assignment.scope_type, role.hierarchy_level)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     if (isPlatformAdminRole(role.name)) {

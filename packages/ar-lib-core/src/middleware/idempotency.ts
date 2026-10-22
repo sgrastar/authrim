@@ -30,6 +30,7 @@ import { createLogger } from '../utils/logger';
 import { createPhase1ErrorDetails } from '../errors/details';
 import { readRequestBytesWithLimit } from '../utils/body-limits';
 import { readResponseTextWithLimit } from '../utils/url-security';
+import { isUniqueConstraintError } from '../utils/d1-retry';
 
 const log = createLogger().module('IDEMPOTENCY');
 const IDEMPOTENCY_REQUEST_BODY_MAX_BYTES = 1024 * 1024;
@@ -86,10 +87,6 @@ const DEFAULT_REDACT_FIELDS = [
  * Default TTL: 24 hours
  */
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return String(error).includes('UNIQUE constraint');
-}
 
 function returnStoredResponse(
   c: Context<{ Bindings: Env }>,

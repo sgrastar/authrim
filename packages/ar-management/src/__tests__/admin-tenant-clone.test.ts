@@ -655,6 +655,13 @@ describe('admin tenant clone', () => {
       expect(copy({ [KEY]: 'set-platform' }, ['set-platform'])).toEqual({ [KEY]: 'set-platform' });
     });
 
+    it('drops the retired shadow comparison switch and keeps the default beside it', () => {
+      expect(
+        copy({ 'identity_mapping.shadow_compare_enabled': true, [KEY]: 'none' }, ['set-platform'])
+      ).toEqual({ [KEY]: 'none' });
+      expect(copy({ 'identity_mapping.shadow_compare_enabled': false })).toEqual({});
+    });
+
     it('keeps none, which names no set, and drops a value that is not a string', () => {
       expect(copy({ [KEY]: 'none' })).toEqual({ [KEY]: 'none' });
       for (const value of [false, null, 1, {}, ['set-platform']]) {

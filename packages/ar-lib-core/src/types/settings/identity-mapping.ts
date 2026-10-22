@@ -7,10 +7,12 @@
  *      GET/PATCH /api/admin/tenants/:tenantId/settings/identity-mapping
  * Config Level: platform, tenant (never per app: an app's own choice lives on the app)
  *
- * The default itself is not read by the release of claims yet (the key is `in_development`). It is
- * read by the shadow comparison only: while `identity_mapping.shadow_compare_enabled` is on, each
- * OIDC resolution is also run through the new selection and a difference from what the request
- * used is logged as a warning. The release of claims is unchanged.
+ * The same category holds the limits of the search for the places that name a Mapping Set (platform
+ * only, see `IDENTITY_MAPPING_SCAN_TENANT_LIMIT_KEY` and the keys beside it).
+ *
+ * The release of claims reads the default (ID token, UserInfo and the consent screen) through the
+ * selection in services/identity-mapping-selection.ts; an app that names nothing and a tenant
+ * and platform that set nothing are given no mapping.
  */
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
@@ -24,9 +26,30 @@ export const IDENTITY_MAPPING_NONE = 'none';
 /** The longest Mapping Set ID an app's own choice can hold (login-runtime-flow reads 200). */
 export const IDENTITY_MAPPING_SET_ID_MAX_LENGTH = 200;
 
+/**
+ * How far the search for the places that name a Mapping Set looks (the usage API, and the
+ * operations that delete or switch off a set and refuse while something names it). Platform
+ * settings: they bound the work one request does, which no tenant may raise. A saved or
+ * environment value outside the range is not used; the default is.
+ */
+export const IDENTITY_MAPPING_SCAN_TENANT_LIMIT_KEY =
+  'identity_mapping.reference_scan_tenant_limit';
+export const IDENTITY_MAPPING_SCAN_ROW_LIMIT_KEY = 'identity_mapping.reference_scan_row_limit';
+export const IDENTITY_MAPPING_SCAN_CONCURRENCY_KEY = 'identity_mapping.reference_scan_concurrency';
+export const IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT_KEY =
+  'identity_mapping.reference_display_limit';
+
+export const IDENTITY_MAPPING_SCAN_TENANT_LIMIT_DEFAULT = 200;
+export const IDENTITY_MAPPING_SCAN_ROW_LIMIT_DEFAULT = 500;
+export const IDENTITY_MAPPING_SCAN_CONCURRENCY_DEFAULT = 8;
+export const IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT_DEFAULT = 20;
+
 export interface IdentityMappingSettings {
   'identity_mapping.oidc_default_set_id': string;
-  'identity_mapping.shadow_compare_enabled': boolean;
+  'identity_mapping.reference_scan_tenant_limit': number;
+  'identity_mapping.reference_scan_row_limit': number;
+  'identity_mapping.reference_scan_concurrency': number;
+  'identity_mapping.reference_display_limit': number;
 }
 
 export const IDENTITY_MAPPING_SETTINGS_META: Record<keyof IdentityMappingSettings, SettingMeta> = {
@@ -40,19 +63,65 @@ export const IDENTITY_MAPPING_SETTINGS_META: Record<keyof IdentityMappingSetting
     description:
       'The ID of the Mapping Set that applies to apps of this scope that choose none of their own. Unset means no default: no mapping is applied. For a tenant, the value none means: do not use the platform default either. The Mapping Set must be active; a tenant may name one it owns or one the platform owns, the platform only one the platform owns.',
     visibility: 'admin',
-    status: 'in_development',
   },
-  'identity_mapping.shadow_compare_enabled': {
-    key: 'identity_mapping.shadow_compare_enabled',
-    // The comparison runs before the request's own settings are looked at, for every tenant: the
-    // platform decides whether it runs (it costs a settings read and, for a set, a database read).
-    scopes: ['platform'],
-    type: 'boolean',
-    default: false,
-    envKey: 'IDENTITY_MAPPING_SHADOW_COMPARE',
-    label: 'Compare Mapping Set Selection (shadow)',
+  'identity_mapping.reference_scan_tenant_limit': {
+    key: 'identity_mapping.reference_scan_tenant_limit',
+    type: 'number',
+    default: IDENTITY_MAPPING_SCAN_TENANT_LIMIT_DEFAULT,
+    envKey: 'IDENTITY_MAPPING_REFERENCE_SCAN_TENANT_LIMIT',
+    label: 'Mapping Set Usage Search: Tenants',
     description:
-      'While on, each OIDC identity mapping resolution is also run through the new selection (the app, then the tenant default, then the platform default) and a difference from what the request used is logged as a warning (identity_mapping_resolution_diff). It changes nothing in the response. It adds a settings read and, when the new selection names a Mapping Set, an Admin database read to each resolution, so turn it on only where the comparison is wanted. Off by default.',
+      'The most tenants whose apps are read when looking for the places that use a Mapping Set the platform owns. Each tenant is a database read; when there are more tenants than this, the rest are reported as not looked at, and deleting or switching off the set is refused. Held between 1 and 1000.',
+    min: 1,
+    max: 1000,
+    integer: true,
+    envNumber: 'strict-in-range',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'identity_mapping.reference_scan_row_limit': {
+    key: 'identity_mapping.reference_scan_row_limit',
+    type: 'number',
+    default: IDENTITY_MAPPING_SCAN_ROW_LIMIT_DEFAULT,
+    envKey: 'IDENTITY_MAPPING_REFERENCE_SCAN_ROW_LIMIT',
+    label: 'Mapping Set Usage Search: Rows per Place',
+    description:
+      'The most rows read from one place (a tenant default list, the apps of one tenant, the SAML providers of one tenant) when looking for the places that use a Mapping Set. A place with more is cut off and the count is given as a lower bound. Held between 10 and 5000.',
+    min: 10,
+    max: 5000,
+    integer: true,
+    envNumber: 'strict-in-range',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'identity_mapping.reference_scan_concurrency': {
+    key: 'identity_mapping.reference_scan_concurrency',
+    type: 'number',
+    default: IDENTITY_MAPPING_SCAN_CONCURRENCY_DEFAULT,
+    envKey: 'IDENTITY_MAPPING_REFERENCE_SCAN_CONCURRENCY',
+    label: 'Mapping Set Usage Search: Concurrency',
+    description:
+      'How many tenants are read at the same time when looking for the places that use a Mapping Set the platform owns. Held between 1 and 16.',
+    min: 1,
+    max: 16,
+    integer: true,
+    envNumber: 'strict-in-range',
+    scopes: ['platform'],
+    visibility: 'admin',
+  },
+  'identity_mapping.reference_display_limit': {
+    key: 'identity_mapping.reference_display_limit',
+    type: 'number',
+    default: IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT_DEFAULT,
+    envKey: 'IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT',
+    label: 'Mapping Set Usage: References Shown',
+    description:
+      'How many references the usage answer and the refusal of a deletion list; the count is always the whole. Held between 1 and 100.',
+    min: 1,
+    max: 100,
+    integer: true,
+    envNumber: 'strict-in-range',
+    scopes: ['platform'],
     visibility: 'admin',
   },
 };
@@ -61,7 +130,7 @@ export const IDENTITY_MAPPING_CATEGORY_META: CategoryMeta = {
   category: 'identity-mapping',
   label: 'Identity Mapping',
   description:
-    'Default Mapping Sets for platform and tenant (not yet applied at runtime), and the shadow comparison of their selection',
+    'The Mapping Set that applies to apps that choose none of their own, for the platform and for each tenant',
   settings: IDENTITY_MAPPING_SETTINGS_META,
 };
 
@@ -69,8 +138,8 @@ export const IDENTITY_MAPPING_DEFAULTS: {
   [K in keyof IdentityMappingSettings]: IdentityMappingSettings[K] | null;
 } = {
   'identity_mapping.oidc_default_set_id': null,
-  'identity_mapping.shadow_compare_enabled': false,
+  'identity_mapping.reference_scan_tenant_limit': IDENTITY_MAPPING_SCAN_TENANT_LIMIT_DEFAULT,
+  'identity_mapping.reference_scan_row_limit': IDENTITY_MAPPING_SCAN_ROW_LIMIT_DEFAULT,
+  'identity_mapping.reference_scan_concurrency': IDENTITY_MAPPING_SCAN_CONCURRENCY_DEFAULT,
+  'identity_mapping.reference_display_limit': IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT_DEFAULT,
 };
-
-/** The setting that turns the shadow comparison of the Mapping Set selection on. */
-export const IDENTITY_MAPPING_SHADOW_COMPARE_KEY = 'identity_mapping.shadow_compare_enabled';

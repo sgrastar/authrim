@@ -169,6 +169,24 @@ describe('findPlatformMappingCompileViolation', () => {
     ).toMatch(/not a field of the platform catalog/);
   });
 
+  it('refuses a source an entry of the older taxonomy `destination` stands for, as destination-only', () => {
+    expect(
+      findPlatformMappingCompileViolation(mapping(), [
+        entry({ targetType: 'destination', targetTaxonomy: 'destination' }),
+      ])
+    ).toMatch(/not a field of the platform catalog/);
+    expect(
+      findPlatformMappingCompileViolation(
+        mapping({
+          edges: [
+            { sourceRef: { catalogEntryId: 'platform_canonical_email' }, targetRef: destination() },
+          ],
+        }),
+        [entry({ targetType: 'destination', targetTaxonomy: 'destination' })]
+      )
+    ).toMatch(/not a field of the platform catalog/);
+  });
+
   it('refuses a custom entry named by id or read by place, but not a destination of the same name', () => {
     const custom = entry({
       ids: ['custom_1'],
@@ -205,6 +223,105 @@ describe('findPlatformMappingCompileViolation', () => {
         [entry(), custom]
       )
     ).toBeNull();
+  });
+
+  describe('a source that names only its catalog entry', () => {
+    // An entry that is not marked custom, but describes a place only a tenant defines the keys of.
+    const tenantDefined = (overrides: Partial<PlatformCatalogEntry> = {}) =>
+      entry({
+        ids: ['platform_tenant_defined', 'field.tenant.defined'],
+        namespace: 'authrim.custom_claims',
+        path: 'loyalty',
+        ...overrides,
+      });
+    const idOnly = (catalogEntryId: string) => ({ catalogEntryId });
+
+    it('is refused once it is completed to a place only a tenant defines, as if it had named it', () => {
+      for (const id of ['platform_tenant_defined', 'field.tenant.defined']) {
+        expect(
+          findPlatformMappingCompileViolation(
+            mapping({ edges: [{ sourceRef: idOnly(id), targetRef: destination() }] }),
+            [entry(), tenantDefined()]
+          ),
+          id
+        ).toMatch(/tenant-defined/);
+      }
+      // Spelled out, the same source is refused already by the save-time check.
+      expect(
+        findPlatformMappingCompileViolation(
+          mapping({
+            edges: [
+              {
+                sourceRef: source({ namespace: 'authrim.custom_claims', path: 'loyalty' }),
+                targetRef: destination(),
+              },
+            ],
+          }),
+          [entry(), tenantDefined()]
+        )
+      ).toMatch(/tenant-defined/);
+    });
+
+    it('is refused when its path leads into a tenant-defined part of the subject', () => {
+      expect(
+        findPlatformMappingCompileViolation(
+          mapping({
+            edges: [{ sourceRef: idOnly('field.tenant.defined'), targetRef: destination() }],
+          }),
+          [entry(), tenantDefined({ namespace: 'authrim.profile', path: 'custom_fields.loyalty' })]
+        )
+      ).toMatch(/tenant-defined/);
+    });
+
+    it('is refused as a validation rule target too', () => {
+      expect(
+        findPlatformMappingCompileViolation(
+          mapping({
+            validationRules: [
+              { targetRef: { side: 'source', catalogEntryId: 'field.tenant.defined' } },
+            ],
+          }),
+          [entry(), tenantDefined()]
+        )
+      ).toMatch(/tenant-defined/);
+    });
+
+    it('is refused for a destination that names such an entry, and for its validation rule', () => {
+      expect(
+        findPlatformMappingCompileViolation(
+          mapping({
+            edges: [
+              {
+                sourceRef: source(),
+                targetRef: destination({ catalogEntryId: 'field.tenant.defined' }),
+              },
+            ],
+          }),
+          [entry(), tenantDefined()]
+        )
+      ).toMatch(/cannot use a tenant-defined field/);
+      expect(
+        findPlatformMappingCompileViolation(
+          mapping({
+            validationRules: [
+              { targetRef: destination({ catalogEntryId: 'platform_tenant_defined' }) },
+            ],
+          }),
+          [entry(), tenantDefined()]
+        )
+      ).toMatch(/cannot validate a tenant-defined field/);
+    });
+
+    it('is let through when it completes to a standard field', () => {
+      expect(
+        findPlatformMappingCompileViolation(
+          mapping({
+            edges: [{ sourceRef: idOnly('field.canonical.email'), targetRef: destination() }],
+          }),
+          [entry(), tenantDefined()]
+        )
+      ).toBeNull();
+    });
   });
 
   it('asks a validation rule on a source for a catalog field, and a destination one only to not be custom', () => {

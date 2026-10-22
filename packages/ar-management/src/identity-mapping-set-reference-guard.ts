@@ -21,6 +21,7 @@ import {
   PLATFORM_MAPPING_TENANT_ID,
   requireDedicatedAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
+  resolveMappingSetReferenceLimits,
   runtimeDestinationProfileIds,
   summarizeMappingSetReferences,
   type AdminAuthContext,
@@ -57,6 +58,9 @@ export function canSeeOtherTenantReferences(c: AdminContext): boolean {
   return hasGlobalAdminPermission(auth, '*');
 }
 
+/** How many references each search was told to list (`identity_mapping.reference_display_limit`). */
+const displayLimits = new WeakMap<MappingSetReferenceScan, number>();
+
 /** The search, wired to this request: its Core database, tenant routing and the settings store. */
 export async function scanMappingSetReferences(
   c: AdminContext,
@@ -76,7 +80,10 @@ export async function scanMappingSetReferences(
     // Left null: the search reports the tenant's apps as not looked at.
   }
   const requestCache = new Map();
-  return findMappingSetReferences({
+  // The platform's settings bound the search (tenants, rows, concurrency, rows listed).
+  const limits = await resolveMappingSetReferenceLimits(c.env);
+  const scan = await findMappingSetReferences({
+    limits,
     adminAdapter: requireDedicatedAdminDatabaseAdapter(c.env, PARTITION),
     setId: input.setId,
     ownerTenantId: input.ownerTenantId,
@@ -98,6 +105,8 @@ export async function scanMappingSetReferences(
     settingsStore: c.env.SETTINGS ?? null,
     purpose: input.purpose,
   });
+  displayLimits.set(scan, limits.displayLimit);
+  return scan;
 }
 
 /** The search result as the caller of this request may see it. */
@@ -108,6 +117,7 @@ export function summarizeForRequest(
   return summarizeMappingSetReferences(scan, {
     viewerTenantId: getTenantIdFromContext(c),
     includeOtherTenants: canSeeOtherTenantReferences(c),
+    itemLimit: displayLimits.get(scan),
   });
 }
 

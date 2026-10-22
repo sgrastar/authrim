@@ -6,8 +6,22 @@ import type { DatabaseAdapter } from '../../db/adapter';
 const { resolveBinding } = vi.hoisted(() => ({ resolveBinding: vi.fn() }));
 
 vi.mock('../identity-mapping-runtime-resolver', () => ({
-  resolveRuntimeIdentityMappingBinding: resolveBinding,
+  resolveRuntimeIdentityMappingBinding: vi.fn(),
   assertRuntimeIdentityMappingReleaseSafety: vi.fn(),
+}));
+
+// The selection and the reading of the chosen set are tested in
+// oidc-identity-mapping-explicit-resolution.test.ts; `resolveBinding` stands for them here.
+vi.mock('../identity-mapping-resolution', () => ({
+  resolveOidcIdentityMappingBinding: async () => {
+    const binding = await resolveBinding();
+    return {
+      selection: binding
+        ? { kind: 'bound', tier: 'tenant_default', setId: binding.fieldMappingSetId, chain: [] }
+        : { kind: 'none', reason: 'no_default', chain: [] },
+      binding,
+    };
+  },
 }));
 vi.mock('../destination-profile-consent', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../destination-profile-consent')>()),
@@ -19,6 +33,16 @@ vi.mock('../destination-profile-consent', async (importOriginal) => ({
 import { applyOIDCIdentityMapping, deriveOIDCSubject } from '../oidc-identity-mapping';
 
 const adapter = {} as DatabaseAdapter;
+const adminAdapter = {
+  query: vi.fn(),
+  queryOne: vi.fn(),
+  execute: vi.fn(),
+  transaction: vi.fn(),
+  batch: vi.fn(),
+  isHealthy: vi.fn(),
+  getType: vi.fn(),
+  close: vi.fn(),
+} as unknown as DatabaseAdapter;
 const entry = (id: string, path: string) => ({
   id,
   namespace: 'oidc.claim',
@@ -73,6 +97,7 @@ describe('a mapping whose only source reference is a validation rule', () => {
   ) =>
     applyOIDCIdentityMapping({
       adapter,
+      env: { DB_ADMIN: adminAdapter as never },
       tenantId: 'tenant-a',
       clientId: 'client-a',
       claims,
@@ -108,6 +133,7 @@ describe('a mapping whose only source reference is a validation rule', () => {
     await expect(
       deriveOIDCSubject({
         adapter,
+        env: { DB_ADMIN: adminAdapter as never },
         tenantId: 'tenant-a',
         clientId: 'client-a',
         claims: { sub: 'u' },

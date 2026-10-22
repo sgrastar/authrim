@@ -3,6 +3,7 @@ import {
   ApiMigrationEngine,
   CONTROL_ENSURE_WORKER_BINDING_TARGETS_SQL,
   MigrationReleaseArtifactReader,
+  RUNTIME_SMOKE_LOOKUP_METADATA_KEY,
   activeWorkerDeployment,
   assertControlPlaneRecordIsSecretFree,
   ensureControlProvisioningD1,
@@ -14,6 +15,7 @@ import {
   type CloudflareWorkerDeployment,
   type CloudflareWorkerBinding,
   type CloudflareWorkerSettings,
+  type ControlProvisioningD1CreateCheckpoint,
   type ControlProvisioningFailureDecision,
   type ReleaseArtifactObject,
   type ReleaseArtifactStore,
@@ -32,6 +34,19 @@ import type {
 } from './control-operator-operations.js';
 
 const LEASE_SECONDS = 5 * 60;
+
+/** The provider id pattern the operation listing accepts for a create checkpoint. */
+const SAFE_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+/**
+ * The shard row an operation provisions: lookup physical shards and tenant shards share the
+ * desired resource, migration state and Worker-binding path, but keep their status apart.
+ */
+function shardProjection(operation: Pick<PendingControlOperatorOperation, 'dataRole'>) {
+  return operation.dataRole === 'lookup'
+    ? { table: 'control_lookup_physical_shards', idColumn: 'lookup_shard_id' }
+    : { table: 'control_tenant_shards', idColumn: 'shard_id' };
+}
 const WORKER_BINDING_LEASE_SECONDS = 15 * 60;
 
 interface ClaimedOperationRow extends Record<string, unknown> {
@@ -73,7 +88,7 @@ export interface SetupOperatorExecutionResult {
   nextAttemptAt: number | null;
 }
 
-class SetupR2ReleaseArtifactStore implements ReleaseArtifactStore {
+export class SetupR2ReleaseArtifactStore implements ReleaseArtifactStore {
   constructor(
     private readonly bucketName: string,
     private readonly verifyBucketOwnership?: () => Promise<void>
@@ -283,7 +298,7 @@ async function claimCreate(input: {
   operation: PendingControlOperatorOperation;
   ownerId: string;
   now: number;
-}): Promise<SetupOperatorLease | null> {
+}): Promise<(SetupOperatorLease & { checkpoint: ControlProvisioningD1CreateCheckpoint }) | null> {
   const leaseExpiresAt = input.now + LEASE_SECONDS;
   const results = await input.client.queryD1Batch(input.controlDatabaseId, [
     {
@@ -294,12 +309,16 @@ async function claimCreate(input: {
                    started_at = COALESCE(started_at, ?), updated_at = ?
              WHERE operation_id = ? AND environment_id = ?
                AND operation_kind = 'provision_shard'
-               AND status = 'blocked' AND last_error_code = 'operator_action_required'
+               AND (
+                 (status = 'blocked' AND last_error_code = 'operator_action_required') OR
+                 (status = 'running' AND last_error_code IS NULL
+                   AND lock_expires_at IS NOT NULL AND lock_expires_at <= ?)
+               )
                AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                AND EXISTS (
                  SELECT 1 FROM control_operation_steps step
                   WHERE step.operation_id = candidate.operation_id
-                    AND step.step_key = 'create_d1' AND step.status = 'blocked'
+                    AND step.step_key = 'create_d1' AND step.status IN ('blocked', 'running')
                )
                AND (
                  SELECT COUNT(*) FROM control_operations active
@@ -323,6 +342,7 @@ async function claimCreate(input: {
         input.operation.operationId,
         input.operation.environmentId,
         input.now,
+        input.now,
       ],
     },
     {
@@ -330,7 +350,7 @@ async function claimCreate(input: {
                SET status = 'running', attempt_count = attempt_count + 1,
                    next_attempt_at = NULL, last_error_code = NULL, last_error_redacted = NULL,
                    started_at = COALESCE(started_at, ?), updated_at = ?
-             WHERE operation_id = ? AND step_key = 'create_d1' AND status = 'blocked'
+             WHERE operation_id = ? AND step_key = 'create_d1' AND status IN ('blocked', 'running')
                AND EXISTS (
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.environment_id = ?
@@ -367,9 +387,9 @@ async function claimCreate(input: {
       ],
     },
     {
-      sql: `UPDATE control_tenant_shards
+      sql: `UPDATE ${shardProjection(input.operation).table}
                SET status = 'provisioning', updated_at = ?
-             WHERE shard_id = ? AND environment_id = ?
+             WHERE ${shardProjection(input.operation).idColumn} = ? AND environment_id = ?
                AND d1_desired_resource_id = ?
                AND EXISTS (
                  SELECT 1 FROM control_operations operation
@@ -389,16 +409,17 @@ async function claimCreate(input: {
       sql: `SELECT operation.status AS operation_status,
                    operation.lock_owner, operation.fencing_token,
                    step.status AS step_status,
-                   desired.provisioning_state, shard.status AS shard_status
+                   desired.provisioning_state, desired.provider_create_state,
+                   desired.provider_resource_id, shard.status AS shard_status
               FROM control_operations operation
               JOIN control_operation_steps step
                 ON step.operation_id = operation.operation_id AND step.step_key = 'create_d1'
               JOIN control_desired_resources desired
                 ON desired.origin_operation_id = operation.operation_id
                AND desired.desired_resource_id = ?
-              JOIN control_tenant_shards shard
+              JOIN ${shardProjection(input.operation).table} shard
                 ON shard.d1_desired_resource_id = desired.desired_resource_id
-               AND shard.shard_id = ?
+               AND shard.${shardProjection(input.operation).idColumn} = ?
              WHERE operation.operation_id = ? AND operation.environment_id = ?`,
       params: [
         input.operation.desiredResourceId,
@@ -435,6 +456,18 @@ async function claimCreate(input: {
   ) {
     throw new Error('control_operator_lease_reflection_mismatch');
   }
+  // A previous operator can still move the checkpoint until this lease replaces its own, so the
+  // create resumes from the state read under the new lease, not from the listing.
+  const createState = reflected.provider_create_state;
+  const providerResourceId = reflected.provider_resource_id ?? null;
+  if (
+    (createState !== 'not_started' && createState !== 'issued' && createState !== 'identified') ||
+    (createState === 'identified') !==
+      (typeof providerResourceId === 'string' && SAFE_PROVIDER_ID.test(providerResourceId)) ||
+    (createState !== 'identified' && providerResourceId !== null)
+  ) {
+    throw new Error('control_operator_create_checkpoint_invalid');
+  }
   return {
     operationId: row.operation_id,
     environmentId: row.environment_id,
@@ -443,6 +476,7 @@ async function claimCreate(input: {
     attemptCount: row.attempt_count,
     createdAt: row.created_at,
     retryBudgetStartedAt: row.retry_budget_started_at ?? row.created_at,
+    checkpoint: { state: createState, providerResourceId: providerResourceId as string | null },
   };
 }
 
@@ -622,12 +656,9 @@ async function markCreateSucceeded(input: {
 }): Promise<SetupOperatorExecutionResult> {
   const observedId = `observed:${input.operation.desiredResourceId}`;
   const projectionAssertionId = `projection:${input.lease.operationId}:${input.lease.fencingToken}:setup`;
-  const shardProjectionTable =
-    input.operation.dataRole === 'lookup'
-      ? 'control_lookup_physical_shards'
-      : 'control_tenant_shards';
-  const shardProjectionIdColumn =
-    input.operation.dataRole === 'lookup' ? 'lookup_shard_id' : 'shard_id';
+  const { table: shardProjectionTable, idColumn: shardProjectionIdColumn } = shardProjection(
+    input.operation
+  );
   const fence = [input.lease.operationId, input.lease.ownerId, input.lease.fencingToken] as const;
   const identity = [
     input.operation.desiredResourceId,
@@ -1229,53 +1260,90 @@ async function writeSetupMigrationMetadata(input: {
 }): Promise<void> {
   const migration = input.operation.migration;
   if (!migration) throw new Error('control_operator_migration_state_missing');
-  const response = await input.client.queryD1Batch(migration.databaseId, [
-    {
-      sql: `INSERT INTO authrim_control_plane_shard_metadata (
-              singleton_id, binding_ref, data_role, residency_partition, migration_generation,
-              release_id, manifest_digest, expected_file_count, last_filename, updated_at
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(singleton_id) DO UPDATE SET
-              binding_ref = excluded.binding_ref,
-              data_role = excluded.data_role,
-              residency_partition = excluded.residency_partition,
-              migration_generation = excluded.migration_generation,
-              release_id = excluded.release_id,
-              manifest_digest = excluded.manifest_digest,
-              expected_file_count = excluded.expected_file_count,
-              last_filename = excluded.last_filename,
-              updated_at = excluded.updated_at`,
-      params: [
-        input.operation.bindingRef,
-        input.operation.dataRole,
-        input.operation.residencyPartition,
-        migration.generation,
-        migration.releaseId,
-        migration.manifestDigest,
-        input.result.totalFiles,
-        input.result.lastFilename,
-        input.now,
-      ],
-    },
-    {
-      sql: `SELECT binding_ref, data_role, residency_partition, migration_generation,
-                   release_id, manifest_digest, expected_file_count, last_filename
-              FROM authrim_control_plane_shard_metadata
-             WHERE singleton_id = 1`,
-    },
-  ]);
+  // The same record Control writes after its own migration (ar-control writeMigrationMetadata):
+  // runtime smoke reads it back from either table.
+  const metadata = {
+    binding_ref: input.operation.bindingRef,
+    data_role: input.operation.dataRole,
+    residency_partition: input.operation.residencyPartition,
+    migration_generation: migration.generation,
+    release_id: migration.releaseId,
+    manifest_digest: migration.manifestDigest,
+    expected_file_count: input.result.totalFiles,
+    last_filename: input.result.lastFilename,
+  };
+  const lookup = input.operation.dataRole === 'lookup';
+  const response = await input.client.queryD1Batch(
+    migration.databaseId,
+    lookup
+      ? [
+          {
+            sql: `INSERT INTO lookup_schema_metadata (metadata_key, metadata_value, updated_at)
+                  VALUES (?, ?, ?)
+                  ON CONFLICT(metadata_key) DO UPDATE SET
+                    metadata_value = excluded.metadata_value,
+                    updated_at = excluded.updated_at`,
+            params: [RUNTIME_SMOKE_LOOKUP_METADATA_KEY, JSON.stringify(metadata), input.now],
+          },
+          {
+            sql: `SELECT metadata_value FROM lookup_schema_metadata WHERE metadata_key = ?`,
+            params: [RUNTIME_SMOKE_LOOKUP_METADATA_KEY],
+          },
+        ]
+      : [
+          {
+            sql: `INSERT INTO authrim_control_plane_shard_metadata (
+                    singleton_id, binding_ref, data_role, residency_partition, migration_generation,
+                    release_id, manifest_digest, expected_file_count, last_filename, updated_at
+                  ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(singleton_id) DO UPDATE SET
+                    binding_ref = excluded.binding_ref,
+                    data_role = excluded.data_role,
+                    residency_partition = excluded.residency_partition,
+                    migration_generation = excluded.migration_generation,
+                    release_id = excluded.release_id,
+                    manifest_digest = excluded.manifest_digest,
+                    expected_file_count = excluded.expected_file_count,
+                    last_filename = excluded.last_filename,
+                    updated_at = excluded.updated_at`,
+            params: [
+              metadata.binding_ref,
+              metadata.data_role,
+              metadata.residency_partition,
+              metadata.migration_generation,
+              metadata.release_id,
+              metadata.manifest_digest,
+              metadata.expected_file_count,
+              metadata.last_filename,
+              input.now,
+            ],
+          },
+          {
+            sql: `SELECT binding_ref, data_role, residency_partition, migration_generation,
+                         release_id, manifest_digest, expected_file_count, last_filename
+                    FROM authrim_control_plane_shard_metadata
+                   WHERE singleton_id = 1`,
+          },
+        ]
+  );
   assertBatch(response, 2);
-  const [reflected] = resultRows<Record<string, unknown>>(response[1]);
+  const [row] = resultRows<Record<string, unknown>>(response[1]);
+  let reflected: Record<string, unknown> | undefined = row;
+  if (lookup) {
+    try {
+      reflected =
+        typeof row?.metadata_value === 'string'
+          ? (JSON.parse(row.metadata_value) as Record<string, unknown>)
+          : undefined;
+    } catch {
+      reflected = undefined;
+    }
+  }
+  const keys = Object.keys(metadata) as Array<keyof typeof metadata>;
   if (
     !reflected ||
-    reflected.binding_ref !== input.operation.bindingRef ||
-    reflected.data_role !== input.operation.dataRole ||
-    reflected.residency_partition !== input.operation.residencyPartition ||
-    reflected.migration_generation !== migration.generation ||
-    reflected.release_id !== migration.releaseId ||
-    reflected.manifest_digest !== migration.manifestDigest ||
-    reflected.expected_file_count !== input.result.totalFiles ||
-    reflected.last_filename !== input.result.lastFilename
+    (lookup && Object.keys(reflected).length !== keys.length) ||
+    keys.some((key) => reflected[key] !== metadata[key])
   ) {
     throw new Error('control_migration_metadata_write_failed');
   }
@@ -1363,8 +1431,8 @@ async function markMigrationSucceeded(input: {
       params: [input.now, input.operation.desiredResourceId, input.lease.environmentId, ...fence],
     },
     {
-      sql: `UPDATE control_tenant_shards SET status = 'ready', updated_at = ?
-             WHERE shard_id = ? AND environment_id = ?
+      sql: `UPDATE ${shardProjection(input.operation).table} SET status = 'ready', updated_at = ?
+             WHERE ${shardProjection(input.operation).idColumn} = ? AND environment_id = ?
                AND EXISTS (
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.lock_owner = ?
@@ -1471,11 +1539,13 @@ async function markMigrationSucceeded(input: {
                AND binding_step.step_key = 'reconcile_worker_bindings'
               JOIN control_desired_resources desired
                 ON desired.desired_resource_id = migration.desired_resource_id
-              JOIN control_tenant_shards shard
+              JOIN ${shardProjection(input.operation).table} shard
                 ON shard.d1_desired_resource_id = desired.desired_resource_id
+               AND shard.${shardProjection(input.operation).idColumn} = ?
              WHERE operation.operation_id = ? AND operation.environment_id = ?`,
       params: [
         input.operation.desiredResourceId,
+        input.operation.shardId,
         input.lease.operationId,
         input.lease.environmentId,
       ],
@@ -2989,10 +3059,7 @@ export async function executeSetupControlOperatorCreate(input: {
           readReplicationMode: input.operation.readReplicationMode,
         },
         provider: client,
-        checkpoint: {
-          state: input.operation.providerCreateState,
-          providerResourceId: input.operation.providerResourceId,
-        },
+        checkpoint: lease.checkpoint,
         reserveCreate: () =>
           reserveCreate({
             client,

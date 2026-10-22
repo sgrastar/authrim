@@ -16,6 +16,7 @@ import {
   encryptValue,
   getTenantIdFromContext,
   hasAdminPermission,
+  hasGlobalPlatformAuthority,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
@@ -119,12 +120,11 @@ function hasPermission(authContext: AdminAuthContext, permission: string): boole
   return hasAdminPermission(authContext.permissions || [], permission);
 }
 
+// Platform destinations reach every tenant, so the authority has to come from a global assignment:
+// `roles` and `permissions` also hold what is given for one tenant only. A machine token needs the
+// destinations permission of the operation for every tenant, which its callers' own rule checks.
 function hasPlatformAuthority(authContext: AdminAuthContext): boolean {
-  return (
-    hasAdminPermission(authContext.permissions || [], ADMIN_PERMISSIONS.ALL) ||
-    (authContext.roles || []).includes('super_admin') ||
-    (authContext.roles || []).includes('system_admin')
-  );
+  return hasGlobalPlatformAuthority(authContext, ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_ALL);
 }
 
 function hasRuntimeBinding(env: Env, bindingRef: string): boolean {

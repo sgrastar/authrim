@@ -85,6 +85,12 @@ export interface TenantDatabaseResolveOptions {
   minimumSchemaVersion?: number;
   deploymentTarget?: string;
   requestCache?: TenantDatabaseRequestCache;
+  /**
+   * `none`: resolve for a read that must leave no trace. A failure to route (a binding that is not
+   * configured, a schema too old, a snapshot that does not verify) is still thrown, but is not
+   * reported: no notification event and no repair job is written.
+   */
+  sideEffects?: 'none';
   memoryCacheTtlMs?: number;
   generationCacheTtlMs?: number;
 }
@@ -186,6 +192,8 @@ function getDeploymentTarget(
 async function reportTenantDatabaseResolverHealthFailure(
   env: TenantDatabaseResolverEnv,
   input: {
+    /** Report nothing (see `TenantDatabaseResolveOptions.sideEffects`). */
+    quiet?: boolean;
     tenantId: string;
     role: TenantDatabaseRole;
     code: 'missing_binding' | 'schema_version_too_old';
@@ -199,7 +207,7 @@ async function reportTenantDatabaseResolverHealthFailure(
     createdAt?: string | null;
   }
 ): Promise<void> {
-  if (!env.DB_ADMIN) return;
+  if (input.quiet || !env.DB_ADMIN) return;
   if (
     input.code === 'missing_binding' &&
     isWithinTenantDatabaseProvisioningGracePeriod(input.createdAt)
@@ -288,6 +296,7 @@ async function getBinding(
   env: TenantDatabaseResolverEnv,
   bindingRef: string,
   context: {
+    quiet?: boolean;
     tenantId: string;
     role: TenantDatabaseRole;
     generation?: number | null;
@@ -419,7 +428,8 @@ async function getMemoryCachedTenantDatabase(
   env: TenantDatabaseResolverEnv,
   tenantId: string,
   deploymentTarget: string | null,
-  generationCacheTtlMs: number
+  generationCacheTtlMs: number,
+  quiet = false
 ): Promise<ResolvedTenantStore | null> {
   const memoryCache = getTenantDatabaseMemoryCache(env);
   const cached = memoryCache.get(cacheKey);
@@ -446,6 +456,7 @@ async function getMemoryCachedTenantDatabase(
   return {
     ...cached.value,
     source: await getBinding(env, cached.value.bindingRef, {
+      quiet,
       tenantId: cached.value.tenantId,
       role: cached.value.role,
       generation: cached.value.generation,
@@ -831,6 +842,7 @@ function snapshotStoreToRegistryRow(
 async function reportRuntimeSnapshotSecurityFailure(
   env: TenantDatabaseResolverEnv,
   input: {
+    quiet?: boolean;
     tenantId: string;
     role: TenantDatabaseRole;
     deploymentTarget: string;
@@ -840,7 +852,7 @@ async function reportRuntimeSnapshotSecurityFailure(
     runtimeGeneration?: number | null;
   }
 ): Promise<void> {
-  if (!env.DB_ADMIN) return;
+  if (input.quiet || !env.DB_ADMIN) return;
   try {
     const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-runtime-registry-security');
     await recordTenantRuntimeRegistrySnapshotSecurityEvent(
@@ -890,6 +902,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
   const expectedDeploymentTarget = deploymentTarget ?? 'default';
   if (snapshot.deploymentTarget !== expectedDeploymentTarget) {
     await reportRuntimeSnapshotSecurityFailure(env, {
+      quiet: options.sideEffects === 'none',
       tenantId: options.tenantId,
       role: options.role,
       deploymentTarget: expectedDeploymentTarget,
@@ -930,6 +943,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
   }
   if (signatureStatus !== 'valid') {
     await reportRuntimeSnapshotSecurityFailure(env, {
+      quiet: options.sideEffects === 'none',
       tenantId: options.tenantId,
       role: options.role,
       deploymentTarget: expectedDeploymentTarget,
@@ -981,6 +995,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
   const minimumSchemaVersion = options.minimumSchemaVersion ?? 1;
   if (row.schema_version < minimumSchemaVersion) {
     await reportTenantDatabaseResolverHealthFailure(env, {
+      quiet: options.sideEffects === 'none',
       tenantId: options.tenantId,
       role: options.role,
       code: 'schema_version_too_old',
@@ -1013,6 +1028,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
   }
   if (!row.binding_ref) {
     await reportTenantDatabaseResolverHealthFailure(env, {
+      quiet: options.sideEffects === 'none',
       tenantId: options.tenantId,
       role: options.role,
       code: 'missing_binding',
@@ -1035,6 +1051,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       tenantId: options.tenantId,
       role: options.role,
       source: await getBinding(env, row.binding_ref, {
+        quiet: options.sideEffects === 'none',
         tenantId: options.tenantId,
         role: options.role,
         generation: row.generation,
@@ -1159,7 +1176,8 @@ export async function resolveTenantDatabaseSourceFromRegistry(
     env,
     options.tenantId,
     deploymentTarget,
-    options.generationCacheTtlMs ?? DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS
+    options.generationCacheTtlMs ?? DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS,
+    options.sideEffects === 'none'
   );
   if (memoryCached?.resolutionSource === 'runtime_registry') {
     options.requestCache?.set(cacheKey, memoryCached);
@@ -1374,7 +1392,8 @@ export async function resolveTenantDatabaseSourceFromControlRegistry(
     env,
     options.tenantId,
     deploymentTarget,
-    options.generationCacheTtlMs ?? DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS
+    options.generationCacheTtlMs ?? DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS,
+    options.sideEffects === 'none'
   );
   if (memoryCached) {
     options.requestCache?.set(cacheKey, memoryCached);
@@ -1448,6 +1467,7 @@ export async function resolveTenantDatabaseSourceFromControlRegistry(
   const minimumSchemaVersion = options.minimumSchemaVersion ?? 1;
   if (row.schema_version < minimumSchemaVersion) {
     await reportTenantDatabaseResolverHealthFailure(env, {
+      quiet: options.sideEffects === 'none',
       tenantId: options.tenantId,
       role: options.role,
       code: 'schema_version_too_old',
@@ -1481,6 +1501,7 @@ export async function resolveTenantDatabaseSourceFromControlRegistry(
   }
   if (!row.binding_ref) {
     await reportTenantDatabaseResolverHealthFailure(env, {
+      quiet: options.sideEffects === 'none',
       tenantId: options.tenantId,
       role: options.role,
       code: 'missing_binding',
@@ -1502,6 +1523,7 @@ export async function resolveTenantDatabaseSourceFromControlRegistry(
     tenantId: options.tenantId,
     role: options.role,
     source: await getBinding(env, row.binding_ref, {
+      quiet: options.sideEffects === 'none',
       tenantId: options.tenantId,
       role: options.role,
       generation: row.generation,

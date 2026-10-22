@@ -4901,6 +4901,176 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    describe('a selector of the older kind (a Destination Profile and no Mapping Set)', () => {
+      it.each([
+        [
+          'destinationProfileId',
+          { destinationProfileId: 'profile-1' },
+          /fieldMappingSetId is required/,
+        ],
+        [
+          'destination_profile_id',
+          { destination_profile_id: 'profile-1' },
+          /destination_profile_id is not accepted/,
+        ],
+      ])('is refused on create and on update, as %s', async (_name, selector, description) => {
+        const createDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const created = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Old Client',
+            redirect_uris: ['https://example.com/callback'],
+            identity_mapping: selector,
+          },
+          db: createDB,
+        });
+        const createResponse = await adminClientCreateHandler(created);
+        expect(createResponse.status).toBe(400);
+        expect(await createResponse.json()).toMatchObject({
+          error: 'invalid_request',
+          error_description: expect.stringMatching(description),
+        });
+        expect(createDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('INSERT'));
+
+        const updateDB = createMockDB({
+          firstResult: createOAuthClientRow('mapped-client'),
+          runResult: { success: true, meta: { changes: 1 } },
+        });
+        const updated = createMockContext({
+          method: 'PUT',
+          params: { id: 'mapped-client' },
+          body: { identity_mapping: selector },
+          db: updateDB,
+        });
+        expect((await adminClientUpdateHandler(updated)).status).toBe(400);
+        expect(updateDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
+      });
+    });
+
+    describe('the opt-out { mode: "none" }', () => {
+      it('is saved on create, as the whole choice, without checking any Mapping Set', async () => {
+        const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Unmapped Client',
+            redirect_uris: ['https://example.com/callback'],
+            identity_mapping: { mode: 'none' },
+          },
+          db: mockDB,
+        });
+        validateMappingSetReference.mockClear();
+
+        const response = await adminClientCreateHandler(c);
+
+        expect(response.status).toBe(201);
+        expect(validateMappingSetReference).not.toHaveBeenCalled();
+        expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
+          JSON.stringify({ mode: 'none' })
+        );
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            client: expect.objectContaining({ identity_mapping: { mode: 'none' } }),
+          }),
+          201
+        );
+      });
+
+      it('is saved on update', async () => {
+        const mockDB = createMockDB({
+          firstResult: createOAuthClientRow('mapped-client'),
+          runResult: { success: true, meta: { changes: 1 } },
+        });
+        const c = createMockContext({
+          method: 'PUT',
+          params: { id: 'mapped-client' },
+          body: { identity_mapping: { mode: 'none' } },
+          db: mockDB,
+        });
+        validateMappingSetReference.mockClear();
+
+        const response = await adminClientUpdateHandler(c);
+
+        expect(response.status).toBe(200);
+        expect(validateMappingSetReference).not.toHaveBeenCalled();
+        expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
+          JSON.stringify({ mode: 'none' })
+        );
+      });
+
+      it.each([
+        ['a mode other than none', { mode: 'default' }, /mode must be "none"/],
+        ['a mode that is not a string', { mode: true }, /mode must be "none"/],
+        [
+          'a Mapping Set',
+          { mode: 'none', fieldMappingSetId: 'mapping_set_1' },
+          /cannot be combined with identity_mapping.fieldMappingSetId/,
+        ],
+        [
+          'the older spelling of a Mapping Set',
+          { mode: 'none', policySetId: 'mapping_set_1' },
+          /cannot be combined with identity_mapping.policySetId/,
+        ],
+        [
+          'a pinned version',
+          { mode: 'none', fieldMappingVersionId: 'v1' },
+          /cannot be combined with identity_mapping.fieldMappingVersionId/,
+        ],
+      ])('refuses %s beside it, on create and on update', async (_name, selector, description) => {
+        const createDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const created = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Unmapped Client',
+            redirect_uris: ['https://example.com/callback'],
+            identity_mapping: selector,
+          },
+          db: createDB,
+        });
+        const createResponse = await adminClientCreateHandler(created);
+        expect(createResponse.status).toBe(400);
+        expect(await createResponse.json()).toMatchObject({
+          error: 'invalid_request',
+          error_description: expect.stringMatching(description),
+        });
+        expect(createDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('INSERT'));
+
+        const updateDB = createMockDB({
+          firstResult: createOAuthClientRow('mapped-client'),
+          runResult: { success: true, meta: { changes: 1 } },
+        });
+        const updated = createMockContext({
+          method: 'PUT',
+          params: { id: 'mapped-client' },
+          body: { identity_mapping: selector },
+          db: updateDB,
+        });
+        const updateResponse = await adminClientUpdateHandler(updated);
+        expect(updateResponse.status).toBe(400);
+        expect(updateDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
+      });
+
+      it('is told from a choice that is left empty: an empty object clears the choice', async () => {
+        const mockDB = createMockDB({ firstResult: null, runResult: { success: true } });
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            client_name: 'Following Client',
+            redirect_uris: ['https://example.com/callback'],
+            identity_mapping: {},
+          },
+          db: mockDB,
+        });
+
+        const response = await adminClientCreateHandler(c);
+
+        expect(response.status).toBe(201);
+        expect(mockDB._mockStatement.bind.mock.calls.flat()).not.toContainEqual(
+          JSON.stringify({ mode: 'none' })
+        );
+      });
+    });
+
     it.each([
       ['set_missing', 404, 'not_found', /does not reference a Mapping Set available/],
       ['set_inactive', 400, 'invalid_request', /active compiled Mapping Set/],
@@ -4957,8 +5127,9 @@ describe('Admin API Handlers', () => {
       }
     );
 
-    // Until the runtime resolves an app's own Mapping Set under its owner (stage 2), an app saved
-    // with a platform-owned set would fail every sign-in: the real check refuses it at save time.
+    // TODO(backup dependency): the runtime reads a platform-owned set for an app, but a tenant
+    // backup cannot hold the reference, so saving it on an app stays refused (it answers as a set
+    // that does not exist); the tenant's and the platform's default may name one.
     describe('with the real shared check on a real Admin schema', () => {
       async function withRealCheck() {
         const actual =

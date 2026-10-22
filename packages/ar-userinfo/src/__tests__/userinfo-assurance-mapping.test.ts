@@ -50,18 +50,18 @@ vi.mock('@authrim/ar-lib-core', async () => {
   };
 });
 
-// The app's mapping binding: a tenant-wide mapping that maps nothing and decides what each
-// surface may carry through its Destination Profile.
-vi.mock('@authrim/ar-lib-core/services/identity-mapping-runtime-resolver', async () => {
+// The app's mapping binding: a Mapping Set that maps nothing and decides what each surface may
+// carry through its Destination Profile. The app names it in its own `identity_mapping`.
+vi.mock('@authrim/ar-lib-core/services/identity-mapping-set-binding', async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
-    '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver'
+    '@authrim/ar-lib-core/services/identity-mapping-set-binding'
   );
   return {
     ...actual,
-    resolveRuntimeIdentityMappingBinding: async () => ({
+    loadMappingBindingBySetId: async (input: { setId: string }) => ({
       id: 'binding-tenant',
       tenantId: 'default',
-      fieldMappingSetId: 'set-tenant',
+      fieldMappingSetId: input.setId,
       fieldMappingVersionId: 'version-tenant',
       mappingSnapshotHash: 'hash-tenant',
       catalog: { identity: { id: 'c', version: '1', contentHash: 'c' }, entries: [] },
@@ -69,7 +69,7 @@ vi.mock('@authrim/ar-lib-core/services/identity-mapping-runtime-resolver', async
       transforms: [],
       validationRules: [],
       fieldMappingSet: {},
-      activationScope: { tenantId: 'default' },
+      activationScope: {},
       destinationNamespace: 'oidc.claim',
       destinationProfileId: 'profile-1',
       destinationProfileIds: ['profile-1'],
@@ -182,7 +182,7 @@ async function userinfo(options: {
 }) {
   mockGetClientCached.mockResolvedValue({
     client_id: 'client-1',
-    identity_mapping: null,
+    identity_mapping: { fieldMappingSetId: 'set-tenant' },
     ...options.client,
   });
   mockIntrospectTokenFromContext.mockResolvedValue({
@@ -203,7 +203,7 @@ async function userinfo(options: {
   };
   const c = {
     req: { header: (name: string) => (name === 'Authorization' ? 'Bearer t' : undefined) },
-    env: { ISSUER_URL: 'https://op.example.com' } as unknown as Env,
+    env: { ISSUER_URL: 'https://op.example.com', DB_ADMIN: d1 } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     header: vi.fn(),
     body: vi.fn(),

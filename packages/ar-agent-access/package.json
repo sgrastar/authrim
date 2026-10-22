@@ -72,8 +72,9 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@cfworker/json-schema": "4.1.1",
-    "@modelcontextprotocol/client": "2.2.0",
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "agents": "0.22.0",
     "zod": "^4.4.3"
   },
@@ -82,6 +83,6 @@
     "@modelcontextprotocol/conformance": "0.1.16",
     "@types/node": "^20.19.25",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }

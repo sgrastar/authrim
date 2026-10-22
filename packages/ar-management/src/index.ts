@@ -16,7 +16,6 @@ import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
-import { bodyLimit } from 'hono/body-limit';
 import type { MessageBatch } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -86,6 +85,7 @@ import { processScheduledAgentTokenRevocations } from './agent-token-revocation'
 import { processScheduledAgentPayloadRetention } from './agent-payload-retention';
 import { processControlPlaneDriftNotifications } from './control-plane-drift-notifications';
 import { isDirectoryScheduledCron, processScheduledDirectoryJobs } from './directory-scheduled';
+import { sweepExpiredBulkApplyRecords } from './routes/settings-v2/bulk-apply-idempotency';
 import {
   isLookupScaleOutObservationDue,
   processNextLookupBucketMigration,
@@ -1009,7 +1009,17 @@ import {
   adminIdentityMappingTemplateCreateHandler,
   adminIdentityMappingTemplatesListHandler,
 } from './identity-mapping-control-plane';
+import { adminBodyLimitMiddleware } from './admin-body-limit';
 import { adminIdentityMappingEffectiveHandler } from './identity-mapping-effective';
+import {
+  adminIdentityMappingSetCreateHandler,
+  adminIdentityMappingSetDeleteHandler,
+  adminIdentityMappingSetGetHandler,
+  adminIdentityMappingSetPutHandler,
+  adminIdentityMappingSetsListHandler,
+  mappingSetSaveIdempotency,
+  sweepExpiredMappingSetSaveRecords,
+} from './identity-mapping-set-facade';
 import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
 import {
   getLoggingConfig,
@@ -1525,40 +1535,7 @@ app.use('/api/admin/*', releaseRolloutMutationFenceMiddleware());
 
 // Body size limit for Admin API - prevents DoS attacks via large payloads
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
-app.use('/api/admin/*', async (c, next) => {
-  const isImportUpload = c.req.path.startsWith('/api/admin/jobs/users/import/upload/');
-  const isTenantBackupPart = /^\/api\/admin\/tenant-backups\/uploads\/[^/]+\/parts\/[^/]+$/.test(
-    c.req.path
-  );
-  const isPublicAssetUpload = c.req.path === '/api/admin/assets/login-ui';
-  const maxSize = isTenantBackupPart
-    ? 8 * 1024 * 1024
-    : isImportUpload
-      ? USER_IMPORT_MAX_UPLOAD_BYTES
-      : isPublicAssetUpload
-        ? 5 * 1024 * 1024
-        : 100 * 1024;
-  const maxSizeLabel = isTenantBackupPart
-    ? '8MB'
-    : isImportUpload
-      ? '50MB'
-      : isPublicAssetUpload
-        ? '5MB'
-        : '100KB';
-
-  return bodyLimit({
-    maxSize,
-    onError: (ctx) => {
-      return ctx.json(
-        {
-          error: 'payload_too_large',
-          message: `Request body exceeds maximum allowed size (${maxSizeLabel})`,
-        },
-        413
-      );
-    },
-  })(c, next);
-});
+app.use('/api/admin/*', adminBodyLimitMiddleware(USER_IMPORT_MAX_UPLOAD_BYTES));
 app.use(
   '/api/admin/test/email-codes',
   managementRequestDiagnosticCheckpoint('mg_admin_body_limit')
@@ -3156,6 +3133,44 @@ app.get(
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingEffectiveHandler
 );
+// The Mapping Set facade. A save runs the validation of the content, the compile and the checks
+// of what names the set, and one of the references search per call, so every route is rate
+// limited with the strict profile. The writes need an Idempotency-Key (a preview does not).
+app.use('/api/admin/identity-mapping/sets/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/identity-mapping/sets'],
+  })(c, next);
+});
+app.get(
+  '/api/admin/identity-mapping/sets',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingSetsListHandler
+);
+app.post(
+  '/api/admin/identity-mapping/sets',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  mappingSetSaveIdempotency,
+  adminIdentityMappingSetCreateHandler
+);
+app.get(
+  '/api/admin/identity-mapping/sets/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingSetGetHandler
+);
+app.put(
+  '/api/admin/identity-mapping/sets/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  mappingSetSaveIdempotency,
+  adminIdentityMappingSetPutHandler
+);
+app.delete(
+  '/api/admin/identity-mapping/sets/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  mappingSetSaveIdempotency,
+  adminIdentityMappingSetDeleteHandler
+);
 app.get(
   '/api/admin/field-mapping/source-authority-contracts',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
@@ -4188,6 +4203,24 @@ async function handleCoveredScheduled(
       await processScheduledIdentifierReplacements(env, log.module('IDENTIFIER-REPLACEMENT'));
     } catch (error) {
       log.warn('Identifier replacement scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      // The answers kept for replay hold many tenants' settings: they go as their time runs out.
+      const removed = await sweepExpiredBulkApplyRecords(env);
+      if (removed > 0) log.info('Expired bulk apply records removed', { removed });
+    } catch (error) {
+      log.warn('Bulk apply record sweep failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      // The answers kept for replay hold the definition of a Mapping Set: they go as their time runs out.
+      const removed = await sweepExpiredMappingSetSaveRecords(env);
+      if (removed > 0) log.info('Expired Mapping Set save records removed', { removed });
+    } catch (error) {
+      log.warn('Mapping Set save record sweep failed', {
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
     }

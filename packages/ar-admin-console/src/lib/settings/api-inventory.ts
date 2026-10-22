@@ -255,6 +255,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 			`${A}/field-mapping/field-mapping-sets`,
 			`${A}/identity-mapping/usage`,
 			`${A}/identity-mapping/effective`,
+			`${A}/identity-mapping/sets`,
 			`${A}/field-mapping/templates`,
 			`${A}/field-mapping/preview`
 		]
@@ -732,6 +733,14 @@ export const API_GROUPS: readonly ApiGroup[] = [
 			`${A}/platform/control-plane/provisioning-authority`,
 			`${A}/platform/control-plane/operations`
 		]
+	},
+	{
+		id: 'settings-bulk-apply',
+		name: 'Bulk apply of settings to several tenants',
+		kind: 'actions',
+		page: 'plat-tenants/bulk-apply',
+		paths: [`${A}/settings/bulk-apply`],
+		note: 'Preview, then apply, the same settings to many tenants; the result is per tenant and key, with the previous value for undoing.'
 	},
 	{
 		id: 'platform-domains',

@@ -10,6 +10,7 @@
  * plane turns the message into its own error.
  */
 import {
+  catalogReferenceResolver,
   isTenantDefinedSubjectNamespace,
   mappingDestinationProfileIds,
   mappingReferenceCatalogEntryId,
@@ -172,12 +173,6 @@ export interface PlatformStoredMapping {
   transforms: Array<{ operation: string; parameters: Record<string, unknown> }>;
 }
 
-function sameCatalogPlace(entry: PlatformCatalogEntry, ref: Ref): boolean {
-  return (
-    mappingSourceSubjectPath(entry) === mappingSourceSubjectPath(toMappingSourceReference(ref))
-  );
-}
-
 /**
  * The first thing in a stored version that the platform catalog it is compiled against does not
  * back, or null: every source (and every validation rule on a source) must be a field of the
@@ -198,19 +193,45 @@ export function findPlatformMappingCompileViolation(
   if (saveTime) return saveTime;
 
   const customEntries = entries.filter((entry) => entry.targetTaxonomy === 'custom');
-  // A source is matched to an entry by the place it reads, a destination (whose path is a name of
-  // its own) only by the entry ID it names.
+  const resolve = catalogReferenceResolver(entries);
+  // A source reference is judged as the place it reads once resolved against the catalog (one that
+  // names only its entry reads the entry's place); a destination (whose path is a name of its own)
+  // only by the entry ID it names.
+  const catalogSource = (ref: Ref) =>
+    resolve(toMappingSourceReference(ref), { completePlace: true });
   const namesCustomEntry = (ref: Ref): boolean => {
     const entryId = mappingReferenceCatalogEntryId(ref) ?? null;
+    const isSource = (str(ref.side) ?? RUNTIME_DEFAULT_SIDE) === 'source';
+    const place = isSource ? catalogSource(ref) : null;
     return customEntries.some(
       (entry) =>
         (entryId !== null && entry.ids.includes(entryId)) ||
-        ((str(ref.side) ?? RUNTIME_DEFAULT_SIDE) === 'source' && sameCatalogPlace(entry, ref))
+        (place !== null && mappingSourceSubjectPath(entry) === mappingSourceSubjectPath(place))
     );
   };
-  const catalogSource = toMappingSourceReference;
+
+  // A reference that names only its catalog entry has no place of its own for the save-time check
+  // to judge: the place it reads is the entry's. So the place once resolved is judged again, and a
+  // destination that names an entry is judged by the entry's namespace.
+  const completedSourceViolation = (ref: Ref, what: string): string | null => {
+    const place = catalogSource(ref);
+    return readsTenantDefinedSubjectPart(place)
+      ? `platform mapping cannot ${what} a tenant-defined field: ${describeRef({ ...ref, ...place })}`
+      : null;
+  };
+  const namedEntryViolation = (ref: Ref, what: string): string | null => {
+    const entryId = mappingReferenceCatalogEntryId(ref);
+    const named = entryId === undefined ? undefined : entries.find((e) => e.ids.includes(entryId));
+    return named && isTenantDefinedSubjectNamespace(named.namespace)
+      ? `platform mapping cannot ${what} a tenant-defined field: ${describeRef({ ...ref, namespace: named.namespace })}`
+      : null;
+  };
 
   for (const edge of mapping.edges) {
+    const completed =
+      completedSourceViolation(edge.sourceRef, 'read') ??
+      namedEntryViolation(edge.targetRef, 'use');
+    if (completed) return completed;
     if (resolveSourceClassification(entries, catalogSource(edge.sourceRef)) === null) {
       return `platform mapping source is not a field of the platform catalog: ${describeRef(edge.sourceRef)}`;
     }
@@ -223,6 +244,11 @@ export function findPlatformMappingCompileViolation(
   }
   for (const rule of mapping.validationRules) {
     const ref = rule.targetRef;
+    const isSource = (str(ref.side) ?? RUNTIME_DEFAULT_SIDE) === 'source';
+    const completed = isSource
+      ? completedSourceViolation(ref, 'validate')
+      : namedEntryViolation(ref, 'validate');
+    if (completed) return completed;
     if (
       (str(ref.side) ?? RUNTIME_DEFAULT_SIDE) === 'source' &&
       resolveSourceClassification(entries, catalogSource(ref)) === null
