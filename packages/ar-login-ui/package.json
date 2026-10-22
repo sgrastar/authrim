@@ -74,7 +74,7 @@
 	"dependencies": {
 		"@authrim/ar-lib-core": "workspace:*",
 		"@authrim/core": "^0.2.1",
-		"@simplewebauthn/browser": "^13.2.2",
+		"@simplewebauthn/browser": "^14.0.0",
 		"qrcode": "^1.5.4"
 	}
 }
