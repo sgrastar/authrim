@@ -65,6 +65,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     resolveLogoutIssuerWithRetry: vi.fn(async () => 'https://canonical.example.com'),
     reportLogoutNotSent: vi.fn().mockResolvedValue({ sessions: 0, clients: 0 }),
     reportIncompleteLogouts: vi.fn().mockResolvedValue(undefined),
+    reportLogoutTargetsUnavailable: vi.fn().mockResolvedValue(undefined),
     resolveLogoutWebhookConfig: vi.fn(
       (actual as { resolveLogoutWebhookConfig: (...args: unknown[]) => unknown })
         .resolveLogoutWebhookConfig
@@ -96,6 +97,7 @@ import {
   resolveLogoutIssuerWithRetry,
   reportLogoutNotSent,
   reportIncompleteLogouts,
+  reportLogoutTargetsUnavailable,
   resolveLogoutWebhookConfig,
   purgeEndedSessionsFromSessionClientStore,
   DEFAULT_LOGOUT_CONFIG,
@@ -597,6 +599,10 @@ describe('Front-channel Logout', () => {
         await frontChannelLogoutHandler(c);
         await settleAll(waitUntil);
 
+        expect(reportLogoutTargetsUnavailable).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({ sessionCount: 0 })
+        );
         expect(reportIncompleteLogouts).toHaveBeenCalledWith(
           c.env,
           expect.objectContaining({
@@ -625,6 +631,15 @@ describe('Front-channel Logout', () => {
         await settleAll(waitUntil);
 
         expect(purgeEndedSessionsFromSessionClientStore).not.toHaveBeenCalled();
+        // The admin can see how many sessions ended without their apps being told.
+        expect(reportLogoutTargetsUnavailable).toHaveBeenCalledWith(
+          c.env,
+          expect.objectContaining({
+            tenantId: 'default',
+            trigger: 'user_logout',
+            sessionCount: 1,
+          })
+        );
       });
 
       it('does not treat unreadable webhook settings as off: the webhook apps are recorded and kept', async () => {

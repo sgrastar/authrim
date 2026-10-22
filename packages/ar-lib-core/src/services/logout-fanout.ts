@@ -182,6 +182,51 @@ export async function reportLogoutNotSent(
 }
 
 /**
+ * Sessions ended whose relying parties could not be looked up (the SessionClientStore could not
+ * be read): nobody can be told, and which apps they are is unknown, so no failure record per app
+ * can be left. The audit log gets one `user.downstream_logout_failed` entry (reason
+ * `logout_targets_unavailable`) with the path and the number of sessions; `client_count` is null
+ * (unknown). No user, app or session id is put in it. Never throws.
+ */
+export async function reportLogoutTargetsUnavailable(
+  env: Env,
+  params: {
+    tenantId: string;
+    trigger: string;
+    /** How many ended sessions could not be looked up. */
+    sessionCount: number;
+    metadata?: Record<string, string>;
+    log?: Logger;
+  }
+): Promise<void> {
+  if (params.sessionCount <= 0) return;
+  const log = params.log ?? defaultLog;
+  await createAuditLog(env, {
+    tenantId: params.tenantId,
+    userId: 'system',
+    action: 'user.downstream_logout_failed',
+    resource: 'downstream_logout',
+    resourceId: params.trigger,
+    ipAddress: '',
+    userAgent: '',
+    metadata: JSON.stringify({
+      trigger: params.trigger,
+      error_code: 'logout_targets_unavailable',
+      session_count: params.sessionCount,
+      client_count: null,
+      ...params.metadata,
+    }),
+    severity: 'warning',
+  }).catch((error) =>
+    log.error(
+      'Failed to create audit log for an unsent logout',
+      { action: 'audit_log' },
+      error as Error
+    )
+  );
+}
+
+/**
  * `reportLogoutNotSent` for what the fan-out reported as incomplete (`onIncomplete`): one report
  * per kind of notice and reason, for the sessions concerned. Never throws.
  */

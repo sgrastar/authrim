@@ -41,6 +41,7 @@ import {
   resolveLogoutIssuerWithRetry,
   reportLogoutNotSent,
   reportIncompleteLogouts,
+  reportLogoutTargetsUnavailable,
   type LogoutIncomplete,
   purgeEndedSessionsFromSessionClientStore,
   sendBackchannelLogoutFanout,
@@ -780,6 +781,13 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (logoutIssuer && c.executionCtx) {
       c.executionCtx.waitUntil(
         (async () => {
+          // Sessions whose apps could not be looked up were not told either: counted for the admin.
+          await reportLogoutTargetsUnavailable(c.env, {
+            tenantId,
+            trigger: 'user_logout',
+            sessionCount: targetReadFailed.size,
+            log,
+          });
           if (!(await logoutIssuer)) {
             const webhookConfig = await logoutWebhookConfig;
             await reportLogoutNotSent(c.env, {

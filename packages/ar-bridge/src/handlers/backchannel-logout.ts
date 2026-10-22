@@ -35,6 +35,7 @@ import {
   resolveLogoutIssuerWithRetry,
   reportLogoutNotSent,
   reportIncompleteLogouts,
+  reportLogoutTargetsUnavailable,
   type LogoutIncomplete,
   type LogoutWebhookConfig,
   purgeEndedSessionsFromSessionClientStore,
@@ -396,6 +397,15 @@ async function notifyDownstream(
         })
       ),
     ]);
+
+    // Sessions whose apps could not be looked up were not told either: counted for the admin.
+    await reportLogoutTargetsUnavailable(env, {
+      tenantId,
+      trigger: 'upstream_backchannel_logout',
+      sessionCount: targetReadFailed.size,
+      metadata: { provider_id: providerId, upstream_flow_id: upstreamFlowId },
+      log,
+    });
 
     if (!logoutIssuer) {
       // Nothing can be sent: make the apps that were not told visible to the admin (the failure

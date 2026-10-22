@@ -15,6 +15,7 @@ import { LogoutKVHelpers } from '../backchannel-logout-sender';
 import {
   reportIncompleteLogouts,
   reportLogoutNotSent,
+  reportLogoutTargetsUnavailable,
   type LogoutFanoutSession,
 } from '../logout-fanout';
 
@@ -136,6 +137,57 @@ describe('reportLogoutNotSent', () => {
     kv.put.mockRejectedValue(new Error('kv down'));
     auditMock.mockRejectedValue(new Error('audit down'));
     await expect(report()).resolves.toEqual({ sessions: 3, clients: 3 });
+  });
+});
+
+describe('reportLogoutTargetsUnavailable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auditMock.mockResolvedValue(undefined);
+  });
+
+  it('records one audit entry with the path and the number of sessions, and no id', async () => {
+    await reportLogoutTargetsUnavailable({} as never, {
+      tenantId: 'tenant-a',
+      trigger: 'user_logout',
+      sessionCount: 2,
+      metadata: { provider_id: 'provider-1' },
+    });
+
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    const entry = auditMock.mock.calls[0][1];
+    expect(entry).toMatchObject({
+      tenantId: 'tenant-a',
+      action: 'user.downstream_logout_failed',
+      severity: 'warning',
+      userId: 'system',
+      resourceId: 'user_logout',
+    });
+    expect(JSON.parse(entry.metadata)).toEqual({
+      trigger: 'user_logout',
+      error_code: 'logout_targets_unavailable',
+      session_count: 2,
+      client_count: null,
+      provider_id: 'provider-1',
+    });
+  });
+
+  it('writes nothing when no session is concerned, and does not throw when the audit fails', async () => {
+    await reportLogoutTargetsUnavailable({} as never, {
+      tenantId: 'tenant-a',
+      trigger: 'user_logout',
+      sessionCount: 0,
+    });
+    expect(auditMock).not.toHaveBeenCalled();
+
+    auditMock.mockRejectedValue(new Error('audit down'));
+    await expect(
+      reportLogoutTargetsUnavailable({} as never, {
+        tenantId: 'tenant-a',
+        trigger: 'user_logout',
+        sessionCount: 1,
+      })
+    ).resolves.toBeUndefined();
   });
 });
 

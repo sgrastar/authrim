@@ -36,6 +36,7 @@ const {
   mockResolveLogoutIssuer,
   mockReportNotSent,
   mockReportIncomplete,
+  mockReportTargetsUnavailable,
   mockSafeFetchJson,
   mockDiagnosticAuthDecision,
   mockPurgeEndedSessions,
@@ -51,6 +52,7 @@ const {
   mockResolveLogoutIssuer: vi.fn(),
   mockReportNotSent: vi.fn(),
   mockReportIncomplete: vi.fn(),
+  mockReportTargetsUnavailable: vi.fn(),
   mockSafeFetchJson: vi.fn(),
   mockDiagnosticAuthDecision: vi.fn(),
   mockPurgeEndedSessions: vi.fn(),
@@ -99,6 +101,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveLogoutIssuerWithRetry: mockResolveLogoutIssuer,
     reportLogoutNotSent: mockReportNotSent,
     reportIncompleteLogouts: mockReportIncomplete,
+    reportLogoutTargetsUnavailable: mockReportTargetsUnavailable,
     createAuditLog: mockCreateAuditLog,
   };
 });
@@ -308,6 +311,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
     mockResolveLogoutIssuer.mockResolvedValue(CANONICAL_ISSUER);
     mockReportNotSent.mockResolvedValue({ sessions: 0, clients: 0 });
     mockReportIncomplete.mockResolvedValue(undefined);
+    mockReportTargetsUnavailable.mockResolvedValue(undefined);
     mockPurgeEndedSessions.mockResolvedValue(undefined);
   });
 
@@ -454,6 +458,16 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
 
     expect(sent).toEqual([]);
     expect(mockPurgeEndedSessions).not.toHaveBeenCalled();
+    // The admin can see how many sessions ended without their apps being told.
+    expect(mockReportTargetsUnavailable).toHaveBeenCalledWith(
+      c.env,
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        trigger: 'upstream_backchannel_logout',
+        sessionCount: 1,
+        metadata: expect.objectContaining({ provider_id: 'provider-upstream' }),
+      })
+    );
   });
 
   it('does not treat unreadable webhook settings as off: the webhook apps are recorded and the session kept', async () => {
