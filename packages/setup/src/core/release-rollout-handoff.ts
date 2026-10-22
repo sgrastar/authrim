@@ -674,6 +674,12 @@ export async function waitForReleaseRolloutAwaitingSetup(input: {
   sleep?: (milliseconds: number) => Promise<void>;
   clock?: () => number;
   onProgress?: (status: ReleaseRolloutHandoffStatus, context?: ReleaseRolloutWaitContext) => void;
+  /**
+   * Runs the targets of a Control without a migration executor
+   * (`release_migration_executor_unavailable`): how many it took over, or, when none was due, the
+   * earliest retry time (seconds) of a target still backing off.
+   */
+  executeTargetsAsSetup?: () => Promise<{ claimed: number; nextAttemptAt: number | null }>;
 }): Promise<ReleaseRolloutHandoffStatus> {
   const timeoutMs = input.timeoutMs ?? 30 * 60 * 1000;
   const pollIntervalMs = input.pollIntervalMs ?? 5_000;
@@ -706,6 +712,35 @@ export async function waitForReleaseRolloutAwaitingSetup(input: {
       }
       blockedSince = null;
       blockedCode = null;
+    }
+    if (
+      status.phase === 'blocked' &&
+      status.lastErrorCode === 'release_migration_executor_unavailable' &&
+      input.executeTargetsAsSetup
+    ) {
+      const execution = await input.executeTargetsAsSetup();
+      if (execution.claimed > 0) {
+        // Setup ran the targets itself; Control's reconciler advances the rollout from here.
+        deadline = Math.max(deadline, clock() + timeoutMs);
+        blockedSince = null;
+        blockedCode = null;
+        continue;
+      }
+      if (execution.nextAttemptAt !== null) {
+        // A target backs off from an earlier failure: wait for it rather than for Control.
+        input.onProgress?.(status);
+        blockedSince = null;
+        blockedCode = null;
+        if (clock() >= deadline) return status;
+        await sleep(
+          Math.min(
+            pollIntervalMs,
+            Math.max(1, execution.nextAttemptAt * 1000 - clock()),
+            Math.max(1, deadline - clock())
+          )
+        );
+        continue;
+      }
     }
     if (status.phase === 'blocked') {
       const code = status.lastErrorCode ?? 'unknown';
