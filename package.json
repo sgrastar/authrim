@@ -170,7 +170,7 @@
     "@esbuild/linux-x64": "^0.25.12"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "pnpm": {
     "overrides": {
