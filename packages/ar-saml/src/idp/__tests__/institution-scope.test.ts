@@ -418,14 +418,89 @@ describe('the attributes that name the institution', () => {
     }
   });
 
-  it('leaves them as they come for a tenant that registered nothing', () => {
-    const attributes = [
-      attribute(SCHAC, ['rival.example']),
-      attribute(ORG_NAME, ['Rival University']),
-    ];
-    const result = apply(attributes, { state: 'unset' }, []);
-    expect(result.attributes).toBe(attributes);
-    expect(result.withheld).toEqual([]);
+  it('withholds both for a tenant that registered nothing: it has no institution to name', () => {
+    const result = apply(
+      [attribute(SCHAC, ['rival.example']), attribute(ORG_NAME, ['Rival University'])],
+      { state: 'unset' },
+      []
+    );
+    expect(result.attributes).toEqual([]);
+    expect(result.withheld).toEqual([
+      {
+        attribute: 'schacHomeOrganization',
+        name: SCHAC,
+        reason: 'institution_not_registered',
+        // No scope is named here: the tenant has none, and the value is the person's.
+        count: 1,
+      },
+      {
+        attribute: 'organizationName',
+        name: ORG_NAME,
+        reason: 'institution_not_registered',
+        count: 1,
+      },
+    ]);
+    expect(JSON.stringify(result.withheld)).not.toContain('Rival');
+    expect(JSON.stringify(result.withheld)).not.toContain('rival.example');
+  });
+
+  it('withholds them for such a tenant whatever the value, even one that looks right', () => {
+    const result = apply(
+      [attribute(SCHAC, ['example.ac.jp', '']), attribute(ORG_NAME, ['Example University'])],
+      { state: 'unset' },
+      []
+    );
+    expect(result.attributes).toEqual([]);
+    // Both values of schacHomeOrganization, and the one of o.
+    expect(result.withheld.map((entry) => [entry.attribute, entry.reason, entry.count])).toEqual([
+      ['schacHomeOrganization', 'institution_not_registered', 2],
+      ['organizationName', 'institution_not_registered', 1],
+    ]);
+  });
+
+  it('still releases the scoped values of such a tenant as they come, beside the withheld ones', () => {
+    const eppn = attribute(EPPN, ['someone@elsewhere.example']);
+    const epsa = attribute(EPSA, ['member@anywhere.example']);
+    const result = apply(
+      [eppn, attribute(SCHAC, ['rival.example']), epsa, attribute(ORG_NAME, ['Rival University'])],
+      { state: 'unset' },
+      []
+    );
+    expect(result.attributes).toEqual([eppn, epsa]);
+    expect(result.withheld.map((entry) => entry.attribute)).toEqual([
+      'schacHomeOrganization',
+      'organizationName',
+    ]);
+  });
+
+  it('keeps to the existing rule when only the scopes are registered: scope for schacHomeOrganization, name for o', () => {
+    const result = apply(
+      [
+        attribute(SCHAC, ['example.ac.jp', 'rival.example']),
+        attribute(ORG_NAME, ['Example University']),
+      ],
+      registered,
+      []
+    );
+    expect(result.attributes).toEqual([attribute(SCHAC, ['example.ac.jp'])]);
+    expect(result.withheld.map((entry) => entry.reason)).toEqual([
+      'organization_not_registered',
+      'organization_not_registered',
+    ]);
+  });
+
+  it('keeps to the existing rule when only the names are registered', () => {
+    const result = apply(
+      [attribute(SCHAC, ['example.ac.jp']), attribute(ORG_NAME, ['Example University'])],
+      { state: 'unset' }
+    );
+    expect(result.attributes).toEqual([attribute(ORG_NAME, ['Example University'])]);
+    expect(result.withheld).toEqual([
+      expect.objectContaining({
+        attribute: 'schacHomeOrganization',
+        reason: 'organization_not_registered',
+      }),
+    ]);
   });
 
   it('does not touch the scoped affiliation of a tenant that registered names but no scope', () => {
