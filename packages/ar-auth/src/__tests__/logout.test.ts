@@ -60,6 +60,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
       matchedInstallations: 0,
     }),
     resolveLogoutTargetsFromSessionClientStore: vi.fn().mockResolvedValue(null),
+    sendBackchannelLogoutFanout: vi.fn().mockResolvedValue(null),
+    sendLogoutWebhookFanout: vi.fn().mockResolvedValue(null),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     // Return { stub: ... } to match the destructuring pattern in logout.ts
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),
@@ -79,6 +81,9 @@ import {
   validateLogoutParameters,
   resolveLogoutTargetsFromSessionClientStore,
   recordHybridUserSessionRevocationEpoch,
+  sendBackchannelLogoutFanout,
+  sendLogoutWebhookFanout,
+  DEFAULT_LOGOUT_CONFIG,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -357,6 +362,61 @@ describe('Front-channel Logout', () => {
       expect(html).toContain('sid=rp-session-123');
       expect(html).not.toContain('sid=0_session_123');
       expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
+    });
+
+    it('hands the ended session clients to the shared downstream fan-out after the response', async () => {
+      const { c } = createMockContext({
+        query: {},
+        body: { confirmation_token: '0_session_123' },
+      });
+      const waitUntil = vi.fn();
+      c.executionCtx = { waitUntil };
+      const backchannelClient = {
+        client_id: 'rp-client',
+        oidc_sid: 'rp-session-123',
+        backchannel_logout_uri: 'https://rp.example.com/backchannel',
+        backchannel_logout_session_required: true,
+      };
+      const webhookClient = {
+        client_id: 'rp-webhook',
+        logout_webhook_uri: 'https://rp.example.com/webhook',
+      };
+
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      vi.mocked(resolveLogoutTargetsFromSessionClientStore).mockResolvedValueOnce({
+        backchannelClients: [backchannelClient],
+        frontchannelClients: [],
+        webhookClients: [webhookClient],
+      } as unknown as Awaited<ReturnType<typeof resolveLogoutTargetsFromSessionClientStore>>);
+
+      await frontChannelLogoutHandler(c);
+      await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+
+      expect(sendBackchannelLogoutFanout).toHaveBeenCalledWith(
+        c.env,
+        expect.objectContaining({
+          tenantId: 'default',
+          issuer: 'https://op.example.com',
+          config: DEFAULT_LOGOUT_CONFIG.backchannel,
+          onAlert: expect.any(Function),
+          sessions: [
+            expect.objectContaining({
+              sessionId: '0_session_123',
+              backchannelClients: [backchannelClient],
+              webhookClients: [webhookClient],
+            }),
+          ],
+        })
+      );
+      expect(sendLogoutWebhookFanout).toHaveBeenCalledWith(
+        c.env,
+        expect.objectContaining({
+          issuer: 'https://op.example.com',
+          sessions: [expect.objectContaining({ sessionId: '0_session_123' })],
+        })
+      );
     });
 
     it('should handle logout when no session exists', async () => {

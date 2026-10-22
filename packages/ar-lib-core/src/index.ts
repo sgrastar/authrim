@@ -420,6 +420,7 @@ export * from './services/destination-profile-consent';
 export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';
+export * from './services/logout-fanout';
 export * from './services/invitation-auth-core';
 export * from './services/policy-resolver';
 export * from './services/custom-claims';
