@@ -12,6 +12,7 @@
 		emailCodeAPI,
 		totpAPI,
 		externalIdpAPI,
+		invitationAPI,
 		loginChallengeAPI,
 		type APIError
 	} from '$lib/api/client';
@@ -95,6 +96,18 @@
 	let name = $state('');
 	let inviteToken = $state('');
 	let inviteTenantName = $state('');
+	/** The tenant requires the invited email proved before a passkey or authenticator-app signup. */
+	let invitationEmailRequired = $state(false);
+	let invitationEmailProof = $state<string | null>(null);
+	/** The invitation's code step, and the signup it holds back. */
+	let invitationEmailStep = $state<{
+		verificationId: string;
+		maskedEmail: string;
+		resume: 'passkey' | 'totp';
+		error?: string;
+	} | null>(null);
+	let invitationCode = $state('');
+	let invitationCodeLoading = $state(false);
 	let runtimeInteractionId = $state('');
 	let authorizationChallengeId = $state('');
 	let clientInfo = $state<{ client_id: string } | null>(null);
@@ -144,6 +157,7 @@
 		passkeyLoading ||
 			emailCodeLoading ||
 			totpLoading ||
+			invitationCodeLoading ||
 			externalIdpLoading !== null ||
 			runtimeFlowLoading
 	);
@@ -479,6 +493,7 @@
 
 		if (token) {
 			inviteToken = token;
+			void loadInvitation(token);
 		}
 		if (prefilledEmail) {
 			email = prefilledEmail;
@@ -1298,10 +1313,81 @@
 		}
 	}
 
+	/** What the invitation asks of this signup: proof of its email, and the email itself. */
+	async function loadInvitation(token: string) {
+		const { data } = await invitationAPI.validate(token);
+		if (!data) return;
+		invitationEmailRequired = data.email_verification_required === true;
+		if (data.invited_email && !email.trim()) email = data.invited_email;
+	}
+
+	/**
+	 * Holds a passkey or authenticator-app signup back while the tenant requires the invited email
+	 * proved and it is not yet: sends the code and opens the code step instead.
+	 */
+	async function holdForInvitationEmailProof(resume: 'passkey' | 'totp'): Promise<boolean> {
+		if (!inviteToken || !invitationEmailRequired || invitationEmailProof) return false;
+		await sendInvitationEmailCode(resume);
+		return true;
+	}
+
+	async function sendInvitationEmailCode(resume: 'passkey' | 'totp') {
+		invitationCodeLoading = true;
+		error = '';
+		try {
+			const { data, error: apiError } = await invitationAPI.sendEmailCode(inviteToken);
+			if (apiError || !data) {
+				throw loginUiDisplayError(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
+			}
+			invitationCode = '';
+			invitationEmailStep = {
+				verificationId: data.verification_id,
+				maskedEmail: data.masked_email,
+				resume
+			};
+		} catch (err) {
+			error = messageForCaughtError(err, $LL.error_unknown());
+		} finally {
+			invitationCodeLoading = false;
+		}
+	}
+
+	async function verifyInvitationEmailCode() {
+		const step = invitationEmailStep;
+		if (!step || authActionLoading) return;
+		invitationCodeLoading = true;
+		try {
+			const { data, error: apiError } = await invitationAPI.verifyEmailCode({
+				token: inviteToken,
+				verificationId: step.verificationId,
+				code: invitationCode.trim()
+			});
+			if (apiError || !data) {
+				invitationEmailStep = { ...step, error: $LL.emailCode_errorInvalid() };
+				return;
+			}
+			invitationEmailProof = data.invitation_email_proof;
+			invitationEmailStep = null;
+		} finally {
+			invitationCodeLoading = false;
+		}
+		// The signup the code step held back goes on, from this click as it would from its button.
+		if (step.resume === 'passkey') void handlePasskeyRegister();
+		else void handleTotpSignupStart();
+	}
+
+	/** A start the server refused for want of the proof (an expired one): ask for it anew. */
+	function forgetExpiredInvitationEmailProof(apiError: APIError | undefined) {
+		if (inviteToken && invitationEmailRequired && apiError?.error === 'interaction_required') {
+			invitationEmailProof = null;
+		}
+	}
+
 	async function handlePasskeyRegister() {
 		if (authActionLoading) return;
 		error = '';
 		if (!validateForm()) return;
+		if (await holdForInvitationEmailProof('passkey')) return;
 
 		passkeyLoading = true;
 		passkeyProgress = 'preparing';
@@ -1315,10 +1401,13 @@
 				name: getSubmittedDisplayName(),
 				custom_fields: submittedCustomFields,
 				authorizationChallengeId: authorizationChallengeId || undefined,
-				human_verification_response: cfTurnstileResponse
+				human_verification_response: cfTurnstileResponse,
+				inviteToken: inviteToken || undefined,
+				invitationEmailProof: invitationEmailProof ?? undefined
 			});
 
 			if (optionsError) {
+				forgetExpiredInvitationEmailProof(optionsError);
 				throw loginUiDisplayError(getApiErrorMessage(optionsError));
 			}
 			if (!optionsData?.options) {
@@ -1331,7 +1420,7 @@
 			const credential = await startRegistration({ optionsJSON: optionsData.options as any });
 
 			passkeyProgress = 'finishing';
-			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration({
+			const { error: verifyError } = await passkeyAPI.verifyRegistration({
 				userId: optionsData.userId,
 				credential,
 				deviceName: navigator.userAgent.includes('Mobile')
@@ -1349,22 +1438,6 @@
 
 			// Restore authenticated state from the HttpOnly managed session cookie.
 			await auth.refreshFromSession();
-
-			// Apply invitation if present (passkey flow: server doesn't see invite_token during registration)
-			if (inviteToken && verifyData?.userId) {
-				try {
-					const inviteRes = await fetch('/api/v1/invitations/use', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ token: inviteToken, user_id: verifyData.userId })
-					});
-					if (!inviteRes.ok) {
-						console.warn('[signup] Failed to apply invitation:', inviteRes.status);
-					}
-				} catch (inviteErr) {
-					console.warn('[signup] Failed to apply invitation:', inviteErr);
-				}
-			}
 
 			try {
 				removeLoginUiSessionItems([
@@ -1528,6 +1601,7 @@
 			emailError = $LL.login_errorEmailRequired();
 			return;
 		}
+		if (await holdForInvitationEmailProof('totp')) return;
 
 		totpLoading = true;
 		try {
@@ -1539,9 +1613,12 @@
 				name: getSubmittedDisplayName(),
 				custom_fields: submittedCustomFields,
 				authorizationChallengeId: authorizationChallengeId || undefined,
-				human_verification_response: cfTurnstileResponse
+				human_verification_response: cfTurnstileResponse,
+				inviteToken: inviteToken || undefined,
+				invitationEmailProof: invitationEmailProof ?? undefined
 			});
 			if (apiError || !data) {
+				forgetExpiredInvitationEmailProof(apiError);
 				throw loginUiDisplayError(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
@@ -1673,7 +1750,9 @@
 				redirectUri,
 				provider.startUrl,
 				provider.startMode,
-				turnstileRequired ? { token: cfTurnstileResponse } : undefined
+				turnstileRequired ? { token: cfTurnstileResponse } : undefined,
+				undefined,
+				inviteToken || undefined
 			);
 
 			if (!isValidRedirectUrl(url)) {
@@ -1816,7 +1895,8 @@
 			passkey: passkeyLoading,
 			emailCode: emailCodeLoading,
 			totp: totpLoading,
-			externalIdp: externalIdpLoading
+			externalIdp: externalIdpLoading,
+			invitationEmailCode: invitationCodeLoading
 		}}
 		busy={authActionLoading}
 		registrationFields={registrationFieldViews}
@@ -1824,6 +1904,9 @@
 		{emailError}
 		{customFieldErrors}
 		totpSetup={totpSetupView}
+		invitationEmailCode={invitationEmailStep
+			? { maskedEmail: invitationEmailStep.maskedEmail, error: invitationEmailStep.error }
+			: null}
 		externalProviders={runtimeExternalProviders}
 		emailVerification={{
 			enabled: Boolean(emailVerificationChallenge),
@@ -1846,6 +1929,7 @@
 		bind:email
 		bind:customFieldValues
 		bind:totpCode
+		bind:invitationCode
 		bind:turnstileToken
 		bind:consentDecisions={runtimeConsentDecisions}
 		onSubmit={handleEmailVerificationProtocolSubmit}
@@ -1877,5 +1961,13 @@
 		}}
 		onTotpDone={continueAfterTotpBackupCodes}
 		onExternalProvider={handleRuntimeExternalProviderAction}
+		onInvitationCodeVerify={verifyInvitationEmailCode}
+		onInvitationCodeResend={() => {
+			if (invitationEmailStep) void sendInvitationEmailCode(invitationEmailStep.resume);
+		}}
+		onInvitationCodeCancel={() => {
+			invitationEmailStep = null;
+			invitationCode = '';
+		}}
 	/>
 </AuthPageShell>

@@ -347,22 +347,34 @@ describe('Router Worker', () => {
         expect(await forwarded.json()).toEqual({ provisioning_token: 'opaque-token' });
       });
 
-      it('should route public invitation validation and consumption to OP_AUTH', async () => {
+      it('should route public invitation validation, and not invitation use, to OP_AUTH', async () => {
         const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
         await app.fetch(
           new Request('https://example.com/api/v1/invitations/validate?token=opaque'),
           env
         );
-        await app.fetch(
+        // An invitation is used only by the sign-up that creates the account.
+        const use = await app.fetch(
           new Request('https://example.com/api/v1/invitations/use', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
-            body: JSON.stringify({ token: 'opaque' }),
+            body: JSON.stringify({ token: 'opaque', user_id: 'user_victim' }),
           }),
           env
         );
 
-        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(2);
+        for (const step of ['send', 'verify']) {
+          await app.fetch(
+            new Request(`https://example.com/api/v1/invitations/email-verification/${step}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
+              body: JSON.stringify({ token: 'opaque' }),
+            }),
+            env
+          );
+        }
+
+        expect(use.status).toBe(404);
         expect(
           mockEnv.OP_AUTH.fetch.mock.calls.map(([request]) => [
             request.method,
@@ -370,7 +382,8 @@ describe('Router Worker', () => {
           ])
         ).toEqual([
           ['GET', '/api/v1/invitations/validate'],
-          ['POST', '/api/v1/invitations/use'],
+          ['POST', '/api/v1/invitations/email-verification/send'],
+          ['POST', '/api/v1/invitations/email-verification/verify'],
         ]);
       });
 

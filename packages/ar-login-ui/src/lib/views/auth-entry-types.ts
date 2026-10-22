@@ -72,3 +72,11 @@ export type EmailVerificationView = {
 	enabled: boolean;
 	nonce: string | null;
 };
+
+/** The code step an invitation asks of a passkey or authenticator-app signup. */
+export interface InvitationEmailCodeView {
+	/** The invited email, masked, that the code went to. */
+	maskedEmail: string;
+	/** Why the last code was not accepted. */
+	error?: string;
+}

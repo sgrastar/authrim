@@ -96,7 +96,11 @@ import {
   directSessionHandler,
   directLogoutHandler,
 } from './direct-auth';
-import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
+import {
+  sendInvitationEmailCodeHandler,
+  validateInvitationHandler,
+  verifyInvitationEmailCodeHandler,
+} from './invitation-handlers';
 import { registrationFieldsHandler } from './registration-fields';
 import {
   loginRuntimeEmailVerificationChallengeHandler,
@@ -522,6 +526,14 @@ app.use('/api/admin/invitations/*', async (c, next) => {
     requireAtomic: true,
   })(c, next);
 });
+// Sends codes (to the invited email only); also limited per invitation by the handler.
+app.use('/api/v1/invitations/email-verification/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/invitations/email-verification'],
+  })(c, next);
+});
 app.use('/api/auth/directory-connectors/heartbeat/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({
@@ -552,6 +564,7 @@ app.use('/api/v1/login/interactions/*', csrfProtectionMiddleware());
 app.use('/api/v1/login/interactions/start', authRequestDiagnosticCheckpoint('auth_csrf'));
 app.use('/auth/consent', csrfProtectionMiddleware());
 app.use('/api/flow/*', csrfProtectionMiddleware());
+app.use('/api/v1/invitations/email-verification/*', csrfProtectionMiddleware());
 
 // Health check endpoint (accessible via /api/auth/health due to route pattern)
 app.get('/api/auth/health', (c) => {
@@ -768,9 +781,12 @@ app.post('/api/v1/auth/direct/logout', directLogoutHandler);
 
 // Invitation API (public)
 // - GET  /api/v1/invitations/validate?token=xxx  - Validate token
-// - POST /api/v1/invitations/use                 - Mark token used
+// - POST /api/v1/invitations/email-verification/{send,verify} - Prove the invited email
+// An invitation is used only by the sign-up that creates the account (Direct Auth passkey and
+// email-code sign-up record it on their challenge), never by a request naming a user.
 app.get('/api/v1/invitations/validate', validateInvitationHandler);
-app.post('/api/v1/invitations/use', useInvitationHandler);
+app.post('/api/v1/invitations/email-verification/send', sendInvitationEmailCodeHandler);
+app.post('/api/v1/invitations/email-verification/verify', verifyInvitationEmailCodeHandler);
 
 // Registration fields (public)
 // - GET /api/v1/registration-fields  - Fields visible on signup form

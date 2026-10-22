@@ -69,7 +69,9 @@ export type ChallengeType =
   | 'passkey_reauth' // Account Page passkey re-authentication challenge
   | 'account_email_reauth' // Account Page email code re-authentication challenge
   | 'external_idp_link_intent' // Account Page request to link an external account (one use)
-  | 'login_method_removal_lock'; // Serialises an account's removals of sign-in methods
+  | 'login_method_removal_lock' // Serialises an account's removals of sign-in methods
+  | 'invitation_email_code' // Code sent to the email an invitation names
+  | 'invitation_email_proof'; // Proof that a sign-up controls the email its invitation names
 
 /**
  * Challenge metadata

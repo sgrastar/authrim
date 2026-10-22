@@ -165,6 +165,10 @@ export interface ExternalIdpAuthState {
   reauthChallengeId?: string;
   /** When Authrim asked the IdP for a new login for it (milliseconds, Authrim's clock) */
   reauthRequestedAt?: number;
+  /** The invitation this sign-in started from, if any */
+  inviteId?: string;
+  /** The use of it the start reserved (applied only to an account the callback creates) */
+  inviteReservationId?: string;
   expiresAt: number;
   createdAt: number;
 }
@@ -265,6 +269,11 @@ export interface HandleIdentityParams {
   tokens: TokenResponse;
   linkingUserId?: string;
   tenantId: string;
+  /**
+   * The invitation the sign-in started from. When it names an email, an account is created only
+   * for that email (and, when the tenant requires it, only when the provider verified it).
+   */
+  invitation?: { invitedEmail: string | null; requireVerifiedEmail: boolean };
 }
 
 export interface HandleIdentityReadyResult {
@@ -459,6 +468,12 @@ export const ExternalIdPErrorCode = {
    * first sign-in cannot create the account.
    */
   SIGNUP_DISABLED: 'external_signup_disabled',
+
+  /**
+   * The sign-in started from an invitation that names another email than the provider's, so the
+   * account is not created.
+   */
+  INVITATION_EMAIL_MISMATCH: 'invitation_email_mismatch',
 
   /**
    * The tenant's provider usage settings could not be read, so neither sign-in nor sign-up is
