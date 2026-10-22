@@ -653,6 +653,7 @@ export interface Env {
   DEFAULT_FAL?: string; // Default Federation Assurance Level (FAL1-3)
   DEFAULT_IAL?: string; // Default Identity Assurance Level (IAL1-3)
   // Deleted accounts (settings account-lifecycle.deletion.*; KV takes precedence)
+  TOMBSTONE_HMAC_KEYRING?: string; // Secret: deleted emails' fingerprint keys (JSON keyring)
   ACCOUNT_TOMBSTONE_RETENTION_DAYS?: string; // Days a deletion record is kept (1-3650, default 90)
   ACCOUNT_TOMBSTONE_BLOCK_REREGISTRATION?: string; // 'true' blocks sign-up with a deleted address
 

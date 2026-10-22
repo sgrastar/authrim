@@ -3,7 +3,10 @@ import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LookupHmacKeyStateService } from '../lookup-hmac-key-state';
+import {
+  LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS,
+  LookupHmacKeyStateService,
+} from '../lookup-hmac-key-state';
 import { LOOKUP_HMAC_VERIFICATION_COMPONENTS } from '../lookup-hmac-candidate-verifier';
 
 type SqlValue = string | number | null | Uint8Array;
@@ -253,6 +256,8 @@ describe('Lookup HMAC rotation state machine', () => {
       operationId: started.operationId,
     });
 
+    // Dual-write is kept until Worker key-state caches expire.
+    now += LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS;
     recordGenerationObservation(started.operationId);
     await service.observeGeneration('test', {
       operationId: started.operationId,
@@ -314,6 +319,33 @@ describe('Lookup HMAC rotation state machine', () => {
     ).rejects.toThrow('lookup_hmac_rotation_idempotency_conflict');
   });
 
+  it('keeps dual-write until Worker key-state caches can have expired', async () => {
+    const started = await service.start('test', {
+      candidate: KEY_B,
+      idempotencyKey: 'rotation-dwell',
+      ownerId: 'setup-owner',
+    });
+    recordCandidateVerification(started.operationId);
+    const mutation = { operationId: started.operationId, ownerId: 'setup-owner', fencingToken: 1 };
+    await service.activate('test', mutation);
+    recordGenerationObservation(started.operationId);
+
+    now += LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS - 1;
+    await expect(service.observeGeneration('test', mutation)).rejects.toThrow(
+      'lookup_hmac_dual_write_dwell_incomplete'
+    );
+    await expect(service.get('test')).resolves.toMatchObject({
+      rotationState: 'activation_dual_write',
+      writeMode: 'dual_write',
+    });
+
+    now += 1;
+    await expect(service.observeGeneration('test', mutation)).resolves.toMatchObject({
+      state: 'dual_read',
+    });
+    await expect(service.get('test')).resolves.toMatchObject({ writeMode: 'current_only' });
+  });
+
   it('resumes an expired setup lease with a new fencing token', async () => {
     const request = {
       candidate: KEY_B,
@@ -345,7 +377,8 @@ describe('Lookup HMAC rotation state machine', () => {
       fencingToken: 2,
     });
 
-    now += 121;
+    // The activation's lease covers the dual-write dwell as well.
+    now += 121 + LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS;
     const resumedActivation = await service.start('test', {
       ...request,
       ownerId: 'recovery-owner',
@@ -398,6 +431,8 @@ describe('Lookup HMAC rotation state machine', () => {
       ownerId: 'setup-owner',
       fencingToken: 1,
     });
+    // Dual-write is kept until Worker key-state caches expire.
+    now += LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS;
     recordGenerationObservation(started.operationId);
     await service.observeGeneration('test', {
       operationId: started.operationId,
@@ -462,6 +497,8 @@ describe('Lookup HMAC rotation state machine', () => {
       ownerId: 'setup-owner',
       fencingToken: 1,
     });
+    // Dual-write is kept until Worker key-state caches expire.
+    now += LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS;
     recordGenerationObservation(started.operationId);
     await service.observeGeneration('test', {
       operationId: started.operationId,
@@ -610,6 +647,8 @@ describe('Lookup HMAC rotation state machine', () => {
       fencingToken: started.fencingToken,
     };
     await service.activate('test', setupMutation);
+    // Dual-write is kept until Worker key-state caches expire.
+    now += LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS;
     recordGenerationObservation(started.operationId);
     await service.observeGeneration('test', setupMutation);
     now += 121;

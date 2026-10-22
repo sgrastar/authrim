@@ -19,6 +19,13 @@ import { LOOKUP_HMAC_VERIFICATION_COMPONENTS } from './lookup-hmac-candidate-ver
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
 const SETUP_TRANSITION_LEASE_SECONDS = 120;
+/**
+ * How long the key state stays in dual-write before anyone may write with the new key only: a
+ * Worker may hold the state from before the activation in its cache (30 seconds) after reading
+ * it from KV, whose copies can lag by up to a minute. Until both have passed, a Worker may still
+ * read only the previous key and miss what is written with the new one alone.
+ */
+export const LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS = 120;
 const SCHEDULED_REWRITE_LEASE_SECONDS = 90;
 const MAX_CHECKPOINT_BYTES = 4096;
 
@@ -486,7 +493,9 @@ export class LookupHmacKeyStateService {
       'activation_dual_write',
       'activation_dual_write',
       'dual_write',
-      true
+      true,
+      // The lease outlives the dual-write dwell, so the generation can be observed after it.
+      SETUP_TRANSITION_LEASE_SECONDS + LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS
     );
   }
 
@@ -1487,6 +1496,18 @@ export class LookupHmacKeyStateService {
             ? 'lookup_hmac_candidate_verification_incomplete'
             : 'lookup_hmac_generation_observation_incomplete'
         );
+      }
+    }
+    if (expectedState === 'activation_dual_write') {
+      const activated = await this.database
+        .prepare(
+          `SELECT updated_at FROM control_lookup_hmac_key_states
+            WHERE environment_id = ? AND operation_id = ? AND rotation_state = 'activation_dual_write'`
+        )
+        .bind(environmentId, operationId)
+        .first<{ updated_at: number }>();
+      if (!activated || now - Number(activated.updated_at) < LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS) {
+        throw new Error('lookup_hmac_dual_write_dwell_incomplete');
       }
     }
     const atomicVerificationGate = verificationGate?.sql ?? '';

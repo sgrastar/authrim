@@ -295,6 +295,7 @@ export * from './services/auth-core-persistence-context';
 export * from './services/runtime-data-context';
 export * from './services/account-provisioning';
 export * from './services/account-tombstone';
+export * from './services/tombstone-hmac-keyring';
 export * from './services/pii-access-log';
 export * from './services/device-secret-route';
 export * from './services/consent-store';

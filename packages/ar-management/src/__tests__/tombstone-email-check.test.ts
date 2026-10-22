@@ -15,7 +15,6 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createAuditLogFromContext: mocked.createAuditLogFromContext,
   };
 });
-vi.mock('../lookup-hmac-runtime', () => ({ loadLookupHmacRuntimeKeys: vi.fn() }));
 
 import { checkTombstoneEmail } from '../routes/settings/tombstones';
 import { findAdminRouteAccessRule } from '../admin-route-access';
@@ -61,11 +60,10 @@ describe('POST /api/admin/tombstones/email-check', () => {
       deleted_at: '2026-10-01T00:00:00.000Z',
       retention_until: '2026-12-30T00:00:00.000Z',
     });
-    expect(mocked.findActiveEmailTombstone).toHaveBeenCalledWith(
-      c.env,
-      { tenantId: 'acme', email: 'gone@example.com' },
-      expect.objectContaining({ loadKeys: expect.any(Function) })
-    );
+    expect(mocked.findActiveEmailTombstone).toHaveBeenCalledWith(c.env, {
+      tenantId: 'acme',
+      email: 'gone@example.com',
+    });
     // Audited without the address.
     expect(mocked.createAuditLogFromContext).toHaveBeenCalledWith(
       c,
@@ -93,6 +91,25 @@ describe('POST /api/admin/tombstones/email-check', () => {
       expect(mocked.findActiveEmailTombstone).not.toHaveBeenCalled();
     }
   );
+
+  it('gives no answer when the check cannot be audited', async () => {
+    mocked.findActiveEmailTombstone.mockResolvedValue({
+      deleted_at: Date.UTC(2026, 9, 1),
+      retention_until: Date.UTC(2026, 11, 30),
+    });
+    mocked.createAuditLogFromContext.mockRejectedValue(new Error('audit_log_delivery_failed'));
+    const response = await checkTombstoneEmail(context({ email: 'gone@example.com' }));
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(await response.json())).not.toContain('deleted_at');
+  });
+
+  it('is audited as an action that must be delivered (actor and time come with it)', async () => {
+    const { resolveAuditEventFailureBehavior } =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+    expect(resolveAuditEventFailureBehavior('tombstone.email_checked').behavior).toBe(
+      'fail_closed_or_strong_retry'
+    );
+  });
 
   it('answers a server error when the records cannot be searched', async () => {
     mocked.findActiveEmailTombstone.mockRejectedValue(new Error('missing_registry_row'));

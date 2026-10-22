@@ -17,7 +17,11 @@ import {
   tombstoneEmailIndexGeneration,
   type LookupBlindIndexKey,
 } from '../lookup-directory/blind-index';
-import type { ResolvedLookupHmacKeys } from '../lookup-directory/hmac-key-state';
+import {
+  loadTombstoneHmacKeysFromEnv,
+  parseTombstoneHmacKeyring,
+  type TombstoneHmacKeys,
+} from '../tombstone-hmac-keyring';
 
 const PII_MIGRATIONS = new URL('../../../../../migrations/pii/d1/', import.meta.url);
 const KEY_1: LookupBlindIndexKey = { generation: 1, secret: 'k'.repeat(32) };
@@ -58,11 +62,12 @@ function piiStore(): DatabaseAdapter {
   } as unknown as DatabaseAdapter;
 }
 
+/** A keyring reading `readKeys`, writing with the first of them (or `writeKey`). */
 function keys(
   readKeys: LookupBlindIndexKey[],
-  writeKeys = readKeys.slice(0, 1)
-): () => Promise<ResolvedLookupHmacKeys> {
-  return async () => ({ state: {} as ResolvedLookupHmacKeys['state'], readKeys, writeKeys });
+  writeKey: LookupBlindIndexKey = readKeys[0]
+): () => TombstoneHmacKeys {
+  return () => ({ writeKey, readKeys });
 }
 
 async function tombstone(
@@ -111,37 +116,64 @@ describe('tombstone email index', () => {
     expect(tombstoneValue.endsWith(lookup.digest)).toBe(false);
   });
 
-  it('is made with a key every reader reads, and is null without a usable address', async () => {
+  it("is made with the keyring's current key, and is null without a usable address", async () => {
     const env = {} as Env;
-    // Stable or reading both: the current key.
-    expect(
-      tombstoneEmailIndexGeneration(
-        await createTombstoneEmailIndexForDeletion(env, 'person@example.com', {
-          loadKeys: keys([KEY_2, KEY_1], [KEY_2]),
-        })
-      )
-    ).toBe(2);
-    // Writing with both (activation): a worker may still read only the previous key.
-    const loadKeys = keys([KEY_2, KEY_1], [KEY_2, KEY_1]);
+    const loadKeys = keys([KEY_2, KEY_1]);
     expect(
       tombstoneEmailIndexGeneration(
         await createTombstoneEmailIndexForDeletion(env, 'person@example.com', { loadKeys })
       )
-    ).toBe(1);
+    ).toBe(2);
     expect(await createTombstoneEmailIndexForDeletion(env, null, { loadKeys })).toBeNull();
     expect(await createTombstoneEmailIndexForDeletion(env, 'not-an-address', { loadKeys })).toBe(
       null
     );
   });
 
+  it('is made with the keyring in the environment', async () => {
+    const env = {
+      TOMBSTONE_HMAC_KEYRING: JSON.stringify({
+        current: 2,
+        keys: { 1: KEY_1.secret, 2: KEY_2.secret },
+      }),
+    } as unknown as Env;
+    expect(await createTombstoneEmailIndexForDeletion(env, 'person@example.com')).toBe(
+      await createTombstoneEmailIndex('person@example.com', KEY_2)
+    );
+  });
+
   it('fails the deletion preparation when the keys cannot be loaded', async () => {
     await expect(
       createTombstoneEmailIndexForDeletion({} as Env, 'person@example.com', {
-        loadKeys: async () => {
-          throw new Error('lookup_hmac_key_state_unavailable');
-        },
+        loadKeys: () => loadTombstoneHmacKeysFromEnv({}),
       })
-    ).rejects.toThrow('lookup_hmac_key_state_unavailable');
+    ).rejects.toThrow('tombstone_hmac_keyring_unavailable');
+  });
+});
+
+describe('tombstone keyring', () => {
+  const ring = (value: unknown) => JSON.stringify(value);
+
+  it('writes with the current generation and reads every one, current first', () => {
+    expect(
+      parseTombstoneHmacKeyring(ring({ current: 2, keys: { 1: KEY_1.secret, 2: KEY_2.secret } }))
+    ).toEqual({ writeKey: KEY_2, readKeys: [KEY_2, KEY_1] });
+  });
+
+  it.each([
+    ['not JSON', '{'],
+    ['no keys', ring({ current: 1, keys: {} })],
+    ['a current generation it does not hold', ring({ current: 3, keys: { 1: KEY_1.secret } })],
+    ['a short key', ring({ current: 1, keys: { 1: 'short' } })],
+    ['the same key twice', ring({ current: 1, keys: { 1: KEY_1.secret, 2: KEY_1.secret } })],
+    ['a bad generation', ring({ current: 1, keys: { 1: KEY_1.secret, x: KEY_2.secret } })],
+    ['an unknown member', ring({ current: 1, keys: { 1: KEY_1.secret }, extra: true })],
+  ])('refuses a keyring with %s', (_case, value) => {
+    expect(() => parseTombstoneHmacKeyring(value)).toThrow('tombstone_hmac_keyring_invalid');
+  });
+
+  it('is unavailable when the secret is missing', () => {
+    expect(() => loadTombstoneHmacKeysFromEnv({})).toThrow('tombstone_hmac_keyring_unavailable');
   });
 });
 
@@ -155,31 +187,6 @@ describe('findActiveEmailTombstone', () => {
       { loadKeys: keys([KEY_2, KEY_1]), resolvePiiStores: async () => [first, second] }
     );
     expect(found?.retention_until).toBeGreaterThan(Date.now() + 89 * DAY_MS);
-  });
-
-  it('is found by a worker still reading only the previous key while a rotation writes both', async () => {
-    const store = piiStore();
-    const email = 'rotating@example.com';
-    await new TombstoneRepository(store).createTombstone(
-      {
-        id: 'user-rotating',
-        tenant_id: 'tenant-a',
-        email_blind_index: await createTombstoneEmailIndexForDeletion({} as Env, email, {
-          loadKeys: keys([KEY_2, KEY_1], [KEY_2, KEY_1]),
-        }),
-        retention_days: 90,
-      },
-      store
-    );
-    for (const readKeys of [[KEY_1], [KEY_2, KEY_1]]) {
-      expect(
-        await findActiveEmailTombstone(
-          {} as Env,
-          { tenantId: 'tenant-a', email },
-          { loadKeys: keys(readKeys), resolvePiiStores: async () => [store] }
-        )
-      ).not.toBeNull();
-    }
   });
 
   it('does not find another tenant, another address, or a key no longer read', async () => {

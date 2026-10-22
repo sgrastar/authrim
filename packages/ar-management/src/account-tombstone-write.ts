@@ -14,7 +14,6 @@ import {
   type PreparedStatement,
   type Tombstone,
 } from '@authrim/ar-lib-core';
-import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
 
 export interface PreparedAccountTombstone {
   emailBlindIndex: string | null;
@@ -39,9 +38,7 @@ export async function prepareAccountTombstone(
     input.retentionDays === undefined
       ? resolveAccountTombstonePolicy(env, input.tenantId)
       : Promise.resolve(null),
-    createTombstoneEmailIndexForDeletion(env, input.email, {
-      loadKeys: (runtimeEnv) => loadLookupHmacRuntimeKeys(runtimeEnv),
-    }),
+    createTombstoneEmailIndexForDeletion(env, input.email),
   ]);
   return {
     emailBlindIndex,

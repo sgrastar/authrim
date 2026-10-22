@@ -2128,6 +2128,31 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // Setting another address: refused, as an address in use is, when it belongs to an account
+    // deleted within the retention period and the tenant blocks re-registration.
+    if (body.email.trim().toLowerCase() !== projection.email?.trim().toLowerCase()) {
+      const registration = await checkEmailRegistration(c.env, { tenantId, email: body.email });
+      if (registration === 'unavailable') {
+        c.header('Retry-After', '5');
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The email address cannot be checked now; try again',
+          },
+          503
+        );
+      }
+      if (registration === 'blocked') {
+        return c.json(
+          {
+            error: 'conflict',
+            error_description: 'Unable to update user with the provided information',
+          },
+          409
+        );
+      }
+    }
+
     const addressJson = buildAddressJsonFromAdminBody(body);
     await createCanonicalRuntimeUserWriter(
       c,

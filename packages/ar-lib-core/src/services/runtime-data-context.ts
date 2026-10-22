@@ -163,17 +163,6 @@ async function loadHmacKeys(env: Env, now: number): Promise<ResolvedLookupHmacKe
   return value;
 }
 
-/**
- * The environment's verified lookup HMAC keys (current, and the previous one while it is still
- * read), cached as account routing caches them.
- */
-export async function loadLookupHmacKeysFromEnv(
-  env: Env,
-  nowMs: number = Date.now()
-): Promise<ResolvedLookupHmacKeys> {
-  return loadHmacKeys(env, nowMs);
-}
-
 async function firstPrimary<T>(
   source: D1Database,
   sql: string,

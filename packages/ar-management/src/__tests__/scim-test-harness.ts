@@ -133,13 +133,6 @@ const accountRemovalState = vi.hoisted(() => ({
   erase: vi.fn(),
 }));
 
-vi.mock('../lookup-hmac-runtime', () => ({
-  loadLookupHmacRuntimeKeys: vi.fn(async () => {
-    const key = { generation: 1, secret: 'h'.repeat(32) };
-    return { state: {}, readKeys: [key], writeKeys: [key] };
-  }),
-}));
-
 vi.mock('../cross-shard-account-list', () => ({
   CrossShardAccountListService: class {
     private readonly env: Partial<Env>;

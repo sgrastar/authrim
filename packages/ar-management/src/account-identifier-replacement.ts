@@ -16,6 +16,7 @@ import {
   persistAccountEmailMutation,
   produceNotificationDelivery,
   resolveAccountReauthTtlSeconds,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession, type AccountSession } from './account-page';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -703,6 +704,19 @@ export async function completeAccountIdentifierReplacementHandler(
   const { pii: runtimePii, user } = await runtimeUser(c, tenantId, accountSession.userId);
   if (!user) {
     return c.json({ error: 'not_found', error_description: 'Account was not found' }, 404);
+  }
+  // A new address of an account deleted within the retention period, where the tenant blocks
+  // re-registration: answered as an address in use, once the code to it is verified.
+  const registration = await checkEmailRegistration(c.env, { tenantId, email: newEmail });
+  if (registration === 'unavailable') {
+    c.header('Retry-After', '5');
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'Try again shortly' },
+      503
+    );
+  }
+  if (registration === 'blocked') {
+    return c.json({ error: 'conflict', error_description: 'Email address is already in use' }, 409);
   }
   if (challenge.operation_mode === 'addition') {
     if (user.email && normalizeLookupEmail(user.email) !== newEmail) {

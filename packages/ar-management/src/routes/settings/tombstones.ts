@@ -29,7 +29,6 @@ import {
   type DatabaseSource,
   type Env,
 } from '@authrim/ar-lib-core';
-import { loadLookupHmacRuntimeKeys } from '../../lookup-hmac-runtime';
 
 /**
  * Tombstone entity from database
@@ -579,11 +578,7 @@ export async function checkTombstoneEmail(c: Context<{ Bindings: Env }>) {
   }
 
   try {
-    const tombstone = await findActiveEmailTombstone(
-      c.env,
-      { tenantId, email },
-      { loadKeys: (env) => loadLookupHmacRuntimeKeys(env) }
-    );
+    const tombstone = await findActiveEmailTombstone(c.env, { tenantId, email });
     await createAuditLogFromContext(c, 'tombstone.email_checked', 'tombstone', 'email', {
       deleted: tombstone !== null,
     });

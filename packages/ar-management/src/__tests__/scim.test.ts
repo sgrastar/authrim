@@ -18,13 +18,6 @@ import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
 
 const SCIM_TOMBSTONE_KEY = { generation: 2, secret: 's'.repeat(32) };
-vi.mock('../lookup-hmac-runtime', () => ({
-  loadLookupHmacRuntimeKeys: vi.fn(async () => ({
-    state: {},
-    readKeys: [SCIM_TOMBSTONE_KEY],
-    writeKeys: [SCIM_TOMBSTONE_KEY],
-  })),
-}));
 const scimTombstoneInserts: unknown[][] = [];
 
 vi.mock('../scim-identifier-replacement', () => ({
@@ -964,6 +957,10 @@ describe('SCIM 2.0 Endpoints', () => {
           Promise.all(statements.map((statement) => statement.run()))
         ),
       } as any,
+      TOMBSTONE_HMAC_KEYRING: JSON.stringify({
+        current: SCIM_TOMBSTONE_KEY.generation,
+        keys: { [SCIM_TOMBSTONE_KEY.generation]: SCIM_TOMBSTONE_KEY.secret },
+      }),
       // DB_PII mock for PII/Non-PII DB separation
       DB_PII: {
         prepare: vi.fn().mockImplementation((sql: string) => {

@@ -30,31 +30,43 @@ SCIM delete (`DELETE /scim/v2/Users/:id`). A record keeps:
 
 `email_blind_index` is `tombstone_email:v<normalization>:g<key generation>:<hex>`: the
 HMAC-SHA256 of the normalized address (trimmed, lower case, as the lookup directory normalizes
-it) under the environment's current lookup HMAC key (`LOOKUP_HMAC_KEY_SLOT_A/B`, see
-[Lookup key distribution](lookup-key-distribution.md)).
+it) under the current key of the **tombstone keyring** (`TOMBSTONE_HMAC_KEYRING`), which is kept
+apart from the lookup directory's keys.
 
 - It answers "was this address deleted?" only by being made again from an address someone
   presents. Read on its own, the column does not give the address back; without the key, a
   dictionary of likely addresses cannot be turned into fingerprints either. The guarantee rests
-  on the key staying in Worker secrets, never in a database or a backup next to the records.
-- It is made under its own label (`tombstone_email`), so it never equals the lookup directory's
-  email index of the same address: the PII stores and the lookup database cannot be joined on it.
-- It carries the key generation it was made with, and is made with a key every Worker reads: the
-  current key, or the previous one while a rotation writes with both (a Worker may still hold
-  the state from before the rotation for up to 30 seconds and read only the previous key).
-- Every key generation still read is tried when searching, so a rotation does not hide records
-  while the previous key is read. **Known limit:** Control stops reading the previous key 7 days
-  after a rotation is verified (`grace`, then `stable`). From then on, records made with it are
-  no longer found (the address is gone, so they cannot be re-keyed): the re-registration block
-  and the address check stop covering them, though the records stay until their
-  `retention_until`. Until this is addressed, rotate the lookup key only when that gap is
-  acceptable, or after the records made with the old key have expired.
-- **Known limit:** Control can leave the dual-write phase before every Worker's cached key state
-  (30 seconds) has caught up. A deletion written with the new key in that window can be missed
-  by a Worker still holding the state from before the rotation, for at most that cache lifetime.
-  The lookup directory's own reservations share this timing.
+  on the keyring staying in Worker secrets, never in a database or a backup next to the records.
+- It is made under its own label (`tombstone_email`) and its own keys, so it never equals the
+  lookup directory's email index of the same address: the PII stores and the lookup database
+  cannot be joined on it. Lookup key rotations do not touch it.
+- It carries the key generation it was made with; every generation in the keyring is tried when
+  searching.
 
-The fingerprint is computed before the deletion changes anything. If the keys cannot be loaded
+### The tombstone keyring
+
+`TOMBSTONE_HMAC_KEYRING` is a Worker secret (file `tombstone_hmac_keyring.json` in the keys
+directory) given to ar-auth, ar-management, ar-bridge and ar-saml:
+
+```json
+{ "current": 1, "keys": { "1": "<32-byte base64url>" } }
+```
+
+- **New and existing installs.** `setup init` writes it with the other keys. An install from
+  before it gets it on its next `setup update` or `setup deploy` (`ensureSupplementalKeyFiles`
+  creates a missing file, keeps an existing one, and refuses a malformed one), which also uploads
+  it. Nothing has to be done by hand. `scripts/setup-keys.sh` writes it too.
+- **Rotating** (rare; only if the key may have been exposed). Keys are added, never replaced in
+  place, and it takes two deploys so that no Worker is asked about a generation it cannot read:
+  1. add the new generation to `keys`, leaving `current` as it is; deploy;
+  2. set `current` to the new generation; deploy.
+- **Retiring a key.** Remove a generation only once every record made with it is past its
+  `retention_until` (at most the longest tombstone retention, 3650 days, after it stopped being
+  current). Until then it must stay in the keyring, or those records are no longer found.
+- Without a usable keyring, deletions are refused (and can be retried), the address check
+  answers a server error, and sign-up with blocking on is not let through.
+
+The fingerprint is computed before the deletion changes anything. If the keyring cannot be read
 the deletion is refused (and can be retried); it never writes a record without the fingerprint
 when the account had an email.
 
@@ -79,24 +91,34 @@ their `retention_until`; the data retention API reports the setting for the
 `POST /api/admin/tombstones/email-check` with `{ "email": "..." }` (in the body, never the URL;
 permission `users:read`) answers `{ "deleted": false }` or
 `{ "deleted": true, "deleted_at": "...", "retention_until": "..." }` for a record within its
-retention. It does not say which account it was. Each check is written to the admin audit log
-(`tombstone.email_checked`, with the answer, without the address).
+retention. It does not say which account it was. Each check is written to the audit log
+before the answer is given (`tombstone.email_checked`: the administrator, the time, and whether
+a record was found; never the address). The action is delivered fail-closed: a check that
+cannot be recorded is not answered.
 
 ### Blocking re-registration
 
 `account-lifecycle.deletion.block_reregistration` (tenant setting; environment default
 `ACCOUNT_TOMBSTONE_BLOCK_REREGISTRATION`; built-in default `false`). When on, a new account
-whose email has a deletion record within its retention is refused on:
+whose email has a deletion record within its retention, or a change to such an address, is
+refused on:
 
-| Path                                   | Refused as                                   |
-| -------------------------------------- | -------------------------------------------- |
-| Passkey sign-up (`/api/auth/passkeys`) | An address that has an account (409)         |
-| Direct-auth passkey sign-up            | An address that has an account (409)         |
-| Email code / direct-auth email code    | The usual "code sent" reply; nothing is sent |
-| TOTP sign-up (start and activation)    | An address that has an account (409)         |
-| External IdP / social JIT              | A policy denial (`policy_access_denied`)     |
-| SAML JIT                               | Sign-up turned off for the IdP (403)         |
-| Admin create (`POST /api/admin/users`) | The address conflict (409)                   |
+| Path                                                                      | Refused as                                                    |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Passkey sign-up (`/api/auth/passkeys`)                                    | An address that has an account (409)                          |
+| Direct-auth passkey sign-up                                               | An address that has an account (409)                          |
+| Email code / direct-auth email code                                       | The usual "code sent" reply; nothing is sent                  |
+| TOTP sign-up (start and activation)                                       | An address that has an account (409)                          |
+| External IdP / social JIT                                                 | A policy denial (`policy_access_denied`)                      |
+| SAML JIT                                                                  | Sign-up turned off for the IdP (403)                          |
+| Admin create (`POST /api/admin/users`)                                    | The address conflict (409)                                    |
+| Guest upgrade with email (complete)                                       | `identity_already_registered` (409), as for an address in use |
+| Own email change or addition (complete, after the code to it is verified) | `Email address is already in use` (409)                       |
+| Admin retry-PII setting another address                                   | The update conflict (409)                                     |
+
+Not covered: SCIM create and update and user import (a directory that re-provisions a deleted
+person is the directory's decision), and accounts without an email (passkey-only, guest, DID).
+The administrator's user update does not change an address.
 
 No reply says the address was deleted, and no audit entry written for the refusal carries the
 address or its hash. On the paths that answer 409, a blocked address goes through the same address
@@ -115,6 +137,14 @@ answers 503, the email code paths give the usual reply, and the other paths a se
 
 Turning the block on applies at once to every record still within its retention, including
 records made while it was off: the fingerprint is always written.
+
+### Lookup key rotations
+
+Separately from the tombstone keyring, Control keeps a lookup key rotation in dual-write for at
+least 120 seconds after activating it (`LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS`: a Worker may hold the
+key state from before the activation for 30 seconds after reading it from KV, whose copies can
+lag by up to a minute). `setup lookup-hmac-rotate` waits that long before leaving dual-write and
+asks again while Control answers `CONTROL_PLANE_LOOKUP_HMAC_DUAL_WRITE_DWELL_INCOMPLETE`.
 
 ## PII read records
 

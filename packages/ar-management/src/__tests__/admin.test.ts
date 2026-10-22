@@ -82,15 +82,12 @@ vi.mock('../account-directory-removal-producer', () => ({
   eraseAccountPiiAfterDirectoryRemovalPrepared: eraseAccountPii,
 }));
 
-// The environment's lookup HMAC key, as deletion paths load it for the tombstone's email index.
+// The tombstone keyring every mock environment holds (TOMBSTONE_HMAC_KEYRING).
 const TOMBSTONE_TEST_KEY = { generation: 3, secret: 't'.repeat(32) };
-vi.mock('../lookup-hmac-runtime', () => ({
-  loadLookupHmacRuntimeKeys: vi.fn(async () => ({
-    state: {},
-    readKeys: [TOMBSTONE_TEST_KEY],
-    writeKeys: [TOMBSTONE_TEST_KEY],
-  })),
-}));
+const TOMBSTONE_TEST_KEYRING = JSON.stringify({
+  current: TOMBSTONE_TEST_KEY.generation,
+  keys: { [TOMBSTONE_TEST_KEY.generation]: TOMBSTONE_TEST_KEY.secret },
+});
 
 /** Marks the statement that writes the user's tombstone row (account-tombstone-write.ts). */
 const TOMBSTONE_ROW_UPSERT = 'COALESCE(excluded.email_blind_index';
@@ -868,6 +865,7 @@ function createMockContext(options: {
       DB: mockDB,
       DB_ADMIN: mockDB,
       DB_PII: mockDBPII, // Added for PII/Non-PII DB separation
+      TOMBSTONE_HMAC_KEYRING: TOMBSTONE_TEST_KEYRING,
       ISSUER_URL: 'https://op.example.com',
       CLIENTS_CACHE: createMockKVNamespace(),
       SETTINGS: createMockKVNamespace(),
@@ -3564,6 +3562,80 @@ describe('Admin API Handlers', () => {
       );
       expect(canonicalRuntimeUsers.get(userId)).toBeDefined();
     });
+    it.each([
+      ['another address', 'deleted@example.com', 409],
+      ['the address it already has', 'routed@example.com', 200],
+    ])(
+      'checks a recently deleted address only when retry-PII sets %s',
+      async (_case, email, status) => {
+        const userId = 'user-routed-retry-blocked';
+        const accountDb = createMockDB({
+          firstResult: {
+            id: userId,
+            tenant_id: 'default',
+            email_verified: 1,
+            phone_number_verified: 0,
+            is_active: 1,
+            user_type: 'end_user',
+            pii_status: 'active',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          },
+        });
+        const accountPiiDb = createMockDB({
+          firstResult: { id: userId, email: 'routed@example.com' },
+        });
+        resolveCustomClaimRuntimeSources.mockImplementationOnce(async (env: Partial<Env>) => ({
+          storageProfile: {
+            id: 'builtin:storage:tenant-d1',
+            kind: 'storage',
+            label: 'Tenant D1',
+            slices: {},
+          },
+          schemaDb: env.DB,
+          nonPiiDb: accountDb,
+          piiDb: accountPiiDb,
+        }));
+        canonicalRuntimeUsers.set(userId, {
+          id: userId,
+          tenant_id: 'default',
+          lifecycle_state: 'active',
+          active: 1,
+          email: 'routed@example.com',
+          email_verified: 1,
+          phone_number_verified: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        const c = createMockContext({
+          method: 'POST',
+          params: { id: userId },
+          body: { email },
+          db: createMockDB({ firstResult: null, allResults: [] }),
+          dbPII: createMockDB({ firstResult: null }),
+        });
+
+        registrationCheck.override = 'blocked';
+        try {
+          await adminUserRetryPiiHandler(c);
+        } finally {
+          registrationCheck.override = null;
+        }
+
+        if (status === 409) {
+          expect(c.json).toHaveBeenCalledWith(
+            {
+              error: 'conflict',
+              error_description: 'Unable to update user with the provided information',
+            },
+            409
+          );
+          expect(canonicalRuntimeUsers.get(userId)).toMatchObject({ email: 'routed@example.com' });
+        } else {
+          expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+        }
+      }
+    );
   });
 
   describe('adminUserDeletePiiHandler (routed account)', () => {

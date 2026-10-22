@@ -2,7 +2,8 @@
  * Deleted accounts' records (users_pii_tombstone) and what they are used for.
  *
  * A deletion keeps, on the PII side, when, by whom and why the account was deleted, its retention
- * deadline, and a keyed fingerprint of its email (see createTombstoneEmailIndex). Nothing in it
+ * deadline, and a keyed fingerprint of its email (see createTombstoneEmailIndex), made with the
+ * tombstone keyring (TOMBSTONE_HMAC_KEYRING, see tombstone-hmac-keyring). Nothing in it
  * gives the address back; the fingerprint answers only "was this address deleted?", made again
  * from an address someone presents: the tenant's re-registration block and the administrator's
  * check of an address.
@@ -17,14 +18,9 @@ import { TombstoneRepository, type Tombstone } from '../repositories/pii/tombsto
 import type { Env } from '../types/env';
 import { createLogger } from '../utils/logger';
 import { resolveEffectiveSettings } from './effective-settings';
-import {
-  createTombstoneEmailIndex,
-  normalizeLookupEmail,
-  type LookupBlindIndexKey,
-} from './lookup-directory/blind-index';
-import type { ResolvedLookupHmacKeys } from './lookup-directory/hmac-key-state';
-import { loadLookupHmacKeysFromEnv } from './runtime-data-context';
+import { createTombstoneEmailIndex, normalizeLookupEmail } from './lookup-directory/blind-index';
 import { resolveTenantAssignedDatabaseSourcesFromRegistry } from './tenant-database-resolver';
+import { loadTombstoneHmacKeysFromEnv, type TombstoneHmacKeys } from './tombstone-hmac-keyring';
 
 const log = createLogger().module('ACCOUNT-TOMBSTONE');
 
@@ -43,7 +39,7 @@ export interface AccountTombstonePolicy {
 
 /** What the functions here read; each may be replaced (tests, callers with their own cache). */
 export interface AccountTombstoneDependencies {
-  loadKeys?: (env: Env) => Promise<ResolvedLookupHmacKeys>;
+  loadKeys?: (env: Env) => TombstoneHmacKeys | Promise<TombstoneHmacKeys>;
   resolvePiiStores?: (env: Env, tenantId: string) => Promise<DatabaseAdapter[]>;
 }
 
@@ -93,22 +89,10 @@ async function defaultPiiStores(env: Env, tenantId: string): Promise<DatabaseAda
 }
 
 /**
- * The key a new tombstone's index is made with: one every reader still reads. While a rotation
- * writes with both keys, a worker may still hold the state from before it (cached briefly) and
- * read the previous key only, so the previous key is used; otherwise the current one.
- */
-function tombstoneWriteKey(keys: ResolvedLookupHmacKeys): LookupBlindIndexKey {
-  const key =
-    keys.writeKeys.length > 1 ? keys.writeKeys[keys.writeKeys.length - 1] : keys.writeKeys[0];
-  if (!key) throw new Error('lookup_hmac_key_state_unavailable');
-  return key;
-}
-
-/**
- * The email index a new tombstone carries: made with a lookup key every reader reads (see
- * tombstoneWriteKey), under the tombstone's own label. Null when the account has no email to keep a fingerprint of (or one the
- * lookup directory would not accept). Throws when the keys cannot be loaded: every tombstone that
- * could carry an index does.
+ * The email index a new tombstone carries: made with the keyring's current key, under the
+ * tombstone's own label. Null when the account has no email to keep a fingerprint of (or one the
+ * lookup directory would not accept). Throws when the keyring cannot be read: every tombstone
+ * that could carry an index does.
  */
 export async function createTombstoneEmailIndexForDeletion(
   env: Env,
@@ -122,14 +106,14 @@ export async function createTombstoneEmailIndexForDeletion(
   } catch {
     return null;
   }
-  const keys = await (deps.loadKeys ?? loadLookupHmacKeysFromEnv)(env);
-  return createTombstoneEmailIndex(normalized, tombstoneWriteKey(keys));
+  const keys = await (deps.loadKeys ?? loadTombstoneHmacKeysFromEnv)(env);
+  return createTombstoneEmailIndex(normalized, keys.writeKey);
 }
 
 /**
  * The latest tombstone within its retention for an address, across the tenant's PII stores, or
- * null. Each lookup key generation still read is tried, so a rotation does not hide records made
- * with the previous key while it is read; records made with a key no longer read are not found.
+ * null. Every generation of the keyring is tried, so a record is found whichever key made it
+ * while that key stays in the keyring.
  */
 export async function findActiveEmailTombstone(
   env: Env,
@@ -142,7 +126,7 @@ export async function findActiveEmailTombstone(
   } catch {
     return null;
   }
-  const keys = await (deps.loadKeys ?? loadLookupHmacKeysFromEnv)(env);
+  const keys = await (deps.loadKeys ?? loadTombstoneHmacKeysFromEnv)(env);
   const indexes = [
     ...new Set(
       await Promise.all(keys.readKeys.map((key) => createTombstoneEmailIndex(normalized, key)))

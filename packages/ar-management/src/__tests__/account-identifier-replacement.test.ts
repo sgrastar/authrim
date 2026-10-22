@@ -57,10 +57,17 @@ vi.mock('../account-operation-log', () => ({
   recordAccountOperation: mocks.recordAccountOperation,
 }));
 
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
+      registrationCheck.override ?? actual.checkEmailRegistration(...args),
     createAccountAuthContextFromHono: vi.fn(() => ({
       coreAdapter: {
         queryOne: mocks.coreQueryOne,
@@ -407,6 +414,67 @@ describe('account identifier replacement handlers', () => {
       )
     ).toBe(false);
   });
+
+  it.each(['replacement', 'addition'] as const)(
+    'refuses a verified %s to a recently deleted address as an address in use',
+    async (mode) => {
+      const challengeId = 'identifier-replacement-00000000-0000-4000-8000-000000000001';
+      const code = '123456';
+      const now = Math.floor(Date.now() / 1000);
+      const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode('test-identifier-replacement-secret-32-bytes'),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+      const signature = await crypto.subtle.sign(
+        'HMAC',
+        key,
+        new TextEncoder().encode(`${challengeId}\0${code}`)
+      );
+      const verifier = Array.from(new Uint8Array(signature), (byte) =>
+        byte.toString(16).padStart(2, '0')
+      ).join('');
+      if (mode === 'addition') mocks.findById.mockResolvedValueOnce({ email: null });
+      mocks.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({
+        tenant_id: 'tenant-a',
+        account_id: 'account-a',
+        normalized_value_json: JSON.stringify('deleted@example.com'),
+        value_sha256: 'b'.repeat(64),
+        otp_verifier: verifier,
+        delivery_state: 'sent',
+        attempt_count: 0,
+        attempt_limit: 5,
+        expires_at: now + 300,
+        consumed_at: null,
+        initiating_session_ref: 'session-current',
+        recent_reauth_verified_at: now,
+        operation_mode: mode,
+      });
+
+      registrationCheck.override = 'blocked';
+      let response: Response;
+      try {
+        response = await completeAccountIdentifierReplacementHandler(
+          context({
+            body: { challenge_id: challengeId, code },
+            idempotencyKey: `blocked-${mode}-key-0000`,
+          }) as never
+        );
+      } finally {
+        registrationCheck.override = null;
+      }
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: 'conflict',
+        error_description: 'Email address is already in use',
+      });
+      expect(mocks.repositoryCreate).not.toHaveBeenCalled();
+      expect(mocks.publishEmailAddition).not.toHaveBeenCalled();
+    }
+  );
 
   it('fails closed before resuming an operation owned by another account', async () => {
     mocks.queryOne.mockResolvedValueOnce(null);

@@ -54,8 +54,18 @@ vi.mock('@simplewebauthn/server', () => ({
   generateRegistrationOptions: mocks.registration,
   verifyRegistrationResponse: mocks.verifyRegistration,
 }));
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  checkEmailRegistration: async (
+    ...args: Parameters<typeof import('@authrim/ar-lib-core').checkEmailRegistration>
+  ) =>
+    registrationCheck.override ??
+    (await importOriginal<typeof import('@authrim/ar-lib-core')>()).checkEmailRegistration(...args),
   validateAccountDirectoryPublication: vi.fn(async (value) => value),
   getTenantIdFromContext: () => 'tenant',
   getSessionStoreBySessionId: () => ({
@@ -441,6 +451,32 @@ describe('account guest upgrade API', () => {
     });
     expect(mocks.commit).not.toHaveBeenCalled();
     expect(mocks.updateSession).not.toHaveBeenCalled();
+  });
+  it('answers a recently deleted address as an identity collision, reserving nothing', async () => {
+    mocks.operation.mockResolvedValue({ ...(await operation()), state: 'verified' });
+    registrationCheck.override = 'blocked';
+    let result: Response;
+    try {
+      result = await completeAccountGuestUpgradeHandler(
+        context({ operation_id: 'op', upgrade_token: token })
+      );
+    } finally {
+      registrationCheck.override = null;
+    }
+    expect(result.status).toBe(409);
+    expect(await result.json()).toEqual({
+      error: 'identity_already_registered',
+      existing_login_available: true,
+    });
+    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(mocks.commit).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'account.guest.upgrade_failed',
+        metadata: expect.objectContaining({ reason: 'identity_already_registered' }),
+      })
+    );
   });
   it('does not refresh authentication when a completed operation is retried', async () => {
     mocks.operation.mockResolvedValue({ ...(await operation()), state: 'completed' });

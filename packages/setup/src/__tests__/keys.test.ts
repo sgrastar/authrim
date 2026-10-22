@@ -32,6 +32,7 @@ import {
   validateSetupMachinePublicKeyJwk,
   generateWranglerSecretCommands,
   ensureSupplementalKeyFiles,
+  isValidTombstoneHmacKeyring,
 } from '../core/keys.js';
 import { AUTHRIM_KEYS_DIR, AUTHRIM_DIR, LEGACY_KEYS_DIR } from '../core/paths.js';
 
@@ -255,6 +256,11 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
+    expect(
+      isValidTombstoneHmacKeyring(
+        readFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), 'utf-8')
+      )
+    ).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_evidence_hmac_secret.txt'))).toBe(true);
@@ -625,6 +631,34 @@ describe('ensureSupplementalKeyFiles', () => {
     }
   });
 
+  it('keeps an existing tombstone keyring and refuses a malformed one', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const keyPair = generateRsaKeyPair('legacy-key');
+    writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
+    writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
+    writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify({ kid: 'legacy-key', files: {} }));
+    // A rotated keyring: generation 2 current, generation 1 still read.
+    const rotated = JSON.stringify({
+      current: 2,
+      keys: { '1': 'a'.repeat(43), '2': 'b'.repeat(43) },
+    });
+    writeFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), rotated);
+
+    const result = await ensureSupplementalKeyFiles(keysDir);
+
+    expect(result.createdFiles).not.toContain(join(keysDir, 'tombstone_hmac_keyring.json'));
+    expect(readFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), 'utf-8')).toBe(rotated);
+
+    writeFileSync(
+      join(keysDir, 'tombstone_hmac_keyring.json'),
+      JSON.stringify({ current: 3, keys: { '1': 'a'.repeat(43) } })
+    );
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      /Invalid supplemental secret: .*tombstone_hmac_keyring\.json/u
+    );
+  });
+
   it('backfills keys required by deploy-time Admin Machine Access', async () => {
     const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
     mkdirSync(keysDir, { recursive: true });
@@ -635,7 +669,7 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(25);
+    expect(result.createdFiles).toHaveLength(26);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
@@ -644,6 +678,10 @@ describe('ensureSupplementalKeyFiles', () => {
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'lookup_hmac_key_slot_a.txt'))).toBe(true);
+    // Deleted accounts' email fingerprints get their own keyring, apart from the lookup keys.
+    expect(JSON.parse(readFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), 'utf-8'))).toEqual(
+      { current: 1, keys: { '1': expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } }
+    );
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_mutation_hmac_key.txt'))).toBe(true);
