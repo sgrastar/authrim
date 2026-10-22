@@ -97,6 +97,8 @@ describe('tenant backup dataset registry coverage', () => {
       // Restored with the device secrets and consents it refuses or ends.
       ['core', 'device_secrets'],
       ['core', 'oauth_client_consent_revocations'],
+      // Restored with the invitations whose uses it holds.
+      ['core', 'tenant_invitation_redemptions'],
     ]) {
       expect(
         TENANT_DATASET_POLICIES.find((entry) => entry.family === family && entry.table === table)

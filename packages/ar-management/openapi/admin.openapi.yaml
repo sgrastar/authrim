@@ -2038,6 +2038,11 @@ paths:
         authentication-methods.email_otp.guest_upgrade_enabled (both default true).
         authentication-methods.did.login_enabled (default false) lets accounts with a linked DID
         sign in with it; linking, listing and unlinking DIDs do not depend on it.
+        authentication-methods.invitation.email_verification (optional or required, default
+        optional) decides, for an invitation that names an email, whether a sign-up must prove it:
+        a passkey or authenticator-app sign-up by a code sent to that email first, an external IdP
+        sign-up by the provider reporting the email verified (an email-code sign-up always proves
+        it).
       security:
         - adminBearer: []
         - adminSessionCookie: []

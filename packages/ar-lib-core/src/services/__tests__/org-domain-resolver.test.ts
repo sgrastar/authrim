@@ -74,7 +74,7 @@ describe('org-domain-resolver', () => {
     expect(result.success).toBe(true);
     expect(result.org_id).toBe('org-1');
     expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO org_memberships'),
+      expect.stringContaining('INSERT INTO subject_org_membership'),
       expect.arrayContaining(['tenant-1', 'user-1', 'org-1', 'admin'])
     );
   });

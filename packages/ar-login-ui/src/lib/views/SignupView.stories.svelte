@@ -178,6 +178,17 @@
 </Story>
 
 <Story
+	name="Invitation email code"
+	args={{
+		inviteTenantName: 'Acme Corp',
+		invitationEmailCode: { maskedEmail: 'i***@example.com' },
+		invitationCode: '123456'
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
 	name="Runtime screen"
 	args={{
 		legacyHeading: false,

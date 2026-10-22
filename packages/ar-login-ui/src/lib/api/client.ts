@@ -579,13 +579,67 @@ const loginUiDirectAuthHttp: HttpClient = {
 	}
 };
 
-function createDirectAuthClient(): DirectAuthBrowserSessionClient {
+/** Sign-up starts that accept an invitation (the SDK has no field for it). */
+const INVITATION_SIGNUP_START_PATHS = [
+	'/api/v1/auth/direct/passkey/signup/start',
+	'/api/auth/totp/signup/options'
+];
+
+/**
+ * Adds the invitation (and, when the tenant requires it, the proof of the invited email) to the
+ * body of a Passkey or authenticator-app signup start. The server reserves one use for the signup
+ * and applies it to the account that signup creates. A provisioning replay re-sends this body, so
+ * the invitation stays on it.
+ */
+function withSignupInvitation(invitation: {
+	inviteToken: string;
+	invitationEmailProof?: string;
+}): HttpClient {
+	const fields: Record<string, string> = { invite_token: invitation.inviteToken };
+	if (invitation.invitationEmailProof) {
+		fields.invitation_email_proof = invitation.invitationEmailProof;
+	}
+	return {
+		async fetch<T = unknown>(url: string, options: HttpOptions = {}): Promise<HttpResponse<T>> {
+			if (!INVITATION_SIGNUP_START_PATHS.some((path) => url.includes(path))) {
+				return loginUiDirectAuthHttp.fetch<T>(url, options);
+			}
+			if (typeof options.body !== 'string') {
+				throw new Error('Invalid signup request body');
+			}
+			const parsed: unknown = JSON.parse(options.body);
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				throw new Error('Invalid signup request body');
+			}
+			return loginUiDirectAuthHttp.fetch<T>(url, {
+				...options,
+				body: JSON.stringify({ ...parsed, ...fields })
+			});
+		}
+	};
+}
+
+function signupInvitationHttp(data: {
+	inviteToken?: string;
+	invitationEmailProof?: string;
+}): HttpClient | undefined {
+	return data.inviteToken
+		? withSignupInvitation({
+				inviteToken: data.inviteToken,
+				invitationEmailProof: data.invitationEmailProof
+			})
+		: undefined;
+}
+
+function createDirectAuthClient(
+	http: HttpClient = loginUiDirectAuthHttp
+): DirectAuthBrowserSessionClient {
 	const baseUrl = resolveApiBaseUrl();
 	return new DirectAuthBrowserSessionClient({
 		issuer: baseUrl,
 		baseUrl,
 		clientId: getAuthConfig().clientId,
-		http: loginUiDirectAuthHttp,
+		http,
 		crypto: loginUiCryptoProvider,
 		storage: loginUiDirectAuthStorage,
 		storageKeyPrefix: 'authrim:loginui:direct'
@@ -1042,9 +1096,13 @@ export const passkeyAPI = {
 		custom_fields?: Record<string, unknown>;
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
+		/** Applied by the server to the account this signup creates. */
+		inviteToken?: string;
+		/** Proof of the invited email, when the tenant requires one. */
+		invitationEmailProof?: string;
 	}) {
 		const response = await withDirectAuthResult(() =>
-			createDirectAuthClient().startPasskeySignup(
+			createDirectAuthClient(signupInvitationHttp(data)).startPasskeySignup(
 				{
 					email: data.email || undefined,
 					displayName: data.name,
@@ -1361,9 +1419,13 @@ export const totpAPI = {
 		custom_fields?: Record<string, unknown>;
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
+		/** Applied by the server to the account this signup creates. */
+		inviteToken?: string;
+		/** Proof of the invited email, when the tenant requires one. */
+		invitationEmailProof?: string;
 	}) {
 		return withDirectAuthResult(() =>
-			createDirectAuthClient().createTotpSignupOptions(
+			createDirectAuthClient(signupInvitationHttp(data)).createTotpSignupOptions(
 				{
 					email: data.email,
 					name: data.name,
@@ -1936,7 +1998,9 @@ export const externalIdpAPI = {
 		startMode: 'oauth_redirect' | 'saml_sp' = 'oauth_redirect',
 		humanVerification?: { token?: string },
 		/** The /authorize challenge this sign-in answers (a re-authentication asks the IdP anew). */
-		authorizationChallengeId?: string
+		authorizationChallengeId?: string,
+		/** The invitation a sign-up started from; applied only to an account the sign-in creates. */
+		inviteToken?: string
 	): Promise<{
 		url: string;
 	}> {
@@ -1948,6 +2012,9 @@ export const externalIdpAPI = {
 		}
 		if (authorizationChallengeId) {
 			targetUrl.searchParams.set('authorization_challenge_id', authorizationChallengeId);
+		}
+		if (inviteToken) {
+			targetUrl.searchParams.set('invite_token', inviteToken);
 		}
 
 		if (startMode === 'saml_sp') {
@@ -1990,6 +2057,51 @@ export const externalIdpAPI = {
 		return {
 			url: targetUrl.toString()
 		};
+	}
+};
+
+// =============================================================================
+// Invitations
+// =============================================================================
+
+export interface InvitationValidation {
+	valid: true;
+	tenant_name: string;
+	invited_email: string | null;
+	/** A passkey or authenticator-app signup must first prove the invited email. */
+	email_verification_required: boolean;
+	expires_at: number;
+}
+
+export const invitationAPI = {
+	validate(token: string) {
+		return apiFetch<InvitationValidation>(
+			`/api/v1/invitations/validate?token=${encodeURIComponent(token)}`,
+			{ method: 'GET' }
+		);
+	},
+
+	/** Sends a code to the email the invitation names (the server picks the address). */
+	sendEmailCode(token: string) {
+		return apiFetch<{ verification_id: string; expires_in: number; masked_email: string }>(
+			'/api/v1/invitations/email-verification/send',
+			{ method: 'POST', body: JSON.stringify({ token }) }
+		);
+	},
+
+	/** Exchanges the code for a short-lived proof the signup start takes. */
+	verifyEmailCode(data: { token: string; verificationId: string; code: string }) {
+		return apiFetch<{ invitation_email_proof: string; expires_in: number }>(
+			'/api/v1/invitations/email-verification/verify',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					token: data.token,
+					verification_id: data.verificationId,
+					code: data.code
+				})
+			}
+		);
 	}
 };
 

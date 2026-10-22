@@ -880,6 +880,11 @@ export interface SAMLRequestContext {
    * the challenge, when it asked (milliseconds, Authrim's clock), and the keys of the IdP's
    * re-authentication setting.
    */
+  /**
+   * The invitation this SP-initiated sign-in started from, and the use its start reserved: applied
+   * only to an account the ACS creates, given back otherwise.
+   */
+  invitation?: { inviteId: string; inviteReservationId: string };
   spReauthentication?: {
     authorizationChallengeId: string;
     requestedAt: number;

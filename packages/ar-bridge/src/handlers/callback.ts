@@ -6,6 +6,11 @@
  * Apple Sign In uses POST with response_mode=form_post when name/email scope is requested.
  */
 
+import {
+  applyExternalSignupInvitation,
+  externalSignupInvitationRequirement,
+  releaseExternalSignupInvitation,
+} from '../services/signup-invitation';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import * as jose from 'jose';
@@ -265,6 +270,17 @@ async function completeExternalAuthentication(
     expectedAccountId: `account:${result.userId}`,
   });
   (c as unknown as { set(key: string, value: unknown): void }).set('accountDataContext', account);
+  // The use the start reserved goes to the account this sign-in created, before any session or
+  // code is issued so its first tokens carry the invitation's role.
+  if (result.isNewUser && authState.inviteId && authState.inviteReservationId) {
+    await applyExternalSignupInvitation(c.env, getLogger(c).module('CALLBACK'), {
+      inviteId: authState.inviteId,
+      inviteReservationId: authState.inviteReservationId,
+      tenantId: authState.tenantId,
+      userId: result.userId,
+      accountCoreAdapter: createAccountAuthContextFromHono(c, authState.tenantId).coreAdapter,
+    });
+  }
   publishEvent(c, {
     type: AUTH_EVENTS.EXTERNAL_IDP_SUCCEEDED,
     tenantId: authState.tenantId,
@@ -558,7 +574,10 @@ function parseContinuation(value: string): ExternalIdpProvisioningContinuation {
     result.accountId !== `account:${result.userId}` ||
     continuation.providerId !== result.providerId ||
     userInfo.sub !== result.providerUserId ||
-    (continuation.upstreamAcr !== undefined && !boundedString(continuation.upstreamAcr, 1024))
+    (continuation.upstreamAcr !== undefined && !boundedString(continuation.upstreamAcr, 1024)) ||
+    (authState.inviteId !== undefined && !boundedString(authState.inviteId, 256)) ||
+    (authState.inviteReservationId !== undefined &&
+      !boundedString(authState.inviteReservationId, 256))
   ) {
     throw new Error('external_idp_provisioning_continuation_invalid');
   }
@@ -793,6 +812,14 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   let provider: UpstreamProvider | null = null;
   // Set once the state shows this is a link from the account page, whose outcome returns there.
   let link: { tenantId: string; userId: string; sessionId?: string } | null = null;
+  // The invitation use this sign-in's start reserved, until it is handed to the account the
+  // sign-in creates. Every other ending (a provider error, a failed exchange, an existing
+  // account, any failure) gives it back below, so an abandoned start does not hold it.
+  let unsettledInvitation: {
+    inviteId: string;
+    inviteReservationId: string;
+    tenantId: string;
+  } | null = null;
 
   if (c.req.method === 'GET' && !code && !state && !error && !responseJwt) {
     return createHybridFragmentRelayResponse();
@@ -847,6 +874,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // 2. Validate state and get stored data
     const authState = await consumeAuthState(c.env, tenantId, state);
+    if (authState?.inviteId && authState.inviteReservationId) {
+      unsettledInvitation = {
+        inviteId: authState.inviteId,
+        inviteReservationId: authState.inviteReservationId,
+        tenantId: authState.tenantId,
+      };
+    }
     if (!authState) {
       await logCallbackRejection(log, diagnosticLogger, {
         diagnosticSessionId,
@@ -1454,14 +1488,29 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
             idTokenAuthTime,
           });
 
-    // 8. Handle identity stitching or account creation
+    // 8. Handle identity stitching or account creation. An invitation the sign-in started from
+    // goes only to an account created here: one it names an email for is created only for that
+    // email, and a sign-in that finds an existing account gives the reserved use back.
+    const signupInvitation =
+      authState.inviteId && authState.inviteReservationId
+        ? { inviteId: authState.inviteId, inviteReservationId: authState.inviteReservationId }
+        : null;
+    const invitation = signupInvitation
+      ? await externalSignupInvitationRequirement(c.env, {
+          tenantId: authState.tenantId,
+          inviteId: signupInvitation.inviteId,
+        })
+      : null;
     const result = await handleIdentity(c.env, {
       provider,
       userInfo,
       tokens,
       linkingUserId: authState.userId,
       tenantId: authState.tenantId,
+      ...(invitation ? { invitation } : {}),
     });
+    // Created here (now or once provisioning finishes): the use goes to that account.
+    if (result.isNewUser) unsettledInvitation = null;
 
     if (result.status === 'pending') {
       return await beginExternalIdpProvisioningContinuation(c, {
@@ -1620,6 +1669,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       'Authentication failed. Please try again.'
     );
   } finally {
+    if (unsettledInvitation) {
+      await releaseExternalSignupInvitation(c.env, log, unsettledInvitation);
+    }
     if (diagnosticLogger) {
       await diagnosticLogger.cleanup().catch((cleanupError: unknown) => {
         log.warn('Failed to flush callback diagnostic logs', {

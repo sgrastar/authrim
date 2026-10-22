@@ -103,11 +103,21 @@ import {
   checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
-  applyInvitationAssignments,
-  consumeInvitationUse,
   findActiveInvitationByToken,
-  hasRemainingInvitationUses,
+  findInvitationReservation,
+  invitationHolderForEmail,
 } from '@authrim/ar-lib-core/services/invitation-auth-core';
+import {
+  bindSignupInvitation,
+  completeSignupInvitation,
+  invitationDatabase,
+  releaseSignupInvitation,
+  signupInvitationErrorResponse,
+  signupInvitationFromMetadata,
+  startSignupInvitation,
+  type SignupInvitationReservation,
+  type SignupInvitationStart,
+} from './invitation-redemption';
 
 import {
   generateRegistrationOptions,
@@ -1976,6 +1986,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       cf_turnstile_response?: string;
       provisioning_token?: string;
       resume_user_id?: string;
+      invite_token?: string;
+      invitation_email_proof?: string;
     }>();
 
     const {
@@ -1994,6 +2006,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       cf_turnstile_response,
       provisioning_token,
       resume_user_id,
+      invite_token,
+      invitation_email_proof,
     } = body;
 
     if (!client_id || !code_challenge || code_challenge_method !== 'S256' || !channel) {
@@ -2085,6 +2099,11 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     // Passkey signup is discoverable and does not use email to identify the
     // account. Email is only used when the caller supplies it as optional
     // profile data or as an existing-account lookup hint.
+    if (invite_token !== undefined && (typeof invite_token !== 'string' || !invite_token)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'invite_token' },
+      });
+    }
     const accountRoute = normalizedEmail
       ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail).catch((error: unknown) => {
           if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
@@ -2134,14 +2153,34 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       ...customFieldValidation.values,
     });
 
+    // An invitation is checked and one use reserved for this sign-up before its account exists;
+    // the reservation is recorded on the challenge and applied, when the passkey is registered,
+    // to the user the challenge names. A sign-up that gives an email holds the use by it, so a
+    // restart (a provisioning replay, a new start after the passkey prompt was closed) keeps it.
+    const newUserId = resumedUserId ?? (await generateUserIdFromSettings(c.env, tenantId, c.env));
+    let signupInvitation: Extract<SignupInvitationStart, { ok: true }> | null = null;
+    if (invite_token) {
+      const started = await startSignupInvitation(c, {
+        token: invite_token,
+        tenantId,
+        email: normalizedEmail,
+        holder: normalizedEmail
+          ? await invitationHolderForEmail(normalizedEmail)
+          : `user:${newUserId}`,
+        emailProof: invitation_email_proof,
+      });
+      if (!started.ok) return signupInvitationErrorResponse(c, started.reason);
+      signupInvitation = started;
+    }
+    const emailVerifiedByInvitation = signupInvitation?.emailVerified === true;
+
     if (!user) {
       // Create new user
-      const newUserId = resumedUserId ?? (await generateUserIdFromSettings(c.env, tenantId, c.env));
       const defaultName = display_name || null;
       const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
       const provisioningRuntimeUser = {
         active: true as const,
-        emailVerified: false,
+        emailVerified: emailVerifiedByInvitation,
         userType: 'end_user',
         displayName: defaultName,
         sourceRef: 'auth:passkey',
@@ -2177,7 +2216,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
             email: normalizedEmail,
             name: defaultName,
             active: true,
-            emailVerified: false,
+            emailVerified: emailVerifiedByInvitation,
             userType: 'end_user',
             sourceRef: 'direct_auth_passkey',
             piiFields: canonicalProfileFields.piiFields,
@@ -2186,6 +2225,13 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
           });
         }
       } catch (piiError) {
+        // No account, so the reserved use goes back (a retry reserves again).
+        if (signupInvitation) {
+          await releaseSignupInvitation(invitationDatabase(c, tenantId), log, {
+            reservation: signupInvitation.reservation,
+            tenantId,
+          });
+        }
         const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, piiError);
         if (writeFenceResponse) return writeFenceResponse;
         log.error('Failed to create canonical runtime user', {
@@ -2196,6 +2242,14 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       }
 
       user ??= { id: newUserId, email: normalizedEmail, name: defaultName };
+    }
+    // The reserved use now belongs to this account, and can only ever be applied to it.
+    if (signupInvitation) {
+      await bindSignupInvitation(c, log, {
+        reservation: signupInvitation.reservation,
+        tenantId,
+        userId: user.id,
+      });
     }
 
     // Get existing passkeys for exclusion
@@ -2280,6 +2334,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         ...(Object.keys(customFieldValidation.values).length > 0
           ? { custom_fields: customFieldValidation.values }
           : {}),
+        ...(signupInvitation ? signupInvitation.reservation : {}),
       },
     });
 
@@ -2418,6 +2473,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         rpID: string;
         custom_fields?: Record<string, unknown>;
         authorization_challenge_id?: string;
+        invite_id?: string;
+        invite_reservation_id?: string;
       };
     };
 
@@ -2535,6 +2592,20 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
           persistError as Error
         );
       }
+    }
+
+    // The use the start reserved goes to the user this challenge was bound to.
+    const signupInvitation = signupInvitationFromMetadata(challengeData.metadata);
+    if (signupInvitation) {
+      failureStage = 'invitation_apply';
+      await completeSignupInvitation(
+        {
+          invitations: () => invitationDatabase(c, tenantId),
+          assignments: authCtx.coreAdapter,
+        },
+        log,
+        { reservation: signupInvitation, tenantId, userId, now: Math.floor(now / 1000) }
+      );
     }
 
     // Generate auth_code
@@ -2730,61 +2801,18 @@ async function completeDirectEmailVerification(
         await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
       }
 
-      // Apply invitation role/org assignment if present.
-      const inviteId = metadataString(metadata, 'invite_id');
-      const inviteToken = metadataString(metadata, 'invite_token');
-
-      if (inviteId && inviteToken) {
-        const inviteNow = Math.floor(now / 1000);
-        try {
-          const invitation = await findActiveInvitationByToken(coreAdapter, inviteToken, inviteNow);
-          if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
-            log.warn('Invitation metadata no longer matches an active tenant invitation', {
-              invite_id: inviteId,
-              tenant_id: tenantId,
-            });
-          } else if (
-            !(await consumeInvitationUse(
-              coreAdapter,
-              invitation.id,
-              invitation.tenant_id,
-              inviteNow
-            ))
-          ) {
-            log.warn('Invitation use_count increment was skipped during email verification', {
-              invite_id: inviteId,
-              tenant_id: tenantId,
-            });
-          } else {
-            const assignmentResults = await applyInvitationAssignments(coreAdapter, {
-              userId,
-              tenantId,
-              roleId: invitation.role_id,
-              orgId: invitation.org_id,
-            });
-
-            if (invitation.role_id && !assignmentResults.roleAssignment?.success) {
-              log.warn('Failed to assign role from invitation', {
-                invite_id: inviteId,
-                tenant_id: tenantId,
-                error: assignmentResults.roleAssignment?.error,
-              });
-            }
-
-            if (invitation.org_id && !assignmentResults.orgMembership?.success) {
-              log.warn('Failed to assign organization from invitation', {
-                invite_id: inviteId,
-                tenant_id: tenantId,
-                error: assignmentResults.orgMembership?.error,
-              });
-            }
-          }
-        } catch (inviteErr) {
-          log.warn('Failed to apply invitation assignments', {
-            error: String(inviteErr),
-            invite_id: inviteId,
-          });
-        }
+      // The use the send reserved goes to the user the code was sent to, the account that send
+      // created (an existing account never carries a reservation).
+      const signupInvitation = signupInvitationFromMetadata(metadata);
+      if (signupInvitation) {
+        await completeSignupInvitation(
+          {
+            invitations: () => invitationDatabase(c, tenantId),
+            assignments: coreAdapter,
+          },
+          log,
+          { reservation: signupInvitation, tenantId, userId, now: Math.floor(now / 1000) }
+        );
       }
 
       // Save custom registration fields if present.
@@ -3105,23 +3133,14 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     let tenantId = challengeTenantId;
     const routingCoreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
-    // Invitation token routing: overrides all other tenant resolution
-    let inviteData: {
-      invite_id: string;
-      invite_token: string;
-      invite_role_id: string | null;
-      invite_org_id: string | null;
-      invited_email: string | null;
-    } | null = null;
-
+    // Invitation token routing: overrides all other tenant resolution. Whether the invitation still
+    // has a use for this sign-up is decided when its use is reserved, below.
+    let invitedTokenId: string | null = null;
     if (invite_token) {
       const nowTs = Math.floor(Date.now() / 1000);
       const invitation = await findActiveInvitationByToken(routingCoreAdapter, invite_token, nowTs);
 
       if (!invitation) {
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-      }
-      if (!hasRemainingInvitationUses(invitation)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
       }
       // If invitation is restricted to a specific email, enforce it
@@ -3130,13 +3149,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       }
 
       tenantId = invitation.tenant_id;
-      inviteData = {
-        invite_id: invitation.id,
-        invite_token,
-        invite_role_id: invitation.role_id,
-        invite_org_id: invitation.org_id,
-        invited_email: invitation.invited_email,
-      };
+      invitedTokenId = invitation.id;
     }
 
     // A Flow interaction is tenant-bound before Direct Auth begins. Invitations must not move a
@@ -3346,6 +3359,45 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
     }
 
+    // An invitation is only for the account this sign-up creates. A new address reserves one use
+    // now (held by the address, so a resent code keeps it) and binds it to the account once that
+    // exists. An existing account takes the invitation only when it is that sign-up's own
+    // account: an unexpired use bound to it, or, for the resumed send of a sign-up whose account
+    // was still being provisioned, one not yet bound. Any other existing account signs in without
+    // it. Neither case changes the answer, so the answer does not tell whether the address has an
+    // account: a new address whose invitation has no use left gets the same answer, with no
+    // account created and no code sent.
+    let signupInvitation: SignupInvitationReservation | null = null;
+    if (invite_token && invitedTokenId) {
+      const holder = await invitationHolderForEmail(normalizedEmail);
+      const held = user
+        ? await findInvitationReservation(invitationDatabase(c, tenantId), {
+            invitationId: invitedTokenId,
+            tenantId,
+            holder,
+          })
+        : null;
+      const ownAccount =
+        user &&
+        held?.status === 'reserved' &&
+        held.expires_at > Math.floor(Date.now() / 1000) &&
+        (held.user_id === user.id || (held.user_id === null && resumedSend !== null));
+      if (!user || ownAccount) {
+        const started = await startSignupInvitation(c, {
+          token: invite_token,
+          tenantId,
+          email: normalizedEmail,
+          holder,
+          methodVerifiesEmail: true,
+        });
+        if (started.ok) {
+          signupInvitation = started.reservation;
+        } else if (!user) {
+          return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
+        }
+      }
+    }
+
     const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
       ...(custom_fields ?? {}),
       ...customFieldValues,
@@ -3408,12 +3460,27 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
           });
         }
       } catch (error) {
+        // No account, so the reserved use goes back (a retry reserves again).
+        if (signupInvitation) {
+          await releaseSignupInvitation(invitationDatabase(c, tenantId), log, {
+            reservation: signupInvitation,
+            tenantId,
+          });
+        }
         const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
         if (writeFenceResponse) return writeFenceResponse;
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
       user ??= { id: userId, email: normalizedEmail, name: displayName };
+    }
+    // The reserved use now belongs to this account, and can only ever be applied to it.
+    if (signupInvitation) {
+      await bindSignupInvitation(c, log, {
+        reservation: signupInvitation,
+        tenantId,
+        userId: user.id,
+      });
     }
 
     const emailVerificationMetadata: Record<string, unknown> = {
@@ -3426,15 +3493,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       usage: emailCodeUsage,
       ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       ...(boundRuntimeInteractionId ? { runtime_interaction_id: boundRuntimeInteractionId } : {}),
-      ...(inviteData
-        ? {
-            invite_id: inviteData.invite_id,
-            invite_token: inviteData.invite_token,
-            invite_role_id: inviteData.invite_role_id,
-            invite_org_id: inviteData.invite_org_id,
-            invite_tenant_id: tenantId,
-          }
-        : {}),
+      ...(signupInvitation ?? {}),
       ...(Object.keys(customFieldValues).length > 0 ? { custom_fields: customFieldValues } : {}),
     };
 

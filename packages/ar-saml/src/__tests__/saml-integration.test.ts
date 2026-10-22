@@ -53,7 +53,14 @@ const {
   mockProvisionAuthAccount,
   mockPublishExternalIdpRoute,
   mockProvisionedAccounts,
+  invitationMocks,
 } = vi.hoisted(() => ({
+  invitationMocks: {
+    requirement: vi.fn(),
+    apply: vi.fn(),
+    release: vi.fn(),
+    resolveCoreAdapter: vi.fn(),
+  },
   mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
   mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
   mockSyncUserLifecycleState: vi.fn().mockResolvedValue({
@@ -125,17 +132,30 @@ vi.mock('../common/key-utils', () => ({
   getSigningCertificate: (...args: any[]) => mockGetSigningCertificate(...args),
 }));
 
-// Mock structured logger and event publisher
+vi.mock('@authrim/ar-lib-core/services/external-signup-invitation', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@authrim/ar-lib-core/services/external-signup-invitation')
+  >()),
+  externalSignupInvitationRequirement: invitationMocks.requirement,
+  applyExternalSignupInvitation: invitationMocks.apply,
+  releaseExternalSignupInvitation: invitationMocks.release,
+}));
+
 // Overrides the deleted-account re-registration check for one test (null: the real check).
 const registrationCheck = vi.hoisted(() => ({
   override: null as null | 'blocked' | 'unavailable',
 }));
 
+// Mock structured logger and event publisher
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   const { vi } = await import('vitest');
+  invitationMocks.resolveCoreAdapter.mockImplementation(
+    actual.resolveAuthCorePersistenceAdapterFromEnv
+  );
   return {
     ...actual,
+    resolveAuthCorePersistenceAdapterFromEnv: invitationMocks.resolveCoreAdapter,
     checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
       registrationCheck.override ?? actual.checkEmailRegistration(...args),
     getLogger: () => ({
@@ -2178,6 +2198,179 @@ describe('SAML Integration', () => {
         })
       );
       expect(mockSyncUserLifecycleState).toHaveBeenCalled();
+    });
+  });
+
+  describe('ACS for a sign-in started from an invitation', () => {
+    const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+    const reservation = { inviteId: 'invite-1', inviteReservationId: 'inr-1' };
+
+    function serveRequest(context?: Record<string, unknown>) {
+      const requestId = `_${'f'.repeat(32)}`;
+      const createdAt = Date.now() - 5_000;
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn().mockResolvedValue(
+            Response.json({
+              requestId,
+              issuer: 'https://idp.example.com',
+              destination: 'https://idp.example.com/sso',
+              binding: 'post',
+              used: true,
+              type: 'authn_request',
+              createdAt,
+              expiresAt: createdAt + 300_000,
+              ...(context ? { context } : {}),
+            })
+          ),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+      return requestId;
+    }
+
+    function respond(requestId: string, nameId: string, email: string) {
+      return callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: requestId,
+          nameId,
+          nameIdFormat,
+          attributes: [{ name: 'email', value: email }],
+        }),
+        'https://ui.example.com/'
+      );
+    }
+
+    beforeEach(() => {
+      invitationMocks.requirement.mockReset().mockResolvedValue({
+        invitedEmail: null,
+        requireVerifiedEmail: false,
+      });
+      invitationMocks.apply.mockReset().mockResolvedValue(true);
+      invitationMocks.release.mockReset().mockResolvedValue(undefined);
+      invitationMocks.resolveCoreAdapter.mockResolvedValue({ name: 'tenant-metadata' });
+    });
+
+    it('gives the use back when the account cannot be created in time (provisioning pending)', async () => {
+      mockProvisionAuthAccount.mockResolvedValueOnce({
+        status: 202,
+        operationId: 'operation-1',
+        accountId: 'account:user-pending',
+        userId: 'user-pending',
+      });
+      const requestId = serveRequest({ invitation: reservation });
+
+      const res = await respond(requestId, 'persistent-subject-pending', 'pending@example.com');
+
+      expect(res.status).toBe(400);
+      expect(invitationMocks.apply).not.toHaveBeenCalled();
+      expect(invitationMocks.release).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.anything(),
+        {
+          ...reservation,
+          tenantId: 'default',
+        }
+      );
+    });
+
+    it('applies the reserved use to the account it created, before the session is made', async () => {
+      const requestId = serveRequest({ invitation: reservation });
+
+      const res = await respond(requestId, 'persistent-subject-invited', 'invited@example.com');
+
+      expect(res.status).toBe(302);
+      expect(invitationMocks.requirement).toHaveBeenCalledWith(
+        mockEnv,
+        { name: 'tenant-metadata' },
+        { tenantId: 'default', inviteId: 'invite-1' }
+      );
+      expect(mockProvisionAuthAccount).toHaveBeenCalled();
+      expect(invitationMocks.apply).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          ...reservation,
+          tenantId: 'default',
+          userId: expect.any(String),
+        })
+      );
+      expect(invitationMocks.apply.mock.invocationCallOrder[0]).toBeLessThan(
+        mockSessionStoreFetch.mock.invocationCallOrder.at(-1)!
+      );
+      expect(invitationMocks.release).not.toHaveBeenCalled();
+    });
+
+    it('creates no account for another email than the invitation names, and gives the use back', async () => {
+      invitationMocks.requirement.mockResolvedValue({
+        invitedEmail: 'invited@example.com',
+        requireVerifiedEmail: false,
+      });
+      const requestId = serveRequest({ invitation: reservation });
+
+      const res = await respond(requestId, 'persistent-subject-other', 'other@example.com');
+
+      expect(res.status).toBe(400);
+      expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
+      expect(invitationMocks.apply).not.toHaveBeenCalled();
+      expect(invitationMocks.release).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.anything(),
+        {
+          ...reservation,
+          tenantId: 'default',
+        }
+      );
+    });
+
+    it('gives the use back when the sign-in finds an existing account', async () => {
+      mockRuntimeUsersById.set('linked-user-001', {
+        id: 'linked-user-001',
+        email: 'linked@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
+        coreDb: createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('SELECT id, email_verified FROM users_core WHERE id')
+              ? { id: 'linked-user-001', email_verified: 1 }
+              : null,
+        }),
+        piiDb: createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')
+              ? { id: 'saml-link-001', user_id: 'linked-user-001' }
+              : null,
+        }),
+      });
+      const requestId = serveRequest({ invitation: reservation });
+
+      const res = await respond(requestId, 'persistent-subject-123', 'linked@example.com');
+
+      expect(res.status).toBe(302);
+      expect(invitationMocks.apply).not.toHaveBeenCalled();
+      expect(invitationMocks.release).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.anything(),
+        {
+          ...reservation,
+          tenantId: 'default',
+        }
+      );
+    });
+
+    it('handles a response to a request without an invitation as before', async () => {
+      const requestId = serveRequest();
+
+      const res = await respond(requestId, 'persistent-subject-plain', 'plain@example.com');
+
+      expect(res.status).toBe(302);
+      expect(invitationMocks.requirement).not.toHaveBeenCalled();
+      expect(invitationMocks.apply).not.toHaveBeenCalled();
+      expect(invitationMocks.release).not.toHaveBeenCalled();
     });
   });
 
