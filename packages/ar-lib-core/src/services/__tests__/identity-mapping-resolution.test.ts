@@ -8,7 +8,21 @@ import { PLATFORM_MAPPING_TENANT_ID } from '../identity-mapping-owner';
 import { resolveOidcIdentityMappingBinding } from '../identity-mapping-resolution';
 import { IdentityMappingSelectionError } from '../identity-mapping-selection';
 import { IdentityMappingResolutionError } from '../identity-mapping-set-binding';
-import { openAdminDatabase, seedMapping, sqliteAdapter } from './identity-mapping-sqlite-fixture';
+import {
+  openAdminDatabase,
+  seedMapping as seedMappingRows,
+  sqliteAdapter,
+  seedDestinationProfile,
+  type SeedMappingInput,
+} from './identity-mapping-sqlite-fixture';
+
+/** The Mapping Set, and the active OIDC Destination Profile(s) its edges release into. */
+function seedMapping(db: Parameters<typeof seedMappingRows>[0], input: SeedMappingInput): void {
+  seedMappingRows(db, input);
+  for (const profileId of input.profiles ?? [`profile-${input.id}`]) {
+    seedDestinationProfile(db, { owner: input.owner, id: profileId });
+  }
+}
 
 /**
  * Selecting and reading in one step. The real selection, effective-settings reader, set lookup and

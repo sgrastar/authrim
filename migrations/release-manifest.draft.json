@@ -101,6 +101,10 @@
               "checksum": "8e8a737b014aedca2c62699ee34fd121fa46cf34ce741f4b494ab791ea6c468e"
             },
             {
+              "path": "022_account_webhook_subject_lookup.sql",
+              "checksum": "22ed892a15da53592d70a4f033fe555c9515982cc7a3c074d8eec9a66f0e8967"
+            },
+            {
               "path": "023_log_row_archive_indexes.sql",
               "checksum": "73dfebb14f693eb2ed41a53bbb6d40a3ee1b27f1fd7edb3d2a3fad6dcf0e796a"
             }
@@ -516,6 +520,10 @@
             {
               "path": "010_oauth_client_consent_revocations.sql",
               "checksum": "c0132f95f721dd906a5767b17acfe3d1fe843d29107f0b5db6f752d7513b555b"
+            },
+            {
+              "path": "011_account_webhook_subject_lookup.sql",
+              "checksum": "c6cecd791cc77b855555cda34769bedda9fe88e2921997f348c626c74195bbd5"
             }
           ]
         },
@@ -648,6 +656,10 @@
         {
           "path": "021_tenant_ordered_tenant_indexes.sql",
           "checksum": "8e8a737b014aedca2c62699ee34fd121fa46cf34ce741f4b494ab791ea6c468e"
+        },
+        {
+          "path": "022_account_webhook_subject_lookup.sql",
+          "checksum": "22ed892a15da53592d70a4f033fe555c9515982cc7a3c074d8eec9a66f0e8967"
         },
         {
           "path": "023_log_row_archive_indexes.sql",
@@ -1089,6 +1101,10 @@
         {
           "path": "010_oauth_client_consent_revocations.sql",
           "checksum": "c0132f95f721dd906a5767b17acfe3d1fe843d29107f0b5db6f752d7513b555b"
+        },
+        {
+          "path": "011_account_webhook_subject_lookup.sql",
+          "checksum": "c6cecd791cc77b855555cda34769bedda9fe88e2921997f348c626c74195bbd5"
         }
       ]
     },

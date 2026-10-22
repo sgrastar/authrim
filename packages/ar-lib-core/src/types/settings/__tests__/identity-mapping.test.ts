@@ -1,15 +1,13 @@
 /**
  * The identity-mapping category: the default Mapping Set of the platform and of a tenant
  * (`identity_mapping.oidc_default_set_id`). Settable at the platform and at a tenant, never at an
- * app; unset by default; no environment variable; and not read by the release of claims yet
- * (`in_development`). And the platform switch of the shadow comparison of its selection
- * (`identity_mapping.shadow_compare_enabled`).
+ * app; unset by default; no environment variable; and read by the release of claims (ID token,
+ * UserInfo and the consent screen), so it is not `in_development`. The shadow comparison switch
+ * that once sat beside it is retired (src/__tests__/retired-identity-mapping-shadow-setting.test.ts).
  */
 import { describe, expect, it } from 'vitest';
-import {
-  resolveEffectiveSettingsWithSources,
-  resolvePlatformSettingsWithSources,
-} from '../../../services/effective-settings';
+import { resolveEffectiveSettingsWithSources } from '../../../services/effective-settings';
+import { resolveMappingSetReferenceLimits } from '../../../services/identity-mapping-reference-limits';
 import { readOidcDefaultSetSelection } from '../../../services/identity-mapping-set-reference';
 import { createSettingsManager } from '../../../utils/settings-manager';
 import {
@@ -25,11 +23,16 @@ import {
   IDENTITY_MAPPING_NONE,
   IDENTITY_MAPPING_SET_ID_MAX_LENGTH,
   IDENTITY_MAPPING_SETTINGS_META,
-  IDENTITY_MAPPING_SHADOW_COMPARE_KEY,
 } from '../identity-mapping';
 
 const KEY = 'identity_mapping.oidc_default_set_id';
-const SHADOW_KEY = 'identity_mapping.shadow_compare_enabled';
+/** The limits of the search for the places that name a Mapping Set: platform settings. */
+const SCAN_KEYS = [
+  'identity_mapping.reference_scan_tenant_limit',
+  'identity_mapping.reference_scan_row_limit',
+  'identity_mapping.reference_scan_concurrency',
+  'identity_mapping.reference_display_limit',
+] as const;
 
 function kv(documents: Record<string, unknown>): KVNamespace {
   return {
@@ -69,7 +72,7 @@ describe('the identity-mapping category', () => {
   });
 
   it('holds the default Mapping Set, unset by default, with no environment variable', () => {
-    expect(Object.keys(IDENTITY_MAPPING_SETTINGS_META)).toEqual([KEY, SHADOW_KEY]);
+    expect(Object.keys(IDENTITY_MAPPING_SETTINGS_META)).toEqual([KEY, ...SCAN_KEYS]);
     const meta = IDENTITY_MAPPING_SETTINGS_META[KEY];
     expect(meta.type).toBe('string');
     expect(meta.default).toBeNull();
@@ -77,44 +80,10 @@ describe('the identity-mapping category', () => {
     expect(meta.envKey).toBeUndefined();
     // Not narrowed below the category: both the platform and a tenant can set it.
     expect(meta.scopes).toBeUndefined();
-    // The release of claims does not read it yet.
-    expect(meta.status).toBe('in_development');
+    // The release of claims reads it.
+    expect(meta.status).toBeUndefined();
     expect(meta.description).toMatch(/Unset means no default/);
     expect(meta.description).toMatch(/none means: do not use the platform default/);
-  });
-
-  it('holds the switch of the shadow comparison: a platform boolean, off by default, from the environment', () => {
-    const meta = IDENTITY_MAPPING_SETTINGS_META[SHADOW_KEY];
-    expect(IDENTITY_MAPPING_SHADOW_COMPARE_KEY).toBe(SHADOW_KEY);
-    expect(meta.type).toBe('boolean');
-    expect(meta.default).toBe(false);
-    expect(IDENTITY_MAPPING_DEFAULTS[SHADOW_KEY]).toBe(false);
-    expect(meta.envKey).toBe('IDENTITY_MAPPING_SHADOW_COMPARE');
-    // The platform decides: a tenant cannot turn it on, and an app has no such category.
-    expect(meta.scopes).toEqual(['platform']);
-    // It is applied (the comparison runs), unlike the default it compares.
-    expect(meta.status).toBeUndefined();
-  });
-
-  it('is off unless the platform saves true or the environment says true', async () => {
-    const read = async (docs: Record<string, unknown>, env: Record<string, string> = {}) =>
-      (
-        await resolvePlatformSettingsWithSources(
-          { SETTINGS: kv(docs), ...env } as never,
-          'identity-mapping'
-        )
-      ).values[SHADOW_KEY];
-    expect(await read({})).toBe(false);
-    expect(await read({ 'settings:platform:identity-mapping': { [SHADOW_KEY]: true } })).toBe(true);
-    expect(await read({}, { IDENTITY_MAPPING_SHADOW_COMPARE: 'true' })).toBe(true);
-    expect(await read({}, { IDENTITY_MAPPING_SHADOW_COMPARE: 'false' })).toBe(false);
-    // Saved wins over the environment.
-    expect(
-      await read(
-        { 'settings:platform:identity-mapping': { [SHADOW_KEY]: false } },
-        { IDENTITY_MAPPING_SHADOW_COMPARE: 'true' }
-      )
-    ).toBe(false);
   });
 
   it('gives its reserved value and the longest ID a name', () => {
@@ -216,5 +185,102 @@ describe('the default Mapping Set in effect', () => {
         false
       );
     }
+  });
+});
+
+describe('the limits of the search for the places that name a Mapping Set', () => {
+  it('are platform settings with the limits the search always used as defaults, held in a range', () => {
+    const expected = {
+      'identity_mapping.reference_scan_tenant_limit': [200, 1, 1000],
+      'identity_mapping.reference_scan_row_limit': [500, 10, 5000],
+      'identity_mapping.reference_scan_concurrency': [8, 1, 16],
+      'identity_mapping.reference_display_limit': [20, 1, 100],
+    } as const;
+    for (const key of SCAN_KEYS) {
+      const meta = IDENTITY_MAPPING_SETTINGS_META[key];
+      const [fallback, min, max] = expected[key];
+      expect(meta.type, key).toBe('number');
+      expect(meta.default, key).toBe(fallback);
+      expect(IDENTITY_MAPPING_DEFAULTS[key], key).toBe(fallback);
+      expect([meta.min, meta.max, meta.integer], key).toEqual([min, max, true]);
+      expect(meta.scopes, key).toEqual(['platform']);
+      expect(meta.envKey, key).toMatch(/^IDENTITY_MAPPING_REFERENCE_/);
+      expect(meta.envNumber, key).toBe('strict-in-range');
+    }
+  });
+
+  it('are saved by the platform within the range, and refused outside it or as anything but a whole number', () => {
+    const manager = createSettingsManager({ env: {}, kv: null });
+    manager.registerCategory(IDENTITY_MAPPING_CATEGORY_META);
+    const key = SCAN_KEYS[0];
+    expect(manager.validate('identity-mapping', { [key]: 1 }).valid).toBe(true);
+    expect(manager.validate('identity-mapping', { [key]: 1000 }).valid).toBe(true);
+    for (const value of [0, 1001, -5, 2.5, '8', null]) {
+      expect(manager.validate('identity-mapping', { [key]: value }).valid, String(value)).toBe(
+        false
+      );
+    }
+  });
+
+  it('are read for the platform from its saved value, else the environment, else the default', async () => {
+    const read = async (documents: Record<string, unknown>, env: Record<string, string> = {}) =>
+      resolveMappingSetReferenceLimits({ SETTINGS: kv(documents), ...env } as never);
+
+    expect(await read({})).toEqual({
+      tenantLimit: 200,
+      rowLimit: 500,
+      concurrency: 8,
+      displayLimit: 20,
+    });
+    expect(
+      await read(
+        { 'settings:platform:identity-mapping': { [SCAN_KEYS[3]]: 5 } },
+        {
+          IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT: '50',
+          IDENTITY_MAPPING_REFERENCE_SCAN_ROW_LIMIT: '40',
+        }
+      )
+    ).toMatchObject({ displayLimit: 5, rowLimit: 40 });
+  });
+
+  it('keep the default for a value outside the range, wherever it came from', async () => {
+    const read = async (documents: Record<string, unknown>, env: Record<string, string> = {}) =>
+      resolveMappingSetReferenceLimits({ SETTINGS: kv(documents), ...env } as never);
+
+    const saved = await read({
+      'settings:platform:identity-mapping': {
+        [SCAN_KEYS[0]]: 100000,
+        [SCAN_KEYS[1]]: 3,
+        [SCAN_KEYS[2]]: 0,
+        [SCAN_KEYS[3]]: 2.5,
+      },
+    });
+    expect(saved).toEqual({ tenantLimit: 200, rowLimit: 500, concurrency: 8, displayLimit: 20 });
+    const env = await read(
+      {},
+      {
+        IDENTITY_MAPPING_REFERENCE_SCAN_TENANT_LIMIT: '0',
+        IDENTITY_MAPPING_REFERENCE_SCAN_CONCURRENCY: 'many',
+      }
+    );
+    expect(env).toEqual({ tenantLimit: 200, rowLimit: 500, concurrency: 8, displayLimit: 20 });
+  });
+
+  it('are not taken from a tenant’s document: a tenant cannot widen the search', async () => {
+    const limits = await resolveMappingSetReferenceLimits({
+      SETTINGS: kv({ 'settings:tenant:acme:identity-mapping': { [SCAN_KEYS[0]]: 999 } }),
+    } as never);
+    expect(limits.tenantLimit).toBe(200);
+  });
+
+  it('keep the defaults when the settings cannot be read', async () => {
+    const limits = await resolveMappingSetReferenceLimits({
+      SETTINGS: {
+        get: async () => {
+          throw new Error('kv down');
+        },
+      },
+    } as never);
+    expect(limits).toEqual({ tenantLimit: 200, rowLimit: 500, concurrency: 8, displayLimit: 20 });
   });
 });

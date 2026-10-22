@@ -357,9 +357,11 @@ import {
   executeSetupControlOperatorWorkerBindings,
 } from '../core/control-operator-executor.js';
 import {
+  assertControlProvisionBeforeControlHandoff,
   assertControlProvisionMutationState,
   CONTROL_WORKER_BINDING_INTER_TARGET_DELAY_MS,
 } from '../core/control-provision-policy.js';
+import { getActiveReleaseRolloutHandoffStatus } from '../core/release-rollout-handoff.js';
 import {
   buildWorkerHttpReadinessTargets,
   waitForRouterWorkerReady,
@@ -6873,7 +6875,7 @@ export function createApiRoutes(): Hono {
           throw new Error('environment_changed_while_waiting_for_control_provision_lock');
         }
         try {
-          assertControlProvisionMutationState(lock);
+          assertControlProvisionMutationState(lock, { allowBeforeControlHandoff: true });
         } catch (error) {
           return c.json(
             {
@@ -6929,6 +6931,22 @@ export function createApiRoutes(): Hono {
               error: 'This Control operation step is not executable by this setup version',
               operation,
             },
+            409
+          );
+        }
+        try {
+          await assertControlProvisionBeforeControlHandoff({
+            lock,
+            operationKind: operation.operationKind,
+            loadActiveRollout: () =>
+              getActiveReleaseRolloutHandoffStatus({
+                controlDatabaseId: controlDatabase.id,
+                environmentId: parsed.data.environmentId,
+              }),
+          });
+        } catch (error) {
+          return c.json(
+            { success: false, error: sanitizeError(error), errorCode: sanitizeError(error) },
             409
           );
         }

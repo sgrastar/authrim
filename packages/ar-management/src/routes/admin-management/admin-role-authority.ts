@@ -135,3 +135,96 @@ export function mayGiveGlobally(auth: AdminAuthContext, permissions: readonly st
     permissions.every((permission) => hasAdminPermission(auth.globalPermissions ?? [], permission))
   );
 }
+
+/**
+ * What an Admin account holds in the tenant, as it decides who may act on the account: whether any
+ * active global assignment, and the highest hierarchy among all active assignments that apply to
+ * the tenant (the global ones and the tenant's own).
+ */
+export interface AdminStanding {
+  hasGlobalAssignment: boolean;
+  highestLevel: number;
+}
+
+export async function loadAdminStanding(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  adminUserId: string
+): Promise<AdminStanding> {
+  const rows = await adapter.query<{ scope_type: string; hierarchy_level: number | null }>(
+    `SELECT ra.scope_type AS scope_type, r.hierarchy_level AS hierarchy_level
+       FROM admin_role_assignments ra
+       JOIN admin_roles r
+         ON r.id = ra.admin_role_id
+        AND (r.tenant_id = ra.tenant_id OR (r.tenant_id = 'default' AND r.is_system = 1))
+      WHERE ra.tenant_id = ?
+        AND ra.admin_user_id = ?
+        AND (
+          ra.scope_type = 'global'
+          OR (ra.scope_type = 'tenant' AND (ra.scope_id = ? OR ra.scope_id IS NULL))
+        )
+        AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
+    [tenantId, adminUserId, tenantId, Date.now()]
+  );
+  return {
+    hasGlobalAssignment: rows.some((row) => row.scope_type === 'global'),
+    highestLevel: rows.reduce((max, row) => Math.max(max, Number(row.hierarchy_level ?? 0)), 0),
+  };
+}
+
+/**
+ * Whether the caller may act on another Admin's account (change it, suspend, delete, activate or
+ * unlock it). An account that holds a global assignment, or a role above the caller's own, is
+ * reached by what the global assignments give: the permission from a global assignment, and a
+ * global hierarchy at least as high as the account's. `permissions` and `hierarchyLevel` add up
+ * what the caller holds for one tenant, which is not what an account that reaches every tenant
+ * (or outranks the caller) is judged on. Any other account is the caller's by the route's own
+ * permission rule.
+ */
+export function mayActOnAdminAccount(
+  auth: AdminAuthContext,
+  target: AdminStanding,
+  permission: string
+): boolean {
+  if (!target.hasGlobalAssignment && target.highestLevel <= (auth.hierarchyLevel ?? 0)) {
+    return true;
+  }
+  return (
+    hasGlobalAdminPermission(auth, permission) &&
+    (isGlobalMachine(auth) || (auth.globalHierarchyLevel ?? 0) >= target.highestLevel)
+  );
+}
+
+/**
+ * A machine token has no hierarchy (it is always 0), and a person who may issue one may give it
+ * the permissions they hold for the tenant, so a tenant-scoped machine is judged by hierarchy like
+ * any other caller: it outranks nothing. Only a token that holds its permission for every tenant
+ * is measured by that permission alone: such a token can only be issued by a global assignment.
+ */
+function isGlobalMachine(auth: AdminAuthContext): boolean {
+  return auth.authMethod === 'machine_access_token' && (auth.tenantScope ?? []).includes('*');
+}
+
+/**
+ * Whether the caller may remove an assignment of a role at `roleLevel`. A global assignment is
+ * removed on the global permission and the global hierarchy; a tenant one on a hierarchy that is not
+ * below the role's.
+ */
+export function mayRemoveAssignment(
+  auth: AdminAuthContext,
+  scopeType: string,
+  hierarchyLevel: number | null | undefined
+): boolean {
+  const roleLevel = Number(hierarchyLevel ?? 0);
+  if (scopeType === 'global') {
+    return (
+      hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE) &&
+      (isGlobalMachine(auth) || (auth.globalHierarchyLevel ?? 0) >= roleLevel)
+    );
+  }
+  return (
+    (isGlobalMachine(auth) &&
+      hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE)) ||
+    (auth.hierarchyLevel ?? 0) >= roleLevel
+  );
+}

@@ -231,11 +231,31 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 
 	'set.k.identity_mapping.oidc_default_set_id': 'Default Mapping Set (OIDC)',
 	'set.k.identity_mapping.oidc_default_set_id.desc':
-		'The ID of the Mapping Set used by apps in this scope that did not choose one of their own. Unset means no default, so no mapping is applied. A tenant can enter none to ignore the platform default as well. Only an active Mapping Set can be named. For now this is saved and checked only; sign-in does not use it yet.',
+		'The ID of the Mapping Set used by apps in this scope that did not choose one of their own. Unset means no default, so no mapping is applied. A tenant can enter none to ignore the platform default as well. Only an active Mapping Set can be named. Apps that name no Mapping Set of their own use it, for the ID token, UserInfo and the consent screen; an app can opt out with its own none. If the named Mapping Set cannot be used (deleted, inactive, not valid), those apps cannot sign in until it is fixed or cleared.',
 
-	'set.k.identity_mapping.shadow_compare_enabled': 'Compare Mapping Set selection (shadow)',
-	'set.k.identity_mapping.shadow_compare_enabled.desc':
-		"While on, each OIDC identity mapping resolution is also run through the new selection (the app's own choice, then the tenant default, then the platform default), and a difference from what the request used is written to the log as a warning. Responses do not change. It adds a settings read and, when a Mapping Set is selected, a database read to each resolution, so turn it on only where you want the comparison. Platform setting; off by default.",
+	'set.k.bulk_apply.max_tenants_per_request': 'Bulk apply: tenants per request',
+	'set.k.bulk_apply.max_tenants_per_request.desc':
+		'The most tenants one bulk apply request may name; the same tenant named twice counts once. Each tenant costs several subrequests and some run time, so one request can only serve so many; a larger job is sent in several requests. Held between 1 and 100. Platform setting; 25 by default.',
+
+	'set.k.bulk_apply.max_keys_per_request': 'Bulk apply: settings per request',
+	'set.k.bulk_apply.max_keys_per_request.desc':
+		'The most settings (keys set or cleared, over all categories) one bulk apply request may carry. Held between 1 and 100. Platform setting; 20 by default.',
+
+	'set.k.identity_mapping.reference_scan_tenant_limit': 'Mapping Set usage search: tenants',
+	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
+		'The most tenants whose apps are read when looking for the places that use a Mapping Set the platform owns. Each tenant is a database read; when there are more tenants than this, the rest are reported as not looked at, and deleting or switching off the set is refused. Held between 1 and 1000. Platform setting; 200 by default.',
+
+	'set.k.identity_mapping.reference_scan_row_limit': 'Mapping Set usage search: rows per place',
+	'set.k.identity_mapping.reference_scan_row_limit.desc':
+		'The most rows read from one place (the tenant defaults, the apps of one tenant, the SAML providers of one tenant) when looking for the places that use a Mapping Set. A place with more is cut off and the count is given as a lower bound. Held between 10 and 5000. Platform setting; 500 by default.',
+
+	'set.k.identity_mapping.reference_scan_concurrency': 'Mapping Set usage search: concurrency',
+	'set.k.identity_mapping.reference_scan_concurrency.desc':
+		'How many tenants are read at the same time when looking for the places that use a Mapping Set the platform owns. Held between 1 and 16. Platform setting; 8 by default.',
+
+	'set.k.identity_mapping.reference_display_limit': 'Mapping Set usage: references shown',
+	'set.k.identity_mapping.reference_display_limit.desc':
+		'How many references the usage answer and the refusal of a deletion list; the count is always the whole. Held between 1 and 100. Platform setting; 20 by default.',
 
 	'settings.advanced': 'Advanced',
 	'settings.setHere': 'Overridden settings: {n}',

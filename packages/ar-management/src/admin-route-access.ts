@@ -506,6 +506,15 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'tenant settings'
   ),
+  // The same settings for several tenants: platform authority (the handler asks for it in full:
+  // a global assignment with a global tenant scope), then each tenant's own edit right.
+  rule({
+    pattern: '/api/admin/settings/bulk-apply',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'bulk apply of tenant settings',
+  }),
   ...byMethod(
     '/api/admin/settings/agent',
     ADMIN_PERMISSIONS.AGENT_SETTINGS_READ,
@@ -889,6 +898,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'identity field mapping'
+  ),
+  ...byMethod(
+    '/api/admin/identity-mapping/sets',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping sets'
+  ),
+  ...byMethod(
+    '/api/admin/identity-mapping/sets/:id',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping set'
   ),
   readOnly(
     '/api/admin/identity-mapping/usage',

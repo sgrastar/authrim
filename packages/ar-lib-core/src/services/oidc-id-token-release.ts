@@ -70,11 +70,6 @@ export interface IDTokenReleaseContext {
   ) => Promise<Record<string, unknown> | null>;
   /** The endpoint's own module logger. */
   log: Pick<Logger, 'warn' | 'error'>;
-  /**
-   * Keeps a promise alive past the response (`executionCtx.waitUntil`). Used only by the shadow
-   * comparison of the Mapping Set selection, which must not delay the response.
-   */
-  waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 /**
@@ -130,7 +125,6 @@ export async function mapIDTokenClaims(
       ...(carries?.userInfoClaims ? { userInfoClaimsInIdToken: true } : {}),
       claims,
       ...(userId ? { sourceAttributes: (names) => ctx.loadUserAttributes(userId, names) } : {}),
-      ...(ctx.waitUntil ? { waitUntil: ctx.waitUntil } : {}),
     });
     return { ok: true, claims: mapped.claims };
   } catch (error) {

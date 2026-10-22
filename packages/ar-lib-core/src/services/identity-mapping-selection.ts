@@ -7,7 +7,9 @@
  * database, so it gives the same answer in every Worker whether or not DB_ADMIN is bound. Reading
  * the chosen set is `resolveOidcIdentityMappingBinding` (identity-mapping-resolution.ts).
  *
- * Nothing in the release of claims uses this yet; the admin API and the shadow comparison do.
+ * The release of claims (ID token, UserInfo, the subject of an authorization request) and the
+ * consent screen go through this selection (see `applyOIDCIdentityMapping`), and so does the admin
+ * API that shows what applies to an app.
  */
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
 import {
@@ -44,8 +46,15 @@ export type ClientIdentityMappingChoice =
       /** The app's selector as stored (the pinned version, namespace and profiles it names). */
       selector: OIDCIdentityMappingFieldMappingSelector;
     }
-  /** A value that is neither (a set ID that is not a string or is empty, an unknown mode, both a mode and a set, JSON that does not parse). */
-  | { kind: 'invalid' };
+  /**
+   * A value that is neither (a set ID that is not a string or is empty, an unknown mode, both a mode
+   * and a set, JSON that does not parse). `legacy_profile_only_selector`: an object that names a
+   * Destination Profile (`destinationProfileId`) and no Mapping Set and no opt-out, as older apps
+   * were saved. That profile once held the app's claims and its consent screen; it binds nothing
+   * now, so the selector fails instead of being read as "unset", which would drop that gate in
+   * silence.
+   */
+  | { kind: 'invalid'; reason?: 'legacy_profile_only_selector' };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -66,7 +75,7 @@ function isUsableSetId(value: unknown): value is string {
  * and backup checks still read) names a set; `{ mode: 'none' }` is the explicit opt-out; nothing
  * (null, undefined, empty, an object with neither) is unset.
  *
- * This only reads the value. Saving `{ mode: 'none' }` is not accepted yet.
+ * This only reads the value; the admin API checks what is saved.
  */
 export function readClientIdentityMappingChoice(raw: unknown): ClientIdentityMappingChoice {
   let value = raw;
@@ -93,7 +102,14 @@ export function readClientIdentityMappingChoice(raw: unknown): ClientIdentityMap
     if (value.mode !== IDENTITY_MAPPING_NONE || hasName) return { kind: 'invalid' };
     return { kind: 'none' };
   }
-  if (!hasName) return { kind: 'unset' };
+  if (!hasName) {
+    const namesProfile = [value.destinationProfileId, value.destination_profile_id].some(
+      (profile) => profile !== undefined && profile !== null
+    );
+    return namesProfile
+      ? { kind: 'invalid', reason: 'legacy_profile_only_selector' }
+      : { kind: 'unset' };
+  }
   if (!isUsableSetId(named)) return { kind: 'invalid' };
 
   const selector: OIDCIdentityMappingFieldMappingSelector = { fieldMappingSetId: named };
@@ -248,11 +264,12 @@ export async function selectIdentityMapping(
   const client = clientEntry(choice);
 
   if (choice.kind === 'invalid') {
-    throw new IdentityMappingSelectionError('client_selector_invalid', 'client', [
-      client,
-      NOT_CONSULTED('tenant_default'),
-      NOT_CONSULTED('platform_default'),
-    ]);
+    throw new IdentityMappingSelectionError(
+      'client_selector_invalid',
+      'client',
+      [client, NOT_CONSULTED('tenant_default'), NOT_CONSULTED('platform_default')],
+      choice.reason
+    );
   }
 
   const decidedByClient = choice.kind === 'set' || choice.kind === 'none';

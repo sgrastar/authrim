@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import type { ControlEnv } from '../types';
 import { controlTenantMutationPermit } from '../tenant-backup-mutation-permits';
+import { TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS } from '@authrim/ar-lib-core/services/tenant-portability/mutation-admission';
 
 it('scopes permits to the authenticated environment, tenant and caller and permits completion after metadata changes', async () => {
   const sql = new DatabaseSync(':memory:');
@@ -347,6 +348,49 @@ it('scopes permits to the authenticated environment, tenant and caller and permi
     expect((await startTenantBackupSnapshotBoundary(clientInput)).state).toBe('released');
     expect((await startTenantBackupSnapshotBoundary(clientInput)).state).toBe('released');
     expect(startCount).toBe(2);
+
+    // A writer that stopped mid-effect never completes its permit. Past the permit lease the
+    // permit no longer keeps boundaries from being held; before that it still does, and the
+    // failure names the cause.
+    const later = 100 + TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS + 1;
+    const leasedClient = (operationId: string, boundaryId: string) => ({
+      ...createTenantBackupBoundaryRpcClient(
+        {
+          async tenantBackupSnapshotBoundary(request) {
+            return controlTenantBackupBoundary({ ...rpc, now: later, request });
+          },
+        },
+        { ...clientScope, operationId }
+      ),
+      identity: { ...clientScope, operationId, boundaryId },
+      signal: new AbortController().signal,
+      now: () => later,
+      async assertReady() {},
+      participants: physical.map((p) => ({ ...p, async start() {} })),
+    });
+    const stopped = { ...input, scope: 'environment' as const };
+    expect(
+      await controlTenantMutationPermit({
+        ...stopped,
+        now: 100,
+        action: 'acquire',
+        request: { permitId: crypto.randomUUID() },
+      })
+    ).toEqual({ admitted: true });
+    expect(
+      (await startTenantBackupSnapshotBoundary(leasedClient('after-lease', 'cd'.repeat(32)))).state
+    ).toBe('released');
+    expect(
+      await controlTenantMutationPermit({
+        ...stopped,
+        now: later - 1,
+        action: 'acquire',
+        request: { permitId: crypto.randomUUID() },
+      })
+    ).toEqual({ admitted: true });
+    await expect(
+      startTenantBackupSnapshotBoundary(leasedClient('within-lease', 'ab'.repeat(32)))
+    ).rejects.toThrow('backup_snapshot_boundary_failed:backup_boundary_writers_pending');
   } finally {
     sql.close();
   }

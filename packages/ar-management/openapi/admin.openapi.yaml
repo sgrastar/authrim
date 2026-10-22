@@ -1595,15 +1595,19 @@ paths:
       description: >-
         Create Client in the Clients area. The request body is JSON unless the detailed schema for
         this operation states otherwise.
-        When identity_mapping names a Mapping Set it is checked the way a default Mapping Set is: the
-        set must be one the tenant owns (a platform-owned set is not accepted for an app yet, and
-        answers as a set that does not exist), active, with an active activation that
-        applies and an active compiled snapshot (and, when fieldMappingVersionId is given, that
-        version), and must release into exactly one active OIDC Destination Profile. 404 when the
-        set does not exist or is not available to the tenant (another tenant's set answers the
-        same), 400 when it exists but cannot be used (not active, no active compiled snapshot, no
-        single active OIDC Destination Profile, or a platform set that holds what a platform set
-        may not), 503 when the Admin database cannot be read to check it.
+        identity_mapping is the app's own choice: a Mapping Set, or { "mode": "none" } (the app takes
+        no mapping, whatever the defaults say). Left null or absent, the app follows the tenant's
+        default Mapping Set, else the platform's, else no mapping applies; an activation's scope
+        never binds an app to a set. When identity_mapping names a Mapping Set it is checked the way
+        a default Mapping Set is: the set must be one the tenant owns (a platform-owned set is not
+        accepted for an app yet, because a tenant backup cannot hold the reference; it answers as a
+        set that does not exist, and the tenant's or the platform's default Mapping Set names it
+        instead), active, with an active activation that applies and an active compiled snapshot
+        (and, when fieldMappingVersionId is given, that version), and must release into exactly one
+        active OIDC Destination Profile. 404 when the set does not exist or is not available to the
+        tenant (another tenant's set, and a platform-owned set, answer the same), 400 when it exists
+        but cannot be used (not active, no active compiled snapshot, no single active OIDC
+        Destination Profile), 503 when the Admin database cannot be read to check it.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1647,15 +1651,19 @@ paths:
       description: >-
         Replace Client in the Clients area. The request body is JSON unless the detailed schema for
         this operation states otherwise. 404 also answers a client that does not exist.
-        When identity_mapping names a Mapping Set it is checked the way a default Mapping Set is: the
-        set must be one the tenant owns (a platform-owned set is not accepted for an app yet, and
-        answers as a set that does not exist), active, with an active activation that
-        applies and an active compiled snapshot (and, when fieldMappingVersionId is given, that
-        version), and must release into exactly one active OIDC Destination Profile. 404 when the
-        set does not exist or is not available to the tenant (another tenant's set answers the
-        same), 400 when it exists but cannot be used (not active, no active compiled snapshot, no
-        single active OIDC Destination Profile, or a platform set that holds what a platform set
-        may not), 503 when the Admin database cannot be read to check it.
+        identity_mapping is the app's own choice: a Mapping Set, or { "mode": "none" } (the app takes
+        no mapping, whatever the defaults say). Left null or absent, the app follows the tenant's
+        default Mapping Set, else the platform's, else no mapping applies; an activation's scope
+        never binds an app to a set. When identity_mapping names a Mapping Set it is checked the way
+        a default Mapping Set is: the set must be one the tenant owns (a platform-owned set is not
+        accepted for an app yet, because a tenant backup cannot hold the reference; it answers as a
+        set that does not exist, and the tenant's or the platform's default Mapping Set names it
+        instead), active, with an active activation that applies and an active compiled snapshot
+        (and, when fieldMappingVersionId is given, that version), and must release into exactly one
+        active OIDC Destination Profile. 404 when the set does not exist or is not available to the
+        tenant (another tenant's set, and a platform-owned set, answer the same), 400 when it exists
+        but cannot be used (not active, no active compiled snapshot, no single active OIDC
+        Destination Profile), 503 when the Admin database cannot be read to check it.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2170,7 +2178,7 @@ paths:
         both pass; serialising them would need a shared coordinator.
         For the identity-mapping category, identity_mapping.oidc_default_set_id names the Mapping Set
         that applies to apps of the scope that choose none of their own (unset: no default, so no
-        mapping applies; there is no environment variable; nothing reads it at runtime yet). The
+        mapping applies; there is no environment variable; apps that choose none of their own use it for the ID token, UserInfo and the consent screen, and a value that cannot be used stops them from signing in). The
         value is a Mapping Set ID (letters, digits and _ . : -, at most 200 characters, no
         surrounding whitespace) or, for a tenant, the reserved value none, which refuses the
         platform's default; a string only (the disabled marker, false and null are refused, and
@@ -2183,7 +2191,13 @@ paths:
         Profile; a platform-owned set must also hold only what a platform set may hold. 503
         temporarily_unavailable when the Admin database cannot be read to check it (nothing is
         saved). The category is not available for apps (400), and cannot be rolled back through the
-        settings history routes (400).
+        settings history routes (400). The category also holds platform-only limits of the search
+        for what names a Mapping Set (identity_mapping.reference_scan_tenant_limit 1 to 1000,
+        reference_scan_row_limit 10 to 5000, reference_scan_concurrency 1 to 16 and
+        reference_display_limit 1 to 100, whole numbers; defaults 200, 500, 8 and 20; a value
+        outside the range is refused with 400 on the platform and is not accepted for a tenant).
+        A value in the environment or the store that is outside the range is ignored and the
+        default is used.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2391,7 +2405,7 @@ paths:
         For the identity-mapping category, identity_mapping.oidc_default_set_id (the default for
         every tenant that has set no default of its own, and has not saved none) names the Mapping Set
         that applies to apps of the scope that choose none of their own (unset: no default, so no
-        mapping applies; there is no environment variable; nothing reads it at runtime yet). The
+        mapping applies; there is no environment variable; apps that choose none of their own use it for the ID token, UserInfo and the consent screen, and a value that cannot be used stops them from signing in). The
         value is a Mapping Set ID (letters, digits and _ . : -, at most 200 characters, no
         surrounding whitespace) or, for a tenant, the reserved value none, which refuses the
         platform's default; a string only (the disabled marker, false and null are refused, and
@@ -2404,7 +2418,13 @@ paths:
         Profile; a platform-owned set must also hold only what a platform set may hold. 503
         temporarily_unavailable when the Admin database cannot be read to check it (nothing is
         saved). The category is not available for apps (400), and cannot be rolled back through the
-        settings history routes (400).
+        settings history routes (400). The category also holds platform-only limits of the search
+        for what names a Mapping Set (identity_mapping.reference_scan_tenant_limit 1 to 1000,
+        reference_scan_row_limit 10 to 5000, reference_scan_concurrency 1 to 16 and
+        reference_display_limit 1 to 100, whole numbers; defaults 200, 500, 8 and 20; a value
+        outside the range is refused with 400 on the platform and is not accepted for a tenant).
+        A value in the environment or the store that is outside the range is ignored and the
+        default is used.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2453,6 +2473,98 @@ paths:
           $ref: '#/components/responses/Error'
       parameters:
         - $ref: '#/components/parameters/Category'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/settings/bulk-apply:
+    post:
+      tags:
+        - Settings - General
+      operationId: postApiAdminSettingsBulkApply
+      summary: Preview or apply the same settings to several tenants.
+      description: >-
+        Gives the same settings to several tenants in one request, for any setting a tenant can have
+        that the bulk apply allows. `mode: preview` writes nothing and says, for each tenant and key,
+        what the tenant has now (`current.own` is the tenant's own value, `current.effective` what is
+        in force), what is proposed, and what an apply would do (`would_apply`, `would_clear`,
+        `would_skip` or `would_reject`), with the result of the same checks an apply runs (the Admin
+        database reference check of the default Mapping Set included) and the `version` of the
+        tenant's document. A category can add what its change affects in `impact`: for
+        `identity-mapping`, the number of the tenant's apps that follow the default (those with no
+        Mapping Set of their own), or `available: false` with a reason when the tenant's database
+        cannot be read. `mode: apply` writes, tenant by tenant and independently (a tenant that
+        fails does not stop or undo another; there is no rollback of the whole), through the same
+        save as the tenant PATCH, with the caller's right to edit that tenant's category checked
+        again for each tenant. Each change reports `previous` (the tenant's own value before; null
+        when it had none) so that an apply can be undone, `new` (the value, or `"clear"`),
+        `version_before` and, when written, `version_after`. A tenant that already has a value of
+        its own for a key keeps it unless `on_existing_override` is `overwrite` (reported as
+        `skipped`, reason `existing_override`; `already_set` when it is the same value and
+        `not_overridden` for a clear of nothing). `expected` holds the versions a preview returned:
+        a category whose version has changed is `conflict` (`version_changed`) and is not written.
+        Settings the bulk apply does not give (a tenant's URLs, domains, identifiers, brand text,
+        references to its own records, secrets, structured documents, platform-only settings) are
+        `rejected` with a reason. A tenant that does not exist, or is deleted, is `rejected`
+        (`tenant_not_found`, `tenant_deleted`). A request names at most
+        `bulk_apply.max_tenants_per_request` tenants (25 by default; duplicates count once) and
+        `bulk_apply.max_keys_per_request` settings (20), both platform settings held between 1 and
+        100; more is a 400, and a larger job is sent in several requests. A key counts once for
+        each category it is set or cleared in, and a request carries at most 20 changes (one for
+        each category; a category that does not exist is a 400). A value is at most 2048
+        bytes as JSON (UTF-8, escapes counted), and all values together at most 32768. A value of
+        more than 256 bytes is not repeated in the answer: it is shown as
+        `{"value_too_large": true, "type": ..., "length": ...}` (also for `previous`, which then
+        cannot be used to undo that key). A request whose answer could pass the 900,000 bytes the
+        idempotency store keeps (an upper bound worked out from the tenant IDs, the keys and the
+        proposed values) is a 400 (`response_too_large`) before anything is done. A preview reads
+        the tenants' Core databases for `impact` without leaving a trace: nothing is written for a
+        tenant whose database cannot be routed. The result of a failed
+        tenant carries a fixed code, nothing of the tenant or the database. An apply is recorded
+        once (`settings.bulk_apply`: counts, categories and key names, never a value), and every
+        tenant's own audit record carries the bulk ID and, for the keys changed, what was done to each
+        (`changed_keys`, `results`), never the values before or after; a failure record holds codes
+        and key names only, not what a validation found. A refusal by a validation gives
+        `reason: validation_failed` and, where there is one, a fixed `detail_code`; the sentence of
+        the validation is never given (it can name what the tenant has saved, or repeat a piece of
+        what was sent), and the allowed values of a setting are read from the settings metadata. Needs the platform's authority over settings
+        (a global assignment of a platform role with a global tenant scope, or a machine token for
+        every tenant with the settings write permission); a tenant administrator, and an Agent, are
+        refused with 403. Strict rate limit. `Idempotency-Key` is required (8 to 128 characters): the
+        same key with the same body, by the same administrator or machine principal, answers with
+        the stored result; with another body, 409; another principal's request with the same key
+        is another request. The stored result (which holds the settings and IDs of many tenants) is
+        kept for 15 minutes in the platform's Admin database, never in the database of any
+        tenant, and removed when the time runs out (a scheduled sweep does it even if the
+        administrator never calls again). Once an apply has started, its key is never released:
+        if its result could not be kept, a repeat of the key is a 409 (`result_unknown`) and does
+        not run again, so look at the tenants and use another key to run it again. A request that
+        changed nothing (a preview, a refusal, a failure before the first change) is not kept, so
+        that it can be repeated.
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkApplyRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/BulkApply'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -10939,6 +11051,7 @@ paths:
       tags:
         - Field Mapping
       operationId: postApiAdminFieldMappingFieldMappingSets
+      deprecated: true
       summary: Create a field mapping set.
       description: >-
         Creates a field mapping set container. Versions and rules are added through the versions
@@ -10946,6 +11059,7 @@ paths:
         namespace (the set every tenant can read), which requires platform administrator
         authority; any other value creates a set the calling tenant owns. A tenant set cannot
         carry the platform owner scope.
+        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -11061,7 +11175,11 @@ paths:
         only the calling tenant's databases are read, what the Admin database holds of other
         tenants is given as a count (`usage.otherTenants`, with `scanned` false), and
         `usage.unscanned` lists the other tenants as not looked at. Places that could not be
-        checked are listed in `usage.unscanned`, and `usage.scanComplete` is false. The endpoint
+        checked are listed in `usage.unscanned`, and `usage.scanComplete` is false. How far the
+        search looks is set by the platform (`identity_mapping.reference_scan_tenant_limit`,
+        `identity_mapping.reference_scan_row_limit`, `identity_mapping.reference_scan_concurrency`
+        and `identity_mapping.reference_display_limit` of the `identity-mapping` category; a place
+        with more rows than the limit is cut off and the count is a lower bound). The endpoint
         is rate limited with the strict profile.
       parameters:
         - name: set_id
@@ -11104,8 +11222,14 @@ paths:
         An app of another tenant, and one that does not exist, answer 404. The selection reads no
         database; the name, owner and state of the sets it names are read from the Admin database
         in one query and are left out (`setFound` absent) when it cannot be read. The release of
-        claims does not use this selection yet. The endpoint is rate limited with the moderate
-        profile.
+        claims (ID token, UserInfo, the consent screen) uses this same selection. When nothing is
+        named (`no_default`) the answer also looks, in one more Admin database query, for the
+        tenant's active activations that the release once applied to an app naming no Mapping Set
+        and no longer does, and lists them in `warnings` (`implicit_activation_no_longer_applies`;
+        IDs and names only); if that cannot be read the answer is the same with
+        `warnings_unavailable: true`. An app whose selector names only a Destination Profile (the
+        older kind) is `failed` with `reason` `legacy_profile_only_selector`. The endpoint is
+        rate limited with the moderate profile.
       parameters:
         - name: client_id
           in: query
@@ -11129,6 +11253,293 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
         '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/sets:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminIdentityMappingSets
+      summary: List Mapping Sets.
+      description: >-
+        Lists the Mapping Sets the calling tenant owns together with the platform's, which every
+        tenant can read, in the form of the Mapping Set facade: whether each is switched on
+        (`enabled`), its `owner` (`tenant` or `platform`), the version in use (`active_version_id`;
+        null when the set is off) and `content_version`. The content itself is read with
+        `GET /api/admin/identity-mapping/sets/{id}`. A set another tenant owns is never listed.
+        Rate limited with the strict profile.
+      responses:
+        '200':
+          $ref: '#/components/responses/MappingSetList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Field Mapping
+      operationId: postApiAdminIdentityMappingSets
+      summary: Create a Mapping Set with its content, and switch it on.
+      description: >-
+        Creates a Mapping Set and saves its content in one call (the set, a version, its
+        publication and compile, and the activation), as `PUT /api/admin/identity-mapping/sets/{id}`
+        does for a set that exists. The body is the same, with `field_mapping_key` (required here,
+        unique among the sets of the owner) and `owner_scope_type`: `platform` creates the platform's
+        set, which needs platform authority (403 otherwise); any other value creates the calling
+        tenant's. The set is given a server-made ID (a set ID cannot be chosen). Answers 201.
+        `?preview=true` writes nothing (see the PUT). A key already in use answers 409 `conflict`.
+        If a step fails, the set is not left behind (see the PUT for `stage_failed`). A set that
+        releases into a Destination Profile that is not an OIDC one is refused with 400
+        `unsupported_destination`. `Idempotency-Key` is required (8 to 128 characters; not for a
+        preview). Rate limited with the strict profile.
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKey'
+        - $ref: '#/components/parameters/MappingSetPreview'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MappingSetSaveRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/MappingSetPreview'
+        '201':
+          $ref: '#/components/responses/MappingSetSaved'
+        '400':
+          $ref: '#/components/responses/MappingSetSaveFailed'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/MappingSetSaveFailed'
+        '413':
+          $ref: '#/components/responses/Error'
+        '425':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/MappingSetSaveFailed'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/identity-mapping/sets/{id}':
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminIdentityMappingSetsById
+      summary: Read a Mapping Set with its content.
+      description: >-
+        Reads the Mapping Set with the content of the version in use (the version saved last when
+        the set is off), in the form `PUT /api/admin/identity-mapping/sets/{id}` takes, so that it
+        can be edited and sent back. `enabled`, `owner` (`tenant` or `platform`),
+        `active_version_id`, `content_version` (also sent as `ETag`) and `references` (how many
+        things name the set: only the count, the places are read with
+        `GET /api/admin/identity-mapping/usage`; for a platform set only what the Admin database
+        knows is counted, `scan_complete` says whether that is all) are given. The release rules
+        and conflict rules of a version are stored on the version, not on a rule, so they are spread
+        over its rules in order, each rule holding up to the limit of a rule (250 release rules, 100
+        conflict rules) before the next one, so that the content is accepted by the PUT as read. A set another tenant owns, and one that does not exist, answer 404; a
+        platform set can be read by every tenant administrator. Rate limited with the strict
+        profile.
+      parameters:
+        - $ref: '#/components/parameters/MappingSetId'
+      responses:
+        '200':
+          $ref: '#/components/responses/MappingSetDetail'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Field Mapping
+      operationId: putApiAdminIdentityMappingSetsById
+      summary: Replace the content of a Mapping Set, and switch it on or off.
+      description: >-
+        Replaces the whole content of a Mapping Set that exists (a set cannot be created by naming
+        its ID: use `POST /api/admin/identity-mapping/sets`) in one call, instead of the version,
+        publish, compile and activate calls. The control plane's own steps run in order, and none of
+        their checks is repeated here: the content is validated first (what the version create
+        checks, what the compile checks, and the release safety check the activation makes, which
+        is run now so that nothing is saved that cannot be switched on; a platform set is also held
+        to what a platform set may hold), then a new version is created, published and compiled,
+        and last the version in use is replaced by it (`enabled`, true by default) in the control
+        plane's one atomic switch, or, with `enabled: false`, the activation is ended. Every save
+        makes a new version; the earlier ones are kept.
+        An activation written here is scoped to OIDC and the OP role (`{protocol: oidc, role: op}`;
+        a platform set is written with an empty scope, as the activation endpoint does). A set
+        that releases into a Destination Profile that is not an OIDC one, none, or more than one, is
+        refused with 400 `unsupported_destination` (or `invalid_request` for more than one OIDC
+        profile): use the field mapping version and activation endpoints for those.
+        `If-Match` (optional) carries the `content_version` (or `ETag`) read last; another value is
+        a 409 `conflict`, and so is a set that is saved by someone else while this save is built.
+        While something names the set (an app, a default, a SAML provider, a credential profile,
+        SCIM), `confirm_impact` has to carry the number of references (`references.count` of the
+        preview or of `GET /api/admin/identity-mapping/usage`); without it, or with another number,
+        409 `impact_confirmation_required` with `references`. Switching a set that is named off
+        is refused as the deactivation endpoint refuses it (409, `reason` `referenced`), and a
+        version that would not meet what the references need as the activation endpoint does
+        (`would_break_references`, `scan_incomplete`).
+        When a step fails the answer carries `stage_failed` (`validate`, `create_version`,
+        `publish`, `compile` or `activate`), the status of the failure, and `version_id` of the
+        version this save created together with `version_discarded` (the version is removed when it
+        can be); the version in use stays in use, and the name and description are put back. A
+        refusal before the steps (authority, 404, `If-Match`, `confirm_impact`, the shape of the
+        request) carries no `stage_failed`. `?preview=true` writes nothing (no version, no settings
+        document, no replay record, no backup admission) and answers 200 with the result of the
+        validation (`valid`, or `valid: false` with `stage_failed`, `error` and
+        `error_description`), whether it would compile, the difference from the content now (the
+        sizes and the names of the claims added and removed, never a value), the number of
+        references, whether `confirm_impact` is required, and whether switching the set off would
+        be refused; whether the new version may replace the one in use is judged when it has a
+        compiled snapshot, on the save.
+        Saves that run at the same time do not overwrite each other: the version in use that the
+        save was decided against is checked again with the activation lock held and again inside the
+        batch that switches (the switch fails as a whole when it is another version now), and the
+        loser answers 409 `conflict` with `stage_failed` `activate`, its own version removed and
+        the other save untouched. The name and description are written by that same batch, never
+        before, so a save that loses leaves them as the other save made them. The number of
+        references is compared with `confirm_impact` again just before the switch (409
+        `impact_confirmation_required` with the newest count, `stage_failed` `activate`); an app
+        that comes to name the set after that last look cannot be excluded, because the references
+        live in other databases than the set. A version that was being written when a step failed
+        is removed by one batch that first checks that nothing put it in use meanwhile.
+        A save that leaves the set off is confirmed by one batch that checks that nothing was saved
+        or switched on since it looked (else 409 `conflict`). When the answer of that batch (or of
+        the switch) is lost, the state is looked at: if the save's own mark is there it stands and
+        the answer is 200; if the state cannot be read the answer is 500 `outcome_unknown`
+        (`stage_failed` `activate`) with nothing cleaned up, and the key is held (a repeat is 409
+        `result_unknown`). A version that another call put in use first (the activation endpoint)
+        is not taken for this save's own switch: 409 `conflict`, and the scope that call wrote stands.
+        A repeat of a deletion that succeeded is answered with the stored result although the set is
+        gone, judged by the owner the stored answer records (a platform set's needs platform
+        authority). One audit record is made for a save
+        (`identity_mapping.set.saved`: the set, the version, `enabled`, the result, the number of
+        rules; never a value). A platform set needs platform authority (403 otherwise). A set
+        another tenant owns, and one that does not exist, answer 404. `Idempotency-Key` is
+        required (8 to 128 characters; not for a preview): the same key, method, path and body
+        answers with the stored result (and its `ETag`) for 15 minutes in the Admin database; the
+        same key for another request, or from another credential or with other rights than the first
+        request (the stored answer is for the authority it was made with), is 409
+        `idempotency_conflict`; the right to change the set is judged again before a stored answer is
+        used (403 / 404 as for a first request); and a request that started but whose result was
+        lost is 409 `result_unknown`. The body is at most 256 KiB (the Admin API's common limit of
+        100 KiB does not apply to this route), and the content is held to the limits of the version
+        create. Rate limited with the strict profile.
+      parameters:
+        - $ref: '#/components/parameters/MappingSetId'
+        - $ref: '#/components/parameters/RequiredIdempotencyKey'
+        - $ref: '#/components/parameters/MappingSetPreview'
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+          description: The `content_version` (or `ETag`) of the set as it was read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MappingSetSaveRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/MappingSetSaved'
+        '400':
+          $ref: '#/components/responses/MappingSetSaveFailed'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/MappingSetSaveFailed'
+        '413':
+          $ref: '#/components/responses/Error'
+        '425':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/MappingSetSaveFailed'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Field Mapping
+      operationId: deleteApiAdminIdentityMappingSetsById
+      summary: Delete a Mapping Set.
+      description: >-
+        Deletes a Mapping Set with its versions. A set that is switched on is switched off and
+        deleted by the same request, in one atomic batch: there is no separate step of switching it
+        off first (the older `DELETE /api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}`
+        still refuses an active set). The request is refused with 409 (`reason` `referenced` or
+        `scan_incomplete`, with `references`) while a default, an app, a SAML provider, a
+        credential profile, a federation trust source or SCIM still names the set, or when where it
+        is used could not be checked everywhere; nothing is changed then. `If-Match` (optional)
+        carries the `content_version` (or `ETag`) read last; another value is refused with 409 and
+        nothing is deleted. Whether or not it is sent, the batch starts with a check that the set
+        is still as this request read it (the version in use, else the one saved last): a save or
+        a switch by someone else in between fails the check with 409 and deletes nothing. A
+        platform set needs platform authority (403); a set another tenant owns, and one that does
+        not exist, answer 404 (a repeat without an `Idempotency-Key` match after the set is gone is
+        a 404; a repeat with the same key is answered with the stored answer). `Idempotency-Key`
+        is required. One audit record (`identity_mapping.set.deleted`, with whether the set was
+        switched on). Rate limited with the strict profile.
+      parameters:
+        - $ref: '#/components/parameters/MappingSetId'
+        - $ref: '#/components/parameters/RequiredIdempotencyKey'
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+          description: The `content_version` (or `ETag`) of the set as it was read.
+      responses:
+        '200':
+          $ref: '#/components/responses/MappingSetDeleted'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/MappingSetInUse'
+        '425':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -11172,6 +11583,7 @@ paths:
       tags:
         - Field Mapping
       operationId: postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersions
+      deprecated: true
       summary: Create a field mapping version.
       description: >-
         Creates a draft version for a field mapping set with rules, edges, transforms, validation
@@ -11180,6 +11592,7 @@ paths:
         or use a Source Profile. Mapping edges cannot target claims owned by an OIDC
         or introspection protocol envelope. Every source field marked mappingRequired in a referenced
         Source Profile must be connected by an edge.
+        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingVersionMutation'
@@ -11213,6 +11626,7 @@ paths:
         - Field Mapping
       operationId: >-
         postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersionsByFieldMappingVersionIdActivate
+      deprecated: true
       summary: Activate a field mapping version.
       description: >-
         Activates a compiled field mapping version for the supplied activation scope. Requires a
@@ -11235,6 +11649,7 @@ paths:
         list in `references` is then a lower bound (`countIsLowerBound`) and `scanComplete` is
         false. 409
         `scan_incomplete` when where the set is used could not be checked everywhere.
+        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingActivationResult'
@@ -11275,11 +11690,13 @@ paths:
         - Field Mapping
       operationId: >-
         postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersionsByFieldMappingVersionIdCompile
+      deprecated: true
       summary: Compile a field mapping version.
       description: >-
         Compiles a field mapping version against a catalog version and returns the compiled snapshot
         metadata. For a set the platform owns, the catalog version must be the platform's, every
         source must be a field of it, and a custom field is refused.
+        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingCompileResult'
@@ -11368,11 +11785,13 @@ paths:
         - Field Mapping
       operationId: >-
         postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersionsByFieldMappingVersionIdPublish
+      deprecated: true
       summary: Publish a field mapping version.
       description: >-
         Publishes a draft field mapping version for the specified field mapping set. The mutation is
         idempotent when an Idempotency-Key header is supplied and returns the lifecycle transition
         in a result envelope.
+        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingLifecycleTransition'
@@ -33169,6 +33588,24 @@ components:
         minLength: 1
         maxLength: 255
       description: Required replay-protection key retained for 15 minutes.
+    MappingSetId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+      description: Mapping Set identifier.
+    MappingSetPreview:
+      name: preview
+      in: query
+      required: false
+      schema:
+        type: boolean
+        default: false
+      description: >-
+        With `true` nothing is written; the answer says what the save would do (see the PUT).
     Page:
       name: page
       in: query
@@ -37155,12 +37592,73 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/FieldMappingDestinationProfileMutationResponse'
+    MappingSetList:
+      description: The Mapping Sets of the tenant and the platform's.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MappingSetListResponse'
+    MappingSetDetail:
+      description: A Mapping Set with the content of the version in use.
+      headers:
+        ETag:
+          schema:
+            type: string
+          description: The `content_version`, quoted.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MappingSetDetailResponse'
+    MappingSetSaved:
+      description: >-
+        The set was saved (200 for a set that existed, 201 for one that was created), or, with
+        `preview=true`, what a save would do.
+      headers:
+        ETag:
+          schema:
+            type: string
+          description: The `content_version` after the save, quoted.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/MappingSetSavedResponse'
+              - $ref: '#/components/schemas/MappingSetPreviewResponse'
+    MappingSetPreview:
+      description: What a save would do (nothing was written).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MappingSetPreviewResponse'
+    MappingSetSaveFailed:
+      description: >-
+        The save was refused or a step failed. `stage_failed` names the step when the content was
+        looked at or written; `version_id` and `version_discarded` are given when a version was
+        created.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MappingSetSaveError'
+    MappingSetDeleted:
+      description: The Mapping Set was deleted.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MappingSetDeletedResponse'
     MappingSetUsage:
       description: Where a Mapping Set is used.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/MappingSetUsageResponse'
+    BulkApply:
+      description: >-
+        The preview of, or the result of, a bulk apply: one entry per tenant named, in the order of
+        first appearance.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BulkApplyResponse'
     IdentityMappingEffective:
       description: The Mapping Set an app is bound to, and the levels that decided it.
       content:
@@ -46816,6 +47314,15 @@ components:
             - PS256
             - null
     OIDCIdentityMappingSelector:
+      description: >-
+        The app's own choice of Mapping Set. Either a Mapping Set (`fieldMappingSetId`), or the
+        explicit opt-out `{ "mode": "none" }`: the app takes no mapping, whatever the tenant's and
+        the platform's default say. Null (or absent) is not a choice: the app follows the tenant's
+        default, else the platform's, else no mapping applies. The opt-out takes no other field.
+      oneOf:
+        - $ref: '#/components/schemas/OIDCIdentityMappingSetChoice'
+        - $ref: '#/components/schemas/OIDCIdentityMappingOptOut'
+    OIDCIdentityMappingSetChoice:
       type: object
       additionalProperties: false
       required:
@@ -46829,6 +47336,16 @@ components:
           type: string
         sourceProfileId:
           type: string
+    OIDCIdentityMappingOptOut:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+      properties:
+        mode:
+          type: string
+          enum:
+            - none
     AttributeReleaseConsentPolicy:
       type: object
       additionalProperties: false
@@ -56346,6 +56863,304 @@ components:
                 - client
                 - tenant_default
                 - platform_default
+            reason:
+              type: string
+              enum:
+                - legacy_profile_only_selector
+              description: >-
+                Given when the app's own choice names a Destination Profile (`destinationProfileId`)
+                and no Mapping Set and no opt-out: a selector of the older kind, which is not a
+                choice. The release fails for the app (400 `invalid_client`) rather than lose the
+                profile's gate in silence. Select a Mapping Set or save `{ "mode": "none" }`.
+    BulkApplyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - tenant_ids
+        - changes
+      properties:
+        mode:
+          type: string
+          enum:
+            - preview
+            - apply
+        tenant_ids:
+          type: array
+          minItems: 1
+          description: >-
+            The tenants to give the changes to; duplicates are dropped. At most
+            `bulk_apply.max_tenants_per_request` (25 by default, between 1 and 100).
+          items:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{1,128}$'
+        changes:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: >-
+            One entry per settings category (a category appears once). The keys set or cleared, over
+            all entries, number at most `bulk_apply.max_keys_per_request` (20 by default).
+          items:
+            $ref: '#/components/schemas/BulkApplyChange'
+        on_existing_override:
+          type: string
+          enum:
+            - skip
+            - overwrite
+          default: skip
+          description: >-
+            What to do with a key the tenant already has a value of its own for: leave it
+            (`skip`) or replace or clear it (`overwrite`).
+        expected:
+          type: object
+          description: >-
+            For `apply`, optional: the `version` of each category a preview returned, by tenant ID
+            and category. A category whose version is now another is not written.
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+    BulkApplyChange:
+      type: object
+      additionalProperties: false
+      required:
+        - category
+      properties:
+        category:
+          type: string
+          description: A settings category that can be set for a tenant.
+        set:
+          type: object
+          additionalProperties: true
+          description: Setting keys and the values to give them.
+        clear:
+          type: array
+          description: >-
+            Setting keys to take back to what the tenant inherits (the tenant's own value is
+            removed), as `clear` of a PATCH does.
+          items:
+            type: string
+    BulkApplyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - on_existing_override
+        - limits
+        - summary
+        - results
+      properties:
+        bulk_id:
+          type: string
+          format: uuid
+          description: Present for an apply; in every audit record the apply wrote.
+        mode:
+          type: string
+          enum:
+            - preview
+            - apply
+        on_existing_override:
+          type: string
+          enum:
+            - skip
+            - overwrite
+        limits:
+          type: object
+          additionalProperties: false
+          properties:
+            max_tenants_per_request:
+              type: integer
+            max_keys_per_request:
+              type: integer
+        summary:
+          type: object
+          additionalProperties: false
+          properties:
+            tenants:
+              type: integer
+            by_status:
+              type: object
+              description: The number of tenants by status.
+              additionalProperties:
+                type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkApplyTenantResult'
+    BulkApplyTenantResult:
+      type: object
+      additionalProperties: false
+      required:
+        - tenant_id
+        - status
+        - changes
+      properties:
+        tenant_id:
+          type: string
+        status:
+          type: string
+          description: >-
+            Apply: `applied`, `cleared`, `skipped`, `rejected`, `conflict` or `failed` (the worst
+            outcome of the tenant's changes leads; a tenant that cannot be worked on is `rejected`
+            with a `reason`). Preview: `ready`, `nothing_to_do`, or `rejected` for a tenant that
+            cannot be worked on.
+        reason:
+          type: string
+          description: Why the whole tenant was rejected (`tenant_not_found`, `tenant_deleted`).
+        error:
+          type: object
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+          description: A fixed code for a tenant that failed as a whole; nothing else.
+        changes:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/BulkApplyPreviewChange'
+              - $ref: '#/components/schemas/BulkApplyAppliedChange'
+        impact:
+          type: object
+          description: >-
+            Preview only. What a category's changes affect in the tenant, by category. For
+            `identity-mapping`: `apps_total` and `apps_following_default` (the apps with no Mapping
+            Set of their own), `apps_with_unusable_choice` (apps whose selector names only a
+            Destination Profile, which fail rather than follow the default), and `warnings`: with
+            code `implicit_activation_no_longer_applies`, the tenant's own active activations
+            (`activationId`, `setId`, `setName`; nothing of their scope or claims) that once bound
+            apps naming no Mapping Set and no longer do. `warnings_unavailable: true` says the
+            Admin database could not be read for them. Or `available: false` and a `reason`.
+          additionalProperties: true
+    BulkApplyPreviewChange:
+      type: object
+      additionalProperties: false
+      required:
+        - category
+        - key
+        - proposed
+        - action
+        - validation
+      properties:
+        category:
+          type: string
+        key:
+          type: string
+        current:
+          type: object
+          nullable: true
+          additionalProperties: false
+          description: >-
+            What the tenant has now; null when it was not read (a refused key, or settings that
+            could not be read).
+          properties:
+            overridden:
+              type: boolean
+            own:
+              nullable: true
+              description: The tenant's own value; null when it has none.
+            effective:
+              description: The value in force.
+            source:
+              type: string
+              description: Where the value in force comes from (`kv` is the tenant's own).
+        proposed:
+          description: The value, or `"clear"`.
+        action:
+          type: string
+          enum:
+            - would_apply
+            - would_clear
+            - would_skip
+            - would_reject
+        reason:
+          type: string
+        validation:
+          type: object
+          additionalProperties: false
+          required:
+            - ok
+          properties:
+            ok:
+              type: boolean
+              nullable: true
+              description: Null when the key was not checked (it would be skipped or refused already).
+            errors:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  code:
+                    type: string
+                  detail_code:
+                    type: string
+                    description: See `detail_code` of a result.
+        version:
+          type: string
+          nullable: true
+          description: The version of the tenant's document for the category, for `expected`.
+        warnings:
+          type: array
+          items:
+            type: string
+    BulkApplyAppliedChange:
+      type: object
+      additionalProperties: false
+      required:
+        - category
+        - key
+        - status
+        - previous
+        - new
+        - version_before
+        - version_after
+      properties:
+        category:
+          type: string
+        key:
+          type: string
+        status:
+          type: string
+          enum:
+            - applied
+            - cleared
+            - skipped
+            - rejected
+            - conflict
+            - failed
+        reason:
+          type: string
+          description: >-
+            For `skipped`: `existing_override`, `already_set`, `not_overridden`. For `rejected`: a
+            reason the setting cannot be given in bulk (for example `tenant_specific_url`,
+            `tenant_ui_routing`, `tenant_brand_text`, `structured_value`), `forbidden`, or
+            `validation_failed`. For `conflict`: `version_changed`. For `failed`: a fixed code.
+        detail_code:
+          type: string
+          description: >-
+            Why a validation refused the key, as a fixed code and never as the sentence of the
+            validation: `value_invalid`, `value_out_of_range`, `value_wrong_type`,
+            `dependency_not_met`, `unknown_key`, `bounds_not_met`, `identity_mapping_*` or
+            `human_verification_*`. What a value may be (range, type, allowed values) is in the
+            settings metadata, `GET /api/admin/settings/meta/{category}`.
+        previous:
+          nullable: true
+          description: The tenant's own value before; null when it had none.
+        new:
+          description: The value given, or `"clear"`.
+        version_before:
+          type: string
+          nullable: true
+        version_after:
+          type: string
+          nullable: true
+          description: Set only when the key was written.
+        warnings:
+          type: array
+          items:
+            type: string
     IdentityMappingEffectiveResponse:
       type: object
       additionalProperties: false
@@ -56368,6 +57183,383 @@ components:
           description: The app's level, the tenant default and the platform default, in that order.
           items:
             $ref: '#/components/schemas/IdentityMappingEffectiveChainEntry'
+        warnings:
+          type: array
+          description: >-
+            Given with a selection of none because nothing is named (`no_default`); empty
+            otherwise. `implicit_activation_no_longer_applies`: the tenant has active activations
+            that fit an OIDC call (for an app, one that names it counts too), which the release
+            used to apply to an app naming no Mapping Set and no longer does. Name the Mapping Set
+            as the tenant's default (or the app's own) to keep what they did. Only this tenant's
+            rows are read, and only IDs and names are given.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - code
+              - activations
+            properties:
+              code:
+                type: string
+                enum:
+                  - implicit_activation_no_longer_applies
+              activations:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - activationId
+                    - setId
+                  properties:
+                    activationId:
+                      type: string
+                    setId:
+                      type: string
+                    setName:
+                      type: string
+        warnings_unavailable:
+          type: boolean
+          enum:
+            - true
+          description: >-
+            The Admin database could not be read to look for the activations, so `warnings` is
+            empty without the tenant having none.
+    MappingSetContent:
+      type: object
+      additionalProperties: false
+      required:
+        - catalogVersionId
+        - rules
+      description: >-
+        What a version holds, in the form the version create takes (camelCase), and the catalog
+        version it is compiled against. The version label and the author are made by the server.
+      properties:
+        catalogVersionId:
+          type: string
+          description: The catalog version the content is compiled against.
+        compatibilityRange:
+          type: string
+        sourceProfileIds:
+          type: array
+          description: >-
+            Source Profile references validated for mappingRequired fields. Not given back by a GET
+            (the edges carry the profile IDs).
+          items:
+            type: string
+        rules:
+          type: array
+          maxItems: 250
+          description: >-
+            Rules with `ruleKey`, `ruleKind`, `action`, `priority`, `scope`, `condition`,
+            `metadata`, `edges` (`sourceRef`, `targetRef`, `edgeKind`), `transforms` (`edgeIndex`,
+            `operation`, `parameters`), `validationRules`, `releaseRules` and `conflictRules`, as
+            in `FieldMappingVersionCreateRequest`. The rules release into exactly one OIDC
+            Destination Profile (named by `targetRef.profileId`).
+          items:
+            type: object
+            additionalProperties: true
+    MappingSetSaveRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - display_name
+        - content
+      properties:
+        display_name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          nullable: true
+          maxLength: 2000
+        field_mapping_key:
+          type: string
+          maxLength: 200
+          description: >-
+            Required to create (unique among the owner's sets). On a PUT it can be left out or must
+            be the set's own key.
+        owner_scope_type:
+          type: string
+          enum:
+            - tenant
+            - platform
+          description: >-
+            Only when creating: `platform` creates the platform's set (platform authority). On a
+            PUT it can be left out or must be the set's owner.
+        enabled:
+          type: boolean
+          default: true
+          description: >-
+            True switches the saved version on, in place of the one in use. False saves it and ends
+            the activation (refused while something names the set).
+        confirm_impact:
+          type: integer
+          minimum: 0
+          description: >-
+            The number of references seen last (preview or usage). Required to change a set that
+            something names.
+        content:
+          $ref: '#/components/schemas/MappingSetContent'
+    MappingSetSummary:
+      type: object
+      description: >-
+        The fields every answer about a Mapping Set carries. The detail and the save answers add
+        to them, so the schema is open.
+      required:
+        - id
+        - owner
+        - field_mapping_key
+        - display_name
+        - enabled
+        - active_version_id
+        - content_version
+      properties:
+        id:
+          type: string
+        owner:
+          type: string
+          enum:
+            - tenant
+            - platform
+        field_mapping_key:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+          description: Whether an activation is in use.
+        active_version_id:
+          type: string
+          nullable: true
+        version_label:
+          type: string
+          nullable: true
+          description: The label of the version the set is now (the one in use, else the last saved).
+        content_version:
+          type: string
+          description: >-
+            What the set is now: the ID of the version in use, else of the version saved last, else
+            `none`. Changes with every save; sent as `If-Match`.
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+    MappingSetListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - sets
+      properties:
+        sets:
+          type: array
+          items:
+            $ref: '#/components/schemas/MappingSetSummary'
+    MappingSetReferenceCount:
+      type: object
+      additionalProperties: false
+      properties:
+        count:
+          type: integer
+        count_is_lower_bound:
+          type: boolean
+        scan_complete:
+          type: boolean
+    MappingSetDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/MappingSetSummary'
+        - type: object
+          properties:
+            content:
+              allOf:
+                - $ref: '#/components/schemas/MappingSetContent'
+              nullable: true
+              description: Null when the set has no version.
+            references:
+              allOf:
+                - $ref: '#/components/schemas/MappingSetReferenceCount'
+              nullable: true
+              description: Null when the references could not be counted.
+    MappingSetContentSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        rules:
+          type: integer
+        edges:
+          type: integer
+        transforms:
+          type: integer
+        validation_rules:
+          type: integer
+        release_rules:
+          type: integer
+        conflict_rules:
+          type: integer
+        released_claims:
+          type: array
+          description: The names of the claims released. Never a value.
+          items:
+            type: string
+    MappingSetSavedResponse:
+      allOf:
+        - $ref: '#/components/schemas/MappingSetSummary'
+        - type: object
+          properties:
+            created:
+              type: boolean
+            version_id:
+              type: string
+              description: The version this save created.
+            snapshot_id:
+              type: string
+            previous_content_version:
+              type: string
+            summary:
+              $ref: '#/components/schemas/MappingSetContentSummary'
+    MappingSetPreviewResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - preview
+        - valid
+      properties:
+        preview:
+          type: boolean
+          enum:
+            - true
+        valid:
+          type: boolean
+        id:
+          type: string
+          nullable: true
+        owner:
+          type: string
+        would_create:
+          type: boolean
+        enabled:
+          type: boolean
+        content_version:
+          type: string
+        stage_failed:
+          type: string
+          enum:
+            - validate
+          description: Only when `valid` is false.
+        error:
+          type: string
+          description: Only when `valid` is false.
+        error_description:
+          type: string
+          description: Only when `valid` is false.
+        validation:
+          type: object
+          properties:
+            ok:
+              type: boolean
+        compile:
+          type: object
+          properties:
+            ok:
+              type: boolean
+            catalog_version_id:
+              type: string
+        activation:
+          type: object
+          properties:
+            scope:
+              type: object
+              nullable: true
+              additionalProperties: true
+            deactivation_refusal:
+              type: object
+              nullable: true
+              additionalProperties: true
+              description: Why switching the set off would be refused now, if it would.
+        diff:
+          type: object
+          additionalProperties: false
+          properties:
+            before:
+              allOf:
+                - $ref: '#/components/schemas/MappingSetContentSummary'
+              nullable: true
+            after:
+              $ref: '#/components/schemas/MappingSetContentSummary'
+            claims_added:
+              type: array
+              items:
+                type: string
+            claims_removed:
+              type: array
+              items:
+                type: string
+        references:
+          $ref: '#/components/schemas/MappingSetReferenceCount'
+        confirm_impact_required:
+          type: boolean
+    MappingSetSaveError:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+        - error_description
+      properties:
+        error:
+          type: string
+          description: >-
+            For example `invalid_request`, `unsupported_destination`, `conflict`,
+            `impact_confirmation_required`, `idempotency_conflict`, `result_unknown`,
+            `internal_error`.
+        error_description:
+          type: string
+        stage_failed:
+          type: string
+          enum:
+            - validate
+            - create_version
+            - publish
+            - compile
+            - activate
+        version_id:
+          type: string
+          nullable: true
+          description: The version this save created before it failed.
+        version_discarded:
+          type: boolean
+          description: Whether that version was removed.
+        reason:
+          type: string
+          enum:
+            - referenced
+            - scan_incomplete
+            - would_break_references
+        references:
+          type: object
+          additionalProperties: true
+          description: >-
+            The references that made a change a conflict, as in `MappingSetInUseError`; for
+            `impact_confirmation_required`, `references.count` is the number to confirm.
+    MappingSetDeletedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - owner
+        - deleted
+      properties:
+        id:
+          type: string
+        owner:
+          type: string
+          enum:
+            - tenant
+            - platform
+        deleted:
+          type: boolean
     MappingSetInUseError:
       type: object
       additionalProperties: true

@@ -396,9 +396,15 @@ function auth(c: AdminContext): AdminAuthContext {
   return c.get('adminAuth') as AdminAuthContext;
 }
 
-// The control plane is platform-wide, so the authority has to come from a global assignment.
-function hasPlatformAuthority(value: AdminAuthContext): boolean {
-  return hasGlobalPlatformAuthority(value, true);
+// The control plane is platform-wide, so the authority has to come from a global assignment. A
+// machine token needs the control plane permission of the operation (`read` for a read,
+// `provision` for the rest) for every tenant. The setup tool the bootstrap wrote is let in by the
+// routes that name it (`isSetupProvisioningMachine`), not here.
+function hasPlatformAuthority(
+  value: AdminAuthContext,
+  permission: 'read' | 'provision' = 'provision'
+): boolean {
+  return hasGlobalPlatformAuthority(value, `admin:control_plane:${permission}`);
 }
 
 function hasControlPlanePermission(
@@ -421,7 +427,7 @@ function hasControlPlanePermission(
   // The control plane is platform-wide: a human holds the permission through a global assignment,
   // not through one given for a tenant (`permissions` adds those up too).
   return (
-    hasPlatformAuthority(value) ||
+    hasGlobalPlatformAuthority(value) ||
     ((value.tenantScope ?? []).includes('*') && holdsPermission(value.globalPermissions ?? []))
   );
 }
@@ -1757,7 +1763,7 @@ controlPlaneOperationsRouter.post(
 
 controlPlaneOperationsRouter.post('/tenant-recovery', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -1857,7 +1863,7 @@ controlPlaneOperationsRouter.post('/tenant-recovery', async (c) => {
 });
 
 controlPlaneOperationsRouter.get('/tenant-recovery/:operationId', async (c) => {
-  if (!hasPlatformAuthority(auth(c))) {
+  if (!hasPlatformAuthority(auth(c), 'read')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   const control = c.env.CONTROL;
@@ -1881,7 +1887,7 @@ controlPlaneOperationsRouter.get('/tenant-recovery/:operationId', async (c) => {
 
 controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/confirm-restore', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -1963,7 +1969,7 @@ controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/confirm-restore
 
 controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/verify', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -2032,7 +2038,7 @@ controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/verify', async 
 
 controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/reactivate', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -2127,7 +2133,7 @@ controlPlaneOperationsRouter.post('/tenant-recovery/:operationId/reactivate', as
 });
 
 controlPlaneOperationsRouter.get('/shard-cleanup', async (c) => {
-  if (!hasPlatformAuthority(auth(c))) {
+  if (!hasPlatformAuthority(auth(c), 'read')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   const control = c.env.CONTROL;
@@ -2147,7 +2153,7 @@ controlPlaneOperationsRouter.get('/shard-cleanup', async (c) => {
 });
 
 controlPlaneOperationsRouter.get('/shard-cleanup/:shardId', async (c) => {
-  if (!hasPlatformAuthority(auth(c))) {
+  if (!hasPlatformAuthority(auth(c), 'read')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   const control = c.env.CONTROL;
@@ -2170,7 +2176,7 @@ controlPlaneOperationsRouter.get('/shard-cleanup/:shardId', async (c) => {
 
 controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/quarantine', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -2231,7 +2237,7 @@ controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/quarantine', async (c
 
 controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/retry-quarantine', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -2300,7 +2306,7 @@ controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/retry-quarantine', as
 
 controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/approve', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -2367,7 +2373,7 @@ controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/approve', async (c) =
 
 controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/retry-cleanup', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -2432,7 +2438,7 @@ controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/retry-cleanup', async
 });
 
 controlPlaneOperationsRouter.get('/drift-findings', async (c) => {
-  if (!hasPlatformAuthority(auth(c))) {
+  if (!hasPlatformAuthority(auth(c), 'read')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   const control = c.env.CONTROL;
@@ -2468,7 +2474,7 @@ controlPlaneOperationsRouter.post(
   '/release-rollout/:operationId/targets/:targetId/retry',
   async (c) => {
     const actor = auth(c);
-    if (!hasPlatformAuthority(actor)) {
+    if (!hasPlatformAuthority(actor, 'provision')) {
       return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
     }
     const isHumanActor =
@@ -2543,7 +2549,7 @@ controlPlaneOperationsRouter.post(
 );
 
 controlPlaneOperationsRouter.get('/provisioning-authority', async (c) => {
-  if (!hasPlatformAuthority(auth(c))) {
+  if (!hasPlatformAuthority(auth(c), 'read')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   const control = c.env.CONTROL;
@@ -2599,7 +2605,7 @@ controlPlaneOperationsRouter.post('/capacity/preview', async (c) => {
 controlPlaneOperationsRouter.post('/capacity/requests', async (c) => {
   const actor = auth(c);
   const setupMachine = isSetupProvisioningMachine(actor);
-  if (!setupMachine && !hasPlatformAuthority(actor)) {
+  if (!setupMachine && !hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (!setupMachine && actor.actorType && actor.actorType !== 'human') {
@@ -2650,7 +2656,7 @@ controlPlaneOperationsRouter.post('/capacity/requests', async (c) => {
 });
 
 controlPlaneOperationsRouter.get('/operations/:operationId', async (c) => {
-  if (!hasPlatformAuthority(auth(c))) {
+  if (!hasPlatformAuthority(auth(c), 'read')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   const control = c.env.CONTROL;
@@ -2674,7 +2680,7 @@ controlPlaneOperationsRouter.get('/operations/:operationId', async (c) => {
 controlPlaneOperationsRouter.post('/operations/:operationId/retry-step', async (c) => {
   const actor = auth(c);
   const setupMachine = isSetupProvisioningMachine(actor);
-  if (!setupMachine && !hasPlatformAuthority(actor)) {
+  if (!setupMachine && !hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (!setupMachine && actor.actorType && actor.actorType !== 'human') {
@@ -2753,7 +2759,7 @@ controlPlaneOperationsRouter.post('/operations/:operationId/retry-step', async (
 
 controlPlaneOperationsRouter.post('/operations/:operationId/cancel', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {
@@ -2826,7 +2832,7 @@ controlPlaneOperationsRouter.post(
   '/operations/:operationId/restore-previous-settings',
   async (c) => {
     const actor = auth(c);
-    if (!hasPlatformAuthority(actor)) {
+    if (!hasPlatformAuthority(actor, 'provision')) {
       return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
     }
     if (actor.actorType && actor.actorType !== 'human') {
@@ -2898,7 +2904,7 @@ controlPlaneOperationsRouter.post(
 
 controlPlaneOperationsRouter.post('/drift-findings/:findingId/review', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, 'provision')) {
     return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {

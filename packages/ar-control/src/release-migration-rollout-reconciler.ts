@@ -917,8 +917,10 @@ export class ReleaseMigrationRolloutReconciler {
     for (const operation of operations.results) {
       await this.db
         .prepare(
+          // next_attempt_at stays: the executor that takes the target over (a later Control or
+          // setup) keeps the backoff of the failure that put it in waiting_retry.
           `UPDATE control_release_migration_targets
-              SET state = 'blocked', next_attempt_at = NULL,
+              SET state = 'blocked',
                   last_error_code = 'release_migration_executor_unavailable', updated_at = ?
             WHERE operation_id = ? AND provider_database_id IS NOT NULL
               AND state IN ('queued', 'waiting_retry')`
@@ -951,11 +953,13 @@ export class ReleaseMigrationRolloutReconciler {
         this.db
           .prepare(
             `UPDATE control_release_migration_targets
-                SET state = 'queued', last_error_code = NULL, updated_at = ?
+                SET state = CASE WHEN next_attempt_at IS NOT NULL AND next_attempt_at > ?
+                                 THEN 'waiting_retry' ELSE 'queued' END,
+                    last_error_code = NULL, updated_at = ?
               WHERE operation_id = ? AND state = 'blocked'
                 AND last_error_code = 'release_migration_executor_unavailable'`
           )
-          .bind(now, operation.operation_id),
+          .bind(now, now, operation.operation_id),
         this.db
           .prepare(
             `UPDATE control_operation_steps
@@ -1176,8 +1180,7 @@ export class ReleaseMigrationRolloutReconciler {
       .prepare(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN state = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
-                SUM(CASE WHEN state = 'blocked' THEN 1 ELSE 0 END) AS blocked,
-                MIN(CASE WHEN state = 'blocked' THEN last_error_code END) AS error_code
+                SUM(CASE WHEN state = 'blocked' THEN 1 ELSE 0 END) AS blocked
            FROM control_release_migration_targets WHERE operation_id = ?`
       )
       .bind(operationId)
@@ -1185,7 +1188,6 @@ export class ReleaseMigrationRolloutReconciler {
         total: number;
         succeeded: number | null;
         blocked: number | null;
-        error_code: string | null;
       }>();
     if (!counts) return false;
     const total = counts.total;
@@ -1201,31 +1203,40 @@ export class ReleaseMigrationRolloutReconciler {
       .bind(succeeded, total, now, operationId)
       .run();
     if (blocked > 0) {
-      const errorCode = counts.error_code ?? 'release_migration_target_blocked';
+      // The counts can be stale by the time this batch runs (an overlapping cron run, or setup
+      // taking the blocked targets over), so the block and its code are read again here.
+      const stillBlocked = `EXISTS (
+        SELECT 1 FROM control_release_migration_targets target
+         WHERE target.operation_id = ? AND target.state = 'blocked'
+      )`;
+      const blockedCode = `COALESCE((
+        SELECT MIN(target.last_error_code) FROM control_release_migration_targets target
+         WHERE target.operation_id = ? AND target.state = 'blocked'
+      ), 'release_migration_target_blocked')`;
       await this.db.batch([
         this.db
           .prepare(
             `UPDATE control_operation_steps
-                SET status = 'blocked', last_error_code = ?, updated_at = ?
+                SET status = 'blocked', last_error_code = ${blockedCode}, updated_at = ?
               WHERE operation_id = ? AND step_key = 'apply_managed_migrations'
-                AND status = 'running'`
+                AND status = 'running' AND ${stillBlocked}`
           )
-          .bind(errorCode, now, operationId),
+          .bind(operationId, now, operationId, operationId),
         this.db
           .prepare(
             `UPDATE control_operations
-                SET status = 'blocked', last_error_code = ?,
+                SET status = 'blocked', last_error_code = ${blockedCode},
                     lock_owner = NULL, lock_expires_at = NULL, updated_at = ?
-              WHERE operation_id = ? AND status = 'running'`
+              WHERE operation_id = ? AND status = 'running' AND ${stillBlocked}`
           )
-          .bind(errorCode, now, operationId),
+          .bind(operationId, now, operationId, operationId),
         this.db
           .prepare(
             `UPDATE control_release_migration_rollouts
                 SET handoff_state = 'blocked', updated_at = ?
-              WHERE operation_id = ? AND handoff_state = 'database_rollout'`
+              WHERE operation_id = ? AND handoff_state = 'database_rollout' AND ${stillBlocked}`
           )
-          .bind(now, operationId),
+          .bind(now, operationId, operationId),
       ]);
       return false;
     }

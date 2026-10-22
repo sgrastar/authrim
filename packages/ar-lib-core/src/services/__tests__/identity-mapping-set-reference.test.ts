@@ -170,8 +170,9 @@ describe('validateOidcMappingSetReference', () => {
       ).toMatchObject({ ok: true, ownerTenantId: 'tenant-a', destinationProfileId: 'profile-a' });
     });
 
-    // Until the runtime resolves an app's own Mapping Set under its owner (stage 2), an app saved
-    // with a platform-owned set would fail every sign-in.
+    // TODO(backup dependency): the runtime reads a platform-owned set for an app, but a tenant
+    // backup cannot hold the reference (see docs/operations/platform-mapping-sets.md), so saving
+    // the choice on an app stays refused; the tenant's and the platform's default may name one.
     it('lets an app name its tenant’s own set, but refuses the platform’s as if it did not exist', async () => {
       const { adapter } = seeded();
       expect(

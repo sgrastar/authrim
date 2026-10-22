@@ -924,6 +924,112 @@ describe('release rollout handoff', () => {
       expect(time.now() - 1_000).toBe(CONTROL_RESUME_GRACE_MS);
     });
 
+    it('runs the targets as setup when Control has no migration executor', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'release_migration_executor_unavailable');
+      const time = harness();
+      const calls: number[] = [];
+
+      const status = await waitForReleaseRolloutAwaitingSetup({
+        controlDatabaseId: DATABASE_ID,
+        environmentId: 'env-test',
+        operationId,
+        executeBatch,
+        timeoutMs: 30_000,
+        pollIntervalMs: 5_000,
+        clock: time.clock,
+        sleep: async (milliseconds) => {
+          await time.sleep(milliseconds);
+          // Control's cron advances the rollout once setup's targets succeeded.
+          setPhase(operationId, 'awaiting_setup');
+        },
+        executeTargetsAsSetup: async () => {
+          calls.push(time.now());
+          // What a claim does to the rollout: running again under setup's lease.
+          setPhase(operationId, 'database_rollout');
+          return { claimed: 3, nextAttemptAt: null };
+        },
+      });
+
+      expect(status.phase).toBe('awaiting_setup');
+      expect(calls).toEqual([1_000]);
+    });
+
+    it('falls back to the grace wait when setup could take over nothing', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'release_migration_executor_unavailable');
+      const time = harness();
+      let calls = 0;
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          controlResumeGraceMs: 12_000,
+          pollIntervalMs: 5_000,
+          clock: time.clock,
+          sleep: time.sleep,
+          executeTargetsAsSetup: async () => {
+            calls += 1;
+            return { claimed: 0, nextAttemptAt: null };
+          },
+        })
+      ).rejects.toThrow('release_rollout_blocked:release_migration_executor_unavailable');
+      expect(calls).toBeGreaterThan(0);
+    });
+
+    it('waits for a target backing off instead of failing on the grace period', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'release_migration_executor_unavailable');
+      const time = harness();
+      const retryAt = Math.floor(time.now() / 1000) + 600;
+      let calls = 0;
+
+      const status = await waitForReleaseRolloutAwaitingSetup({
+        controlDatabaseId: DATABASE_ID,
+        environmentId: 'env-test',
+        operationId,
+        executeBatch,
+        timeoutMs: 30 * 60 * 1000,
+        controlResumeGraceMs: 12_000,
+        pollIntervalMs: 5_000,
+        clock: time.clock,
+        sleep: async (milliseconds) => {
+          await time.sleep(milliseconds);
+          if (calls > 1 && time.now() >= retryAt * 1000) setPhase(operationId, 'awaiting_setup');
+        },
+        executeTargetsAsSetup: async () => {
+          calls += 1;
+          if (time.now() < retryAt * 1000) return { claimed: 0, nextAttemptAt: retryAt };
+          setPhase(operationId, 'database_rollout');
+          return { claimed: 1, nextAttemptAt: null };
+        },
+      });
+
+      expect(status.phase).toBe('awaiting_setup');
+      expect(time.now()).toBeGreaterThanOrEqual(retryAt * 1000);
+    });
+
+    it('does not run targets as setup for a block that needs an operator', async () => {
+      const operationId = await createRollout();
+      block(operationId, 'cloudflare_d1_migration_rejected');
+      let calls = 0;
+      await expect(
+        waitForReleaseRolloutAwaitingSetup({
+          controlDatabaseId: DATABASE_ID,
+          environmentId: 'env-test',
+          operationId,
+          executeBatch,
+          executeTargetsAsSetup: async () => {
+            calls += 1;
+            return { claimed: 1, nextAttemptAt: null };
+          },
+        })
+      ).rejects.toThrow('release_rollout_blocked:cloudflare_d1_migration_rejected');
+      expect(calls).toBe(0);
+    });
+
     it('honours a custom grace period', async () => {
       const operationId = await createRollout();
       block(operationId, 'release_migration_executor_unavailable');

@@ -186,6 +186,8 @@ function client(options: { createError?: unknown; staleClaim?: boolean } = {}) {
             fencing_token: 1,
             step_status: 'running',
             provisioning_state: 'creating',
+            provider_create_state: 'not_started',
+            provider_resource_id: null,
             shard_status: 'provisioning',
           },
         ],

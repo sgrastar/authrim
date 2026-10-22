@@ -7,8 +7,22 @@ const { resolveBinding, executeMapping } = vi.hoisted(() => ({
 }));
 
 vi.mock('../identity-mapping-runtime-resolver', () => ({
-  resolveRuntimeIdentityMappingBinding: resolveBinding,
+  resolveRuntimeIdentityMappingBinding: vi.fn(),
   assertRuntimeIdentityMappingReleaseSafety: vi.fn(),
+}));
+
+// The selection and the reading of the chosen set are tested in
+// oidc-identity-mapping-explicit-resolution.test.ts; `resolveBinding` stands for them here.
+vi.mock('../identity-mapping-resolution', () => ({
+  resolveOidcIdentityMappingBinding: async () => {
+    const binding = await resolveBinding();
+    return {
+      selection: binding
+        ? { kind: 'bound', tier: 'tenant_default', setId: binding.fieldMappingSetId, chain: [] }
+        : { kind: 'none', reason: 'no_default', chain: [] },
+      binding,
+    };
+  },
 }));
 
 vi.mock('@authrim/ar-lib-field-mapping/runtime', () => ({
@@ -39,7 +53,16 @@ function database(claims: ProfileClaim[]): DatabaseAdapter {
           created_at: 1,
         }
   );
-  return { queryOne } as unknown as DatabaseAdapter;
+  return {
+    queryOne,
+    query: vi.fn(async () => []),
+    execute: vi.fn(),
+    transaction: vi.fn(),
+    batch: vi.fn(),
+    isHealthy: vi.fn(),
+    getType: vi.fn(),
+    close: vi.fn(),
+  } as unknown as DatabaseAdapter;
 }
 
 const edge = (path: string) => ({
@@ -84,6 +107,7 @@ describe('identity mapping release is bound by the request scopes', () => {
   ) =>
     applyOIDCIdentityMapping({
       adapter: database(claims),
+      env: { DB_ADMIN: database(claims) as never },
       tenantId: 'tenant-a',
       clientId: 'client-a',
       destinationSurface: surface,
@@ -141,6 +165,7 @@ describe('identity mapping release is bound by the request scopes', () => {
     ) =>
       applyOIDCIdentityMapping({
         adapter: database(profile),
+        env: { DB_ADMIN: database(profile) as never },
         tenantId: 'tenant-a',
         clientId: 'client-a',
         destinationSurface: 'id_token',
@@ -232,6 +257,7 @@ describe('identity mapping release is bound by the request scopes', () => {
       });
       const result = await applyOIDCIdentityMapping({
         adapter: database(addressProfile),
+        env: { DB_ADMIN: database(addressProfile) as never },
         tenantId: 'tenant-a',
         clientId: 'client-a',
         destinationSurface: 'id_token',
@@ -250,6 +276,7 @@ describe('identity mapping release is bound by the request scopes', () => {
       await expect(
         applyOIDCIdentityMapping({
           adapter: database(custom),
+          env: { DB_ADMIN: database(custom) as never },
           tenantId: 'tenant-a',
           clientId: 'client-a',
           destinationSurface: 'id_token',

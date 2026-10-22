@@ -16,6 +16,8 @@ export interface AuthCorePersistenceEnv extends RuntimeProfileResolverEnv {
 export interface AuthCorePersistenceResolveOptions {
   tenantId?: string;
   requestCache?: TenantDatabaseRequestCache;
+  /** `none`: a read that must leave no trace; see `TenantDatabaseResolveOptions.sideEffects`. */
+  sideEffects?: 'none';
 }
 
 export async function resolveAuthCorePersistenceSourceFromEnv(
@@ -31,6 +33,7 @@ export async function resolveAuthCorePersistenceSourceFromEnv(
       shardIndex: 0,
       deploymentTarget: env.AUTHRIM_DEPLOYMENT_TARGET,
       requestCache: options.requestCache,
+      sideEffects: options.sideEffects,
     });
     return resolved.source;
   }
