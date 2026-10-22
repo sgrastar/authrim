@@ -3,13 +3,17 @@ import { SessionClientStore } from '../../durable-objects/SessionClientStore';
 import type { Env } from '../../types/env';
 import { deriveOidcSid } from '../../utils/session-helper';
 import {
+  purgeEndedSessionsFromSessionClientStore,
+  registerSessionClientInStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
+  listSessionClientsFromStore,
   resolveLogoutTargetsFromSessionClientStore,
   resolveSessionIdFromOidcSidStore,
 } from '../session-client-store';
 
 class MemoryDurableObjectState implements Partial<DurableObjectState> {
-  private readonly values = new Map<string, unknown>();
+  readonly values = new Map<string, unknown>();
+  alarmAt: number | null = null;
   readonly storage: DurableObjectStorage;
 
   constructor() {
@@ -30,6 +34,10 @@ class MemoryDurableObjectState implements Partial<DurableObjectState> {
         for (const key of keyOrKeys) if (this.values.delete(key)) deleted++;
         return Promise.resolve(deleted);
       },
+      deleteAll: (): Promise<void> => {
+        this.values.clear();
+        return Promise.resolve();
+      },
       list: <T>(options?: DurableObjectListOptions): Promise<Map<string, T>> => {
         const prefix = options?.prefix ?? '';
         return Promise.resolve(
@@ -37,6 +45,14 @@ class MemoryDurableObjectState implements Partial<DurableObjectState> {
             [...this.values.entries()].filter(([key]) => key.startsWith(prefix)) as [string, T][]
           )
         );
+      },
+      setAlarm: (scheduledTime: number): Promise<void> => {
+        this.alarmAt = scheduledTime;
+        return Promise.resolve();
+      },
+      deleteAlarm: (): Promise<void> => {
+        this.alarmAt = null;
+        return Promise.resolve();
       },
       transaction: <T>(closure: (txn: DurableObjectStorage) => Promise<T>): Promise<T> =>
         closure(this.storage),
@@ -58,22 +74,27 @@ function durableObjectId(name: string): DurableObjectId {
 
 function createSessionClientNamespace() {
   const stores = new Map<string, SessionClientStore>();
+  const states = new Map<string, MemoryDurableObjectState>();
   const getStore = (name: string) => {
     let store = stores.get(name);
     if (!store) {
-      store = new SessionClientStore(
-        new MemoryDurableObjectState() as unknown as DurableObjectState,
-        {} as Env
-      );
+      const state = new MemoryDurableObjectState();
+      store = new SessionClientStore(state as unknown as DurableObjectState, {} as Env);
       stores.set(name, store);
+      states.set(name, state);
     }
     return store;
+  };
+  const getState = (name: string) => {
+    getStore(name);
+    return states.get(name)!;
   };
 
   return {
     idFromName: vi.fn((name: string) => durableObjectId(name)),
     get: vi.fn((id: DurableObjectId) => getStore(id.toString())),
     getStore,
+    getState,
   };
 }
 
@@ -196,5 +217,80 @@ describe('SessionClientStore legacy SID migration', () => {
       expect.objectContaining({ client_id: clientId, oidc_sid: oidcSid }),
     ]);
     expect(JSON.stringify(targets)).not.toContain(rawSessionId);
+  });
+});
+
+describe('purgeEndedSessionsFromSessionClientStore', () => {
+  const tenantId = 'tenant-a';
+  const sessionId = 'g1:apac:0:session_ended123';
+  let namespace: ReturnType<typeof createSessionClientNamespace>;
+  let env: { SESSION_CLIENT_STORE: ReturnType<typeof createSessionClientNamespace> };
+
+  beforeEach(() => {
+    namespace = createSessionClientNamespace();
+    env = { SESSION_CLIENT_STORE: namespace };
+  });
+
+  async function register(session: string, clientId: string, oidcSid: string) {
+    await registerSessionClientInStore(env as never, tenantId, {
+      session_id: session,
+      client_id: clientId,
+      oidc_sid: oidcSid,
+    });
+  }
+
+  it("removes the session's records and the aliases pointing at it", async () => {
+    await register(sessionId, 'rp-a', 'sid-a');
+    await register(sessionId, 'rp-b', 'sid-b');
+
+    await purgeEndedSessionsFromSessionClientStore(env as never, tenantId, [sessionId]);
+
+    expect(namespace.getState(`${tenantId}:${sessionId}`).values.size).toBe(0);
+    expect(namespace.getState(`${tenantId}:oidc-sid:sid-a`).values.size).toBe(0);
+    expect(namespace.getState(`${tenantId}:oidc-sid:sid-b`).values.size).toBe(0);
+    await expect(listSessionClientsFromStore(env as never, tenantId, sessionId)).resolves.toEqual(
+      []
+    );
+    await expect(resolveSessionIdFromOidcSidStore(env as never, tenantId, 'sid-a')).resolves.toBe(
+      null
+    );
+  });
+
+  it('leaves other sessions alone', async () => {
+    const otherSessionId = 'g1:apac:0:session_other456';
+    await register(sessionId, 'rp-a', 'sid-a');
+    await register(otherSessionId, 'rp-a', 'sid-other');
+
+    await purgeEndedSessionsFromSessionClientStore(env as never, tenantId, [sessionId]);
+
+    await expect(
+      listSessionClientsFromStore(env as never, tenantId, otherSessionId)
+    ).resolves.toEqual([expect.objectContaining({ client_id: 'rp-a', oidc_sid: 'sid-other' })]);
+    await expect(
+      resolveSessionIdFromOidcSidStore(env as never, tenantId, 'sid-other')
+    ).resolves.toBe(otherSessionId);
+  });
+
+  it('goes on with the other sessions when one removal fails, and never throws', async () => {
+    const otherSessionId = 'g1:apac:0:session_other456';
+    await register(sessionId, 'rp-a', 'sid-a');
+    await register(otherSessionId, 'rp-b', 'sid-b');
+    vi.spyOn(namespace.getStore(`${tenantId}:${sessionId}`), 'deleteSessionRpc').mockRejectedValue(
+      new Error('storage unavailable')
+    );
+
+    await expect(
+      purgeEndedSessionsFromSessionClientStore(env as never, tenantId, [sessionId, otherSessionId])
+    ).resolves.toBeUndefined();
+
+    expect(namespace.getState(`${tenantId}:${otherSessionId}`).values.size).toBe(0);
+    // The failed one keeps its records and expiry: the alarm removes them later.
+    expect(namespace.getState(`${tenantId}:${sessionId}`).alarmAt).not.toBeNull();
+  });
+
+  it('does nothing without the binding', async () => {
+    await expect(
+      purgeEndedSessionsFromSessionClientStore({} as never, tenantId, [sessionId])
+    ).resolves.toBeUndefined();
   });
 });
