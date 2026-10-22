@@ -300,8 +300,8 @@ importers:
         specifier: ^7946.0.16
         version: 7946.0.16
       '@unocss/reset':
-        specifier: ^66.5.9
-        version: 66.6.0
+        specifier: ^66.11.0
+        version: 66.11.0
       '@vitest/ui':
         specifier: ^4.1.12
         version: 4.1.12(vitest@4.1.12)
@@ -767,8 +767,8 @@ importers:
         specifier: ^1.5.6
         version: 1.5.6
       '@unocss/reset':
-        specifier: ^66.5.9
-        version: 66.6.0
+        specifier: ^66.11.0
+        version: 66.11.0
       '@vitest/browser':
         specifier: ^4.1.12
         version: 4.1.12(vite@8.3.5(@types/node@22.19.7)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
@@ -3221,6 +3221,9 @@ packages:
 
   '@unocss/preset-wind@66.6.0':
     resolution: {integrity: sha512-6uVq3/gV1MD9ZsycrYLP6OvAS9kI1oGAIuccKKspZHW3jqwEhJmPofDD4pYwbkx4i4zSWzoLakcfp9d67Szjqg==}
+
+  '@unocss/reset@66.11.0':
+    resolution: {integrity: sha512-QyXwD3bOzi/zZBW8jte9ierrx5+iPXQjPUdiSqyAaJd+RxajZQV9m9lKiadWwn8pV082mc2b4y4Acvi5lLTTWg==}
 
   '@unocss/reset@66.6.0':
     resolution: {integrity: sha512-OQK5F7Dzx0wWDSPTYEz7NRP9pekufSAkjxfKOyKokiXOUzVTg8Yx8sOvCsA3Oi0Rx5WlsO2LN+MOBekpkrttXg==}
@@ -8767,6 +8770,8 @@ snapshots:
     dependencies:
       '@unocss/core': 66.6.0
       '@unocss/preset-wind3': 66.6.0
+
+  '@unocss/reset@66.11.0': {}
 
   '@unocss/reset@66.6.0': {}
 
