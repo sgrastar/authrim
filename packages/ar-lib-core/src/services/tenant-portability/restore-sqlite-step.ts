@@ -83,8 +83,37 @@ const RESTORE_CALL_ROWS = 500;
 /** Most rows one write or verify page (one transition of one dataset) carries. */
 export const RESTORE_PAGE_ROWS_MAX = 2000;
 
+/**
+ * D1 statements one restore transition may spend on rows whose installed transform issues its own
+ * (`restoreTransform.statementsPerRow`): each such row counts as its write or read-back plus those
+ * statements. D1 accepts 1,000 queries per Worker invocation; the rest covers the transition's
+ * lease, plan and target checks and the read-back budget below. Rows of other datasets are bounded
+ * by the row limits alone.
+ */
+export const RESTORE_TRANSFORM_STATEMENT_BUDGET = 500;
+
+/** Statements one row of `policy` costs against that budget; 0 when its transform issues none. */
+export function restoreRowStatements(policy: SqliteDatasetInspectionPolicy): number {
+  const issued = policy.restoreTransform?.statementsPerRow ?? 0;
+  if (
+    !Number.isSafeInteger(issued) ||
+    issued < 0 ||
+    issued + 1 > RESTORE_TRANSFORM_STATEMENT_BUDGET
+  )
+    invalid();
+  return issued ? issued + 1 : 0;
+}
+
+/** Rows of `policy` one transition may carry within the statement budget. */
+export function restoreStatementRows(policy: SqliteDatasetInspectionPolicy): number {
+  const statements = restoreRowStatements(policy);
+  return statements
+    ? Math.floor(RESTORE_TRANSFORM_STATEMENT_BUDGET / statements)
+    : Number.POSITIVE_INFINITY;
+}
+
 function restoreBatchRows(policy: SqliteDatasetInspectionPolicy): number {
-  return policy.restoreHold ? 250 : RESTORE_PAGE_ROWS_MAX;
+  return Math.min(policy.restoreHold ? 250 : RESTORE_PAGE_ROWS_MAX, restoreStatementRows(policy));
 }
 
 /** D1 queries one verify transition may spend on row read-back. */

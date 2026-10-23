@@ -533,6 +533,8 @@ export function createPhase8SqliteInspectionPolicies(
     const adminRestoreTransform = adminReferenceRule
       ? {
           id: `phase8-restore-v1:${entry.dataset.id}`,
+          // One frozen-mapping lookup per mapped column.
+          statementsPerRow: 'columns' in adminReferenceRule ? adminReferenceRule.columns.length : 1,
           async transform(
             context: TenantBackupStepContext,
             rowJson: string,

@@ -4,6 +4,7 @@ import {
   runSqliteRestoreSequenceStep,
 } from '../restore-sqlite-sequence';
 import {
+  RESTORE_TRANSFORM_STATEMENT_BUDGET,
   runSqliteRestoreDatasetDeferredStep,
   runSqliteRestoreDatasetStep,
   runSqliteRestoreDatasetVerificationStep,
@@ -1451,4 +1452,177 @@ it('preserves completed input evidence during live restore cleanup after lease t
   expect(admin.prepare('SELECT count(*) AS n FROM tenant_backup_input_validations').get()?.n).toBe(
     1
   );
+});
+
+it('splits rows whose transforms issue statements across transitions and resumes after a failure', async () => {
+  // Each mapped row costs its write plus two statements (a mapping lookup and an audit entry).
+  const sizes = { 'core.grants_a': 100, 'core.grants_b': 100, 'core.grants_c': 400 };
+  const transformed: { datasetId: string; mode: string }[] = [];
+  let failOnCall: number | null = null;
+  const mapped = (id: keyof typeof sizes): SqliteDatasetInspectionPolicy => {
+    const table = id.slice('core.'.length);
+    target.exec(
+      `CREATE TABLE ${table}(id TEXT PRIMARY KEY NOT NULL, tenant_id TEXT NOT NULL, value TEXT)`
+    );
+    return {
+      dataset: { ...policy.dataset, id },
+      restoreAfter: ['core.tenants'],
+      schema: {
+        table,
+        columns: ['id', 'tenant_id', 'value'],
+        primaryKey: ['id'],
+        uniqueKeys: [],
+        tenantColumn: 'tenant_id',
+      },
+      restoreTransform: {
+        id: `test-statement-map-v1:${id}`,
+        statementsPerRow: 2,
+        async transform(_context, rowJson, mode) {
+          transformed.push({ datasetId: id, mode });
+          if (transformed.length === failOnCall) throw new Error('transient');
+          const parsed = JSON.parse(rowJson);
+          parsed.value = ['text', 'mapped'];
+          return JSON.stringify(parsed);
+        },
+      },
+      async inspectRow() {
+        return [];
+      },
+    };
+  };
+  const policies = [
+    policy,
+    mapped('core.grants_a'),
+    mapped('core.grants_b'),
+    mapped('core.grants_c'),
+  ];
+  const rowsOf = (id: string): string[] =>
+    id === policy.dataset.id
+      ? [row]
+      : Array.from({ length: sizes[id as keyof typeof sizes] }, (_, index) =>
+          JSON.stringify({
+            id: ['text', `${id}:${String(index).padStart(3, '0')}`],
+            tenant_id: ['text', 'a'],
+            value: ['text', 'source'],
+          })
+        );
+  const sourceManifest = { ...manifest, datasets: policies.map(({ dataset }) => dataset) };
+  await persist();
+  await persistSqliteRestoreSequence(
+    inventory,
+    1,
+    policies.map((candidate) => ({
+      targetId: 'target',
+      ordinal: 0,
+      policy: candidate,
+      manifest: sourceManifest,
+      recordCount: rowsOf(candidate.dataset.id).length,
+      byteCount: rowsOf(candidate.dataset.id).join('').length,
+    }))
+  );
+  await seal();
+  const saved = await store.checkpoint(
+    context.lease,
+    context.operation.revision,
+    'start_sqlite_restore_sequence',
+    JSON.stringify({
+      version: 1,
+      sequenceOrdinal: 1,
+      jobIndex: 0,
+      datasetCursor: null,
+      completedRows: [],
+      emptyPrepared: true,
+    }),
+    now
+  );
+  if (!saved) throw new Error('checkpoint_missing');
+  await store.release(context.lease, saved.revision, 'queued', now);
+  const perTransition: { statements: number; datasets: Set<string> }[] = [];
+  const handlers = {
+    async run(slice: TenantBackupStepContext) {
+      if (slice.operation.phase === 'restore_other_stores')
+        return {
+          phase: 'verify_restore_targets',
+          cursor: slice.operation.cursor_json,
+          disposition: 'continue' as const,
+        };
+      const before = transformed.length;
+      const activeInventory = new TenantBackupExecutionInventory(
+        adapter(admin),
+        slice.lease,
+        () => now
+      );
+      try {
+        return await runSqliteRestoreSequenceStep(slice, {
+          inventory: activeInventory,
+          sequenceOrdinal: 1,
+          now: () => now,
+          async resolve() {
+            return resource();
+          },
+          async assertValidatedUnpublishedPlan() {},
+          async loadValidatedDataset(job) {
+            const rows = rowsOf(job.datasetId);
+            return {
+              policy: policies.find(({ dataset }) => dataset.id === job.datasetId)!,
+              manifest: sourceManifest,
+              async readNextValidatedRow({ sourceCursor }) {
+                const index = sourceCursor === null ? 0 : Number(sourceCursor.slice(4));
+                return index < rows.length
+                  ? { rowJson: rows[index], nextCursor: `row:${index + 1}` }
+                  : null;
+              },
+            };
+          },
+        });
+      } finally {
+        // Each transformed row costs its own write or read-back and the transform's two statements.
+        const calls = transformed.slice(before);
+        perTransition.push({
+          statements: calls.length * 3,
+          datasets: new Set(calls.map(({ datasetId }) => datasetId)),
+        });
+      }
+    },
+    async cleanup() {
+      throw new Error('unexpected');
+    },
+  };
+  const tick = () => runTenantBackupScheduler(adapter(admin), handlers, context.signal, () => now);
+  // Fail inside the second write page of the 400-row dataset (after A's write and B's write and
+  // read-back): its first page stays written.
+  failOnCall = 100 + 100 + 100 + 166 + 50;
+  let failures = 0;
+  for (let i = 0; i < 40; i++) {
+    const phase = (await store.get('a', 'import'))?.phase;
+    if (phase === 'verify_other_restore_stores') break;
+    now += failures ? 61_000 : 1;
+    const result = await tick();
+    failures += result.failures;
+  }
+  expect(failures).toBe(1);
+  expect((await store.get('a', 'import'))?.phase).toBe('verify_other_restore_stores');
+  expect(Math.max(...perTransition.map(({ statements }) => statements))).toBeLessThanOrEqual(
+    RESTORE_TRANSFORM_STATEMENT_BUDGET
+  );
+  // The two 100-row datasets (600 statements together) no longer share one batch.
+  expect(perTransition.every(({ datasets }) => datasets.size <= 1)).toBe(true);
+  for (const id of Object.keys(sizes) as (keyof typeof sizes)[]) {
+    const table = id.slice('core.'.length);
+    expect(
+      target
+        .prepare(`SELECT count(*) AS n, min(value) AS low, max(value) AS high FROM ${table}`)
+        .get()
+    ).toEqual({ n: sizes[id], low: 'mapped', high: 'mapped' });
+  }
+  expect(target.prepare('SELECT id,value FROM tenants').all()).toEqual([
+    { id: 'a', value: 'restored' },
+  ]);
+  expect(JSON.parse((await store.get('a', 'import'))!.cursor_json!).completedRows).toEqual([
+    1, 100, 100, 400,
+  ]);
+  // Every mapped row is written once more only where the failed page is retried.
+  const writes = transformed.filter(({ mode }) => mode === 'write');
+  expect(writes.filter(({ datasetId }) => datasetId === 'core.grants_c').length).toBe(400 + 50);
+  expect(writes.length).toBe(600 + 50);
 });
