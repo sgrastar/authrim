@@ -696,16 +696,24 @@ describe('CIBARequestStore pending list for one user', () => {
   });
 
   it('keeps the cleanup alarm at the earliest expiry', async () => {
-    const { store, storage } = await storeWith();
+    // The store derives the alarm from its own Date.now() reads, so the clock is frozen for an
+    // exact comparison that cannot drift by the milliseconds the two writes take.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    try {
+      const { store, storage } = await storeWith();
 
-    await store.fetch(
-      request('/store', ciba({ auth_req_id: 'soon', expires_at: Date.now() + 60_000 }))
-    );
-    await store.fetch(
-      request('/store', ciba({ auth_req_id: 'later', expires_at: Date.now() + 600_000 }))
-    );
+      await store.fetch(
+        request('/store', ciba({ auth_req_id: 'soon', expires_at: Date.now() + 60_000 }))
+      );
+      await store.fetch(
+        request('/store', ciba({ auth_req_id: 'later', expires_at: Date.now() + 600_000 }))
+      );
 
-    expect(await storage.getAlarm()).toBe(Date.now() + 60_000);
+      expect(await storage.getAlarm()).toBe(Date.now() + 60_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('stores a new request with an address that cannot be indexed, without listing it', async () => {
