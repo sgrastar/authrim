@@ -16,9 +16,11 @@
       "outputs": ["coverage/**"]
     },
     "lint": {
+      "dependsOn": ["^build"],
       "outputs": []
     },
     "lint:prune-suppressions": {
+      "dependsOn": ["^build"],
       "cache": false
     },
     "typecheck": {

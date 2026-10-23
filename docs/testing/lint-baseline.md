@@ -33,12 +33,20 @@ ar-userinfo.
 
 ## Commands
 
-Run these from the repository root (or the same script inside one package):
+Run these from the repository root:
 
 ```bash
 pnpm run lint                    # check; fails only on errors beyond the baseline
 pnpm run lint:prune-suppressions # lower counts to what is left after fixes
 ```
+
+Type-aware rules read the declarations that workspace dependencies build into
+`dist/` (`@authrim/ar-lib-core` resolves its types there, and some tests import
+`ar-lib-core/dist/...` directly). Without `dist/` those types do not resolve and
+lint reports different errors. The root scripts go through turbo, whose `lint`
+and `lint:prune-suppressions` tasks depend on `^build`, so the dependencies are
+always built first. Running `eslint` or the package script directly uses
+whatever `dist/` is on disk; do not prune that way.
 
 Never regenerate a baseline with `eslint --suppress-all` to make a new error go
 away. Fix the error, or add a narrow `eslint-disable-next-line <rule> -- <reason>`
