@@ -50,7 +50,6 @@ import {
   countRoleAssignments,
   listOrganizationMembersPage,
   listRoleAssignmentsPage,
-  MAX_MERGED_PAGE_WINDOW,
   MergedPageTooDeepError,
 } from '@authrim/ar-lib-core';
 import {
@@ -297,7 +296,8 @@ function pageTooDeep(c: Context<{ Bindings: Env }>) {
   return c.json(
     {
       error: 'invalid_request',
-      error_description: `Pages past the first ${MAX_MERGED_PAGE_WINDOW} entries cannot be read; narrow the list`,
+      error_description:
+        "This page is too deep to read across the tenant's account stores; ask for an earlier page",
     },
     400
   );

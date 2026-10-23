@@ -27,13 +27,13 @@ export interface AccountStorePage<T> {
 }
 
 /**
- * The deepest page (offset + limit) read across several databases. Each database is read from
- * its first row to the end of the page and the rows are merged, so a deeper page costs more in
- * every database.
+ * The most rows read to merge one page across several databases. Each database is read from its
+ * first row to the end of the page (offset + limit), so a page costs that many rows in every
+ * database: the deepest page that can be read is this divided by the number of databases.
  */
-export const MAX_MERGED_PAGE_WINDOW = 10_000;
+export const MAX_MERGED_ROWS = 10_000;
 
-/** A page asked for past MAX_MERGED_PAGE_WINDOW across several databases. */
+/** A page that would read more than MAX_MERGED_ROWS across several databases. */
 export class MergedPageTooDeepError extends Error {
   constructor() {
     super('rbac_merged_page_too_deep');
@@ -139,7 +139,7 @@ function newestFirst(left: NewestFirst, right: NewestFirst): number {
 /**
  * One page of rows, newest first (created_at, then id, descending), across the databases. With
  * one database the page is read as it is; with several, each is read up to the end of the page
- * and the rows merged, up to MAX_MERGED_PAGE_WINDOW.
+ * and the rows merged, up to MAX_MERGED_ROWS in all.
  */
 async function newestFirstPage<T extends NewestFirst>(
   dbs: TenantAccountStores,
@@ -150,7 +150,7 @@ async function newestFirstPage<T extends NewestFirst>(
     return (await read(dbs[0]!, page.limit, page.offset)).map((row) => ({ store: 0, row }));
   }
   const window = page.offset + page.limit;
-  if (window > MAX_MERGED_PAGE_WINDOW) throw new MergedPageTooDeepError();
+  if (window * dbs.length > MAX_MERGED_ROWS) throw new MergedPageTooDeepError();
   const perStore = await Promise.all(dbs.map((adapter) => read(adapter, window, 0)));
   return perStore
     .flatMap((rows, store) => rows.map((row) => ({ store, row })))

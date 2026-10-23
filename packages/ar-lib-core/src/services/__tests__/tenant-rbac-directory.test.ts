@@ -7,7 +7,7 @@ import {
   countRoleAssignments,
   listOrganizationMembersPage,
   listRoleAssignmentsPage,
-  MAX_MERGED_PAGE_WINDOW,
+  MAX_MERGED_ROWS,
   MergedPageTooDeepError,
 } from '../tenant-rbac-directory';
 
@@ -159,13 +159,21 @@ describe('tenant-wide RBAC reads across account databases', () => {
   it('reads one database by its own page, and refuses pages too deep to merge', async () => {
     const single = await listOrganizationMembersPage([first.adapter], 'tenant-a', 'org-1', {
       limit: 1,
-      offset: MAX_MERGED_PAGE_WINDOW,
+      offset: MAX_MERGED_ROWS,
     });
     expect(single).toEqual({ total: 2, items: [] });
+    // Two databases each read up to the end of the page: the rows read add up over both.
+    const both = [first.adapter, second.adapter];
     await expect(
-      listOrganizationMembersPage([first.adapter, second.adapter], 'tenant-a', 'org-1', {
+      listOrganizationMembersPage(both, 'tenant-a', 'org-1', {
         limit: 1,
-        offset: MAX_MERGED_PAGE_WINDOW,
+        offset: MAX_MERGED_ROWS / 2 - 1,
+      })
+    ).resolves.toMatchObject({ items: [] });
+    await expect(
+      listOrganizationMembersPage(both, 'tenant-a', 'org-1', {
+        limit: 1,
+        offset: MAX_MERGED_ROWS / 2,
       })
     ).rejects.toBeInstanceOf(MergedPageTooDeepError);
   });
