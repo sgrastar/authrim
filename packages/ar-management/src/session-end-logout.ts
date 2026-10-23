@@ -29,7 +29,6 @@ import {
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
   SessionClientRepository,
-  type DatabaseAdapter,
   type Env,
   type Logger,
   type LogoutFanoutSession,
@@ -501,7 +500,7 @@ function parseJobConfig(raw: string | null): SessionEndLogoutJobConfig {
 /** The admin job processor: one job's downstream logout. */
 export async function processSessionEndLogoutJob(
   env: Env,
-  _adapter: DatabaseAdapter,
+  _stores: unknown,
   job: { tenant_id: string; config: string | null }
 ): Promise<{
   status: 'completed';

@@ -456,6 +456,7 @@ describe('support operations admin router', () => {
     );
     const payload = (await response.json()) as Record<string, unknown>;
     const executedSql = mockAdapter.execute.mock.calls.map((call) => String(call[0]));
+    const jobSql = mockAdminAdapter.execute.mock.calls.map((call) => String(call[0]));
 
     expect(response.status).toBe(202);
     expect(payload.snapshot_status).toBe('pending');
@@ -463,8 +464,10 @@ describe('support operations admin router', () => {
     expect(executedSql.some((sql) => sql.includes('INSERT INTO support_operation_cohorts'))).toBe(
       true
     );
-    expect(executedSql.some((sql) => sql.includes('INSERT INTO admin_jobs'))).toBe(true);
-    const jobConfig = mockAdapter.execute.mock.calls.find((call) =>
+    // The job is kept in DB_ADMIN, where the scheduled run claims it.
+    expect(executedSql.some((sql) => sql.includes('INSERT INTO admin_jobs'))).toBe(false);
+    expect(jobSql.some((sql) => sql.includes('INSERT INTO admin_jobs'))).toBe(true);
+    const jobConfig = mockAdminAdapter.execute.mock.calls.find((call) =>
       String(call[0]).includes('INSERT INTO admin_jobs')
     )?.[1]?.[4] as string;
     expect(JSON.parse(jobConfig)).toEqual(
@@ -1041,16 +1044,18 @@ describe('support operations admin router', () => {
       matched_count: 12,
       snapshot_cutoff: 1_700_000_000,
     };
+    // The job in DB_ADMIN; the cohort and its targets in the tenant's Core database.
+    mockAdminAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        status: 'pending',
+        progress: JSON.stringify(progress),
+        config: JSON.stringify(config),
+      },
+    ]);
+    mockAdminAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockAdapter.query
-      .mockResolvedValueOnce([
-        {
-          id: 'job-1',
-          tenant_id: 'tenant-a',
-          status: 'pending',
-          progress: JSON.stringify(progress),
-          config: JSON.stringify(config),
-        },
-      ])
       .mockResolvedValueOnce([
         { target_id: 'user-1', block_reason: null },
         { target_id: 'user-2', block_reason: null },
@@ -1062,18 +1067,20 @@ describe('support operations admin router', () => {
 
     await processPendingSupportOpsSnapshotJobs({} as Env);
 
+    const jobQuerySql = mockAdminAdapter.query.mock.calls.map((call) => String(call[0]));
+    const jobSql = mockAdminAdapter.execute.mock.calls.map((call) => String(call[0]));
     const querySql = mockAdapter.query.mock.calls.map((call) => String(call[0]));
-    const targetQueryParams = mockAdapter.query.mock.calls[1]?.[1] as unknown[];
+    const targetQueryParams = mockAdapter.query.mock.calls[0]?.[1] as unknown[];
     const executedSql = mockAdapter.execute.mock.calls.map((call) => String(call[0]));
-    expect(querySql[0]).toContain("status = 'pending'");
-    expect(querySql[0]).toContain("status = 'processing'");
-    expect(querySql[0]).toContain('updated_at < ?');
-    expect(querySql[1]).toContain('created_at <= ?');
-    expect(querySql[1]).toContain('updated_at <= ?');
+    expect(jobQuerySql[0]).toContain("status = 'pending'");
+    expect(jobQuerySql[0]).toContain("status = 'processing'");
+    expect(jobQuerySql[0]).toContain('updated_at < ?');
+    expect(querySql[0]).toContain('created_at <= ?');
+    expect(querySql[0]).toContain('updated_at <= ?');
     expect(targetQueryParams).toEqual(
       expect.arrayContaining([config.snapshot_cutoff, config.snapshot_cutoff])
     );
-    expect(executedSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
+    expect(jobSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
     expect(
       executedSql.some((sql) => sql.includes('INSERT INTO support_operation_cohort_targets'))
     ).toBe(true);
@@ -1082,7 +1089,8 @@ describe('support operations admin router', () => {
         (sql) => sql.includes('UPDATE support_operation_cohorts') && sql.includes('completed')
       )
     ).toBe(true);
-    expect(executedSql.some((sql) => sql.includes("status = 'completed'"))).toBe(true);
+    expect(jobSql.some((sql) => sql.includes("status = 'completed'"))).toBe(true);
+    expect([...executedSql, ...querySql].some((sql) => sql.includes('admin_jobs'))).toBe(false);
   });
 
   it('marks snapshot jobs failed when selector compilation fails after claim', async () => {
@@ -1096,7 +1104,7 @@ describe('support operations admin router', () => {
       matched_count: 12,
       snapshot_cutoff: 1_700_000_000,
     };
-    mockAdapter.query.mockResolvedValueOnce([
+    mockAdminAdapter.query.mockResolvedValueOnce([
       {
         id: 'job-1',
         tenant_id: 'tenant-a',
@@ -1105,14 +1113,16 @@ describe('support operations admin router', () => {
         config: JSON.stringify(config),
       },
     ]);
+    mockAdminAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
 
     await processPendingSupportOpsSnapshotJobs({} as Env);
 
+    const jobSql = mockAdminAdapter.execute.mock.calls.map((call) => String(call[0]));
     const executedSql = mockAdapter.execute.mock.calls.map((call) => String(call[0]));
-    expect(executedSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
+    expect(jobSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
     expect(
-      executedSql.some((sql) => sql.includes("SET status = 'failed'") && sql.includes('admin_jobs'))
+      jobSql.some((sql) => sql.includes("SET status = 'failed'") && sql.includes('admin_jobs'))
     ).toBe(true);
     expect(
       executedSql.some(

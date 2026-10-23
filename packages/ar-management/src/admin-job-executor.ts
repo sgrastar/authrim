@@ -109,9 +109,17 @@ interface AdminJobProcessorResult {
   nextRunAt?: number | null;
 }
 
+/** Where a generic job's processor reads and writes. */
+interface AdminJobStores {
+  /** DB_ADMIN: admin_jobs, and the object catalog of job results and backup artifacts. */
+  jobs: DatabaseAdapter;
+  /** The job's tenant's Core database (resolved on first use): the tenant's own data. */
+  tenant: () => Promise<DatabaseAdapter>;
+}
+
 type AdminJobProcessor = (
   env: Env,
-  adapter: DatabaseAdapter,
+  stores: AdminJobStores,
   job: AdminJobRow
 ) => Promise<AdminJobProcessorResult>;
 
@@ -192,6 +200,27 @@ const GENERIC_ADMIN_JOB_TYPES = [
 
 type GenericAdminJobType = (typeof GENERIC_ADMIN_JOB_TYPES)[number];
 
+/**
+ * The lifecycle state of a job's tenant, as a scheduled run checks it before running the job: read
+ * in the tenant inventory (`DB`), where the lifecycle commands and tenant deletion move tenants.
+ * `missing` without a tenant row, `route_unavailable` when the inventory cannot be read.
+ */
+export async function readAdminJobTenantLifecycleState(
+  env: Env,
+  tenantId: string
+): Promise<string> {
+  try {
+    const inventory = ensureDatabaseAdapter(env.DB, 'management-generic-job-lifecycle');
+    const tenant = await inventory.queryOne<{ lifecycle_state: string }>(
+      'SELECT lifecycle_state FROM tenants WHERE id = ? LIMIT 1',
+      [tenantId]
+    );
+    return tenant?.lifecycle_state ?? 'missing';
+  } catch {
+    return 'route_unavailable';
+  }
+}
+
 export function isAdminJobAllowedForTenantLifecycle(
   lifecycleState: string,
   jobType: string
@@ -270,10 +299,12 @@ async function writeTenantLifecycleJobAudit(
 
 async function processTenantLifecycleValidationJob(
   env: Env,
-  adapter: DatabaseAdapter,
+  stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   const config = parseJsonConfig<TenantLifecycleValidationConfig>(job);
+  // The tenant inventory, where the lifecycle command moved the tenant (admin-tenants).
+  const adapter = ensureDatabaseAdapter(env.DB, 'tenant-lifecycle-inventory');
   const tenant = await adapter.queryOne<{ id: string; lifecycle_state: string }>(
     'SELECT id, lifecycle_state FROM tenants WHERE id = ?',
     [job.tenant_id]
@@ -379,7 +410,7 @@ async function processTenantLifecycleValidationJob(
   }
 
   const auditAdapter = ensureDatabaseAdapter(
-    env.DB_ADMIN ?? adapter,
+    env.DB_ADMIN ?? stores.jobs,
     'tenant-lifecycle-audit-probe'
   );
   await auditAdapter.queryOne('SELECT id FROM admin_audit_log WHERE tenant_id = ? LIMIT 1', [
@@ -410,7 +441,7 @@ async function processTenantLifecycleValidationJob(
     await deleteTenantExistsCache(env.AUTHRIM_CONFIG, job.tenant_id);
   }
 
-  await writeTenantLifecycleJobAudit(env, adapter, job, {
+  await writeTenantLifecycleJobAudit(env, stores.jobs, job, {
     action: 'tenant.lifecycle.validation_completed',
     result: 'success',
     severity: 'info',
@@ -975,6 +1006,19 @@ function safeObjectKeySegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._=-]+/g, '_').slice(0, 160) || 'unknown';
 }
 
+/**
+ * The key prefixes under which a tenant database export job keeps its objects (manifest and
+ * tables): the manifest's key is built from the raw ids, the tables' from their safe segments.
+ */
+export function tenantBackupObjectKeyPrefixes(tenantId: string, jobId: string): string[] {
+  return [
+    ...new Set([
+      `exports/${tenantId}/tenant-backup/${jobId}/`,
+      `exports/${safeObjectKeySegment(tenantId)}/tenant-backup/${safeObjectKeySegment(jobId)}/`,
+    ]),
+  ];
+}
+
 function buildTenantTableObjectKey(
   job: AdminJobRow,
   plane: 'core' | 'pii',
@@ -1236,7 +1280,7 @@ function countJsonlRows(content: string): number {
 
 async function processTenantDatabaseExportJob(
   env: Env,
-  adapter: DatabaseAdapter,
+  { jobs: adapter }: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   if (!env.EXPORT_ARTIFACTS) {
@@ -1392,7 +1436,7 @@ async function processTenantDatabaseExportJob(
 
 async function processTenantDatabaseRestoreDryRunJob(
   env: Env,
-  adapter: DatabaseAdapter,
+  { jobs: adapter }: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   if (!env.EXPORT_ARTIFACTS) {
@@ -1501,7 +1545,7 @@ async function processTenantDatabaseRestoreDryRunJob(
 
 async function processTenantDatabasePurgeBackupJob(
   _env: Env,
-  adapter: DatabaseAdapter,
+  { jobs: adapter }: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   const config = parseJsonConfig<TenantDatabasePurgeBackupConfig>(job);
@@ -1660,9 +1704,10 @@ async function keepSessionEndLogout(
 
 async function processBulkUserUpdateJob(
   env: Env,
-  adapter: DatabaseAdapter,
+  stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
+  const adapter = await stores.tenant();
   const config = parseJsonConfig<BulkUserUpdateConfig>(job);
   validateBulkUserUpdateConfig(config);
   const filter = buildUserFilterWhere(job.tenant_id, config.filter);
@@ -1943,6 +1988,41 @@ async function processBulkUserUpdateJob(
   };
 }
 
+/**
+ * The tenant's admin jobs by type and status, from DB_ADMIN and from the tenant's Core database
+ * (the jobs a tenant's own workflows keep there, such as tenant deletion).
+ */
+async function countTenantAdminJobs(
+  adapters: DatabaseAdapter[],
+  tenantId: string,
+  fromTs: number,
+  toTs: number
+): Promise<Array<{ job_type: string; status: string; count: number }>> {
+  const counts = new Map<string, { job_type: string; status: string; count: number }>();
+  for (const adapter of adapters) {
+    const rows = await adapter.query<{ job_type: string; status: string; count: number }>(
+      `SELECT job_type, status, COUNT(*) as count
+         FROM admin_jobs
+        WHERE tenant_id = ? AND created_at >= ? AND created_at <= ?
+        GROUP BY job_type, status`,
+      [tenantId, fromTs, toTs]
+    );
+    for (const row of rows) {
+      const key = `${row.job_type}\u0000${row.status}`;
+      const entry = counts.get(key) ?? { job_type: row.job_type, status: row.status, count: 0 };
+      entry.count += Number(row.count);
+      counts.set(key, entry);
+    }
+  }
+  return [...counts.values()].sort(
+    (a, b) => compareText(a.job_type, b.job_type) || compareText(a.status, b.status)
+  );
+}
+
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function toUnixSeconds(value: string): number {
   const ts = Date.parse(value);
   if (!Number.isFinite(ts)) throw new Error(`Invalid report date: ${value}`);
@@ -1972,9 +2052,10 @@ export function toCsv(rows: Array<Record<string, unknown>>): string {
 
 async function processReportGenerateJob(
   _env: Env,
-  adapter: DatabaseAdapter,
+  stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
+  const adapter = await stores.tenant();
   const config = parseJsonConfig<ReportGenerateConfig>(job);
   const fromTs = toUnixSeconds(config.from_date);
   const toTs = toUnixSeconds(config.to_date);
@@ -2017,14 +2098,7 @@ async function processReportGenerateJob(
       ];
       break;
     case 'compliance_audit':
-      rows = await adapter.query<Record<string, unknown>>(
-        `SELECT job_type, status, COUNT(*) as count
-           FROM admin_jobs
-          WHERE tenant_id = ? AND created_at >= ? AND created_at <= ?
-          GROUP BY job_type, status
-          ORDER BY job_type ASC, status ASC`,
-        [job.tenant_id, fromTs, toTs]
-      );
+      rows = await countTenantAdminJobs([stores.jobs, adapter], job.tenant_id, fromTs, toTs);
       break;
     case 'security_events':
       rows = await adapter.query<Record<string, unknown>>(
@@ -2072,9 +2146,10 @@ function normalizeMembershipType(role: string | undefined): 'member' | 'admin' |
 
 async function processOrganizationBulkMembersJob(
   _env: Env,
-  adapter: DatabaseAdapter,
+  stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
+  const adapter = await stores.tenant();
   const config = parseJsonConfig<OrganizationBulkMembersConfig>(job);
   const membershipType = normalizeMembershipType(config.role);
   const org = await adapter.queryOne<{ id: string }>(
@@ -2405,22 +2480,7 @@ async function processGenericAdminJob(
   const processor = ADMIN_JOB_PROCESSORS[job.job_type as GenericAdminJobType];
   if (!processor) return;
 
-  if (!job.tenant_lifecycle_state) {
-    try {
-      const tenantAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-        env,
-        'management-generic-job-lifecycle',
-        { tenantId: job.tenant_id }
-      );
-      const tenant = await tenantAdapter.queryOne<{ lifecycle_state: string }>(
-        'SELECT lifecycle_state FROM tenants WHERE id = ? LIMIT 1',
-        [job.tenant_id]
-      );
-      job.tenant_lifecycle_state = tenant?.lifecycle_state ?? 'missing';
-    } catch {
-      job.tenant_lifecycle_state = 'route_unavailable';
-    }
-  }
+  job.tenant_lifecycle_state ??= await readAdminJobTenantLifecycleState(env, job.tenant_id);
 
   if (
     typeof job.tenant_lifecycle_state === 'string' &&
@@ -2470,7 +2530,20 @@ async function processGenericAdminJob(
     if (job.tenant_lifecycle_state === 'route_unavailable') {
       throw new Error('tenant_lifecycle_unavailable');
     }
-    const result = await processor(env, adapter, job);
+    let tenantAdapter: Promise<DatabaseAdapter> | null = null;
+    const result = await processor(
+      env,
+      {
+        jobs: adapter,
+        tenant: () =>
+          (tenantAdapter ??= resolveAuthCorePersistenceAdapterFromEnv(
+            env,
+            'management-generic-job-tenant',
+            { tenantId: job.tenant_id }
+          )),
+      },
+      job
+    );
     if (result.status === 'processing') {
       const continuationTs = Math.floor(Date.now() / 1000);
       await adapter.execute(
