@@ -400,7 +400,7 @@ export async function safeFetchJson<T = unknown>(
     return JSON.parse(text) as T;
   }
 
-  return response.json() as Promise<T>;
+  return response.json();
 }
 
 /**

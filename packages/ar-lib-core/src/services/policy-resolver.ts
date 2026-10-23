@@ -487,7 +487,7 @@ export class PolicyResolverService implements PolicyResolver {
 
     const idTokenSigningAlg = tenant.allowedIdTokenSigningAlgs.includes(client.idTokenSigningAlg)
       ? client.idTokenSigningAlg
-      : (tenant.allowedIdTokenSigningAlgs[0] as SigningAlgorithm);
+      : tenant.allowedIdTokenSigningAlgs[0];
 
     const settings: EffectiveOAuthSettings = {
       accessTokenExpiry: Math.min(client.accessTokenExpiry, tenant.maxAccessTokenExpiry),
@@ -497,8 +497,8 @@ export class PolicyResolverService implements PolicyResolver {
       idTokenSigningAlg,
       allowedResponseTypes: client.allowedResponseTypes.filter((rt) =>
         tenant.allowedResponseTypes.includes(rt)
-      ) as ('code' | 'token' | 'id_token')[],
-      allowedGrantTypes: client.allowedGrantTypes as GrantType[],
+      ),
+      allowedGrantTypes: client.allowedGrantTypes,
       pkceRequired:
         tenant.pkceRequirement === 'required' ||
         client.pkceRequired ||

@@ -962,7 +962,7 @@ function parseLoopbackRedirect(
   } catch {
     return null;
   }
-  return { host: match[1] as '127.0.0.1' | '[::1]', suffix: match[3]! };
+  return { host: match[1] as '127.0.0.1' | '[::1]', suffix: match[3] };
 }
 
 // =============================================================================
@@ -1554,7 +1554,7 @@ export function validateJARClaims(
   return {
     valid: errors.length === 0,
     errors,
-    claims: errors.length === 0 ? (c as Record<string, unknown>) : undefined,
+    claims: errors.length === 0 ? c : undefined,
   };
 }
 

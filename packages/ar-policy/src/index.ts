@@ -351,7 +351,7 @@ policyRoutes.post('/check-role', async (c) => {
 
     let subject: PolicySubject;
     if ('claims' in body.subject) {
-      subject = subjectFromClaims(body.subject.claims as Record<string, unknown>);
+      subject = subjectFromClaims(body.subject.claims);
     } else {
       subject = body.subject;
     }

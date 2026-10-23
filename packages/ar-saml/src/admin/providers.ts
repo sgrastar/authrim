@@ -878,12 +878,12 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       return forbidden;
     }
 
-    const body = (await c.req.json()) as {
+    const body = await c.req.json<{
       entityIdStyle?: unknown;
       interactiveLoginUrlPolicy?: unknown;
       certificateSubject?: unknown;
       certificateSubjectAlternativeNames?: unknown;
-    };
+    }>();
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const before = await getSAMLPublicSettings(c.env, tenantId);
     const entityIdStyle =
@@ -978,7 +978,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       return forbidden;
     }
 
-    const body = (await c.req.json()) as {
+    const body = await c.req.json<{
       role?: unknown;
       action?: unknown;
       certificateSubject?: unknown;
@@ -990,7 +990,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       validTo?: unknown;
       publicKeyAlgorithm?: unknown;
       publicKeySizeBits?: unknown;
-    };
+    }>();
     const role: 'idp' | 'sp' | null = body.role === 'idp' || body.role === 'sp' ? body.role : null;
     const action =
       body.action === 'recreate_active' ||
@@ -1186,7 +1186,7 @@ export async function handleExportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       return forbidden;
     }
 
-    const body = (await c.req.json()) as { passphrase?: unknown };
+    const body = await c.req.json<{ passphrase?: unknown }>();
     const tenantId = resolveSAMLTenantIdFromContext(c);
     failureStage = 'export_signing_keys';
     const bundle = await buildEncryptedSAMLLocalSigningSecretDRBundle(
@@ -1245,7 +1245,7 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       return forbidden;
     }
 
-    const body = (await c.req.json()) as { bundle?: unknown; passphrase?: unknown };
+    const body = await c.req.json<{ bundle?: unknown; passphrase?: unknown }>();
     const tenantId = resolveSAMLTenantIdFromContext(c);
     failureStage = 'decrypt_bundle';
     const result = await restoreEncryptedSAMLLocalSigningSecretDRBundle(
@@ -1553,7 +1553,7 @@ export async function handleCreateAttributePreset(c: AdminSAMLContext): Promise<
       return forbidden;
     }
 
-    const body = (await c.req.json()) as SAMLAttributePresetCreateRequest;
+    const body = await c.req.json<SAMLAttributePresetCreateRequest>();
     const attributes = body.attributeReleasePolicy?.attributes ?? [];
     if (!body.label || attributes.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -2825,7 +2825,7 @@ export async function handlePreviewFederationTrustCertificate(
     const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
     if (forbidden) return forbidden;
 
-    const body = (await c.req.json()) as { certificate?: string; certificateUrl?: string };
+    const body = await c.req.json<{ certificate?: string; certificateUrl?: string }>();
     const certificateUrl = body.certificateUrl?.trim();
     const certificate = body.certificate?.trim();
 
@@ -2899,7 +2899,7 @@ export async function handleListAggregatePreviewEntities(c: AdminSAMLContext): P
       { method: 'GET' }
     );
     if (!response.ok) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    return c.json((await response.json()) as SAMLMetadataEntityListResponse);
+    return c.json(await response.json<SAMLMetadataEntityListResponse>());
   } catch (error) {
     getLogger(c)
       .module('SAML')
@@ -2914,7 +2914,7 @@ export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Prom
     const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
     if (forbidden) return forbidden;
     if (!previewId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    const body = (await c.req.json()) as SAMLMetadataBatchCreateRequest;
+    const body = await c.req.json<SAMLMetadataBatchCreateRequest>();
     const entityIds = Array.from(
       new Set((body.entityIds ?? []).map((id) => id.trim()).filter(Boolean))
     );
@@ -3042,7 +3042,7 @@ export async function handleGetAggregateBatchStatus(c: AdminSAMLContext): Promis
       method: 'GET',
     });
     if (!response.ok) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    const status = (await response.json()) as SAMLMetadataBatchStatusResponse;
+    const status = await response.json<SAMLMetadataBatchStatusResponse>();
     const tenantId = resolveSAMLTenantIdFromContext(c);
     if (status.tenantId !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -3152,7 +3152,7 @@ async function updateProviderSigningPolicy(
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const body = (await c.req.json()) as SigningRolloverRequestBody;
+    const body = await c.req.json<SigningRolloverRequestBody>();
     if (options.requireCertificate && !body.certificate) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'certificate' },
@@ -3615,10 +3615,10 @@ async function readOptionalJson(
   }
 
   return (
-    ((await c.req.json()) as {
+    (await c.req.json<{
       metadataUrl?: string;
       allowEntityIdChange?: boolean;
-    }) ?? {}
+    }>()) ?? {}
   );
 }
 
@@ -3939,7 +3939,7 @@ async function storeAggregatePreview(
   if (!response.ok) {
     throw new Error('Failed to store aggregate preview');
   }
-  return (await response.json()) as { expiresAt: number };
+  return await response.json<{ expiresAt: number }>();
 }
 
 async function getAggregatePreview(
@@ -3956,13 +3956,13 @@ async function getAggregatePreview(
     method: 'GET',
   });
   return response.ok
-    ? ((await response.json()) as {
+    ? await response.json<{
         tenantId: string;
         metadataXml: string;
         metadataUrl?: string;
         entities: SAMLMetadataEntitySummary[];
         verification: SAMLMetadataVerificationSummary;
-      })
+      }>()
     : null;
 }
 
@@ -3979,7 +3979,7 @@ async function startAggregateBatch(
   if (!response.ok) {
     throw new Error('Failed to start aggregate batch');
   }
-  return (await response.json()) as SAMLMetadataBatchStatusResponse;
+  return await response.json<SAMLMetadataBatchStatusResponse>();
 }
 
 async function recordAggregateBatchResult(
@@ -5041,13 +5041,13 @@ async function resolveFederationRuntimeConfig(
     return null;
   }
   try {
-    return await buildFederationRuntimeConfig(highest[0]!, entityId, role);
+    return await buildFederationRuntimeConfig(highest[0], entityId, role);
   } catch (error) {
     createLogger()
       .module('SAML')
       .warn(
         'Federation runtime entity configuration was rejected',
-        { tenantId, entityId, role, trustSourceId: highest[0]!.row.trust_source_id },
+        { tenantId, entityId, role, trustSourceId: highest[0].row.trust_source_id },
         error as Error
       );
     return null;
@@ -5220,9 +5220,7 @@ function evaluateFederationRuntimePolicy(
   );
   if (effectivePresets.size > 1) return { allowed: false };
   const allowed = allow.length > 0 || categoryPolicy.defaultDecision === 'allow';
-  const attributePresetId = effectivePresets.values().next().value as
-    | SAMLAttributePresetId
-    | undefined;
+  const attributePresetId = effectivePresets.values().next().value;
   return {
     allowed,
     ...(attributePresetId

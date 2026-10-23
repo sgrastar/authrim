@@ -948,7 +948,7 @@ export class SessionStore implements ISessionStore {
       session.data,
       this.adapter.getConfiguredTenantId()
     );
-    return result as Session;
+    return result;
   }
 
   async delete(sessionId: string): Promise<void> {

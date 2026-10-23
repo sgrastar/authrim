@@ -165,9 +165,7 @@ export function createDownstreamGrantProtectedResourceMiddleware<Resource>(
     });
 
     const authorizationResponse = await authorizationMiddleware(c, async () => {
-      const decisionContext = getDownstreamGrantMiddlewareContext(
-        c
-      ) as DownstreamGrantMiddlewareContextDecision | null;
+      const decisionContext = getDownstreamGrantMiddlewareContext(c);
       const current = getStoredProtectedResourceContext<Resource>(c);
       if (!current || !decisionContext) {
         await next();

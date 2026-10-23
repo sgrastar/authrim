@@ -317,7 +317,7 @@ export class DeviceCodeStore {
 
       // Get device code by device_code
       if (path === '/get-by-device-code' && request.method === 'POST') {
-        const { device_code } = (await request.json()) as { device_code: string };
+        const { device_code } = await request.json<{ device_code: string }>();
         const metadata = await this.getByDeviceCode(device_code);
         return new Response(JSON.stringify(metadata), {
           headers: { 'Content-Type': 'application/json' },
@@ -326,7 +326,7 @@ export class DeviceCodeStore {
 
       // Get device code by user_code
       if (path === '/get-by-user-code' && request.method === 'POST') {
-        const { user_code } = (await request.json()) as { user_code: string };
+        const { user_code } = await request.json<{ user_code: string }>();
         const metadata = await this.getByUserCode(user_code);
         return new Response(JSON.stringify(metadata), {
           headers: { 'Content-Type': 'application/json' },
@@ -335,12 +335,12 @@ export class DeviceCodeStore {
 
       // Approve device code (user approved the request)
       if (path === '/approve' && request.method === 'POST') {
-        const { user_code, user_id, sub, consent_generation } = (await request.json()) as {
+        const { user_code, user_id, sub, consent_generation } = await request.json<{
           user_code: string;
           user_id: string;
           sub: string;
           consent_generation?: number;
-        };
+        }>();
         await this.approveDeviceCode(user_code, user_id, sub, consent_generation);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -349,7 +349,7 @@ export class DeviceCodeStore {
 
       // Deny device code (user denied the request)
       if (path === '/deny' && request.method === 'POST') {
-        const { user_code } = (await request.json()) as { user_code: string };
+        const { user_code } = await request.json<{ user_code: string }>();
         await this.denyDeviceCode(user_code);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -358,10 +358,10 @@ export class DeviceCodeStore {
 
       // One poll of the token endpoint: evaluate against the previous poll, then record it.
       if (path === '/poll' && request.method === 'POST') {
-        const { device_code, client_id } = (await request.json()) as {
+        const { device_code, client_id } = await request.json<{
           device_code?: unknown;
           client_id?: unknown;
-        };
+        }>();
         const result =
           typeof device_code === 'string' && typeof client_id === 'string'
             ? await this.pollDeviceCode(device_code, client_id)
@@ -376,7 +376,7 @@ export class DeviceCodeStore {
       // afterwards sees its own write. The token endpoint uses /poll; this stays for callers
       // deployed before it existed.
       if (path === '/update-poll' && request.method === 'POST') {
-        const { device_code } = (await request.json()) as { device_code: string };
+        const { device_code } = await request.json<{ device_code: string }>();
         await this.updatePollTime(device_code);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -385,7 +385,7 @@ export class DeviceCodeStore {
 
       // Mark token as issued (one-time use)
       if (path === '/mark-token-issued' && request.method === 'POST') {
-        const { device_code } = (await request.json()) as { device_code: string };
+        const { device_code } = await request.json<{ device_code: string }>();
         await this.markTokenIssued(device_code);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -394,7 +394,7 @@ export class DeviceCodeStore {
 
       // Delete device code (consumed or expired)
       if (path === '/delete' && request.method === 'POST') {
-        const { device_code } = (await request.json()) as { device_code: string };
+        const { device_code } = await request.json<{ device_code: string }>();
         await this.deleteDeviceCode(device_code);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },

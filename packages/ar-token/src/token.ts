@@ -1960,9 +1960,9 @@ async function handleAuthorizationCodeGrant(
       // Per RFC 7523, the 'sub' claim should contain the client_id
       // If not present, fall back to 'iss' which also commonly contains the client_id
       if (!client_id && assertionPayload.sub) {
-        client_id = assertionPayload.sub as string;
+        client_id = assertionPayload.sub;
       } else if (!client_id && assertionPayload.iss) {
-        client_id = assertionPayload.iss as string;
+        client_id = assertionPayload.iss;
       }
 
       // JWT assertion will be validated later against the client's registered public key
@@ -2207,7 +2207,7 @@ async function handleAuthorizationCodeGrant(
     clientMetadata.token_endpoint_auth_method !== 'none' &&
     clientMetadata.client_secret_hash
   ) {
-    const storedHash = (clientMetadata.client_secret_hash as string) ?? '';
+    const storedHash = clientMetadata.client_secret_hash ?? '';
     if (
       !client_secret ||
       !(await timeTokenRequestDiagnosticOperation(c, 'token_client_secret_verify', () =>
@@ -2216,7 +2216,7 @@ async function handleAuthorizationCodeGrant(
     ) {
       return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
     }
-  } else if (!isPublicClientMetadata(clientMetadata as ClientMetadata)) {
+  } else if (!isPublicClientMetadata(clientMetadata)) {
     return oauthError(c, 'invalid_client', 'Client authentication configuration is invalid', 401);
   }
 
@@ -3276,7 +3276,7 @@ async function handleAuthorizationCodeGrant(
         c,
         tenantId,
         client_id,
-        clientMetadata as ClientMetadata,
+        clientMetadata,
         idTokenClaims,
         splitScope(authCodeData.scope),
         // The claims request and the client's policy allowed eduperson_assurance already (as
@@ -3297,7 +3297,7 @@ async function handleAuthorizationCodeGrant(
       enforceOIDCAttributeReleaseConsentForIDTokenClaims(
         c,
         tenantId,
-        clientMetadata as ClientMetadata,
+        clientMetadata,
         authCodeData.sub,
         idTokenClaims
       )
@@ -3323,7 +3323,7 @@ async function handleAuthorizationCodeGrant(
       idToken = await createClientSDJWTIDToken(
         c.env,
         tenantId,
-        clientMetadata as ClientMetadata,
+        clientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
         await lifetimes.idToken(),
         selectiveClaims,
@@ -3341,7 +3341,7 @@ async function handleAuthorizationCodeGrant(
         createClientIDToken(
           c.env,
           tenantId,
-          clientMetadata as ClientMetadata,
+          clientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
           idTokenExpiresIn,
           {
@@ -3831,9 +3831,9 @@ async function handleRefreshTokenGrant(
     try {
       const assertionPayload = parseToken(client_assertion);
       if (!client_id && assertionPayload.sub) {
-        client_id = assertionPayload.sub as string;
+        client_id = assertionPayload.sub;
       } else if (!client_id && assertionPayload.iss) {
-        client_id = assertionPayload.iss as string;
+        client_id = assertionPayload.iss;
       }
     } catch {
       return oauthError(c, 'invalid_client', 'Invalid client_assertion JWT format', 401);
@@ -4432,7 +4432,7 @@ async function handleRefreshTokenGrant(
         c,
         tenantId,
         client_id,
-        clientMetadata as ClientMetadata,
+        clientMetadata,
         idTokenClaims,
         splitScope(grantedScope)
       );
@@ -4444,7 +4444,7 @@ async function handleRefreshTokenGrant(
       const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
         c,
         tenantId,
-        clientMetadata as ClientMetadata,
+        clientMetadata,
         refreshTokenData.sub,
         idTokenClaims
       );
@@ -4466,7 +4466,7 @@ async function handleRefreshTokenGrant(
         idToken = await createClientSDJWTIDToken(
           c.env,
           tenantId,
-          clientMetadata as ClientMetadata,
+          clientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
           await lifetimes.idToken(),
           selectiveClaims,
@@ -4480,7 +4480,7 @@ async function handleRefreshTokenGrant(
         idToken = await createClientIDToken(
           c.env,
           tenantId,
-          clientMetadata as ClientMetadata,
+          clientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
           await lifetimes.idToken(),
           {
@@ -5055,7 +5055,7 @@ async function pollStore<M>(
       })
     );
     if (!response.ok) return null;
-    const result = (await response.json()) as PollRpcResult<M> | null;
+    const result = await response.json<PollRpcResult<M> | null>();
     return result && typeof result.result === 'string' ? result : null;
   } catch {
     return null;
@@ -5386,12 +5386,12 @@ async function handleDeviceCodeGrant(
   const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, authCtx.tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub!, {
+      getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
-      getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub!, {
+      getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
@@ -5443,7 +5443,7 @@ async function handleDeviceCodeGrant(
     c,
     getTenantIdFromContext(c),
     client_id,
-    clientMetadata as ClientMetadata,
+    clientMetadata,
     idTokenClaims,
     splitScope(metadata.scope)
   );
@@ -5455,8 +5455,8 @@ async function handleDeviceCodeGrant(
   const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
     c,
     getTenantIdFromContext(c),
-    clientMetadata as ClientMetadata,
-    metadata.sub!,
+    clientMetadata,
+    metadata.sub,
     idTokenClaims
   );
   if (!idTokenConsent.ok) {
@@ -5468,11 +5468,11 @@ async function handleDeviceCodeGrant(
     idToken = await createClientIDToken(
       c.env,
       getTenantIdFromContext(c),
-      clientMetadata as ClientMetadata,
+      clientMetadata,
       idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
       await lifetimes.idToken(),
       {
-        userId: metadata.sub!,
+        userId: metadata.sub,
         consentGeneration: metadata.consent_generation ?? deviceConsentWithdrawal.generation,
       }
     );
@@ -5556,7 +5556,7 @@ async function handleDeviceCodeGrant(
       let familyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
       if (c.env.REFRESH_TOKEN_ROTATOR) {
         familyResult = await createRefreshTokenFamily(c.env, {
-          userId: metadata.sub!,
+          userId: metadata.sub,
           clientId: client_id,
           scope: metadata.scope || '',
           ttl: refreshTokenExpiry,
@@ -5571,7 +5571,7 @@ async function handleDeviceCodeGrant(
           c,
           await confirmFamilyConsentGeneration(c, authCtx.coreAdapter, {
             tenantId: getTenantIdFromContext(c),
-            userId: metadata.sub!,
+            userId: metadata.sub,
             clientId: client_id,
             generation: deviceConsentWithdrawal.generation,
             familyJti: familyResult.jti,
@@ -5583,7 +5583,7 @@ async function handleDeviceCodeGrant(
             authCtx.coreAdapter,
             getTenantIdFromContext(c),
             refreshJti,
-            metadata.sub!,
+            metadata.sub,
             client_id,
             familyResult.resolution.generation,
             refreshTokenExpiry
@@ -5594,7 +5594,7 @@ async function handleDeviceCodeGrant(
       }
 
       const refreshTokenClaims = {
-        sub: metadata.sub!,
+        sub: metadata.sub,
         scope: metadata.scope,
         client_id,
         ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
@@ -5615,7 +5615,7 @@ async function handleDeviceCodeGrant(
           {
             jti: refreshJti,
             client_id,
-            sub: metadata.sub!,
+            sub: metadata.sub,
             scope: metadata.scope,
             resource_aud: audienceResolution.audience,
             iat: Math.floor(Date.now() / 1000),
@@ -6070,12 +6070,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, authCtx.tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub!, {
+      getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
-      getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub!, {
+      getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub, {
         cache: c.env.REBAC_CACHE,
         claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
@@ -6124,7 +6124,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     [key: string]: unknown;
   } = {
     iss: getRequestIssuer(c),
-    sub: metadata.sub!,
+    sub: metadata.sub,
     aud: audienceResolution.audience,
     scope: metadata.scope,
     client_id: metadata.client_id,
@@ -6167,7 +6167,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   // Create ID token with at_hash
   let idTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
-    sub: metadata.sub!,
+    sub: metadata.sub,
     aud: metadata.client_id,
     ...(metadata.nonce && { nonce: metadata.nonce }),
     ...(metadata.authenticated_acr && { acr: metadata.authenticated_acr }),
@@ -6180,7 +6180,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     c,
     getTenantIdFromContext(c),
     metadata.client_id,
-    clientMetadata as ClientMetadata,
+    clientMetadata,
     idTokenClaims,
     splitScope(metadata.scope)
   );
@@ -6192,8 +6192,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
     c,
     getTenantIdFromContext(c),
-    clientMetadata as ClientMetadata,
-    metadata.sub!,
+    clientMetadata,
+    metadata.sub,
     idTokenClaims
   );
   if (!idTokenConsent.ok) {
@@ -6205,11 +6205,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     idToken = await createClientIDToken(
       c.env,
       getTenantIdFromContext(c),
-      clientMetadata as ClientMetadata,
+      clientMetadata,
       idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
       await lifetimes.idToken(),
       {
-        userId: metadata.sub!,
+        userId: metadata.sub,
         consentGeneration: metadata.consent_generation ?? cibaConsentWithdrawal.generation,
       }
     );
@@ -6261,7 +6261,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     let cibaFamilyResult: Awaited<ReturnType<typeof createRefreshTokenFamily>> | undefined;
     if (c.env.REFRESH_TOKEN_ROTATOR) {
       cibaFamilyResult = await createRefreshTokenFamily(c.env, {
-        userId: metadata.sub!,
+        userId: metadata.sub,
         clientId: metadata.client_id,
         scope: metadata.scope || '',
         ttl: refreshExpiresIn,
@@ -6276,7 +6276,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         c,
         await confirmFamilyConsentGeneration(c, authCtx.coreAdapter, {
           tenantId: getTenantIdFromContext(c),
-          userId: metadata.sub!,
+          userId: metadata.sub,
           clientId: metadata.client_id,
           generation: cibaConsentWithdrawal.generation,
           familyJti: cibaFamilyResult.jti,
@@ -6288,7 +6288,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
           authCtx.coreAdapter,
           getTenantIdFromContext(c),
           refreshTokenJti,
-          metadata.sub!,
+          metadata.sub,
           metadata.client_id,
           cibaFamilyResult.resolution.generation,
           refreshExpiresIn
@@ -6300,7 +6300,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
     const refreshTokenClaims = {
       iss: getRequestIssuer(c),
-      sub: metadata.sub!,
+      sub: metadata.sub,
       aud: metadata.client_id,
       client_id: metadata.client_id,
       scope: metadata.scope,
@@ -6322,7 +6322,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         refreshTokenJti,
         {
           client_id: metadata.client_id,
-          sub: metadata.sub!,
+          sub: metadata.sub,
           scope: metadata.scope,
           resource_aud: audienceResolution.audience,
           iat: Math.floor(Date.now() / 1000),
@@ -6729,7 +6729,7 @@ async function handleTokenExchangeGrant(
     try {
       const assertionPayload = parseToken(client_assertion);
       if (!client_id && assertionPayload.sub) {
-        client_id = assertionPayload.sub as string;
+        client_id = assertionPayload.sub;
       }
     } catch {
       return oauthError(c, 'invalid_client', 'Invalid client_assertion format', 401);
@@ -6755,7 +6755,7 @@ async function handleTokenExchangeGrant(
   }
 
   // Fetch client metadata - request-level cached
-  const clientMetadata = await getClientCached(c, c.env, client_id!);
+  const clientMetadata = await getClientCached(c, c.env, client_id);
   if (!clientMetadata) {
     // Security: Generic message to prevent client_id enumeration
     return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
@@ -6915,8 +6915,8 @@ async function handleTokenExchangeGrant(
     return handleNativeSSOTokenExchange(
       c,
       subject_token,
-      actor_token!, // device_secret
-      client_id!,
+      actor_token, // device_secret
+      client_id,
       typedClient,
       requestedScope,
       resources,
@@ -6956,7 +6956,7 @@ async function handleTokenExchangeGrant(
   // ID-JAG specific validations (draft-ietf-oauth-identity-assertion-authz-grant)
   if (isIdJagTokenRequest) {
     // §3.1: subject_token_type MUST be id_token, jwt, or saml2
-    if (!isValidIdJagSubjectTokenType(subject_token_type!)) {
+    if (!isValidIdJagSubjectTokenType(subject_token_type)) {
       return oauthError(
         c,
         'invalid_request',
@@ -7046,7 +7046,7 @@ async function handleTokenExchangeGrant(
 
     originalIssuer = subjectIssuer;
 
-    const externalAudiences = [client_id!, ...(typedClient.allowed_subject_token_clients || [])];
+    const externalAudiences = [client_id, ...(typedClient.allowed_subject_token_clients || [])];
     try {
       subjectTokenPayload = (await verifyExternalIdJagSubjectToken({
         token: subject_token,
@@ -7147,7 +7147,7 @@ async function handleTokenExchangeGrant(
       elevationGrantContext = await resolveElevationGrantSubjectToken({
         adapter: adminAdapter,
         tenantId,
-        requestingClientId: client_id!,
+        requestingClientId: client_id,
         tokenPayload: subjectTokenPayload,
       });
     } catch (error) {
@@ -7171,7 +7171,7 @@ async function handleTokenExchangeGrant(
 
   // Check 1: Is the requesting client in the subject_token's audience?
   // (client_id must be explicitly in aud, NOT just issuer URL)
-  const isClientInAudience = subjectAudArray.includes(client_id!);
+  const isClientInAudience = subjectAudArray.includes(client_id);
 
   // Check 2: Is the subject_token's issuing client in our allowed list?
   const isAllowedSubjectClient =
@@ -7312,7 +7312,7 @@ async function handleTokenExchangeGrant(
         ...accessTokenConsentClaims({
           generation: subjectConsent.generation ?? subjectConsentState.generation,
           consentClientId: subjectConsent.clientId,
-          tokenClientId: client_id!,
+          tokenClientId: client_id,
         }),
         // Bound to the consented client, which the exchanged token records.
         ...(typeof subjectReference === 'string' && {
@@ -7595,7 +7595,7 @@ async function handleTokenExchangeGrant(
       }
 
       const isActorAudValid =
-        actorAudArray.includes(client_id!) || actorAudArray.includes(getRequestIssuer(c));
+        actorAudArray.includes(client_id) || actorAudArray.includes(getRequestIssuer(c));
 
       if (!isActorAudValid) {
         return c.json(
@@ -7622,7 +7622,7 @@ async function handleTokenExchangeGrant(
       // No actor_token, use client as actor
       actClaim = {
         sub: `client:${client_id}`,
-        client_id: client_id!,
+        client_id: client_id,
       };
     }
   }
@@ -7660,7 +7660,7 @@ async function handleTokenExchangeGrant(
       c.req.url,
       undefined,
       c.env, // Pass full Env for region-aware sharding
-      client_id!,
+      client_id,
       getTenantIdFromContext(c)
     );
     if (!dpopValidation.valid) {
@@ -8090,7 +8090,7 @@ async function handleNativeSSOTokenExchange(
   // The device secret owner's consent withdrawals for this client, read before the secret's use
   // and the ID token are consumed, so a failed read leaves the exchange retryable. The owner is
   // the account the secret routes to; validation below confirms the secret belongs to it.
-  const deviceSecretAccountId = deviceSecretRouteHint!.accountId;
+  const deviceSecretAccountId = deviceSecretRouteHint.accountId;
   const deviceSecretOwnerId = deviceSecretAccountId.startsWith('account:')
     ? deviceSecretAccountId.slice('account:'.length)
     : deviceSecretAccountId;
@@ -8342,7 +8342,7 @@ async function handleNativeSSOTokenExchange(
     if (originalClientId) {
       try {
         const originalClientMetadata = await getClientCached(c, c.env, originalClientId);
-        originalTrustGroup = getClientTrustGroup(originalClientMetadata as ClientMetadata | null);
+        originalTrustGroup = getClientTrustGroup(originalClientMetadata);
       } catch {
         // If we can't verify original client, deny cross-client SSO for safety
         log.warn('Failed to verify original client', { originalClientId, action: 'NativeSSO' });
@@ -8918,7 +8918,7 @@ async function handleClientCredentialsGrant(
     try {
       const assertionPayload = parseToken(client_assertion);
       if (!client_id && assertionPayload.sub) {
-        client_id = assertionPayload.sub as string;
+        client_id = assertionPayload.sub;
       }
     } catch {
       return c.json(
@@ -8950,7 +8950,7 @@ async function handleClientCredentialsGrant(
   }
 
   // Fetch client metadata - request-level cached
-  const clientMetadata = await getClientCached(c, c.env, client_id!);
+  const clientMetadata = await getClientCached(c, c.env, client_id);
   if (!clientMetadata) {
     // Security: Generic message to prevent client_id enumeration
     return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
@@ -9092,7 +9092,7 @@ async function handleClientCredentialsGrant(
       c.req.url,
       undefined,
       c.env, // Pass full Env for region-aware sharding
-      client_id!,
+      client_id,
       getTenantIdFromContext(c)
     );
     if (!dpopValidation.valid) {
@@ -9146,7 +9146,7 @@ async function handleClientCredentialsGrant(
       tenantId,
       data: {
         jti: accessTokenJti,
-        clientId: client_id!,
+        clientId: client_id,
         // Client Credentials is M2M - the client is the subject
         userId: `client:${client_id}`,
         scopes: grantedScope.split(' '),

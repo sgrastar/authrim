@@ -201,7 +201,7 @@ export function toOIDFFormat(
       requestId: log.requestId,
     };
   } else if (log.category === 'token-validation') {
-    const tokenLog = log as TokenValidationLogEntry;
+    const tokenLog = log;
     base.event = `token_validation_${tokenLog.step}`;
     base.details = {
       flowId: log.flowId,
@@ -215,7 +215,7 @@ export function toOIDFFormat(
       ...tokenLog.details,
     };
   } else if (log.category === 'auth-decision') {
-    const authLog = log as AuthDecisionLogEntry;
+    const authLog = log;
     base.event = `auth_decision_${authLog.decision}`;
     base.details = {
       flowId: log.flowId,

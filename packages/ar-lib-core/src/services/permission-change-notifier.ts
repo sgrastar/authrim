@@ -267,7 +267,7 @@ export function createPermissionChangeNotifier(
         return 0;
       }
 
-      const result = (await response.json()) as { notified?: number };
+      const result = await response.json<{ notified?: number }>();
       debugLog('WebSocket notification sent', { notified: result.notified ?? 0 });
       return result.notified ?? 0;
     } catch (error) {

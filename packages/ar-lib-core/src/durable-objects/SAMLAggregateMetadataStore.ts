@@ -266,7 +266,7 @@ export class SAMLAggregateMetadataStore extends DurableObject<Env> {
       const path = url.pathname;
 
       if (path === '/preview' && request.method === 'POST') {
-        const body = (await request.json()) as Parameters<typeof this.storePreview>[0];
+        const body = await request.json<Parameters<typeof this.storePreview>[0]>();
         const preview = await this.storePreview(body);
         return json(preview);
       }
@@ -290,11 +290,11 @@ export class SAMLAggregateMetadataStore extends DurableObject<Env> {
       }
 
       if (path === '/batch' && request.method === 'POST') {
-        const body = (await request.json()) as {
+        const body = await request.json<{
           batchId: string;
           tenantId?: string;
           total: number;
-        };
+        }>();
         if (!body.tenantId) {
           return json({ error: 'tenant_id_required' }, 400);
         }
@@ -303,10 +303,7 @@ export class SAMLAggregateMetadataStore extends DurableObject<Env> {
 
       if (path.startsWith('/batch/') && path.endsWith('/result') && request.method === 'POST') {
         const batchId = path.slice('/batch/'.length, -'/result'.length);
-        await this.recordBatchResult(
-          batchId,
-          (await request.json()) as SAMLMetadataBatchCreateResult
-        );
+        await this.recordBatchResult(batchId, await request.json<SAMLMetadataBatchCreateResult>());
         return json({ success: true });
       }
 
@@ -318,7 +315,7 @@ export class SAMLAggregateMetadataStore extends DurableObject<Env> {
 
       if (path.startsWith('/batch/') && path.endsWith('/fail') && request.method === 'POST') {
         const batchId = path.slice('/batch/'.length, -'/fail'.length);
-        const body = (await request.json()) as { error?: string };
+        const body = await request.json<{ error?: string }>();
         await this.failBatch(batchId, body.error ?? 'Batch failed');
         return json({ success: true });
       }

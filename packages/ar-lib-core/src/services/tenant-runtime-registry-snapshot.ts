@@ -624,10 +624,7 @@ export async function signRuntimeRegistrySnapshotPayloadJws(input: {
   if (getJwkKeyId(privateJwk) && getJwkKeyId(privateJwk) !== keyId) {
     throw new Error('runtime_registry_snapshot_signing_key_id_mismatch');
   }
-  const key = await importJWK(
-    { ...(privateJwk as JWK), kid: keyId, alg: 'EdDSA', use: 'sig' },
-    'EdDSA'
-  );
+  const key = await importJWK({ ...privateJwk, kid: keyId, alg: 'EdDSA', use: 'sig' }, 'EdDSA');
   return new CompactSign(input.payload)
     .setProtectedHeader({
       alg: RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM,
@@ -655,7 +652,7 @@ export async function verifyRuntimeRegistrySnapshotPayloadJws(input: {
     if (!isEd25519Jwk(key.publicJwk) || typeof key.publicJwk.x !== 'string') continue;
     try {
       const verificationKey = await importJWK(
-        { ...(key.publicJwk as JWK), d: undefined, alg: 'EdDSA', use: 'sig' },
+        { ...key.publicJwk, d: undefined, alg: 'EdDSA', use: 'sig' },
         'EdDSA'
       );
       const verified = await compactVerify(input.token, verificationKey, {

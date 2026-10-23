@@ -347,7 +347,7 @@ export class SAMLRequestStore {
     try {
       // POST /store - Store a SAML request
       if (path === '/store' && request.method === 'POST') {
-        const body = (await request.json()) as SAMLRequestData;
+        const body = await request.json<SAMLRequestData>();
         await this.storeRequest(body);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -383,7 +383,7 @@ export class SAMLRequestStore {
 
       // POST /artifact - Store an artifact
       if (path === '/artifact' && request.method === 'POST') {
-        const body = (await request.json()) as SAMLArtifactData;
+        const body = await request.json<SAMLArtifactData>();
         await this.storeArtifact(body);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -392,7 +392,7 @@ export class SAMLRequestStore {
 
       // POST /artifact/resolve - Resolve an artifact
       if (path === '/artifact/resolve' && request.method === 'POST') {
-        const body = (await request.json()) as { artifact: string };
+        const body = await request.json<{ artifact: string }>();
         const result = await this.resolveArtifact(body.artifact);
 
         if (!result) {
@@ -409,7 +409,7 @@ export class SAMLRequestStore {
 
       // POST /assertion/consume - Consume an assertion ID
       if (path === '/assertion/consume' && request.method === 'POST') {
-        const body = (await request.json()) as { assertionId: string; expiresAt?: number };
+        const body = await request.json<{ assertionId: string; expiresAt?: number }>();
         const success = await this.consumeAssertionId(body.assertionId, body.expiresAt);
 
         return new Response(JSON.stringify({ success }), {

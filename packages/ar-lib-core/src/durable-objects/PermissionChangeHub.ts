@@ -118,7 +118,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
    */
   private async handleSetup(request: Request): Promise<Response> {
     try {
-      const body = (await request.json()) as { tenant_id?: string };
+      const body = await request.json<{ tenant_id?: string }>();
       const tenantId = requireTenantId(body.tenant_id, 'PermissionChangeHub setup');
       if (this.tenantId && this.tenantId !== tenantId) {
         return new Response(JSON.stringify({ error: 'Tenant mismatch' }), {
@@ -326,7 +326,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
    */
   private async handleBroadcast(request: Request): Promise<Response> {
     try {
-      const event = (await request.json()) as PermissionChangeEvent;
+      const event = await request.json<PermissionChangeEvent>();
       const eventTenantId = requireTenantId(event.tenant_id, 'PermissionChangeHub broadcast');
       if (this.tenantId && this.tenantId !== eventTenantId) {
         return new Response(JSON.stringify({ error: 'Tenant mismatch' }), {

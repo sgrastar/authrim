@@ -74,7 +74,7 @@ async function envAndDefaults(
     kv: null,
     cacheTTL: 0,
   });
-  manager.registerCategory(ALL_CATEGORY_META[category] as CategoryMeta);
+  manager.registerCategory(ALL_CATEGORY_META[category]);
   return (await manager.getAll(category, { type: 'platform' })).values;
 }
 

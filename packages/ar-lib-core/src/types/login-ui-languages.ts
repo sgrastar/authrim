@@ -249,9 +249,7 @@ export const LOGIN_UI_LANGUAGE_METADATA: readonly LoginUILanguageMetadata[] = [
   },
 ] as const;
 
-export const LOGIN_UI_LOCALES = LOGIN_UI_LANGUAGE_METADATA.map(
-  ({ localeCode }) => localeCode
-) as LoginUILocale[];
+export const LOGIN_UI_LOCALES = LOGIN_UI_LANGUAGE_METADATA.map(({ localeCode }) => localeCode);
 
 export const LOGIN_UI_LANGUAGE_METADATA_BY_LOCALE = Object.fromEntries(
   LOGIN_UI_LANGUAGE_METADATA.map((metadata) => [metadata.localeCode, metadata])

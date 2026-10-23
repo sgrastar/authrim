@@ -187,7 +187,7 @@ export class RuleEvaluator {
       name: row.name,
       description: row.description ?? undefined,
       role_id: row.role_id,
-      scope_type: row.scope_type as ScopeType,
+      scope_type: row.scope_type,
       scope_target: row.scope_target,
       condition: JSON.parse(row.conditions_json) as RuleCondition | CompoundCondition,
       actions: JSON.parse(row.actions_json) as RuleAction[],
@@ -211,7 +211,7 @@ export class RuleEvaluator {
   ): boolean {
     // Check if it's a compound condition
     if ('type' in condition && (condition.type === 'and' || condition.type === 'or')) {
-      return this.evaluateCompoundCondition(condition as CompoundCondition, context);
+      return this.evaluateCompoundCondition(condition, context);
     }
 
     // Single condition
@@ -418,7 +418,7 @@ export function evaluateRuleCondition(
       ctx: RuleEvaluationContext
     ): boolean {
       if ('type' in condition && (condition.type === 'and' || condition.type === 'or')) {
-        const compound = condition as CompoundCondition;
+        const compound = condition;
         if (compound.type === 'and') {
           return compound.conditions.every((c) => this.evaluateCondition(c, ctx));
         } else {
@@ -521,7 +521,7 @@ function collectConditionResults(
   }>
 ): void {
   if ('type' in condition && (condition.type === 'and' || condition.type === 'or')) {
-    const compound = condition as CompoundCondition;
+    const compound = condition;
     for (const c of compound.conditions) {
       collectConditionResults(c, context, results);
     }

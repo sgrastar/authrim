@@ -521,7 +521,7 @@ export function userToScim(user: InternalUser, context: UserToScimContext): Scim
 
 function stringAttribute(source: Record<string, unknown>, ...keys: string[]): string | undefined {
   for (const key of keys) {
-    if (typeof source[key] === 'string' && source[key]) return source[key] as string;
+    if (typeof source[key] === 'string' && source[key]) return source[key];
   }
   return undefined;
 }

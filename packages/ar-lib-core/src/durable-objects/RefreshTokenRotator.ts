@@ -486,7 +486,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     this.families.delete(userId);
     this.families.set(userId, family);
     while (this.families.size > MAX_FAMILY_CACHE_ENTRIES) {
-      const oldestUserId = this.families.keys().next().value as string | undefined;
+      const oldestUserId = this.families.keys().next().value;
       if (!oldestUserId) break;
       this.families.delete(oldestUserId);
     }

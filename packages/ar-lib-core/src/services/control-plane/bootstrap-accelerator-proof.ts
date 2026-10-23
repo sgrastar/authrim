@@ -199,8 +199,8 @@ export async function verifyBootstrapAcceleratorProof(
     throw new Error('bootstrap_accelerator_expired');
   }
   return {
-    iss: claims.iss as string,
-    aud: claims.aud as string,
+    iss: claims.iss,
+    aud: claims.aud,
     iat,
     exp,
     jti: requiredId(claims.jti, 'bootstrap_accelerator_jti_invalid'),

@@ -169,10 +169,10 @@ export class Fapi2Client {
       throw new Error('JARM response contains neither code nor error');
     }
     return {
-      code: payload.code as string | undefined,
+      code: payload.code,
       state: payload.state,
       iss: payload.iss,
-      error: payload.error as string | undefined,
+      error: payload.error,
       error_description: payload.error_description as string | undefined,
     };
   }
