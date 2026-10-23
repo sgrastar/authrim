@@ -78,7 +78,7 @@ function parseAuthority(value: unknown): TenantBackupImportAuthority {
     typeof globalAdmin.hierarchyLevel !== 'number' ||
     !Number.isFinite(globalAdmin.hierarchyLevel) ||
     globalAdmin.hierarchyLevel < 0 ||
-    (globalAdmin.hierarchyLevel as number) > 1_000_000
+    globalAdmin.hierarchyLevel > 1_000_000
   )
     invalid();
   return {
@@ -86,14 +86,13 @@ function parseAuthority(value: unknown): TenantBackupImportAuthority {
     platformSettingsCategories: [...(categories as string[])],
     globalAdmin: {
       permitted: globalAdmin.permitted,
-      hierarchyLevel: globalAdmin.hierarchyLevel as number,
+      hierarchyLevel: globalAdmin.hierarchyLevel,
     },
   };
 }
 
 export function parseTenantBackupRequestIntent(value: unknown): TenantBackupRequestIntent {
-  const withAuthority =
-    !!value && typeof value === 'object' && Object.hasOwn(value as object, 'authority');
+  const withAuthority = !!value && typeof value === 'object' && Object.hasOwn(value, 'authority');
   const root = record(value, [
     'version',
     'kind',
