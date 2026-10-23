@@ -1134,6 +1134,8 @@
 			serverError: () => $LL.error_server_error(),
 			temporarilyUnavailable: () => $LL.error_temporarily_unavailable(),
 			requestExpired: () => $LL.error_authorizationRequestExpired(),
+			rateLimited: (minutes) =>
+				minutes === null ? $LL.error_rateLimited() : $LL.error_rateLimitedRetryAfter({ minutes }),
 			loginRequired: () => $LL.error_login_required(),
 			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
 		});

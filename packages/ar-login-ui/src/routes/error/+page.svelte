@@ -4,32 +4,18 @@
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { errorPageMessage } from '$lib/errors/error-page-message';
 
 	const { brandingStore } = useLoginUIStores();
 
 	let errorCode = $state('');
-	let errorMessage = $derived(getErrorMessage(errorCode));
+	let errorMessage = $derived(errorPageMessage($LL, errorCode));
 
 	onMount(() => {
 		// Get error parameters from URL
 		const urlParams = new URLSearchParams(window.location.search);
 		errorCode = urlParams.get('error') || 'unknown';
 	});
-
-	function getErrorMessage(code: string): string {
-		const errorMessages: Record<string, string> = {
-			invalid_request: $LL.error_invalid_request(),
-			access_denied: $LL.error_access_denied(),
-			unauthorized_client: $LL.error_unauthorized_client(),
-			unsupported_response_type: $LL.error_unsupported_response_type(),
-			invalid_scope: $LL.error_invalid_scope(),
-			server_error: $LL.error_server_error(),
-			temporarily_unavailable: $LL.error_temporarily_unavailable(),
-			unknown: $LL.error_unknown()
-		};
-
-		return errorMessages[code] || errorMessages.unknown;
-	}
 
 	function handleBackToLogin() {
 		window.location.href = '/login';

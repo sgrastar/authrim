@@ -409,6 +409,14 @@ const ja = {
 	error_temporarily_unavailable: '認可サーバーは一時的にリクエストを処理できません',
 	error_login_required: '認証が必要です。続行するにはログインしてください。',
 	error_unknown: '不明なエラーが発生しました',
+	error_rateLimited: '試行回数が多すぎます。しばらく待ってからもう一度お試しください。',
+	error_rateLimitedRetryAfter: '試行回数が多すぎます。約{minutes}分後にもう一度お試しください。',
+	error_unregisteredPostLogoutRedirectUri:
+		'ログアウトしました。アプリの戻り先が登録されていないため、アプリに戻れませんでした。アプリを開き直してください。',
+	error_invalidIdTokenHint:
+		'ログアウトしました。アプリからのログアウト要求を確認できなかったため、アプリに戻れませんでした。アプリを開き直してください。',
+	error_idTokenHintRequired:
+		'ログアウトしました。アプリからのログアウト要求に必要な情報が足りなかったため、アプリに戻れませんでした。アプリを開き直してください。',
 
 	device_title: 'デバイス認証',
 	device_subtitle: 'デバイスに表示されたコードを入力してください',

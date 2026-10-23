@@ -21,6 +21,10 @@ export interface RateLimitSettings {
   'rate_limit.email_max_requests': number;
   'rate_limit.email_window': number;
 
+  // Authenticator App (TOTP) Rate Limits
+  'rate_limit.totp_max_requests': number;
+  'rate_limit.totp_window': number;
+
   // Auth Rate Limits
   'rate_limit.auth_max_failed_attempts': number;
   'rate_limit.public_read': number;
@@ -109,6 +113,36 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     label: 'Email Rate Window',
     description: 'Email rate limit window in seconds (default: 15 minutes)',
     min: 300,
+    max: 3600,
+    unit: 'seconds',
+    integer: true,
+    visibility: 'admin',
+  },
+  'rate_limit.totp_max_requests': {
+    key: 'rate_limit.totp_max_requests',
+    type: 'number',
+    default: 10,
+    envKey: 'TOTP_RATE_LIMIT_MAX_REQUESTS',
+    // A malformed or out-of-range env value keeps the default instead of being cut down.
+    envNumber: 'strict-in-range',
+    label: 'Authenticator App Max Attempts',
+    description:
+      'Authenticator-app sign-in and re-authentication starts per identifier and IP address, and sign-up code checks per sign-up and IP address, allowed per window. Each start allows one code check.',
+    min: 1,
+    max: 100,
+    integer: true,
+    visibility: 'admin',
+  },
+  'rate_limit.totp_window': {
+    key: 'rate_limit.totp_window',
+    type: 'duration',
+    default: 900,
+    envKey: 'TOTP_RATE_LIMIT_WINDOW',
+    // A malformed or out-of-range env value keeps the default instead of being cut down.
+    envNumber: 'strict-in-range',
+    label: 'Authenticator App Rate Window',
+    description: 'Authenticator-app rate limit window in seconds (default: 15 minutes)',
+    min: 60,
     max: 3600,
     unit: 'seconds',
     integer: true,
@@ -289,6 +323,8 @@ export const RATE_LIMIT_DEFAULTS: RateLimitSettings = {
   'rate_limit.lenient': 300,
   'rate_limit.email_max_requests': 3,
   'rate_limit.email_window': 900,
+  'rate_limit.totp_max_requests': 10,
+  'rate_limit.totp_window': 900,
   'rate_limit.auth_max_failed_attempts': 5,
   'rate_limit.public_read': 600,
   'rate_limit.login_start': 300,

@@ -393,6 +393,14 @@ const translation = {
 	error_temporarily_unavailable: 'Serwer autoryzacji tymczasowo nie może obsłużyć żądania.',
 	error_login_required: 'Wymagane jest uwierzytelnienie. Zaloguj się, aby kontynuować.',
 	error_unknown: 'Wystąpił nieznany błąd.',
+	error_rateLimited: 'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+	error_rateLimitedRetryAfter: 'Zbyt wiele prób. Spróbuj ponownie za około {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Wylogowano Cię. Nie udało się wrócić do aplikacji, bo jej adres powrotu nie jest zarejestrowany. Otwórz aplikację ponownie samodzielnie.',
+	error_invalidIdTokenHint:
+		'Wylogowano Cię. Nie udało się wrócić do aplikacji, bo nie udało się zweryfikować jej żądania wylogowania. Otwórz aplikację ponownie samodzielnie.',
+	error_idTokenHintRequired:
+		'Wylogowano Cię. Nie udało się wrócić do aplikacji, bo jej żądanie wylogowania było niekompletne. Otwórz aplikację ponownie samodzielnie.',
 	device_title: 'Weryfikacja urządzenia',
 	device_subtitle: 'Wprowadź kod pokazany na urządzeniu',
 	device_codeLabel: 'Kod weryfikacyjny',

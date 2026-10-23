@@ -121,6 +121,8 @@ export interface APIError {
 	error_code?: string;
 	error_id?: string;
 	error_details?: Record<string, unknown>;
+	/** Seconds until another attempt is allowed, on a rate-limit error. */
+	retry_after?: number;
 	webauthn_signal?: {
 		unknown_credential?: boolean;
 	};
@@ -688,9 +690,16 @@ function apiErrorFromDirectAuthError(error: unknown): APIError {
 			error.code === 'invalid_state' && /state is missing or expired/i.test(error.message)
 				? 'missing_pkce_state'
 				: (originalError ?? error.code);
+		// The seconds until another attempt, which rate-limit errors carry in error_details.
+		const errorDetails = error.details?.errorDetails;
+		const retryAfter =
+			errorDetails && typeof errorDetails === 'object'
+				? (errorDetails as { retry_after?: unknown }).retry_after
+				: undefined;
 		return {
 			error: code,
-			error_description: error.message
+			error_description: error.message,
+			...(typeof retryAfter === 'number' ? { retry_after: retryAfter } : {})
 		};
 	}
 	return {

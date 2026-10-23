@@ -83,8 +83,42 @@ const RESTORE_CALL_ROWS = 500;
 /** Most rows one write or verify page (one transition of one dataset) carries. */
 export const RESTORE_PAGE_ROWS_MAX = 2000;
 
+/**
+ * D1 round trips one restore transition may spend on work that grows with its rows and datasets:
+ * rows whose installed transform issues its own statements (`restoreTransform.statementsPerRow`;
+ * each such row counts as its write or read-back plus those statements), each dataset's count
+ * check, opening restore targets and reconciling generated rows. Rows of other datasets are
+ * bounded by the row limits alone.
+ *
+ * Each round trip waits for D1, about 75 ms from a location far from the database, and the
+ * scheduler never stops a transition midway: this keeps one transition short. (D1's documented
+ * 1,000 queries per invocation did not apply in a measured run, and one `batch()` call counted as
+ * one; the value is a tuning knob, not a platform limit.)
+ */
+export const RESTORE_STATEMENT_BUDGET = 500;
+
+/**
+ * Round trips of one call's own checks (authorization and liveness) or one dataset's count check
+ * (its count and foreign-key queries with their checks).
+ */
+export const RESTORE_DATASET_STATEMENTS = 12;
+
+/** Statements one row of `policy` costs against that budget; 0 when its transform issues none. */
+export function restoreRowStatements(policy: SqliteDatasetInspectionPolicy): number {
+  const issued = policy.restoreTransform?.statementsPerRow ?? 0;
+  if (!Number.isSafeInteger(issued) || issued < 0 || issued + 1 > RESTORE_STATEMENT_BUDGET)
+    invalid();
+  return issued ? issued + 1 : 0;
+}
+
+/** Rows of `policy` one transition may carry within the statement budget. */
+export function restoreStatementRows(policy: SqliteDatasetInspectionPolicy): number {
+  const statements = restoreRowStatements(policy);
+  return statements ? Math.floor(RESTORE_STATEMENT_BUDGET / statements) : Number.POSITIVE_INFINITY;
+}
+
 function restoreBatchRows(policy: SqliteDatasetInspectionPolicy): number {
-  return policy.restoreHold ? 250 : RESTORE_PAGE_ROWS_MAX;
+  return Math.min(policy.restoreHold ? 250 : RESTORE_PAGE_ROWS_MAX, restoreStatementRows(policy));
 }
 
 /** D1 queries one verify transition may spend on row read-back. */

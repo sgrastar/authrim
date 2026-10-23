@@ -131,7 +131,8 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.tokens.exchange_impersonation_enabled.desc':
 		'An app can obtain a token that acts as the person themselves. While this is off, apps in impersonation mode are refused token exchange. It has a large security impact: turn it on only where needed.',
 	'set.page.protection': 'Attack protection',
-	'set.page.protection.desc': 'Keeps sign-in and sign-up emails from being abused.',
+	'set.page.protection.desc':
+		'Keeps sign-in and sign-up emails and authenticator-app codes from being abused.',
 	'set.section.emailSending': 'Email sending limit',
 	'set.section.emailSending.desc':
 		'Limits how many times emails such as sign-in codes can be sent to the same recipient in a row, so they cannot be used to send spam.',
@@ -141,6 +142,15 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.rate_limit.email_window': 'Period the sends are counted in',
 	'set.k.rate_limit.email_window.desc':
 		'The period the number above is counted in (5 to 60 minutes). Once it passes, sending is allowed again.',
+	'set.section.totpAttempts': 'Authenticator app attempts',
+	'set.section.totpAttempts.desc':
+		'Limits how often someone can start signing in with an authenticator app, so the codes cannot be guessed by trying many times.',
+	'set.k.rate_limit.totp_max_requests': 'Attempts allowed per period',
+	'set.k.rate_limit.totp_max_requests.desc':
+		'How many authenticator-app sign-ins (and re-authentications) can be started for the same account name from the same network address, and how many codes a sign-up can check from it. Each start allows one code to be entered.',
+	'set.k.rate_limit.totp_window': 'Period the attempts are counted in',
+	'set.k.rate_limit.totp_window.desc':
+		'The period the number above is counted in (1 to 60 minutes). Once it passes, attempts are allowed again.',
 	'set.section.introspection': 'Token introspection',
 	'set.section.introspection.desc':
 		'The answer a Resource Server gets when it asks whether a token is valid.',

@@ -405,6 +405,14 @@ const en = {
 		'The authorization server is temporarily unable to handle the request',
 	error_login_required: 'Authentication required. Please sign in to continue.',
 	error_unknown: 'An unknown error occurred',
+	error_rateLimited: 'Too many attempts. Wait a while, then try again.',
+	error_rateLimitedRetryAfter: 'Too many attempts. Try again in about {minutes:number} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'You have been signed out. You could not be sent back to the app because its return address is not registered. Open the app again yourself.',
+	error_invalidIdTokenHint:
+		'You have been signed out. You could not be sent back to the app because its sign-out request could not be verified. Open the app again yourself.',
+	error_idTokenHintRequired:
+		'You have been signed out. You could not be sent back to the app because its sign-out request was incomplete. Open the app again yourself.',
 
 	device_title: 'Device verification',
 	device_subtitle: 'Enter the code shown on your device',

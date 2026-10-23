@@ -392,6 +392,14 @@ const translation = {
 	error_temporarily_unavailable: 'Yetkilendirme sunucusu isteği geçici olarak işleyemiyor.',
 	error_login_required: 'Doğrulama gereklidir. Lütfen devam etmek için giriş yapın.',
 	error_unknown: 'Bilinmeyen bir hata oluştu.',
+	error_rateLimited: 'Çok fazla deneme yapıldı. Bir süre bekleyip tekrar dene.',
+	error_rateLimitedRetryAfter: 'Çok fazla deneme yapıldı. Yaklaşık {minutes} dk sonra tekrar dene.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Oturumun kapatıldı. Uygulamanın dönüş adresi kayıtlı olmadığı için uygulamaya geri gönderilemedin. Uygulamayı kendin yeniden aç.',
+	error_invalidIdTokenHint:
+		'Oturumun kapatıldı. Uygulamanın oturum kapatma isteği doğrulanamadığı için uygulamaya geri gönderilemedin. Uygulamayı kendin yeniden aç.',
+	error_idTokenHintRequired:
+		'Oturumun kapatıldı. Uygulamanın oturum kapatma isteği eksik olduğu için uygulamaya geri gönderilemedin. Uygulamayı kendin yeniden aç.',
 	device_title: 'Cihaz doğrulama',
 	device_subtitle: 'Cihazınızda gösterilen kodu girin',
 	device_codeLabel: 'Doğrulama kodu',

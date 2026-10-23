@@ -392,6 +392,15 @@ const translation = {
 	error_temporarily_unavailable: 'Seva ya uidhinishaji haiwezi kushughulikia ombi kwa muda',
 	error_login_required: 'Uthibitishaji unahitajika. Tafadhali ingia ili kuendelea.',
 	error_unknown: 'Hitilafu isiyojulikana imetokea',
+	error_rateLimited: 'Majaribio mengi mno. Subiri kwa muda, kisha ujaribu tena.',
+	error_rateLimitedRetryAfter:
+		'Majaribio mengi mno. Jaribu tena baada ya takriban dakika {minutes}.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Umetoka. Haukuweza kurudishwa kwenye programu kwa sababu anwani yake ya kurudi haijasajiliwa. Fungua programu tena mwenyewe.',
+	error_invalidIdTokenHint:
+		'Umetoka. Haukuweza kurudishwa kwenye programu kwa sababu ombi lake la kutoka halikuweza kuthibitishwa. Fungua programu tena mwenyewe.',
+	error_idTokenHintRequired:
+		'Umetoka. Haukuweza kurudishwa kwenye programu kwa sababu ombi lake la kutoka halikuwa kamili. Fungua programu tena mwenyewe.',
 	device_title: 'uthibitisho wa kifaa',
 	device_subtitle: 'Ingiza nambari iliyoonyeshwa kwenye kifaa chako',
 	device_codeLabel: 'Nambari ya uthibitisho',
