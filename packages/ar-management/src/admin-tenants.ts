@@ -1824,15 +1824,60 @@ async function executeTenantLifecycleCommand(
       ]
     );
   } catch (error) {
-    // Unless the tenant moved again meanwhile. Should this fail too, the tenant stays as moved
-    // with no job: a restore validation is requested again from restore_validating, and any
-    // other command again from the state the tenant shows.
-    await adapter
+    // Unless the tenant moved again meanwhile.
+    const movedBack = await adapter
       .execute(
         'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ? AND updated_at = ?',
         [tenant.lifecycle_state, tenant.updated_at, id, nextState, nowTs]
       )
-      .catch(() => undefined);
+      .then(
+        (result) => result.rowsAffected > 0,
+        () => false
+      );
+    if (!movedBack) {
+      // Not moved back: the tenant stays as this command moved it, with no job (never more open
+      // than it was: only a validation job activates a tenant), or another command moved it
+      // since, or its state could not be read. Recorded as observed: a restore validation is
+      // requested again from restore_validating, any other command again from the state shown.
+      const current = await adapter
+        .queryOne<{
+          lifecycle_state: TenantLifecycleState;
+          updated_at: number;
+        }>('SELECT lifecycle_state, updated_at FROM tenants WHERE id = ?', [id])
+        .catch(() => null);
+      const moveStands = current?.lifecycle_state === nextState && current.updated_at === nowTs;
+      getLogger(c)
+        .module('ADMIN-TENANTS')
+        .error(
+          'Tenant lifecycle job not kept, and the tenant not moved back',
+          {
+            tenantId: id,
+            command,
+            sourceState: tenant.lifecycle_state,
+            nextState,
+            observedState: current?.lifecycle_state ?? null,
+          },
+          error as Error
+        );
+      // The cache follows only a state this command is known to have left; otherwise it is
+      // dropped, so the next request reads the tenant inventory.
+      await (
+        moveStands
+          ? syncTenantExistsCache(c.env.AUTHRIM_CONFIG, id, nextState)
+          : deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, id)
+      ).catch(() => undefined);
+      await createAuditLogFromContext(c, `tenant.lifecycle.${command}`, 'tenant', id, {
+        job_id: null,
+        job_kept: false,
+        move_stands: moveStands,
+        source_state: tenant.lifecycle_state,
+        target_state: nextState,
+        observed_state: current?.lifecycle_state ?? null,
+        reason: parsed.data.reason,
+        break_glass: parsed.data.break_glass,
+        idempotency_key: idempotencyKey,
+      }).catch(() => undefined);
+    }
     throw error;
   }
 

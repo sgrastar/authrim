@@ -1006,6 +1006,19 @@ function safeObjectKeySegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._=-]+/g, '_').slice(0, 160) || 'unknown';
 }
 
+/**
+ * The key prefixes under which a tenant database export job keeps its objects (manifest and
+ * tables): the manifest's key is built from the raw ids, the tables' from their safe segments.
+ */
+export function tenantBackupObjectKeyPrefixes(tenantId: string, jobId: string): string[] {
+  return [
+    ...new Set([
+      `exports/${tenantId}/tenant-backup/${jobId}/`,
+      `exports/${safeObjectKeySegment(tenantId)}/tenant-backup/${safeObjectKeySegment(jobId)}/`,
+    ]),
+  ];
+}
+
 function buildTenantTableObjectKey(
   job: AdminJobRow,
   plane: 'core' | 'pii',

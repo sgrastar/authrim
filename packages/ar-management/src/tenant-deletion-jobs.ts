@@ -1,6 +1,11 @@
 import type { ControlTenantDeletionInventory, DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { ensureDatabaseAdapter, listEnvironmentTenantDefaultStores } from '@authrim/ar-lib-core';
+import {
+  ensureDatabaseAdapter,
+  listEnvironmentTenantDefaultStores,
+  tombstoneObjectCatalogEntryForTenant,
+} from '@authrim/ar-lib-core';
 import { purgeTenantAuthoritativeShards } from './tenant-deletion-authoritative-purge';
+import { tenantBackupObjectKeyPrefixes } from './admin-job-executor';
 import { disableTenantLookupDirectory } from './tenant-deletion-lookup-cleanup';
 import { publishTenantRuntimeRegistryRouteState } from './tenant-runtime-registry-route-state';
 import { deleteTenantPublicAssets } from './r2-storage-maintenance';
@@ -419,6 +424,114 @@ async function deleteTenantAdminRows(
   }
 }
 
+/**
+ * The object catalog entries an export job's result names (its manifest and table artifacts),
+ * besides the job's own result artifact.
+ */
+function exportResultCatalogIds(result: string | null): string[] {
+  if (!result || result.length > 1_048_576) return [];
+  try {
+    const parsed = JSON.parse(result) as {
+      manifest?: { object_catalog_id?: unknown };
+      table_artifacts?: Array<{ object_catalog_id?: unknown }>;
+    };
+    return [
+      parsed.manifest?.object_catalog_id,
+      ...(Array.isArray(parsed.table_artifacts)
+        ? parsed.table_artifacts.map((artifact) => artifact?.object_catalog_id)
+        : []),
+    ].filter((id): id is string => typeof id === 'string' && id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The tenant's admin jobs kept in DB_ADMIN (those the scheduled runs claim) go with the tenant,
+ * as its jobs in its Core databases go with the authoritative purge: the artifacts they hold are
+ * tombstoned (the object cleanup removes the objects) or deleted, then the rows. The deletion's
+ * own jobs (its backup) stay, with their artifacts.
+ */
+export async function deleteTenantAdminJobs(
+  env: Env,
+  adminAdapter: DatabaseAdapter,
+  targetTenantId: string,
+  preserveJobIds: string[]
+): Promise<void> {
+  const keep = preserveJobIds.map(() => '?').join(', ');
+  const jobs = await adminAdapter.query<{
+    id: string;
+    job_type: string;
+    object_catalog_id: string | null;
+    result_r2_key: string | null;
+    result: string | null;
+  }>(
+    `SELECT id, job_type, object_catalog_id, result_r2_key,
+            CASE WHEN job_type = 'tenant-database/export' THEN result END AS result
+       FROM admin_jobs
+      WHERE tenant_id = ? AND id NOT IN (${keep})
+        AND (object_catalog_id IS NOT NULL OR result_r2_key IS NOT NULL
+             OR job_type = 'tenant-database/export')`,
+    [targetTenantId, ...preserveJobIds]
+  );
+  const objectKeys = jobs
+    .filter((job) => !job.object_catalog_id && job.result_r2_key)
+    .map((job) => job.result_r2_key as string);
+  // Its rows are what finds these objects: none is removed while an object cannot be.
+  const bucket = env.EXPORT_ARTIFACTS;
+  if (objectKeys.length > 0 && !bucket) {
+    throw new Error('tenant_deletion_artifact_storage_unavailable');
+  }
+  const catalogIds = new Set<string>();
+  /** The catalogs whose objects are under one of an export job's key prefixes. */
+  const exportCatalogIds = async (jobId: string) => {
+    const ids: string[] = [];
+    for (const prefix of tenantBackupObjectKeyPrefixes(targetTenantId, jobId)) {
+      const catalogs = await adminAdapter.query<{ catalog_id: string }>(
+        `SELECT DISTINCT oco.catalog_id
+           FROM object_catalog_objects oco
+           INNER JOIN object_catalog oc ON oc.id = oco.catalog_id
+          WHERE oc.tenant_id = ? AND substr(oco.object_key, 1, ?) = ?`,
+        [targetTenantId, prefix.length, prefix]
+      );
+      ids.push(...catalogs.map((catalog) => catalog.catalog_id));
+    }
+    return ids;
+  };
+  for (const job of jobs) {
+    if (job.object_catalog_id) catalogIds.add(job.object_catalog_id);
+    if (job.job_type !== 'tenant-database/export') continue;
+    // An export's manifest and tables: named in its result when kept inline, and found by their
+    // object keys (the job's own prefix, matched exactly) when its result is an artifact.
+    for (const id of exportResultCatalogIds(job.result)) catalogIds.add(id);
+    for (const id of await exportCatalogIds(job.id)) catalogIds.add(id);
+  }
+  // Never one of a preserved job's (the deletion's backup), whatever another job's names say.
+  if (catalogIds.size > 0) {
+    const preserved = await adminAdapter.query<{ object_catalog_id: string | null }>(
+      `SELECT object_catalog_id FROM admin_jobs WHERE tenant_id = ? AND id IN (${keep})`,
+      [targetTenantId, ...preserveJobIds]
+    );
+    for (const row of preserved) {
+      if (row.object_catalog_id) catalogIds.delete(row.object_catalog_id);
+    }
+    for (const jobId of preserveJobIds) {
+      for (const id of await exportCatalogIds(jobId)) catalogIds.delete(id);
+    }
+  }
+  const deletedAt = Date.now();
+  for (const catalogId of catalogIds) {
+    await tombstoneObjectCatalogEntryForTenant(adminAdapter, targetTenantId, catalogId, deletedAt);
+  }
+  for (const key of objectKeys) {
+    await bucket?.delete(key);
+  }
+  await adminAdapter.execute(`DELETE FROM admin_jobs WHERE tenant_id = ? AND id NOT IN (${keep})`, [
+    targetTenantId,
+    ...preserveJobIds,
+  ]);
+}
+
 async function suspendTenantAfterDeletionFailure(
   adapter: Pick<DatabaseAdapter, 'execute'>,
   targetTenantId: string | null
@@ -477,6 +590,7 @@ async function processPendingTenantDeletionJobsInStore(
       }
 
       if (!adminAdapter) throw new Error('tenant_deletion_control_unavailable');
+      const preserveJobIds = backup.backupJobId ? [job.id, backup.backupJobId] : [job.id];
       const inventory = await getTenantDeletionInventory(env, deletionTargetTenantId, job.id);
 
       if (inventory.state === 'finalized') {
@@ -486,6 +600,7 @@ async function processPendingTenantDeletionJobsInStore(
           operationId: job.id,
           actorId: job.id,
         });
+        await deleteTenantAdminJobs(env, adminAdapter, deletionTargetTenantId, preserveJobIds);
         await adminAdapter.transaction(async (tx) => {
           await deleteTenantAdminRows(tx, deletionTargetTenantId);
         });
@@ -543,7 +658,7 @@ async function processPendingTenantDeletionJobsInStore(
           env,
           inventory.tenantShards,
           deletionTargetTenantId,
-          backup.backupJobId ? [job.id, backup.backupJobId] : [job.id]
+          preserveJobIds
         );
         await finalizeTenantDeletionControlState(env, deletionTargetTenantId, job.id);
         await publishTenantRuntimeRegistryRouteState(env, {
@@ -558,6 +673,7 @@ async function processPendingTenantDeletionJobsInStore(
           job.id,
           'deleting'
         );
+        await deleteTenantAdminJobs(env, adminAdapter, deletionTargetTenantId, preserveJobIds);
         await adminAdapter.transaction(async (tx) => {
           await deleteTenantAdminRows(tx, deletionTargetTenantId);
         });
