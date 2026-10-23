@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Terlalu banyak percobaan. Tunggu sebentar, lalu coba lagi.',
+	error_rateLimitedRetryAfter: 'Terlalu banyak percobaan. Coba lagi dalam sekitar {minutes} menit.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Anda telah keluar. Anda tidak dapat dikembalikan ke aplikasi karena alamat kembalinya tidak terdaftar. Buka kembali aplikasi secara manual.',
+	error_invalidIdTokenHint:
+		'Anda telah keluar. Anda tidak dapat dikembalikan ke aplikasi karena permintaan keluarnya tidak dapat diverifikasi. Buka kembali aplikasi secara manual.',
+	error_idTokenHintRequired:
+		'Anda telah keluar. Anda tidak dapat dikembalikan ke aplikasi karena permintaan keluarnya tidak lengkap. Buka kembali aplikasi secara manual.',
 	common_logoAlt: 'Logo',
 	common_footerLinks: 'Tautan footer',
 	common_selectOption: 'Pilih opsi',

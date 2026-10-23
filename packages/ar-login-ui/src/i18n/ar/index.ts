@@ -374,6 +374,14 @@ const ar = createTranslation({
 	error_temporarily_unavailable: 'يتعذّر على خادم التفويض معالجة الطلب مؤقتًا',
 	error_login_required: 'المصادقة مطلوبة. سجّل الدخول للمتابعة.',
 	error_unknown: 'حدث خطأ غير معروف',
+	error_rateLimited: 'محاولات كثيرة جدًا. انتظر قليلًا ثم حاول مرة أخرى.',
+	error_rateLimitedRetryAfter: 'محاولات كثيرة جدًا. حاول مرة أخرى بعد نحو {minutes} دقيقة.',
+	error_unregisteredPostLogoutRedirectUri:
+		'تم تسجيل خروجك. تعذّرت إعادتك إلى التطبيق لأن عنوان العودة الخاص به غير مسجّل. افتح التطبيق بنفسك مرة أخرى.',
+	error_invalidIdTokenHint:
+		'تم تسجيل خروجك. تعذّرت إعادتك إلى التطبيق لأنه تعذّر التحقق من طلب تسجيل الخروج الخاص به. افتح التطبيق بنفسك مرة أخرى.',
+	error_idTokenHintRequired:
+		'تم تسجيل خروجك. تعذّرت إعادتك إلى التطبيق لأن طلب تسجيل الخروج الخاص به كان ناقصًا. افتح التطبيق بنفسك مرة أخرى.',
 	device_title: 'التحقق من الجهاز',
 	device_subtitle: 'أدخل الرمز الظاهر على جهازك',
 	device_codeLabel: 'رمز التحقق',

@@ -24,6 +24,59 @@ describe('LoginUI TOTP API adapter', () => {
 		sessionStorage.clear();
 	});
 
+	it('keeps the seconds a rate-limited TOTP start can be retried after', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					error: 'slow_down',
+					error_description: 'Rate limit exceeded. Please retry after 840 seconds.',
+					error_code: 'AR110001',
+					retry_after: 840,
+					error_details: { retry_after: 840 }
+				}),
+				{ status: 429, headers: { 'Content-Type': 'application/json' } }
+			)
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { totpAPI } = await loadClient();
+		const { messageForApiError } = await import('$lib/errors/sdk-error-mapper');
+
+		const { error } = await totpAPI.startLogin({ identifier: 'person@example.com' });
+
+		expect(error).toMatchObject({ error: 'slow_down', retry_after: 840 });
+		expect(
+			messageForApiError(error, {
+				unknown: () => 'unknown',
+				invalidRequest: () => 'invalid request',
+				accessDenied: () => 'access denied',
+				unauthorizedClient: () => 'unauthorized client',
+				unsupportedResponseType: () => 'unsupported response type',
+				invalidScope: () => 'invalid scope',
+				serverError: () => 'server error',
+				temporarilyUnavailable: () => 'temporarily unavailable',
+				loginRequired: () => 'login required',
+				emailCodeInvalid: () => 'invalid code',
+				rateLimited: (minutes) => `wait ${minutes} min`
+			})
+		).toBe('wait 14 min');
+	});
+
+	it('leaves the wait out when a rate-limited response does not say how long', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+			new Response(JSON.stringify({ error: 'slow_down', error_description: 'Too many' }), {
+				status: 429,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { totpAPI } = await loadClient();
+
+		const { error } = await totpAPI.activateSignup({ challengeId: 'c', code: '123456' });
+
+		expect(error?.error).toBe('slow_down');
+		expect(error?.retry_after).toBeUndefined();
+	});
+
 	it('uses TOTP login endpoints and preserves authorization continuation flags', async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()

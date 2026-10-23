@@ -1185,6 +1185,32 @@ export function formatRateLimitProfileOverride(
 }
 
 /**
+ * The loadTest profile's limits while that profile is in force (RATE_LIMIT_PROFILE, or a loadTest
+ * override that has not expired), else null; also null when they cannot be read. For limits kept
+ * outside the profiles (per identifier, such as authenticator-app sign-in starts) that, while a
+ * load test or conformance run runs, count the requests past their own limit against these
+ * instead. Read only after such a limit denies, so allowed requests never wait on it.
+ */
+export async function readLoadTestRateLimitConfig(env: Env): Promise<RateLimitConfig | null> {
+  try {
+    // When the override stops applying (null: RATE_LIMIT_PROFILE, which does not expire).
+    let expiresAt: number | null = null;
+    if (env.RATE_LIMIT_PROFILE !== 'loadTest') {
+      const override = env.AUTHRIM_CONFIG
+        ? parseRateLimitProfileOverride(await env.AUTHRIM_CONFIG.get(PROFILE_OVERRIDE_KV_KEY))
+        : null;
+      if (override?.profile !== 'loadTest') return null;
+      expiresAt = override.expiresAt;
+    }
+    const config = await readRateLimitProfileConfig(env, 'loadTest');
+    // An override that expired while its limits were read no longer applies.
+    return expiresAt === null || Date.now() < expiresAt ? config : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Get rate limit profile with KV override support (async version)
  *
  * Runtime priority:

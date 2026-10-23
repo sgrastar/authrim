@@ -2,7 +2,9 @@
  * Sign-in limits a tenant can set: how many failed password attempts lock an account for a while
  * (`rate_limit.auth_max_failed_attempts`, platform or tenant), how long an emailed sign-in code
  * lasts (`credentials.email_code_ttl`, tenant) and how often one address (or user) can be sent
- * an emailed code (`rate_limit.email_max_requests` per `rate_limit.email_window`).
+ * an emailed code (`rate_limit.email_max_requests` per `rate_limit.email_window`), and how many
+ * authenticator-app sign-in starts and sign-up code checks are allowed
+ * (`rate_limit.totp_max_requests` per `rate_limit.totp_window`).
  *
  * A value outside the setting's range is not used. When the settings cannot be read, the limits
  * keep their defaults, which are the values these paths always used, so an outage of the settings
@@ -48,10 +50,44 @@ export async function resolveEmailCodeTtlSeconds(
   }
 }
 
-/** How many emailed codes one address (or user) can be sent, and in how long a window. */
-export interface EmailSendLimit {
+/** How many requests a limit allows, and in how long a window. */
+export interface RequestLimit {
   maxRequests: number;
   windowSeconds: number;
+}
+
+/** How many emailed codes one address (or user) can be sent, and in how long a window. */
+export type EmailSendLimit = RequestLimit;
+
+/**
+ * A limit stored as a pair of rate-limit settings. Each value that is out of range, or unreadable,
+ * keeps its default.
+ */
+async function resolveRequestLimit(
+  env: EffectiveSettingsEnv,
+  tenantId: string,
+  maxRequestsKey: keyof typeof RATE_LIMIT_DEFAULTS,
+  windowKey: keyof typeof RATE_LIMIT_DEFAULTS
+): Promise<RequestLimit> {
+  const fallback: RequestLimit = {
+    maxRequests: RATE_LIMIT_DEFAULTS[maxRequestsKey],
+    windowSeconds: RATE_LIMIT_DEFAULTS[windowKey],
+  };
+  try {
+    const values = await resolveEffectiveSettings(env, 'rate-limit', { tenantId });
+    const maxRequests = values[maxRequestsKey];
+    const windowSeconds = values[windowKey];
+    return {
+      maxRequests: withinRange(maxRequests, RATE_LIMIT_SETTINGS_META[maxRequestsKey])
+        ? maxRequests
+        : fallback.maxRequests,
+      windowSeconds: withinRange(windowSeconds, RATE_LIMIT_SETTINGS_META[windowKey])
+        ? windowSeconds
+        : fallback.windowSeconds,
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -64,26 +100,28 @@ export async function resolveEmailSendLimit(
   env: EffectiveSettingsEnv,
   tenantId: string
 ): Promise<EmailSendLimit> {
-  const fallback: EmailSendLimit = {
-    maxRequests: RATE_LIMIT_DEFAULTS['rate_limit.email_max_requests'],
-    windowSeconds: RATE_LIMIT_DEFAULTS['rate_limit.email_window'],
-  };
-  try {
-    const values = await resolveEffectiveSettings(env, 'rate-limit', { tenantId });
-    const maxRequests = values['rate_limit.email_max_requests'];
-    const windowSeconds = values['rate_limit.email_window'];
-    return {
-      maxRequests: withinRange(
-        maxRequests,
-        RATE_LIMIT_SETTINGS_META['rate_limit.email_max_requests']
-      )
-        ? maxRequests
-        : fallback.maxRequests,
-      windowSeconds: withinRange(windowSeconds, RATE_LIMIT_SETTINGS_META['rate_limit.email_window'])
-        ? windowSeconds
-        : fallback.windowSeconds,
-    };
-  } catch {
-    return fallback;
-  }
+  return resolveRequestLimit(
+    env,
+    tenantId,
+    'rate_limit.email_max_requests',
+    'rate_limit.email_window'
+  );
+}
+
+/**
+ * The authenticator-app (TOTP) attempt limit (`rate_limit.totp_max_requests` per
+ * `rate_limit.totp_window`): sign-in and re-authentication starts per identifier and IP address,
+ * and sign-up code checks per sign-up and IP address. Each value that is out of range, or
+ * unreadable, keeps its default (10 per 15 minutes).
+ */
+export async function resolveTotpAttemptLimit(
+  env: EffectiveSettingsEnv,
+  tenantId: string
+): Promise<RequestLimit> {
+  return resolveRequestLimit(
+    env,
+    tenantId,
+    'rate_limit.totp_max_requests',
+    'rate_limit.totp_window'
+  );
 }

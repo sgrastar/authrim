@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+	error_rateLimitedRetryAfter: 'Muitas tentativas. Tente novamente em cerca de {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Você saiu da sua conta. Não foi possível voltar ao aplicativo porque o endereço de retorno dele não está registrado. Abra o aplicativo novamente.',
+	error_invalidIdTokenHint:
+		'Você saiu da sua conta. Não foi possível voltar ao aplicativo porque a solicitação de saída dele não pôde ser verificada. Abra o aplicativo novamente.',
+	error_idTokenHintRequired:
+		'Você saiu da sua conta. Não foi possível voltar ao aplicativo porque a solicitação de saída dele estava incompleta. Abra o aplicativo novamente.',
 	common_logoAlt: 'Logotipo',
 	common_footerLinks: 'Links do rodapé',
 	common_selectOption: 'Selecione uma opção',

@@ -366,6 +366,156 @@ describe('TOTP login handlers', () => {
     });
 
     it.each([
+      [
+        'the tenant setting',
+        { 'rate_limit.totp_max_requests': 40, 'rate_limit.totp_window': 1800 },
+        { windowSeconds: 1800, maxRequests: 40 },
+      ],
+      ['its default where none is set', null, { windowSeconds: 15 * 60, maxRequests: 10 }],
+      [
+        'its default for values out of range',
+        { 'rate_limit.totp_max_requests': 5000, 'rate_limit.totp_window': 30 },
+        { windowSeconds: 15 * 60, maxRequests: 10 },
+      ],
+    ])('limits login starts by %s', async (_label, saved, limit) => {
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        createEnv({
+          ...enabledSettings,
+          ...(saved ? { 'settings:tenant:default:rate-limit': saved } : {}),
+        }),
+        true
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockRateLimiter.incrementRpc).toHaveBeenCalledTimes(1);
+      expect(mockRateLimiter.incrementRpc).toHaveBeenCalledWith(
+        expect.stringMatching(/^start:[0-9a-f]{64}:[0-9a-f]{64}$/),
+        limit
+      );
+    });
+
+    it('tells the client when it can start again', async () => {
+      mockRateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 42 });
+
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBe(429);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'slow_down',
+        error_code: 'AR110001',
+        retry_after: 42,
+        error_details: { retry_after: 42 },
+      });
+    });
+
+    it('counts starts past the limit against the loadTest limit and window while it is in force', async () => {
+      // The rate limiter's counting: a window starts with its first request and lasts its
+      // windowSeconds; later requests in it only add to the count.
+      const records = new Map<string, { count: number; resetAt: number }>();
+      mockRateLimiter.incrementRpc.mockImplementation(
+        async (key: string, config: { windowSeconds: number; maxRequests: number }) => {
+          const now = Math.floor(Date.now() / 1000);
+          let record = records.get(key);
+          if (!record || now >= record.resetAt) {
+            record = { count: 0, resetAt: now + config.windowSeconds };
+          }
+          record.count++;
+          records.set(key, record);
+          const allowed = record.count <= config.maxRequests;
+          return { allowed, retryAfter: allowed ? 0 : record.resetAt - now };
+        }
+      );
+      const env = createEnv({
+        ...enabledSettings,
+        'settings:platform:rate-limit': { 'rate_limit.loadtest': 15 },
+      });
+      (env as { AUTHRIM_CONFIG?: unknown }).AUTHRIM_CONFIG = {
+        get: vi.fn(async (key: string) =>
+          key === 'rate_limit_profile_override'
+            ? JSON.stringify({ profile: 'loadTest', expires_at: Date.now() + 30 * 60 * 1000 })
+            : null
+        ),
+      };
+      const start = () =>
+        post('/api/auth/totp/login/start', { identifier: 'person@example.com' }, env, true);
+
+      // 10 within the tenant limit, then 15 more within the loadTest limit (15 per 60 s).
+      for (let i = 0; i < 25; i++) {
+        expect((await start()).status, `start ${i + 1}`).toBe(200);
+      }
+      const denied = await start();
+      expect(denied.status).toBe(429);
+      await expect(denied.json()).resolves.toMatchObject({ retry_after: expect.any(Number) });
+      expect(mockRateLimiter.incrementRpc).toHaveBeenLastCalledWith(
+        expect.stringMatching(/^loadtest:start:[0-9a-f]{64}:[0-9a-f]{64}$/),
+        { windowSeconds: 60, maxRequests: 15 }
+      );
+
+      // The loadTest window, not the 15-minute one, decides when starts are allowed again.
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect((await start()).status).toBe(200);
+    });
+
+    it('tells the earlier of the two windows when both limits deny', async () => {
+      mockRateLimiter.incrementRpc
+        .mockResolvedValueOnce({ allowed: false, retryAfter: 50 })
+        .mockResolvedValueOnce({ allowed: false, retryAfter: 3500 });
+      const env = createEnv(enabledSettings);
+      (env as { AUTHRIM_CONFIG?: unknown }).AUTHRIM_CONFIG = {
+        get: vi.fn(async (key: string) =>
+          key === 'rate_limit_profile_override'
+            ? JSON.stringify({ profile: 'loadTest', expires_at: Date.now() + 30 * 60 * 1000 })
+            : null
+        ),
+      };
+
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        env,
+        true
+      );
+
+      expect(response.status).toBe(429);
+      await expect(response.json()).resolves.toMatchObject({
+        retry_after: 50,
+        error_details: { retry_after: 50 },
+      });
+    });
+
+    it.each([
+      ['no override', null],
+      ['another profile', 'lenient'],
+      ['an expired loadTest override', JSON.stringify({ profile: 'loadTest', expires_at: 1 })],
+    ])('keeps the limit with %s', async (_label, override) => {
+      mockRateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 600 });
+      const env = createEnv(enabledSettings);
+      (env as { AUTHRIM_CONFIG?: unknown }).AUTHRIM_CONFIG = {
+        get: vi.fn(async (key: string) =>
+          key === 'rate_limit_profile_override' ? override : null
+        ),
+      };
+
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        env,
+        true
+      );
+
+      expect(response.status).toBe(429);
+      expect(mockRateLimiter.incrementRpc).toHaveBeenCalledTimes(1);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
       [{}, 'missing challenge and code'],
       [{ challenge_id: 'challenge' }, 'missing code'],
       [{ challenge_id: 'challenge', code: '12ab56' }, 'non-numeric code'],
@@ -997,6 +1147,36 @@ describe('TOTP login handlers', () => {
     expect(response.status).toBe(429);
     expect(mockChallengeStore.getChallengeRpc).not.toHaveBeenCalled();
     expect(mockTotpRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('limits TOTP signup activation attempts by the tenant setting', async () => {
+    const app = createApp();
+    mockRateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 120 });
+
+    const response = await app.request(
+      '/api/auth/totp/signup/activate',
+      {
+        method: 'POST',
+        body: JSON.stringify({ challenge_id: 'signup-challenge', code: '123456' }),
+        headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.10' },
+      },
+      createEnv({
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.totp.signup_enabled': true,
+        },
+        'settings:tenant:default:rate-limit': {
+          'rate_limit.totp_max_requests': 3,
+          'rate_limit.totp_window': 300,
+        },
+      }),
+      { waitUntil: vi.fn() } as unknown as ExecutionContext
+    );
+
+    expect(response.status).toBe(429);
+    expect(mockRateLimiter.incrementRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^signup-activate:/),
+      { windowSeconds: 300, maxRequests: 3 }
+    );
   });
 
   it('refuses, at activation, an address deleted after the sign-up started', async () => {

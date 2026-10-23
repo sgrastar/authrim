@@ -16,7 +16,7 @@
 			docs: {
 				description: {
 					component:
-						'Authentication → Attack protection: how often an emailed code (sign-in, sign-up, re-authentication, directory migration) can be sent to the same address within a period. Built from the Settings API `rate-limit` settings by its placement (`PROTECTION` in `settings/placement.ts`). The failed sign-in lockout, bot protection and API rate limits move here as they are built.'
+						'Authentication → Attack protection: how often an emailed code (sign-in, sign-up, re-authentication, directory migration) can be sent to the same address within a period, and how often an authenticator-app sign-in can be started for the same account name and network address. Built from the Settings API `rate-limit` settings by its placement (`PROTECTION` in `settings/placement.ts`). The failed sign-in lockout, bot protection and API rate limits move here as they are built.'
 				}
 			}
 		}
@@ -38,6 +38,8 @@
 		const canvas = within(canvasElement);
 		await canvas.findAllByText(label('rate_limit.email_max_requests'));
 		await canvas.findAllByText(label('rate_limit.email_window'));
+		await canvas.findAllByText(label('rate_limit.totp_max_requests'));
+		await canvas.findAllByText(label('rate_limit.totp_window'));
 	}}
 >
 	{#snippet template()}

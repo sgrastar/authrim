@@ -355,6 +355,22 @@
 </Story>
 
 <Story
+	name="Too many authenticator app attempts"
+	args={{
+		methods: { totp: true, any: true },
+		alerts: { error: get(LL).error_rateLimitedRetryAfter({ minutes: 15 }) }
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			await canvas.findByText(get(LL).error_rateLimitedRetryAfter({ minutes: 15 }))
+		).toBeVisible();
+	}}
+>
+	{#snippet template(args)}{@render page(args)}{/snippet}
+</Story>
+
+<Story
 	name="Waiting on a passkey and an email code"
 	args={{
 		alerts: {
