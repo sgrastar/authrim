@@ -5,6 +5,7 @@ import {
   getSupportOpsResource,
   listSupportOpsResources,
   validateSupportOpsAction,
+  SUPPORT_OPS_ACCOUNT_METADATA_SQL,
 } from '../support-ops';
 
 describe('support operations registry and selector compiler', () => {
@@ -31,7 +32,10 @@ describe('support operations registry and selector compiler', () => {
       ],
     });
 
-    expect(compiled.whereSql).toContain("json_extract(metadata_json, '$.status') = ?");
+    expect(compiled.whereSql).toContain(
+      `COALESCE(CASE WHEN json_type(${SUPPORT_OPS_ACCOUNT_METADATA_SQL}, '$.status') = 'text'`
+    );
+    expect(compiled.whereSql).toContain('END, lifecycle_state) = ?');
     expect(compiled.whereSql).toContain('EXISTS (SELECT 1 FROM contact_points');
     expect(compiled.whereSql).toContain('= ?)');
     expect(compiled.params).toEqual(['active', 1]);
@@ -43,15 +47,13 @@ describe('support operations registry and selector compiler', () => {
     expect(user).toBeTruthy();
 
     const compiled = await compileSupportOpsSelector(user!, {
-      field: 'last_login_at',
+      field: 'created_at',
       op: 'lt',
       value: '2026-01-01T00:00:00.000Z',
     });
 
-    expect(compiled.whereSql).toContain(
-      'CASE WHEN last_login_at > 0 AND last_login_at < 100000000000'
-    );
-    expect(compiled.whereSql).toContain('last_login_at * 1000');
+    expect(compiled.whereSql).toContain('CASE WHEN created_at > 0 AND created_at < 100000000000');
+    expect(compiled.whereSql).toContain('created_at * 1000');
     expect(compiled.params).toEqual([1767225600000]);
   });
 

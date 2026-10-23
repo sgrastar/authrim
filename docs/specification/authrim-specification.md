@@ -1204,17 +1204,18 @@ MVP resource registry:
 
 User fields:
 
-| Field             | Filterable | Aggregatable | Sensitive | Notes                                                            |
-| ----------------- | ---------- | ------------ | --------- | ---------------------------------------------------------------- |
-| `status`          | Yes        | Yes          | No        | Enum: `active`, `suspended`, `locked`.                           |
-| `lifecycle_state` | Yes        | Yes          | No        | Enum lifecycle stage.                                            |
-| `email_verified`  | Yes        | Yes          | No        | Boolean.                                                         |
-| `pii_status`      | Yes        | Yes          | No        | PII write/delete state, not raw PII.                             |
-| `user_type`       | Yes        | Yes          | No        | Enum: `end_user`, `admin`, `m2m`.                                |
-| `created_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `updated_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `last_login_at`   | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `email`           | No         | No           | Yes       | Reserved as sensitive and not selectable.                        |
+| Field             | Filterable | Aggregatable | Sensitive | Notes                                                                                            |
+| ----------------- | ---------- | ------------ | --------- | ------------------------------------------------------------------------------------------------ |
+| `status`          | Yes        | No           | No        | Enum: `active`, `suspended`, `locked`. The status the account records, else its lifecycle state. |
+| `lifecycle_state` | Yes        | Yes          | No        | Enum lifecycle stage.                                                                            |
+| `email_verified`  | Yes        | No           | No        | Boolean.                                                                                         |
+| `user_type`       | Yes        | Yes          | No        | Enum: `user`, `admin`, `service_account`.                                                        |
+| `created_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds.                                 |
+| `updated_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds.                                 |
+| `email`           | No         | No           | Yes       | Reserved as sensitive and not selectable.                                                        |
+
+Fields are answered from the account's Core store only. PII state (held by the PII store) and the
+last sign-in (held by each account's session state) are not selectable.
 
 Selector shape:
 
