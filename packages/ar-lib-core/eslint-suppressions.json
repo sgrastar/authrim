@@ -76,6 +76,11 @@
       "count": 1
     }
   },
+  "src/durable-objects/KeyManager.ts": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
   "src/durable-objects/SAMLRequestStore.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
