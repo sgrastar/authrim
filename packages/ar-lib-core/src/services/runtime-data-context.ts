@@ -88,14 +88,18 @@ export interface OtpAccountCoreDataContext extends AccountCoreDataContext {
   user: CanonicalOtpLoginUser;
 }
 
-interface AccountRouteResolutionBase {
+/** An account's Lookup membership resolved to its Core destination only. */
+interface AccountCoreRouteResolutionBase {
   resolver: LookupRouteResolver;
   membership: ResolvedLookupMembership;
   accountId: string;
   observedBindingRouteGenerations: Readonly<Record<string, number>>;
   coreResidency: string;
-  piiResidency: string;
   coreRoute: ResolvedTenantDatabaseSource;
+}
+
+interface AccountRouteResolutionBase extends AccountCoreRouteResolutionBase {
+  piiResidency: string;
   piiRoute: ResolvedTenantDatabaseSource;
 }
 
@@ -192,16 +196,18 @@ async function verifyShardMetadata(
   );
 }
 
-async function resolveAccountRouteBaseByIdentifier(
-  env: Env,
-  input: {
-    tenantId: string;
-    indexKind: LookupIdentifierKind;
-    identifier: string | { issuer: string; subject: string };
-    expectedAccountId?: string;
-    nowMs?: number;
-  }
-): Promise<AccountRouteResolutionBase> {
+type AccountRouteIdentifierInput = {
+  tenantId: string;
+  indexKind: LookupIdentifierKind;
+  identifier: string | { issuer: string; subject: string };
+  expectedAccountId?: string;
+  nowMs?: number;
+};
+
+type RouteTarget = ResolvedLookupMembership['routeProjection']['targets'][number];
+
+/** The tenant's one Lookup membership for the identifier, with the generations it observed. */
+async function resolveAccountMembershipByIdentifier(env: Env, input: AccountRouteIdentifierInput) {
   if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
   const now = input.nowMs ?? Date.now();
   const runtime = requiredEnvironment(env);
@@ -228,63 +234,90 @@ async function resolveAccountRouteBaseByIdentifier(
     );
   }
   const membership = memberships[0];
-  const accountId = membership.accountId;
   const observedBindingRouteGenerations = Object.fromEntries(
     membership.routeProjection.targets.map((target) => [
       target.bindingRef,
       target.requiredBindingRouteGeneration,
     ])
   );
-  const coreResidency = membership.routeProjection.targets.find(
-    (target) => target.dataRole === 'tenant_core/users'
+  return { resolver, membership, accountId: membership.accountId, observedBindingRouteGenerations };
+}
+
+/** The route's target for a data role: the first residency the route names for it. */
+function routeTargetFor(
+  membership: ResolvedLookupMembership,
+  dataRole: 'tenant_core/users' | 'tenant_pii'
+): RouteTarget | null {
+  const residency = membership.routeProjection.targets.find(
+    (target) => target.dataRole === dataRole
   )?.residencyPartition;
-  const piiResidency = membership.routeProjection.targets.find(
-    (target) => target.dataRole === 'tenant_pii'
-  )?.residencyPartition;
-  if (!coreResidency || !piiResidency) throw new Error('account_data_route_incomplete');
-  const coreTarget = membership.routeProjection.targets.find(
-    (target) =>
-      target.dataRole === 'tenant_core/users' && target.residencyPartition === coreResidency
+  if (!residency) return null;
+  return (
+    membership.routeProjection.targets.find(
+      (target) => target.dataRole === dataRole && target.residencyPartition === residency
+    ) ?? null
   );
-  const piiTarget = membership.routeProjection.targets.find(
-    (target) => target.dataRole === 'tenant_pii' && target.residencyPartition === piiResidency
-  );
+}
+
+function resolveRouteTargetSource(
+  env: Env,
+  tenantId: string,
+  role: 'tenant_core' | 'tenant_pii',
+  target: RouteTarget
+) {
+  return resolveTenantDatabaseSourceFromRegistry(env, {
+    tenantId,
+    role,
+    dataRole: target.dataRole as 'tenant_core/users' | 'tenant_pii',
+    residencyPartition: target.residencyPartition,
+    shardId: target.shardId,
+    bindingRef: target.bindingRef,
+    requiredBindingRouteGeneration: target.requiredBindingRouteGeneration,
+  });
+}
+
+/**
+ * The account's route to its Core destination alone. The route must still be complete (name a
+ * PII destination too), but that destination's binding is not resolved, so a Core-only reader
+ * never reaches the PII store.
+ */
+async function resolveAccountCoreRouteBaseByIdentifier(
+  env: Env,
+  input: AccountRouteIdentifierInput
+): Promise<AccountCoreRouteResolutionBase> {
+  const base = await resolveAccountMembershipByIdentifier(env, input);
+  const coreTarget = routeTargetFor(base.membership, 'tenant_core/users');
+  if (!coreTarget || !routeTargetFor(base.membership, 'tenant_pii')) {
+    throw new Error('account_data_route_incomplete');
+  }
+  const coreRoute = await resolveRouteTargetSource(env, input.tenantId, 'tenant_core', coreTarget);
+  return { ...base, coreResidency: coreTarget.residencyPartition, coreRoute };
+}
+
+async function resolveAccountRouteBaseByIdentifier(
+  env: Env,
+  input: AccountRouteIdentifierInput
+): Promise<AccountRouteResolutionBase> {
+  const base = await resolveAccountMembershipByIdentifier(env, input);
+  const coreTarget = routeTargetFor(base.membership, 'tenant_core/users');
+  const piiTarget = routeTargetFor(base.membership, 'tenant_pii');
   if (!coreTarget || !piiTarget) throw new Error('account_data_route_incomplete');
   const [coreRoute, piiRoute] = await Promise.all([
-    resolveTenantDatabaseSourceFromRegistry(env, {
-      tenantId: input.tenantId,
-      role: 'tenant_core',
-      dataRole: 'tenant_core/users',
-      residencyPartition: coreTarget.residencyPartition,
-      shardId: coreTarget.shardId,
-      bindingRef: coreTarget.bindingRef,
-      requiredBindingRouteGeneration: coreTarget.requiredBindingRouteGeneration,
-    }),
-    resolveTenantDatabaseSourceFromRegistry(env, {
-      tenantId: input.tenantId,
-      role: 'tenant_pii',
-      dataRole: 'tenant_pii',
-      residencyPartition: piiTarget.residencyPartition,
-      shardId: piiTarget.shardId,
-      bindingRef: piiTarget.bindingRef,
-      requiredBindingRouteGeneration: piiTarget.requiredBindingRouteGeneration,
-    }),
+    resolveRouteTargetSource(env, input.tenantId, 'tenant_core', coreTarget),
+    resolveRouteTargetSource(env, input.tenantId, 'tenant_pii', piiTarget),
   ]);
 
   return {
-    resolver,
-    membership,
-    accountId,
-    observedBindingRouteGenerations,
-    coreResidency,
-    piiResidency,
+    ...base,
+    coreResidency: coreTarget.residencyPartition,
+    piiResidency: piiTarget.residencyPartition,
     coreRoute,
     piiRoute,
   };
 }
 
 async function resolveCoreAccountDestination(
-  base: AccountRouteResolutionBase,
+  base: AccountCoreRouteResolutionBase,
   tenantId: string,
   options: { otpTrustedEmail?: string } = {}
 ): Promise<{
@@ -518,7 +551,7 @@ export async function resolveAccountCoreDataContext(
   input: { tenantId: string; accountId: string; nowMs?: number }
 ): Promise<AccountCoreDataContext> {
   const accountId = normalizeAccountId(input.accountId);
-  const base = await resolveAccountRouteBaseByIdentifier(env, {
+  const base = await resolveAccountCoreRouteBaseByIdentifier(env, {
     tenantId: input.tenantId,
     indexKind: 'account_id',
     identifier: accountId,

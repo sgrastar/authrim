@@ -656,6 +656,10 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 		description: 'Manage application end users',
 		permissions: [
 			{ key: 'admin:users:read', description: 'View end users' },
+			{
+				key: 'admin:users:status:read',
+				description: 'View end-user account status without personal data'
+			},
 			{ key: 'admin:users:write', description: 'Create and update end users' },
 			{ key: 'admin:users:delete', description: 'Delete end users' },
 			{ key: 'admin:users:unlock', description: 'Unlock locked user accounts' },

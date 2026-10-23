@@ -35,6 +35,7 @@ function createHarness(permissions: string[], roles: string[] = []) {
   registerDeclaredAdminRouteAccessMiddleware(app);
 
   app.get('/api/admin/users', (c) => c.json({ ok: true }));
+  app.get('/api/admin/investigations/subjects/subject-1/status', (c) => c.json({ ok: true }));
   app.get('/api/admin/email-deliveries', (c) => c.json({ ok: true }));
   app.get('/api/admin/users/user-1/email-deliveries', (c) => c.json({ ok: true }));
   app.get('/api/admin/users/user-1/support-context', (c) => c.json({ ok: true }));
@@ -257,6 +258,25 @@ describe('declared admin route access', () => {
       expect((await reader.request(write, { method: 'POST' })).status, write).toBe(403);
       expect((await writer.request(write, { method: 'POST' })).status, write).toBe(200);
     }
+  });
+
+  it('gates the status-only investigation read on the status permission, which users:read includes', async () => {
+    const path = '/api/admin/investigations/subjects/subject-1/status';
+    expect(findAdminRouteAccessRule('GET', path)?.permissions).toEqual([
+      ADMIN_PERMISSIONS.USERS_STATUS_READ,
+    ]);
+    expect(findAdminRouteAccessRule('POST', path)).toBeNull();
+
+    const statusReader = createHarness([ADMIN_PERMISSIONS.USERS_STATUS_READ]);
+    const userReader = createHarness([ADMIN_PERMISSIONS.USERS_READ]);
+    const userWriter = createHarness([ADMIN_PERMISSIONS.USERS_WRITE]);
+    const sessionReader = createHarness([ADMIN_PERMISSIONS.SESSIONS_READ]);
+    expect((await statusReader.request(path)).status).toBe(200);
+    expect((await userReader.request(path)).status).toBe(200);
+    expect((await userWriter.request(path)).status).toBe(403);
+    expect((await sessionReader.request(path)).status).toBe(403);
+    // The status permission opens no user route that returns personal data.
+    expect((await statusReader.request('/api/admin/users')).status).toBe(403);
   });
 
   it('uses the dedicated Agent settings permission ahead of the generic settings wildcard', async () => {

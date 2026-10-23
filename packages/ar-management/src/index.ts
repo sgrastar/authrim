@@ -408,6 +408,7 @@ import {
   adminUserActivityLogHandler,
   adminUserSendEmailHandler,
 } from './admin';
+import { adminInvestigationSubjectStatusHandler } from './admin-investigations';
 import scimApp from './scim';
 import {
   adminScimTokensListHandler,
@@ -1559,6 +1560,10 @@ app.post('/api/admin/assets/login-ui', adminPublicAssetUploadHandler);
 app.get('/api/admin/users', adminUsersListHandler);
 app.get('/api/admin/users/operations/:operationId', adminUserCreationOperationHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);
+app.get(
+  '/api/admin/investigations/subjects/:handle/status',
+  adminInvestigationSubjectStatusHandler
+);
 app.get('/api/admin/users/:id/support-context', adminAccountSupportContextGetHandler);
 app.put('/api/admin/users/:id/support-context', adminAccountSupportContextPutHandler);
 app.get('/api/admin/users/:id/legal-holds', adminAccountLegalHoldsListHandler);

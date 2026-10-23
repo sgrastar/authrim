@@ -910,6 +910,10 @@ adminRolesRouter.get('/permissions/list', async (c) => {
     { key: ADMIN_PERMISSIONS.IP_ALLOWLIST_READ, description: 'View IP allowlist' },
     { key: ADMIN_PERMISSIONS.IP_ALLOWLIST_WRITE, description: 'Manage IP allowlist' },
     { key: ADMIN_PERMISSIONS.USERS_READ, description: 'View end users' },
+    {
+      key: ADMIN_PERMISSIONS.USERS_STATUS_READ,
+      description: 'View end-user account status without personal data',
+    },
     { key: ADMIN_PERMISSIONS.USERS_WRITE, description: 'Create and update end users' },
     { key: ADMIN_PERMISSIONS.USERS_SUSPEND, description: 'Suspend end users' },
     { key: ADMIN_PERMISSIONS.USERS_DELETE, description: 'Delete end users' },
