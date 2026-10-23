@@ -58,9 +58,9 @@ import {
   adminTenantResumeHandler,
 } from '../admin-tenants';
 import { processPendingGenericAdminJobs } from '../admin-job-executor';
-import { processPendingTenantDeletionJobs } from '../tenant-deletion-jobs';
+import { deleteTenantAdminJobs, processPendingTenantDeletionJobs } from '../tenant-deletion-jobs';
 import { processPendingSupportOpsSnapshotJobs } from '../support-ops';
-import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
+import { createAuditLogFromContext, ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 
 const REPO_ROOT = resolve(__dirname, '../../../..');
 const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn() };
@@ -205,6 +205,28 @@ describe('tenant lifecycle validation', () => {
     admin.exec('DROP TRIGGER jobs_unavailable');
     expect((await resume(app)).status).toBe(202);
     expect(jobsIn(admin)).toHaveLength(1);
+  });
+
+  it('records the move it could not undo when the job is not kept', async () => {
+    const app = createApp();
+    admin.exec(
+      "CREATE TRIGGER jobs_unavailable BEFORE INSERT ON admin_jobs BEGIN SELECT RAISE(ABORT, 'unavailable'); END"
+    );
+    // The move back fails too.
+    inventory.exec(
+      "CREATE TRIGGER no_move_back BEFORE UPDATE ON tenants WHEN NEW.updated_at = 10 BEGIN SELECT RAISE(ABORT, 'unavailable'); END"
+    );
+
+    expect((await resume(app)).status).toBe(500);
+
+    expect(tenantRow().updated_at).toBeGreaterThan(10);
+    expect(createAuditLogFromContext).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant.lifecycle.resume',
+      'tenant',
+      'tenant-a',
+      expect.objectContaining({ job_id: null, job_kept: false, target_state: 'suspended' })
+    );
   });
 
   const insertLegacyValidation = () =>
@@ -382,6 +404,109 @@ describe('backup before a tenant deletion', () => {
       { id: backupId, job_type: 'tenant-database/export', status: 'pending' },
     ]);
     expect(getTenantDeletionInventory).not.toHaveBeenCalled();
+  });
+});
+
+describe('the tenant jobs DB_ADMIN keeps, when the tenant is deleted', () => {
+  function insertCatalog(id: string, objectKey: string, tenantId = 'tenant-a') {
+    admin
+      .prepare(
+        `INSERT INTO object_catalog (id, public_artifact_id, tenant_id, object_class, created_at, updated_at)
+         VALUES (?, ?, ?, 'admin_job_result', 1, 1)`
+      )
+      .run(id, `public-${id}`, tenantId);
+    admin
+      .prepare(
+        `INSERT INTO object_catalog_objects (id, catalog_id, representation, object_kind, object_index,
+           bucket_binding, object_key, created_at)
+         VALUES (?, ?, 'canonical_json', 'single', 0, 'EXPORT_ARTIFACTS', ?, 1)`
+      )
+      .run(`object-${id}`, id, objectKey);
+  }
+  function insertAdminJob(
+    id: string,
+    jobType: string,
+    objectCatalogId: string | null,
+    result: string | null
+  ) {
+    admin
+      .prepare(
+        `INSERT INTO admin_jobs (id, tenant_id, job_type, status, object_catalog_id, result, created_by,
+           created_at, updated_at)
+         VALUES (?, 'tenant-a', ?, 'completed', ?, ?, 'admin-1', 1, 1)`
+      )
+      .run(id, jobType, objectCatalogId, result);
+  }
+  const live = () =>
+    (
+      admin
+        .prepare('SELECT id FROM object_catalog WHERE deleted_at IS NULL ORDER BY id')
+        .all() as Array<{ id: string }>
+    ).map((row) => row.id);
+
+  it("erases their artifacts, an export's tables included, and keeps the deletion's backup", async () => {
+    const backup = 'tenant-delete-backup:delete-1';
+    // An earlier export whose result was large enough to be kept as an artifact (a summary inline).
+    insertAdminJob('old_backup', 'tenant-database/export', 'old-result', '{"summary":{}}');
+    insertCatalog(
+      'old-result',
+      'exports/tenant-a/admin-jobs/tenant-database-export/old_backup/result.json'
+    );
+    insertCatalog('old-manifest', 'exports/tenant-a/tenant-backup/old_backup/manifest.json');
+    insertCatalog(
+      'old-table',
+      'exports/tenant-a/tenant-backup/old_backup/core/core-0/identity_accounts.jsonl'
+    );
+    // A key one character away (`_` is not a wildcard here), and another tenant's.
+    insertCatalog('near-miss', 'exports/tenant-a/tenant-backup/oldXbackup/manifest.json');
+    insertCatalog(
+      'other-tenant',
+      'exports/tenant-b/tenant-backup/old_backup/manifest.json',
+      'tenant-b'
+    );
+    // A report with its result artifact.
+    insertAdminJob('report-1', 'reports/generate', 'report-result', null);
+    insertCatalog(
+      'report-result',
+      'exports/tenant-a/admin-jobs/reports-generate/report-1/result.json'
+    );
+    // An export whose result names a catalog of the deletion's backup: that one stays.
+    insertAdminJob(
+      'stray-export',
+      'tenant-database/export',
+      null,
+      JSON.stringify({ manifest: { object_catalog_id: 'backup-table' }, table_artifacts: [] })
+    );
+    // The deletion's own backup, preserved with its artifacts.
+    insertAdminJob(backup, 'tenant-database/export', 'backup-result', null);
+    insertCatalog(
+      'backup-result',
+      'exports/tenant-a/admin-jobs/tenant-database-export/backup/result.json'
+    );
+    insertCatalog(
+      'backup-table',
+      `exports/tenant-a/tenant-backup/${backup}/core/core-0/identity_accounts.jsonl`
+    );
+    insertCatalog(
+      'backup-table-safe',
+      'exports/tenant-a/tenant-backup/tenant-delete-backup_delete-1/core/core-0/subjects.jsonl'
+    );
+
+    await deleteTenantAdminJobs(
+      { EXPORT_ARTIFACTS: { delete: vi.fn() } } as unknown as Env,
+      ensureDatabaseAdapter(d1OverSqlite(admin), 'test-admin'),
+      'tenant-a',
+      ['delete-1', backup]
+    );
+
+    expect(jobsIn(admin).map((job) => job.id)).toEqual([backup]);
+    expect(live()).toEqual([
+      'backup-result',
+      'backup-table',
+      'backup-table-safe',
+      'near-miss',
+      'other-tenant',
+    ]);
   });
 });
 
