@@ -7,6 +7,7 @@
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, loginChallengeAPI, totpAPI } from '$lib/api/client';
 	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
+	import { messageForRateLimitError } from '$lib/errors/sdk-error-mapper';
 	import { isValidRedirectUrl } from '$lib/utils/url-validation';
 	import {
 		fetchAuthenticationMethods,
@@ -71,6 +72,12 @@
 	);
 
 	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+
+	function rateLimitedMessage(minutes: number | null): string {
+		return minutes === null
+			? $LL.error_rateLimited()
+			: $LL.error_rateLimitedRetryAfter({ minutes });
+	}
 
 	function resolveTurnstileLanguage(): string {
 		return resolveConfiguredTurnstileLanguage(document.documentElement.lang, getLocale());
@@ -291,7 +298,9 @@
 		try {
 			const { data, error: apiError } = await startTotpReauth(totpAPI, challengeId);
 			if (apiError || !data) {
-				throw loginUiDisplayError($LL.login_totpStartFailed());
+				throw loginUiDisplayError(
+					messageForRateLimitError(apiError, rateLimitedMessage) ?? $LL.login_totpStartFailed()
+				);
 			}
 			totpChallengeId = data.challenge_id;
 			totpCode = '';

@@ -395,6 +395,14 @@ const vi = createTranslation({
 	error_temporarily_unavailable: 'Máy chủ cấp quyền tạm thời không thể xử lý yêu cầu',
 	error_login_required: 'Bạn cần xác thực. Hãy đăng nhập để tiếp tục.',
 	error_unknown: 'Đã xảy ra lỗi không xác định',
+	error_rateLimited: 'Quá nhiều lần thử. Hãy đợi một lúc rồi thử lại.',
+	error_rateLimitedRetryAfter: 'Quá nhiều lần thử. Hãy thử lại sau khoảng {minutes} phút.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Bạn đã đăng xuất. Không thể đưa bạn trở lại ứng dụng vì địa chỉ quay lại của ứng dụng chưa được đăng ký. Hãy tự mở lại ứng dụng.',
+	error_invalidIdTokenHint:
+		'Bạn đã đăng xuất. Không thể đưa bạn trở lại ứng dụng vì không xác minh được yêu cầu đăng xuất của ứng dụng. Hãy tự mở lại ứng dụng.',
+	error_idTokenHintRequired:
+		'Bạn đã đăng xuất. Không thể đưa bạn trở lại ứng dụng vì yêu cầu đăng xuất của ứng dụng không đầy đủ. Hãy tự mở lại ứng dụng.',
 	device_title: 'Xác minh thiết bị',
 	device_subtitle: 'Nhập mã đang hiển thị trên thiết bị',
 	device_codeLabel: 'Mã xác minh',

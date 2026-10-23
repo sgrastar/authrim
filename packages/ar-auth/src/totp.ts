@@ -30,6 +30,7 @@ import {
   profileForTotpPreset,
   publishEvent,
   resolvePostLoginRedirectUrl,
+  resolveTotpAttemptLimit,
   resolveAccountDataContextFromHono,
   verifyTotpCode,
   type AuthEventData,
@@ -286,16 +287,21 @@ async function rateLimitTotpLogin(
   if (!limiter) return null;
   const id = limiter.idFromName(`totp-login:${tenantId}`);
   const stub = limiter.get(id);
-  const result = await stub.incrementRpc(key, {
-    windowSeconds: 15 * 60,
-    maxRequests: 10,
+  // The tenant's limit (rate_limit.totp_max_requests per rate_limit.totp_window; 10 per 15
+  // minutes by default).
+  const limit = await resolveTotpAttemptLimit(c.env, tenantId);
+  // The loadTest profile does not raise it: this limit is what keeps authenticator-app codes from
+  // being guessed. A conformance run raises it for its tenant through this setting instead.
+  const result = await stub.incrementRpc(key, limit);
+  if (result.allowed) return null;
+  // retry_after also in error_details, which the SDK keeps on the errors it raises.
+  return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
+    variables: { retry_after: result.retryAfter },
+    extensions: {
+      retry_after: result.retryAfter,
+      error_details: { retry_after: result.retryAfter },
+    },
   });
-  if (!result.allowed) {
-    return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
-      variables: { retry_after: result.retryAfter },
-    });
-  }
-  return null;
 }
 
 function getClientIp(c: Context<{ Bindings: Env }>): string {

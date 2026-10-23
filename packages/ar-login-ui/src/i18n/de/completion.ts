@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Zu viele Versuche. Warten Sie eine Weile und versuchen Sie es dann erneut.',
+	error_rateLimitedRetryAfter: 'Zu viele Versuche. Versuchen Sie es in etwa {minutes} Min. erneut.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Sie wurden abgemeldet. Die Rückleitung zur App war nicht möglich, weil ihre Rücksprungadresse nicht registriert ist. Öffnen Sie die App selbst erneut.',
+	error_invalidIdTokenHint:
+		'Sie wurden abgemeldet. Die Rückleitung zur App war nicht möglich, weil ihre Abmeldeanfrage nicht geprüft werden konnte. Öffnen Sie die App selbst erneut.',
+	error_idTokenHintRequired:
+		'Sie wurden abgemeldet. Die Rückleitung zur App war nicht möglich, weil ihre Abmeldeanfrage unvollständig war. Öffnen Sie die App selbst erneut.',
 	common_logoAlt: 'Logo',
 	common_footerLinks: 'Footer-Links',
 	common_selectOption: 'Option auswählen',

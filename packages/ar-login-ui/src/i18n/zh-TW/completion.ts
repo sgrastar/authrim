@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: '嘗試次數過多。請稍候片刻再試。',
+	error_rateLimitedRetryAfter: '嘗試次數過多。請在約 {minutes} 分鐘後再試。',
+	error_unregisteredPostLogoutRedirectUri:
+		'您已登出。由於應用程式的返回位址未註冊，無法將您帶回應用程式。請自行重新開啟應用程式。',
+	error_invalidIdTokenHint:
+		'您已登出。由於無法驗證應用程式的登出要求，無法將您帶回應用程式。請自行重新開啟應用程式。',
+	error_idTokenHintRequired:
+		'您已登出。由於應用程式的登出要求不完整，無法將您帶回應用程式。請自行重新開啟應用程式。',
 	common_logoAlt: '標誌',
 	common_footerLinks: '頁尾連結',
 	common_selectOption: '請選擇',

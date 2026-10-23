@@ -2643,6 +2643,8 @@ tr.expired {
 	font-family: var(--font-mono);
 	color: var(--text-primary);
 	margin: 0;
+	/* Codes such as unregistered_post_logout_redirect_uri are longer than the box is wide. */
+	overflow-wrap: anywhere;
 }
 
 /* --- Language selector (themed) --- */
