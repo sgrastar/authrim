@@ -2,12 +2,13 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ADMIN_PERMISSIONS, type AdminAuthContext } from '@authrim/ar-lib-core';
 import { TenantBackupRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 import type { TenantBackupImportAuthority } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { createPhase8SqliteInspectionPolicies } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-references';
+import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import type { SqliteDatasetInspectionPolicy } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { planPhase8InstalledSqliteResources } from '../tenant-backup-phase8-plan-loader';
 import { createSqliteDatasetInspectorFactory } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
@@ -88,10 +89,18 @@ let admin: DatabaseSync;
 let bundleRoles: string[] = [];
 let policies: Map<string, SqliteDatasetInspectionPolicy>;
 let operations = 0;
+/** The datasets planned from the installed schemas, which every test's databases share. */
+let planned: PlannedInstalledSqliteDataset[];
 
-async function realPolicies() {
-  const databases = { core: freshDatabase('core'), pii: freshDatabase('pii'), admin };
-  const planned = await planPhase8InstalledSqliteResources(
+// Planning reads the complete schema of three freshly migrated databases (about 0.7 s here, more
+// than 5 s a test on a loaded CI runner), and only the schema, so it is done once for the file.
+beforeAll(async () => {
+  const databases = {
+    core: freshDatabase('core'),
+    pii: freshDatabase('pii'),
+    admin: freshDatabase('admin'),
+  };
+  planned = await planPhase8InstalledSqliteResources(
     (Object.keys(databases) as (keyof typeof databases)[]).map((family) => ({
       resourceId: `${family}-db`,
       family,
@@ -99,8 +108,10 @@ async function realPolicies() {
     })),
     new AbortController().signal
   );
-  databases.core.close();
-  databases.pii.close();
+  for (const database of Object.values(databases)) database.close();
+});
+
+async function realPolicies() {
   return createPhase8SqliteInspectionPolicies(planned, {
     tenantKey: 'target-key',
     validateAdminEnvelope: async () => {},

@@ -596,6 +596,8 @@ describe('R2 plans listed from the T0 snapshot after the hold', () => {
     expect(unselected.recorded[0].published).toBe(0);
   });
 
+  // About 1 s here for its 5,001 rows and four times that on a loaded CI runner with coverage, so
+  // it has the room of the other large tests rather than the 5 s default.
   it('stops as too large when the lookup tables changed too much since T0', async () => {
     chunk(core, 'a', [BOUNDARY - 1000]);
     core.exec('BEGIN');
@@ -621,5 +623,5 @@ describe('R2 plans listed from the T0 snapshot after the hold', () => {
     await expect(prepareAll(['logs.archive_object_bodies'])).rejects.toThrow(
       'backup_export_too_large'
     );
-  });
+  }, 30_000);
 });

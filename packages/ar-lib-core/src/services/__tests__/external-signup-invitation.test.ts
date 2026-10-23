@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
@@ -11,7 +11,9 @@ import {
   reserveExternalSignupInvitation,
 } from '../external-signup-invitation';
 
-const NOW = Math.floor(Date.now() / 1000);
+// The clock is frozen at NOW for every test: the code under test reads Date.now() itself, so an
+// expiry checked against a NOW read earlier would drift whenever a run crossed a second boundary.
+const NOW = 1_800_000_000;
 
 describe('invitations carried by a federated sign-in, in the real schema', () => {
   let db: DatabaseSync;
@@ -50,6 +52,8 @@ describe('invitations carried by a federated sign-in, in the real schema', () =>
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW * 1000);
     const opened = sqliteAdapter();
     db = opened.db;
     adapter = {
@@ -72,6 +76,10 @@ describe('invitations carried by a federated sign-in, in the real schema', () =>
       `INSERT INTO roles (id, tenant_id, name, permissions_json, created_at, role_type, is_system)
        VALUES ('role-1', 'tenant-a', 'member', '[]', ?, 'custom', 0)`
     ).run(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('reserves a use for the sign-in for as long as it is told, and only in its tenant', async () => {
@@ -97,8 +105,7 @@ describe('invitations carried by a federated sign-in, in the real schema', () =>
       .prepare('SELECT holder, expires_at FROM tenant_invitation_redemptions')
       .get() as { holder: string; expires_at: number };
     expect(row.holder).toBe('saml:request-1');
-    expect(row.expires_at - NOW).toBeGreaterThanOrEqual(899);
-    expect(row.expires_at - NOW).toBeLessThanOrEqual(901);
+    expect(row.expires_at).toBe(NOW + 900);
   });
 
   it('reserves nothing once the invitation has no use left', async () => {
