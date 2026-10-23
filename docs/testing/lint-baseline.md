@@ -21,9 +21,14 @@ ar-userinfo.
 
 ## How the baseline behaves
 
-- The file stores a count per file and rule. Lint fails when a file has more
-  errors for a rule than its count, so existing files are still held to the
-  rules: new code in an old file cannot add violations.
+- The file stores a count per file and rule, and that count is a ceiling. Lint
+  fails when a file has more errors for a rule than its count. An old file can
+  stay at its count but cannot go above it.
+- The ceiling is a number, not a list of findings. If someone fixes one
+  suppressed error and adds a new one of the same rule in the same file, or the
+  count is above the real number because nobody has pruned yet, the new error
+  passes. Review still has to look at new code in old files, and pruning often
+  keeps the ceilings tight.
 - New files have no entry, so the full rules apply.
 - Warnings (for example `no-non-null-assertion`) are not suppressed; they are
   printed as before and do not fail lint.

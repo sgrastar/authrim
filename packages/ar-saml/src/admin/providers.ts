@@ -1184,7 +1184,7 @@ export async function handleExportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       return forbidden;
     }
 
-    const body = await c.req.json<{ passphrase?: unknown }>();
+    const body = (await c.req.json()) as { passphrase?: unknown };
     const tenantId = resolveSAMLTenantIdFromContext(c);
     failureStage = 'export_signing_keys';
     const bundle = await buildEncryptedSAMLLocalSigningSecretDRBundle(
@@ -1243,7 +1243,7 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       return forbidden;
     }
 
-    const body = await c.req.json<{ bundle?: unknown; passphrase?: unknown }>();
+    const body = (await c.req.json()) as { bundle?: unknown; passphrase?: unknown };
     const tenantId = resolveSAMLTenantIdFromContext(c);
     failureStage = 'decrypt_bundle';
     const result = await restoreEncryptedSAMLLocalSigningSecretDRBundle(
@@ -1372,7 +1372,6 @@ function sanitizeSAMLDRBundleAdminErrorMessage(error: unknown): string {
       /\b(privateKeyPem|privatePEM|passphrase|payload|bundle)\b\s*[:=]\s*\S+/gi,
       '$1=[redacted]'
     )
-    // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
