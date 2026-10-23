@@ -32,6 +32,8 @@ export interface SupportOpsSqlResourceDescriptor extends Omit<
   table: string;
   idColumn: string;
   activeWhereSql: string;
+  /** Per action, why a matched record cannot take it (NULL when it can). */
+  blockReasonSql?: Partial<Record<SupportOpsActionName, string>>;
   fields: Record<string, SupportOpsSqlFieldDescriptor>;
 }
 
@@ -43,6 +45,19 @@ const DEFAULT_OPERATORS: Record<string, SupportOpsSelectorOperator[]> = {
   string: ['eq', 'ne', 'in', 'exists', 'not_exists'],
 };
 
+/**
+ * An account's metadata as an object, read as none when it is not a JSON object (as the account's
+ * status reads it), so it can be read and written alike.
+ */
+export const SUPPORT_OPS_ACCOUNT_METADATA_SQL =
+  "(CASE WHEN json_valid(metadata_json) THEN CASE WHEN json_type(metadata_json) = 'object' THEN metadata_json ELSE '{}' END ELSE '{}' END)";
+
+// An account's status as the account reports it: the one its metadata records, else its
+// lifecycle state.
+const ACCOUNT_STATUS_SQL = `COALESCE(CASE WHEN json_type(${SUPPORT_OPS_ACCOUNT_METADATA_SQL}, '$.status') = 'text' THEN json_extract(${SUPPORT_OPS_ACCOUNT_METADATA_SQL}, '$.status') END, lifecycle_state)`;
+
+// Fields are what the account's Core store answers: its PII (in the PII store) and its last
+// sign-in (in its session state) are not among them.
 const USER_RESOURCE: SupportOpsSqlResourceDescriptor = {
   resource: 'User',
   displayName: 'Users',
@@ -51,9 +66,16 @@ const USER_RESOURCE: SupportOpsSqlResourceDescriptor = {
   table: 'identity_accounts',
   idColumn: 'legacy_user_id',
   activeWhereSql: "lifecycle_state = 'active' AND legacy_user_id IS NOT NULL",
+  blockReasonSql: {
+    suspend: `CASE
+      WHEN lifecycle_state = 'deprovisioned' THEN 'deprovisioned'
+      WHEN ${ACCOUNT_STATUS_SQL} != 'active' THEN 'not_active'
+      ELSE NULL
+    END`,
+  },
   fields: {
     status: {
-      column: "json_extract(metadata_json, '$.status')",
+      column: ACCOUNT_STATUS_SQL,
       type: 'enum',
       filterable: true,
       aggregatable: false,
@@ -88,16 +110,6 @@ const USER_RESOURCE: SupportOpsSqlResourceDescriptor = {
       sensitive: false,
       operators: DEFAULT_OPERATORS.boolean,
     },
-    pii_status: {
-      column:
-        "(CASE WHEN EXISTS (SELECT 1 FROM identity_sensitive_values isv WHERE isv.tenant_id = identity_accounts.tenant_id AND isv.owner_type = 'runtime_user' AND isv.owner_id = identity_accounts.legacy_user_id AND isv.lifecycle_state = 'active') THEN 'active' ELSE 'none' END)",
-      type: 'enum',
-      filterable: true,
-      aggregatable: false,
-      sensitive: false,
-      operators: DEFAULT_OPERATORS.enum,
-      values: ['none', 'active'],
-    },
     user_type: {
       column: 'account_type',
       type: 'enum',
@@ -117,14 +129,6 @@ const USER_RESOURCE: SupportOpsSqlResourceDescriptor = {
     },
     updated_at: {
       column: 'updated_at',
-      type: 'datetime',
-      filterable: true,
-      aggregatable: false,
-      sensitive: false,
-      operators: DEFAULT_OPERATORS.datetime,
-    },
-    last_login_at: {
-      column: 'last_login_at',
       type: 'datetime',
       filterable: true,
       aggregatable: false,

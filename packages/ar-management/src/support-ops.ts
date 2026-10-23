@@ -5,12 +5,14 @@ import type {
   DatabaseAdapter,
   Env,
   SupportOpsActionName,
+  SupportOpsRiskSummary,
   SupportOpsSelector,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
   ApprovalRequestApprovalRepository,
   SUBJECT_UPDATED_AT_FORWARD_SQL,
+  SUPPORT_OPS_ACCOUNT_METADATA_SQL,
   ApprovalRequestRepository,
   buildSupportOpsRiskSummary,
   canonicalizeApprovalScope,
@@ -249,6 +251,24 @@ function createSupportOpsAuthContext(c: SupportOpsContext, tenantId: string) {
 
 function isLowCount(value: number, minCount: number): boolean {
   return value > 0 && value < minCount;
+}
+
+/**
+ * A risk summary as a response shows it: its matched count only as the counts beside it show it,
+ * so a suppressed count cannot be told from it.
+ */
+function redactRiskSummary(
+  risk: Partial<SupportOpsRiskSummary>,
+  counts: { matched_count: number | null; privacy: { low_count_suppressed: boolean } }
+) {
+  return {
+    min_count: risk.minCount,
+    matched_count: counts.matched_count,
+    low_count_suppressed: counts.privacy.low_count_suppressed,
+    uses_sensitive_field: risk.usesSensitiveField,
+    risk_level: risk.riskLevel,
+    approval_required: risk.approvalRequired,
+  };
 }
 
 function redactCohortCounts(
@@ -504,15 +524,11 @@ async function auditSupportOps(
   });
 }
 
-function buildBlockExpression(action?: SupportOpsActionName): string {
-  if (action !== 'suspend') {
-    return 'NULL';
-  }
-  return `CASE
-    WHEN status != 'active' THEN 'not_active'
-    WHEN lifecycle_state = 'deprovisioned' THEN 'deprovisioned'
-    ELSE NULL
-  END`;
+function buildBlockExpression(
+  resource: { blockReasonSql?: Partial<Record<SupportOpsActionName, string>> },
+  action?: SupportOpsActionName
+): string {
+  return (action && resource.blockReasonSql?.[action]) || 'NULL';
 }
 
 function buildSnapshotCutoffExpression(resource: {
@@ -717,7 +733,7 @@ async function processSupportOpsSnapshotJob(
 
     const selector = parseSupportOpsSelectorJson(config.selector_json);
     const compiled = await compileSupportOpsSelector(resource, selector);
-    const blockExpression = buildBlockExpression(config.intended_action);
+    const blockExpression = buildBlockExpression(resource, config.intended_action);
     const cutoffExpression = buildSnapshotCutoffExpression(resource);
     const pageSize = 500;
     const maxRowsPerRun = 5000;
@@ -1059,7 +1075,7 @@ supportOpsRouter.post('/cohorts/preview', async (c) => {
         WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}`,
       [tenantId, ...compiled.params]
     );
-    const blockExpression = buildBlockExpression(body.intent?.action);
+    const blockExpression = buildBlockExpression(resource, body.intent?.action);
     const actionable = await authCtx.coreAdapter.queryOne<{ count: number }>(
       `SELECT COUNT(*) as count
          FROM ${resource.table}
@@ -1105,14 +1121,7 @@ supportOpsRouter.post('/cohorts/preview', async (c) => {
     return c.json({
       resource: resource.resource,
       ...redactedCounts,
-      risk: {
-        min_count: risk.minCount,
-        matched_count: redactedCounts.matched_count,
-        low_count_suppressed: redactedCounts.privacy.low_count_suppressed,
-        uses_sensitive_field: risk.usesSensitiveField,
-        risk_level: risk.riskLevel,
-        approval_required: risk.approvalRequired,
-      },
+      risk: redactRiskSummary(risk, redactedCounts),
       selector_hash: compiled.selectorHash,
     });
   } catch {
@@ -1170,7 +1179,7 @@ supportOpsRouter.post('/cohorts', async (c) => {
     }
     const cohortId = `cohort_${crypto.randomUUID().replace(/-/g, '')}`;
     const expiresAt = now + 24 * 60 * 60 * 1000;
-    const blockExpression = buildBlockExpression(intendedAction);
+    const blockExpression = buildBlockExpression(resource, intendedAction);
     const risk = buildSupportOpsRiskSummary({
       resource,
       matchedCount,
@@ -1252,7 +1261,10 @@ supportOpsRouter.post('/cohorts', async (c) => {
           snapshot_job_id: jobId,
           expires_at: expiresAt,
           selector_hash: compiled.selectorHash,
-          risk,
+          risk: redactRiskSummary(risk, {
+            matched_count: matchedCount,
+            privacy: { low_count_suppressed: false },
+          }),
         },
         202
       );
@@ -1367,7 +1379,7 @@ supportOpsRouter.post('/cohorts', async (c) => {
         snapshot_job_id: null,
         expires_at: expiresAt,
         selector_hash: compiled.selectorHash,
-        risk,
+        risk: redactRiskSummary(risk, redactedCounts),
       },
       201
     );
@@ -1441,7 +1453,10 @@ supportOpsRouter.get('/cohorts/:cohortId', async (c) => {
     blocked_summary: redactedCounts.blocked_reasons_suppressed
       ? { suppressed: true }
       : blockedSummary,
-    risk: fromJsonRecord(row.risk_json),
+    risk: redactRiskSummary(
+      fromJsonRecord(row.risk_json) as Partial<SupportOpsRiskSummary>,
+      redactedCounts
+    ),
     support_case_id: row.support_case_id,
     expires_at: row.expires_at,
     created_at: row.created_at,
@@ -1860,14 +1875,15 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
       if (failure) throw failure.reason;
     }
     // Each account takes this action's transition (its version and operation) only if no newer
-    // one did, and its subject only along with it, as single-account status changes do.
-    const lifecycleVersion =
-      "COALESCE(CAST(json_extract(metadata_json, '$.lifecycle_version_ms') AS INTEGER), 0)";
+    // one did, and its subject only along with it, as single-account status changes do. Metadata
+    // that is not a JSON object reads as none, as the cohort read it.
+    const metadata = SUPPORT_OPS_ACCOUNT_METADATA_SQL;
+    const lifecycleVersion = `COALESCE(CAST(json_extract(${metadata}, '$.lifecycle_version_ms') AS INTEGER), 0)`;
     const [updateResult] = await authCtx.coreAdapter.batch([
       {
         sql: `UPDATE identity_accounts
                  SET lifecycle_state = 'suspended',
-                     metadata_json = json_set(COALESCE(metadata_json, '{}'),
+                     metadata_json = json_set(${metadata},
                        '$.status', 'suspended', '$.suspended_at', ?,
                        '$.lifecycle_version_ms', ?, '$.lifecycle_operation_id', ? || legacy_user_id),
                      updated_at = ?
@@ -1904,7 +1920,7 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
                          WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
                       )
                       AND ${lifecycleVersion} = ?
-                      AND json_extract(metadata_json, '$.lifecycle_operation_id') = ? || legacy_user_id
+                      AND json_extract(${metadata}, '$.lifecycle_operation_id') = ? || legacy_user_id
                  )`,
         params: [now, now, tenantId, tenantId, tenantId, action.cohort_id, now, operationPrefix],
       },
