@@ -21,6 +21,8 @@ import {
   type ResourcePermissionInput,
   type ResourcePermissionSubjectType,
   hasIdLevelPermission,
+  invalidateIdPermissionCache,
+  resolveAccountCoreDataContext,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
@@ -157,7 +159,7 @@ export async function createResourcePermission(c: Context) {
     // Invalidate cache for subject
     if (c.env.REBAC_CACHE) {
       try {
-        await c.env.REBAC_CACHE.delete(`policy:idperms:${tenantId}:${body.subject_id}`);
+        await invalidateIdPermissionCache(c.env.REBAC_CACHE, body.subject_id, tenantId);
       } catch {
         // Ignore cache invalidation errors
       }
@@ -311,7 +313,7 @@ export async function deleteResourcePermission(c: Context) {
     // Invalidate cache for subject
     if (c.env.REBAC_CACHE) {
       try {
-        await c.env.REBAC_CACHE.delete(`policy:idperms:${tenantId}:${existing.subject_id}`);
+        await invalidateIdPermissionCache(c.env.REBAC_CACHE, existing.subject_id, tenantId);
       } catch {
         // Ignore cache invalidation errors
       }
@@ -437,14 +439,25 @@ export async function checkResourcePermission(c: Context) {
   const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    const allowed = await hasIdLevelPermission(
-      coreAdapter,
-      body.subject_id,
-      body.resource_type,
-      body.resource_id,
-      body.action,
-      tenantId
-    );
+    // Grants are in the tenant metadata database; the subject's roles, in its account database.
+    // A subject without an account has no permission.
+    const account = await resolveAccountCoreDataContext(c.env, {
+      tenantId,
+      accountId: body.subject_id,
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message === 'account_data_route_not_found') return null;
+      throw error;
+    });
+    const allowed = account
+      ? await hasIdLevelPermission(
+          { metadata: coreAdapter, account: account.coreDb },
+          body.subject_id,
+          body.resource_type,
+          body.resource_id,
+          body.action,
+          tenantId
+        )
+      : false;
 
     return c.json({
       allowed,

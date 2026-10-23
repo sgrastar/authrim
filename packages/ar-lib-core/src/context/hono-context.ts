@@ -43,6 +43,7 @@ import {
   PIIAuditLogRepository,
 } from '../repositories/pii';
 import { MapRequestScopedCache } from './types';
+import type { TenantRBACDatabases } from '../services/tenant-rbac';
 import {
   getAccountDataContextFromHono,
   getTenantMetadataContextFromHono,
@@ -150,6 +151,21 @@ export function createAccountAuthContextFromHono(
     honoContext: c,
     userCacheScope: accountData.userCacheScope,
     piiCacheMode: accountData.piiCacheMode,
+  };
+}
+
+/**
+ * The databases RBAC reads need for the request's account: the tenant metadata database (role and
+ * organisation definitions) and the account's database (its assignments and memberships).
+ * Callers must resolve and attach AccountDataContext first, as for createAccountAuthContextFromHono.
+ */
+export function createTenantRBACDatabasesFromHono(
+  c: HonoContext<{ Bindings: Env }>,
+  tenantId?: string
+): TenantRBACDatabases {
+  return {
+    metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+    account: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
   };
 }
 

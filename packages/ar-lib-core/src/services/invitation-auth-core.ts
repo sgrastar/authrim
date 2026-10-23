@@ -1,6 +1,7 @@
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
 import { joinOrganization, type OrgJoinResult } from './org-domain-resolver';
+import { findTenantRole, type TenantRBACDatabases } from './tenant-rbac';
 
 export interface TenantInvitationRecord {
   id: string;
@@ -356,20 +357,21 @@ export async function findInvitationById(
   );
 }
 
+/**
+ * Gives the user a tenant-wide role of its tenant. The role is a tenant setting (metadata
+ * database); the assignment is the user's account data (account database).
+ */
 export async function assignTenantRoleToUser(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   userId: string,
   roleId: string,
   tenantId: string
 ): Promise<RoleAssignmentResult> {
-  const adapter = getAdapter(db);
+  const adapter = getAdapter(dbs.account);
   const assignmentId = `ra_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
-  const roleCheck = await adapter.queryOne<{ id: string }>(
-    'SELECT id FROM roles WHERE id = ? AND tenant_id = ?',
-    [roleId, tenantId]
-  );
+  const roleCheck = await findTenantRole(dbs.metadata, tenantId, { id: roleId });
   if (!roleCheck) {
     return {
       success: false,
@@ -402,8 +404,9 @@ export async function assignTenantRoleToUser(
   };
 }
 
+/** Gives the user the role and organisation an invitation names (either may be absent). */
 export async function applyInvitationAssignments(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   params: {
     userId: string;
     tenantId: string;
@@ -415,11 +418,11 @@ export async function applyInvitationAssignments(
   const results: InvitationAssignmentResults = {};
 
   if (roleId) {
-    results.roleAssignment = await assignTenantRoleToUser(db, userId, roleId, tenantId);
+    results.roleAssignment = await assignTenantRoleToUser(dbs, userId, roleId, tenantId);
   }
 
   if (orgId) {
-    results.orgMembership = await joinOrganization(db, userId, orgId, tenantId, 'member');
+    results.orgMembership = await joinOrganization(dbs, userId, orgId, tenantId, 'member');
   }
 
   return results;

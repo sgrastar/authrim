@@ -23,50 +23,51 @@ import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
 
 /**
  * Create mock D1 database with tenant-specific role assignments
+ *
+ * Each subject of a tenant has one role, `role:<tenant>:<subject>`, granting the given permissions.
+ * The service reads the subject's assignments (`role_assignments`, by tenant and subject), then
+ * the roles they name (`roles`, by tenant and id), so a role is found only in its own tenant.
  */
 function createTenantAwareD1(
   roleAssignments: Map<string, Map<string, string[]>> // tenant_id -> (subject_id -> permissions[])
 ): D1Database {
+  const results = (sql: string, params: unknown[]) => {
+    if (sql.includes('FROM role_assignments')) {
+      const [tenantId, subjectId] = params as [string, string];
+      return roleAssignments.get(tenantId)?.has(subjectId)
+        ? [
+            {
+              id: `ra:${tenantId}:${subjectId}`,
+              role_id: `role:${tenantId}:${subjectId}`,
+              scope_type: 'global',
+              scope_target: '',
+              expires_at: null,
+            },
+          ]
+        : [];
+    }
+    if (sql.includes('FROM roles')) {
+      const [tenantId, ...roleIds] = params as string[];
+      return roleIds.flatMap((roleId) => {
+        const [, roleTenant, subjectId] = roleId.split(':');
+        const permissions =
+          roleTenant === tenantId ? roleAssignments.get(tenantId)?.get(subjectId) : undefined;
+        return permissions
+          ? [{ id: roleId, name: 'user_role', permissions_json: JSON.stringify(permissions) }]
+          : [];
+      });
+    }
+    return [];
+  };
   return {
-    prepare: vi.fn().mockImplementation(function () {
-      return {
-        bind: vi.fn().mockImplementation((...args: unknown[]) => {
-          // Capture the bound parameters for tenant_id checking
-          const boundParams = args;
-          return {
-            bind: vi.fn().mockReturnThis(),
-            all: vi.fn().mockImplementation(() => {
-              // Extract subject_id (first param) and tenant_id (second param)
-              const subjectId = boundParams[0] as string;
-              const tenantId = boundParams[1] as string;
-
-              const tenantRoles = roleAssignments.get(tenantId);
-              if (!tenantRoles) {
-                return Promise.resolve({ results: [] });
-              }
-
-              const permissions = tenantRoles.get(subjectId);
-              if (!permissions) {
-                return Promise.resolve({ results: [] });
-              }
-
-              return Promise.resolve({
-                results: [
-                  {
-                    name: 'user_role',
-                    permissions_json: JSON.stringify(permissions),
-                  },
-                ],
-              });
-            }),
-            first: vi.fn().mockResolvedValue(null),
-            run: vi.fn().mockResolvedValue({ success: true }),
-          };
-        }),
-        all: vi.fn().mockResolvedValue({ results: [] }),
+    prepare: vi.fn().mockImplementation((sql: string) => {
+      const statement = (params: unknown[]) => ({
+        bind: vi.fn().mockImplementation((...args: unknown[]) => statement(args)),
+        all: vi.fn().mockImplementation(async () => ({ results: results(sql, params) })),
         first: vi.fn().mockResolvedValue(null),
         run: vi.fn().mockResolvedValue({ success: true }),
-      };
+      });
+      return statement([]);
     }),
   } as unknown as D1Database;
 }

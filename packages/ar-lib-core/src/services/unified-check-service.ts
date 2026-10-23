@@ -42,6 +42,13 @@ import { generateAuditId } from './check-audit-service';
 import type { ReBACService, CheckRequest as ReBACCheckRequest } from '../rebac';
 import { hasIdLevelPermission, getUserIdLevelPermissions } from '../utils/resource-permissions';
 import { createLogger } from '../utils/logger';
+import {
+  resolveSubjectRoles,
+  roleAssignmentHolds,
+  rolePermissions,
+  type RoleAssignmentTarget,
+  type TenantRBACDatabases,
+} from './tenant-rbac';
 
 const log = createLogger().module('UNIFIED-CHECK-SERVICE');
 
@@ -223,8 +230,14 @@ export function formatPermission(parsed: ParsedPermission): string {
  * Configuration for UnifiedCheckService
  */
 export interface UnifiedCheckServiceConfig {
-  /** Database source for permission queries */
+  /** Database source for permission queries: the tenant metadata database */
   db: DatabaseSource;
+  /**
+   * The database of a subject's account, where its role assignments and organisation memberships
+   * are (see services/tenant-rbac.ts). It throws when the subject has no account. Without it, the
+   * subject's assignments are read from `db` (a single-database deployment).
+   */
+  subjectAccountDb?: (tenantId: string, subjectId: string) => Promise<DatabaseSource>;
   /** KV namespace for caching (optional) */
   cache?: KVNamespace;
   /** ReBAC service for relationship checks (optional) */
@@ -283,6 +296,16 @@ interface InternalCheckResult {
   debug?: Partial<CheckDebugInfo>;
 }
 
+/** The target of a check, as role assignments are matched against it. */
+function checkTarget(context: CheckContext): RoleAssignmentTarget {
+  return {
+    tenantId: context.tenantId,
+    orgId: context.resourceContext?.org_id,
+    resourceType: context.parsed.resource,
+    resourceId: context.parsed.id,
+  };
+}
+
 /**
  * Unified Check Service
  *
@@ -290,6 +313,9 @@ interface InternalCheckResult {
  */
 export class UnifiedCheckService {
   private db: DatabaseAdapter;
+  private subjectAccountDb?: (tenantId: string, subjectId: string) => Promise<DatabaseSource>;
+  /** Subject account databases resolved during this service's lifetime (one request). */
+  private subjectAccountDbs = new Map<string, Promise<DatabaseSource>>();
   private cache?: KVNamespace;
   private rebacService?: ReBACService;
   private cacheTTL: number;
@@ -305,6 +331,7 @@ export class UnifiedCheckService {
 
   constructor(config: UnifiedCheckServiceConfig) {
     this.db = ensureDatabaseAdapter(config.db, 'policy-check');
+    this.subjectAccountDb = config.subjectAccountDb;
     this.cache = config.cache;
     this.rebacService = config.rebacService;
     this.cacheTTL = config.cacheTTL ?? DEFAULT_CACHE_TTL;
@@ -651,6 +678,19 @@ export class UnifiedCheckService {
     };
   }
 
+  /** The tenant metadata database and the subject's account database. */
+  private subjectRBACDatabases(context: CheckContext): Promise<TenantRBACDatabases> {
+    const resolve = this.subjectAccountDb;
+    if (!resolve) return Promise.resolve({ metadata: this.db, account: this.db });
+    const key = `${context.tenantId}\u0000${context.subjectId}`;
+    let account = this.subjectAccountDbs.get(key);
+    if (!account) {
+      account = resolve(context.tenantId, context.subjectId);
+      this.subjectAccountDbs.set(key, account);
+    }
+    return account.then((db) => ({ metadata: this.db, account: db }));
+  }
+
   /**
    * Check ID-level permission in resource_permissions table
    */
@@ -663,12 +703,13 @@ export class UnifiedCheckService {
 
     try {
       const hasPermission = await hasIdLevelPermission(
-        this.db,
+        await this.subjectRBACDatabases(context),
         context.subjectId,
         context.parsed.resource,
         context.parsed.id,
         context.parsed.action,
-        context.tenantId
+        context.tenantId,
+        { orgId: context.resourceContext?.org_id }
       );
 
       return { allowed: hasPermission };
@@ -686,29 +727,30 @@ export class UnifiedCheckService {
   ): Promise<{ allowed: boolean; roleName?: string }> {
     try {
       // Query user's roles
-      const rolesResult = await this.db.query<{
-        name: string;
-        permissions_json: string;
-        scope_type: string | null;
-        scope_target: string | null;
-        expires_at: number | null;
-      }>(
-        `SELECT r.name, r.permissions_json, ra.scope_type, ra.scope_target, ra.expires_at
-           FROM roles r
-           INNER JOIN role_assignments ra ON r.id = ra.role_id
-           WHERE ra.subject_id = ?
-             AND ra.tenant_id = ?
-             AND r.tenant_id = ?
-             AND r.is_active = 1
-             AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-        [context.subjectId, context.tenantId, context.tenantId, Math.floor(Date.now() / 1000)]
-      );
+      const rolesResult = (
+        await resolveSubjectRoles(
+          await this.subjectRBACDatabases(context),
+          context.tenantId,
+          context.subjectId
+        )
+      ).map(({ role, assignment }) => ({
+        name: role.name,
+        permissions: rolePermissions(role),
+        scope_type: assignment.scope_type as string | null,
+        scope_target: assignment.scope_target as string | null,
+        expires_at: assignment.expires_at,
+      }));
 
       // Role assignments for attribute-based rules with role conditions, with their scope: an
       // assignment limited to one organization or resource must not match a rule for another.
       // One with a scope the rules cannot express is left out (it only grants less).
+      // A tenant-scoped assignment in its own tenant (as invitations once wrote) is tenant-wide, as a
+      // global one.
       context.subjectRoles = rolesResult.flatMap((role): PolicySubjectRole[] => {
-        const scope = role.scope_type ?? 'global';
+        const assigned = role.scope_type ?? 'global';
+        const ownTenant =
+          assigned === 'tenant' && (!role.scope_target || role.scope_target === context.tenantId);
+        const scope = ownTenant ? 'global' : assigned;
         if (scope !== 'global' && scope !== 'org' && scope !== 'resource') return [];
         return [
           {
@@ -726,20 +768,25 @@ export class UnifiedCheckService {
           : formatPermission(context.parsed);
 
       for (const role of rolesResult) {
-        try {
-          const permissions = JSON.parse(role.permissions_json || '[]') as string[];
+        // A role grants only where it is assigned (see roleAssignmentHolds).
+        if (
+          !roleAssignmentHolds(
+            { scope: role.scope_type, scopeTarget: role.scope_target },
+            checkTarget(context)
+          )
+        ) {
+          continue;
+        }
+        const permissions = role.permissions;
 
-          // Check for exact match or wildcard
-          if (
-            permissions.includes(permissionToCheck) ||
-            permissions.includes(`${context.parsed.resource}:*`) ||
-            permissions.includes('*:*') ||
-            permissions.includes('*')
-          ) {
-            return { allowed: true, roleName: role.name };
-          }
-        } catch {
-          // Skip invalid JSON
+        // Check for exact match or wildcard
+        if (
+          permissions.includes(permissionToCheck) ||
+          permissions.includes(`${context.parsed.resource}:*`) ||
+          permissions.includes('*:*') ||
+          permissions.includes('*')
+        ) {
+          return { allowed: true, roleName: role.name };
         }
       }
 
@@ -803,18 +850,8 @@ export class UnifiedCheckService {
         return { allowed: true, ruleName: 'owner_access' };
       }
 
-      // Organization membership check
-      if (context.resourceContext?.org_id) {
-        const orgMemberResult = await this.db.queryOne(
-          `SELECT 1 FROM organization_memberships
-             WHERE tenant_id = ? AND user_id = ? AND org_id = ? AND is_active = 1`,
-          [context.tenantId, context.subjectId, context.resourceContext.org_id]
-        );
-
-        if (orgMemberResult) {
-          return { allowed: true, ruleName: 'org_member_access' };
-        }
-      }
+      // Membership of the resource's organization alone grants nothing: what a member may do is
+      // decided by their roles (scoped to the organization) and the tenant's rules below.
 
       // ABAC evaluation: the tenant's rules (when its settings turn attribute-based policy on)
       const evaluator = context.policy.abac ? context.policy.evaluator : undefined;

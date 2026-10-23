@@ -6,13 +6,73 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock the D1 database
-const mockD1 = {
-  prepare: vi.fn().mockReturnThis(),
-  bind: vi.fn().mockReturnThis(),
-  all: vi.fn(),
-  first: vi.fn(),
-};
+/**
+ * Mock D1 database that answers by the table a query reads. Role definitions and the grants in
+ * `resource_permissions` are tenant settings (metadata database); a subject's role assignments
+ * are account data (account database), so each test database holds only its own tables. Every
+ * bound statement is recorded in `calls`.
+ */
+function createMockD1(tables: {
+  roles?: unknown[];
+  role_assignments?: unknown[];
+  resource_permissions?: unknown[];
+}) {
+  const calls: { sql: string; params: unknown[] }[] = [];
+  const db = {
+    prepare: vi.fn((sql: string) => {
+      const table = (['role_assignments', 'roles', 'resource_permissions'] as const).find((name) =>
+        sql.includes(`FROM ${name}`)
+      );
+      const statement = {
+        bind: vi.fn(),
+        all: vi.fn().mockResolvedValue({ results: (table && tables[table]) ?? [] }),
+        first: vi.fn().mockResolvedValue(null),
+      };
+      statement.bind.mockImplementation((...params: unknown[]) => {
+        calls.push({ sql, params });
+        return statement;
+      });
+      return statement;
+    }),
+  };
+  return Object.assign(db as unknown as D1Database, { calls, prepare: db.prepare });
+}
+
+/** The two databases of the tenant: metadata (grants) and account (assignments) */
+function createMockDatabases(tables: {
+  roles?: unknown[];
+  role_assignments?: unknown[];
+  resource_permissions?: unknown[];
+}) {
+  const metadata = createMockD1({
+    roles: tables.roles,
+    resource_permissions: tables.resource_permissions,
+  });
+  const account = createMockD1({ role_assignments: tables.role_assignments });
+  return { metadata, account };
+}
+
+const roleRow = (id: string, name: string) => ({
+  id,
+  name,
+  display_name: null,
+  description: null,
+  permissions_json: '[]',
+  role_type: 'custom',
+  hierarchy_level: null,
+  is_assignable: 1,
+  is_system: 0,
+  parent_role_id: null,
+});
+const assignmentRow = (roleId: string) => ({
+  id: `ra-${roleId}`,
+  role_id: roleId,
+  scope_type: 'global',
+  scope_target: '',
+  expires_at: null,
+  assigned_by: null,
+  created_at: 1,
+});
 
 // Mock KV namespace
 const mockKV = {
@@ -36,8 +96,6 @@ import {
 describe('Resource Permissions Utilities', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockD1.all.mockResolvedValue({ results: [] });
-    mockD1.first.mockResolvedValue(null);
     mockKV.get.mockResolvedValue(null);
   });
 
@@ -135,58 +193,45 @@ describe('Resource Permissions Utilities', () => {
     });
   });
 
+  const permissionRow = (
+    id: string,
+    resourceType: string,
+    resourceId: string,
+    actionsJson: string,
+    subject: { type: string; id: string } = { type: 'user', id: 'user_123' }
+  ) => ({
+    id,
+    tenant_id: 'default',
+    subject_type: subject.type,
+    subject_id: subject.id,
+    resource_type: resourceType,
+    resource_id: resourceId,
+    actions_json: actionsJson,
+    condition_json: null,
+    expires_at: null,
+    is_active: 1,
+    created_at: 1700000000,
+    updated_at: 1700000000,
+  });
+
   describe('getUserIdLevelPermissions', () => {
     it('should return empty array when no permissions exist', async () => {
-      mockD1.all.mockResolvedValue({ results: [] });
+      const dbs = createMockDatabases({ resource_permissions: [] });
 
-      const result = await getUserIdLevelPermissions(
-        mockD1 as unknown as D1Database,
-        'user_123',
-        'default'
-      );
+      const result = await getUserIdLevelPermissions(dbs, 'user_123', 'default');
 
       expect(result).toEqual([]);
     });
 
     it('should return formatted permissions when permissions exist', async () => {
-      mockD1.all.mockResolvedValue({
-        results: [
-          {
-            id: 'perm_1',
-            tenant_id: 'default',
-            subject_type: 'user',
-            subject_id: 'user_123',
-            resource_type: 'documents',
-            resource_id: 'doc_123',
-            actions_json: '["read", "write"]',
-            condition_json: null,
-            expires_at: null,
-            is_active: 1,
-            created_at: 1700000000,
-            updated_at: 1700000000,
-          },
-          {
-            id: 'perm_2',
-            tenant_id: 'default',
-            subject_type: 'user',
-            subject_id: 'user_123',
-            resource_type: 'projects',
-            resource_id: 'proj_456',
-            actions_json: '["manage"]',
-            condition_json: null,
-            expires_at: null,
-            is_active: 1,
-            created_at: 1700000000,
-            updated_at: 1700000000,
-          },
+      const dbs = createMockDatabases({
+        resource_permissions: [
+          permissionRow('perm_1', 'documents', 'doc_123', '["read", "write"]'),
+          permissionRow('perm_2', 'projects', 'proj_456', '["manage"]'),
         ],
       });
 
-      const result = await getUserIdLevelPermissions(
-        mockD1 as unknown as D1Database,
-        'user_123',
-        'default'
-      );
+      const result = await getUserIdLevelPermissions(dbs, 'user_123', 'default');
 
       expect(result).toHaveLength(2);
       expect(result[0].actions).toEqual(['read', 'write']);
@@ -194,91 +239,91 @@ describe('Resource Permissions Utilities', () => {
       expect(result[1].actions).toEqual(['manage']);
       expect(result[1].resource_type).toBe('projects');
     });
+
+    it('should include grants to the roles the subject is assigned, read from both databases', async () => {
+      // Assignments are in the account database, role definitions and grants in the metadata database
+      const dbs = createMockDatabases({
+        role_assignments: [assignmentRow('role_editor'), assignmentRow('role_deleted')],
+        roles: [roleRow('role_editor', 'editor')],
+        resource_permissions: [
+          permissionRow('perm_role', 'documents', 'doc_9', '["edit"]', {
+            type: 'role',
+            id: 'role_editor',
+          }),
+        ],
+      });
+
+      const result = await getUserIdLevelPermissions(dbs, 'user_123', 'default');
+
+      expect(result.map((permission) => permission.id)).toEqual(['perm_role']);
+
+      const assignmentQuery = dbs.account.calls.find(({ sql }) =>
+        sql.includes('FROM role_assignments')
+      );
+      expect(assignmentQuery?.params.slice(0, 2)).toEqual(['default', 'user_123']);
+      expect(dbs.account.calls.some(({ sql }) => sql.includes('FROM resource_permissions'))).toBe(
+        false
+      );
+
+      // Grants are read from the metadata database: first the subject's own, then its roles'
+      const grantQueries = dbs.metadata.calls.filter(({ sql }) =>
+        sql.includes('FROM resource_permissions')
+      );
+      expect(grantQueries).toHaveLength(2);
+      expect(grantQueries[0].sql).toContain("subject_type = 'user' AND subject_id = ?");
+      expect(grantQueries[0].params).toEqual(['default', expect.any(Number), 'user_123']);
+      expect(grantQueries[1].sql).toContain("subject_type = 'role' AND subject_id IN (?)");
+      // Only the role the tenant still has is asked for: the deleted role's assignment grants nothing
+      expect(grantQueries[1].params).toEqual(['default', expect.any(Number), 'role_editor']);
+    });
   });
 
   describe('evaluateIdLevelPermissions', () => {
     it('should return empty array when no permissions exist', async () => {
-      mockD1.all.mockResolvedValue({ results: [] });
+      const dbs = createMockDatabases({ resource_permissions: [] });
 
-      const result = await evaluateIdLevelPermissions(
-        mockD1 as unknown as D1Database,
-        'user_123',
-        'default'
-      );
+      const result = await evaluateIdLevelPermissions(dbs, 'user_123', 'default');
 
       expect(result).toEqual([]);
     });
 
     it('should return formatted permission strings', async () => {
-      mockD1.all.mockResolvedValue({
-        results: [
-          {
-            id: 'perm_1',
-            tenant_id: 'default',
-            subject_type: 'user',
-            subject_id: 'user_123',
-            resource_type: 'documents',
-            resource_id: 'doc_123',
-            actions_json: '["read", "write"]',
-            condition_json: null,
-            expires_at: null,
-            is_active: 1,
-            created_at: 1700000000,
-            updated_at: 1700000000,
-          },
+      const dbs = createMockDatabases({
+        resource_permissions: [
+          permissionRow('perm_1', 'documents', 'doc_123', '["read", "write"]'),
         ],
       });
 
-      const result = await evaluateIdLevelPermissions(
-        mockD1 as unknown as D1Database,
-        'user_123',
-        'default'
-      );
+      const result = await evaluateIdLevelPermissions(dbs, 'user_123', 'default');
 
       expect(result).toEqual(['documents:doc_123:read', 'documents:doc_123:write']);
     });
 
     it('should use cache when available', async () => {
       mockKV.get.mockResolvedValue(JSON.stringify(['cached:perm:read']));
+      const dbs = createMockDatabases({});
 
-      const result = await evaluateIdLevelPermissions(
-        mockD1 as unknown as D1Database,
-        'user_123',
-        'default',
-        { cache: mockKV as unknown as KVNamespace }
-      );
+      const result = await evaluateIdLevelPermissions(dbs, 'user_123', 'default', {
+        cache: mockKV as unknown as KVNamespace,
+      });
 
       expect(result).toEqual(['cached:perm:read']);
-      expect(mockD1.prepare).not.toHaveBeenCalled();
+      expect(dbs.metadata.prepare).not.toHaveBeenCalled();
+      expect(dbs.account.prepare).not.toHaveBeenCalled();
     });
 
     it('should fetch from database and cache result', async () => {
       mockKV.get.mockResolvedValue(null);
-      mockD1.all.mockResolvedValue({
-        results: [
-          {
-            id: 'perm_1',
-            tenant_id: 'default',
-            subject_type: 'user',
-            subject_id: 'user_123',
-            resource_type: 'documents',
-            resource_id: 'doc_123',
-            actions_json: '["read"]',
-            condition_json: null,
-            expires_at: null,
-            is_active: 1,
-            created_at: 1700000000,
-            updated_at: 1700000000,
-          },
-        ],
+      const dbs = createMockDatabases({
+        resource_permissions: [permissionRow('perm_1', 'documents', 'doc_123', '["read"]')],
       });
 
-      await evaluateIdLevelPermissions(mockD1 as unknown as D1Database, 'user_123', 'default', {
+      await evaluateIdLevelPermissions(dbs, 'user_123', 'default', {
         cache: mockKV as unknown as KVNamespace,
       });
 
       expect(mockKV.put).toHaveBeenCalledWith(
-        'policy:idperms:default:user_123',
+        'policy:idperms:v2:default:user_123',
         '["documents:doc_123:read"]',
         { expirationTtl: 300 }
       );
@@ -287,13 +332,12 @@ describe('Resource Permissions Utilities', () => {
 
   describe('hasIdLevelPermission', () => {
     it('should return true when user has the permission with action', async () => {
-      mockD1.first.mockResolvedValue({ '1': 1 });
-      mockD1.all.mockResolvedValue({
-        results: [{ actions_json: '["read", "write"]' }],
+      const dbs = createMockDatabases({
+        resource_permissions: [{ actions_json: '["read", "write"]' }],
       });
 
       const result = await hasIdLevelPermission(
-        mockD1 as unknown as D1Database,
+        dbs,
         'user_123',
         'documents',
         'doc_456',
@@ -302,13 +346,49 @@ describe('Resource Permissions Utilities', () => {
       );
 
       expect(result).toBe(true);
+      // The grant is looked up on the metadata database for this tenant, resource and subject
+      const grantQuery = dbs.metadata.calls.find(({ sql }) =>
+        sql.includes('FROM resource_permissions')
+      );
+      expect(grantQuery?.params).toEqual([
+        'default',
+        'documents',
+        'doc_456',
+        expect.any(Number),
+        'user_123',
+      ]);
+    });
+
+    it('should return true when the action is granted to a role of the subject', async () => {
+      const dbs = createMockDatabases({
+        role_assignments: [assignmentRow('role_editor')],
+        roles: [roleRow('role_editor', 'editor')],
+        resource_permissions: [{ actions_json: '["read"]' }],
+      });
+
+      const result = await hasIdLevelPermission(
+        dbs,
+        'user_123',
+        'documents',
+        'doc_456',
+        'read',
+        'default'
+      );
+
+      expect(result).toBe(true);
+      expect(
+        dbs.metadata.calls.some(
+          ({ sql, params }) =>
+            sql.includes('FROM resource_permissions') && params.includes('role_editor')
+        )
+      ).toBe(true);
     });
 
     it('should return false when permission row does not exist', async () => {
-      mockD1.first.mockResolvedValue(null);
+      const dbs = createMockDatabases({ resource_permissions: [] });
 
       const result = await hasIdLevelPermission(
-        mockD1 as unknown as D1Database,
+        dbs,
         'user_123',
         'documents',
         'doc_456',
@@ -320,13 +400,12 @@ describe('Resource Permissions Utilities', () => {
     });
 
     it('should return false when action is not in actions_json', async () => {
-      mockD1.first.mockResolvedValue({ '1': 1 });
-      mockD1.all.mockResolvedValue({
-        results: [{ actions_json: '["read"]' }], // Only read, not write
+      const dbs = createMockDatabases({
+        resource_permissions: [{ actions_json: '["read"]' }], // Only read, not write
       });
 
       const result = await hasIdLevelPermission(
-        mockD1 as unknown as D1Database,
+        dbs,
         'user_123',
         'documents',
         'doc_456',
@@ -338,13 +417,12 @@ describe('Resource Permissions Utilities', () => {
     });
 
     it('should return true when permission includes wildcard action', async () => {
-      mockD1.first.mockResolvedValue({ '1': 1 });
-      mockD1.all.mockResolvedValue({
-        results: [{ actions_json: '["*"]' }],
+      const dbs = createMockDatabases({
+        resource_permissions: [{ actions_json: '["*"]' }],
       });
 
       const result = await hasIdLevelPermission(
-        mockD1 as unknown as D1Database,
+        dbs,
         'user_123',
         'documents',
         'doc_456',
@@ -483,7 +561,7 @@ describe('Resource Permissions Utilities', () => {
     it('should delete cache entry', async () => {
       await invalidateIdPermissionCache(mockKV as unknown as KVNamespace, 'user_123', 'default');
 
-      expect(mockKV.delete).toHaveBeenCalledWith('policy:idperms:default:user_123');
+      expect(mockKV.delete).toHaveBeenCalledWith('policy:idperms:v2:default:user_123');
     });
   });
 

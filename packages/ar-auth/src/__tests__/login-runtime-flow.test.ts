@@ -63,6 +63,7 @@ const mocks = vi.hoisted(() => {
     consumeAuthorizationChallengeContinuation: vi.fn(),
     readAuthorizationChallengeFreshness: vi.fn(),
     getFeatureFlag: vi.fn(),
+    resolveAccountCoreDataContext: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -97,6 +98,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     resolveRuntimeIdentityMappingBinding: mocks.resolveRuntimeIdentityMappingBinding,
     resolveOidcIdentityMappingBinding: mocks.resolveOidcIdentityMappingBinding,
+    resolveAccountCoreDataContext: mocks.resolveAccountCoreDataContext,
   };
 });
 
@@ -702,6 +704,32 @@ const conditionRuntime: FlowRuntimeContract = {
   },
 };
 
+/** A condition on the user's roles: admins go to consent, others skip it. */
+const roleConditionRuntime: FlowRuntimeContract = {
+  ...conditionRuntime,
+  ui: {
+    steps: conditionRuntime.ui.steps.map((step) =>
+      step.component === 'condition'
+        ? {
+            ...step,
+            config: {
+              conditions: {
+                rows: [
+                  {
+                    id: 'admin-role',
+                    condition: { type: 'user.role', value: 'admin' },
+                    output_handle: 'needs_consent',
+                  },
+                ],
+                otherwise: { output_handle: 'skip_consent' },
+              },
+            },
+          }
+        : step
+    ),
+  },
+};
+
 const conditionEditor = {
   nodes: [
     { id: 'entry', type: 'entry' },
@@ -845,6 +873,9 @@ function resetAdapter() {
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
   mocks.readAuthorizationChallengeFreshness.mockReset();
   mocks.readAuthorizationChallengeFreshness.mockResolvedValue(null);
+  // No account unless a test gives one (a user without an account has no roles).
+  mocks.resolveAccountCoreDataContext.mockReset();
+  mocks.resolveAccountCoreDataContext.mockRejectedValue(new Error('account_data_route_not_found'));
   clearLoginRuntimeFlowVersionCacheForTests();
   mocks.idQueue.splice(
     0,
@@ -2823,6 +2854,98 @@ describe('LoginUI runtime Flow handlers', () => {
       id: 'consent:step',
       source_node_id: 'consent',
       component: 'consent_policy',
+    });
+  });
+
+  describe("a condition on the user's roles", () => {
+    async function submitRoleCondition() {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login' },
+        roleConditionRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'scope-condition',
+        currentStepId: 'scope-condition:step',
+        stepState: 'pending',
+        runtimeSnapshot: roleConditionRuntime,
+        editorSnapshot: conditionEditor,
+        userId: 'user_1',
+      });
+      return { startData };
+    }
+
+    it('reads the assignment from the account database and the role from the metadata', async () => {
+      const { startData } = await submitRoleCondition();
+      // The metadata database (the request's core adapter) defines the role, nothing more.
+      mocks.coreAdapter.query.mockImplementation(async (sql: string) =>
+        sql.includes('FROM roles') && !sql.includes('user_roles')
+          ? [{ id: 'role_admin', name: 'admin', permissions_json: '[]' }]
+          : []
+      );
+      const account = {
+        query: vi.fn(async (sql: string) =>
+          sql.includes('FROM role_assignments')
+            ? [{ id: 'ra_1', role_id: 'role_admin', scope_type: 'global', scope_target: '' }]
+            : []
+        ),
+        queryOne: vi.fn(),
+        execute: vi.fn(),
+        batch: vi.fn(),
+        transaction: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: () => 'mock',
+        close: vi.fn(),
+      };
+      mocks.resolveAccountCoreDataContext.mockResolvedValue({ coreDb: account });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          body: {
+            step_id: 'scope-condition:step',
+            node_id: 'scope-condition',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(response.status).toBe(200);
+      expect(data.step).toMatchObject({ id: 'consent:step' });
+      expect(mocks.resolveAccountCoreDataContext).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'tenant_test',
+        accountId: 'user_1',
+      });
+    });
+
+    it('chooses no branch when the account cannot be read', async () => {
+      const { startData } = await submitRoleCondition();
+      mocks.coreAdapter.query.mockResolvedValue([]);
+      mocks.resolveAccountCoreDataContext.mockRejectedValue(
+        new Error('account_data_runtime_registry_unavailable')
+      );
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          body: {
+            step_id: 'scope-condition:step',
+            node_id: 'scope-condition',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(data.step).not.toMatchObject({ id: 'complete:step' });
+      expect(data.step).not.toMatchObject({ id: 'consent:step' });
+      expect(JSON.stringify(data)).toContain('AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE');
     });
   });
 

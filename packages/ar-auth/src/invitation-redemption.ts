@@ -281,12 +281,16 @@ export async function completeSignupInvitation(
       return false;
     }
 
-    const assignments = await applyInvitationAssignments(db.assignments, {
-      userId,
-      tenantId,
-      roleId: invitation.role_id,
-      orgId: invitation.org_id,
-    });
+    // The role and organisation are defined in the metadata database, with the invitation.
+    const assignments = await applyInvitationAssignments(
+      { metadata: invitationDb, account: db.assignments },
+      {
+        userId,
+        tenantId,
+        roleId: invitation.role_id,
+        orgId: invitation.org_id,
+      }
+    );
     if (invitation.role_id && !assignments.roleAssignment?.success) {
       log.warn('Failed to assign role from invitation', {
         invite_id: inviteId,
