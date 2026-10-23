@@ -55,6 +55,17 @@ describe('DNS Verification Utility', () => {
   });
 
   describe('calculateVerificationExpiry', () => {
+    // The function reads the clock itself: frozen, so that a second boundary falling between
+    // its read and the test's cannot add one to the difference.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.999Z'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('should return a future timestamp', () => {
       const now = Math.floor(Date.now() / 1000);
       const expiry = calculateVerificationExpiry();

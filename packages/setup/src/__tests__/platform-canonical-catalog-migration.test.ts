@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +54,8 @@ function expectedEntryRows() {
 }
 
 describe.skipIf(!sqlite3)('admin migration 041: the platform canonical field catalog', () => {
+  let templateDir: string;
+  let templatePath: string;
   let tempDir: string;
   let dbPath: string;
   const run = (sql: string) =>
@@ -77,10 +79,20 @@ describe.skipIf(!sqlite3)('admin migration 041: the platform canonical field cat
          FROM field_catalog_entries WHERE tenant_id = 'platform' ORDER BY stable_field_id`
     );
 
+  // Applying every admin migration starts sqlite3 once per file (about 1 s here, over 5 s on a
+  // loaded CI runner), so it is done once for the file and each test gets its own copy.
+  beforeAll(() => {
+    templateDir = mkdtempSync(join(tmpdir(), 'authrim-platform-catalog-migration-template-'));
+    dbPath = templatePath = join(templateDir, 'admin.db');
+    for (const file of listD1MigrationSqlFiles(adminMigrationsDir)) apply(file);
+  });
+
+  afterAll(() => rmSync(templateDir, { recursive: true, force: true }));
+
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'authrim-platform-catalog-migration-'));
     dbPath = join(tempDir, 'admin.db');
-    for (const file of listD1MigrationSqlFiles(adminMigrationsDir)) apply(file);
+    copyFileSync(templatePath, dbPath);
   });
 
   afterEach(() => rmSync(tempDir, { recursive: true, force: true }));
