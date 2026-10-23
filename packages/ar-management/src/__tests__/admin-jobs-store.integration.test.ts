@@ -28,6 +28,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       async (env: Env, partition: string, options?: { tenantId?: string }) =>
         options?.tenantId ? mocks.core : actual.ensureDatabaseAdapter(env.DB_ADMIN!, partition)
     ),
+    // The tenant's metadata (accounts not routed: memberships are kept in the same database).
+    resolveTenantMetadataContext: vi.fn(async (_env: Env, tenantId: string) => ({
+      tenantId,
+      coreDb: mocks.core,
+    })),
     createAuditLogFromContext: mocks.audit,
     emitRuntimeLogRecords: vi.fn(async () => ({ tenantKey: 'tk_test', targetResults: [] })),
     // The authentication state a bulk status change moves first (a Durable Object in production).
@@ -253,7 +258,8 @@ describe('admin jobs created through the admin API', () => {
          VALUES ('org-a', 'tenant-a', 'org-a', 'Org A', 1, 1)`
       )
       .run();
-    // The membership's subject references the legacy users_core row.
+    // The baseline schema (before core migration 028) still has the membership's subject
+    // reference users_core.
     core
       .prepare(
         `INSERT INTO users_core (id, tenant_id, created_at, updated_at)

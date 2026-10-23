@@ -26,6 +26,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
+  getTenantMetadataContextFromHono,
   createAuditLogFromContext,
   getLogger,
   listObjectCatalogObjects,
@@ -50,6 +51,7 @@ import {
   isAdminJobTypeCreatableFromAdminApi,
 } from './admin-job-types';
 import { countBulkUserUpdateTargets, validateBulkUserUpdateConfig } from './admin-job-executor';
+import { usesRoutedAccountStorage } from './tenant-routed-storage';
 import {
   USER_IMPORT_MAX_UPLOAD_BYTES,
   buildUserImportResultKey,
@@ -2116,19 +2118,23 @@ export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env 
       });
     }
 
-    // Validate that all user_ids exist in tenant
-    const userPlaceholders = options.user_ids.map(() => '?').join(',');
-    const existingUsers = await adapter.query<{ id: string }>(
-      `SELECT legacy_user_id as id
-         FROM identity_accounts
-        WHERE legacy_user_id IN (${userPlaceholders})
-          AND tenant_id = ?
-          AND lifecycle_state = 'active'`,
-      [...options.user_ids, tenantId]
-    );
-
-    const existingUserIds = new Set(existingUsers.map((u) => u.id));
-    const invalidUserIds = options.user_ids.filter((id) => !existingUserIds.has(id));
+    // Validate that all user_ids exist in tenant: to join, with an active account; to leave,
+    // with any account not deleted (as the job checks them). A routed tenant keeps each account
+    // in its own store: the job checks each member there and reports one it cannot find.
+    const invalidUserIds: string[] = [];
+    if (!usesRoutedAccountStorage(getTenantMetadataContextFromHono(c))) {
+      const userPlaceholders = options.user_ids.map(() => '?').join(',');
+      const existingUsers = await adapter.query<{ id: string }>(
+        `SELECT legacy_user_id as id
+           FROM identity_accounts
+          WHERE legacy_user_id IN (${userPlaceholders})
+            AND tenant_id = ?
+            AND ${options.action === 'add' ? "lifecycle_state = 'active'" : "lifecycle_state <> 'deleted'"}`,
+        [...options.user_ids, tenantId]
+      );
+      const existingUserIds = new Set(existingUsers.map((u) => u.id));
+      invalidUserIds.push(...options.user_ids.filter((id) => !existingUserIds.has(id)));
+    }
 
     if (invalidUserIds.length > 0) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {

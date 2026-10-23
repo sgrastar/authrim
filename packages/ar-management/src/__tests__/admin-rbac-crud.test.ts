@@ -148,7 +148,9 @@ describe('admin RBAC organization and role CRUD', () => {
   });
 
   it.each([null, organization()])('gets organization result %#', async (org) => {
-    mocks.adapter.queryOne.mockResolvedValueOnce(org).mockResolvedValueOnce({ count: 3 });
+    mocks.adapter.queryOne.mockResolvedValueOnce(org);
+    // The member count, by organisation, from the account databases.
+    mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 3 }]);
     const response = await adminOrganizationGetHandler(context());
     expect(response.status).toBe(org ? 200 : 404);
     if (org)
@@ -242,7 +244,7 @@ describe('admin RBAC organization and role CRUD', () => {
   it('lists roles with assignment counts and timestamp normalization', async () => {
     mocks.adapter.query
       .mockResolvedValueOnce([role(), role({ id: 'role-2', is_system: 1, created_at: null })])
-      .mockResolvedValueOnce([{ role_id: 'role-1', count: 2 }]);
+      .mockResolvedValueOnce([{ key: 'role-1', count: 2 }]);
     await expect((await adminRolesListHandler(context())).json()).resolves.toMatchObject({
       roles: [
         { id: 'role-1', assignment_count: 2, is_system: false },
@@ -254,8 +256,10 @@ describe('admin RBAC organization and role CRUD', () => {
   it('gets role with inherited deduplicated permissions', async () => {
     mocks.adapter.queryOne
       .mockResolvedValueOnce(role({ parent_role_id: 'parent' }))
-      .mockResolvedValueOnce(role({ id: 'parent', permissions_json: '["audit:read","user:read"]' }))
-      .mockResolvedValueOnce({ count: 3 });
+      .mockResolvedValueOnce(
+        role({ id: 'parent', permissions_json: '["audit:read","user:read"]' })
+      );
+    mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 3 }]);
     await expect((await adminRoleGetHandler(context())).json()).resolves.toMatchObject({
       role: {
         assignment_count: 3,
@@ -410,7 +414,8 @@ describe('admin RBAC organization and role CRUD', () => {
   });
 
   it('does not delete assigned custom roles', async () => {
-    mocks.adapter.queryOne.mockResolvedValueOnce(role()).mockResolvedValueOnce({ count: 2 });
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
+    mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 2 }]);
     expect((await adminRoleDeleteHandler(context({ auth: adminAuth }))).status).toBe(409);
     expect(mocks.adapter.execute).not.toHaveBeenCalled();
   });

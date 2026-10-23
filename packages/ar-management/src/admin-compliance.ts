@@ -86,54 +86,52 @@ async function auditLogStats(env: Env, auditProfile: AuditProfile, tenantId: str
   };
 }
 
-/** User ids read per statement when counting users with a role across stores. */
+/** Rows read per statement when counting users with a role across stores. */
 const ROLE_USER_PAGE = 5000;
 
 /**
  * Roles defined for the tenant, and users holding one: an unexpired role assignment, or a role
- * SCIM gave them (user_roles, which sign-in reads too). Read in every store the assignments live
- * in (a routed tenant keeps them with each account, its SCIM roles may be in another store), and
- * each user counted once across them.
+ * SCIM gave them (user_roles, which sign-in reads too). The roles are in the metadata database
+ * (`adapter`); the assignments are read in every store they may be in (a routed tenant keeps them
+ * with each account, its SCIM roles may be in another store) and kept when they name one of the
+ * roles, each user counted once across them.
  */
 export async function roleUsage(env: Env, tenantId: string, adapter: DatabaseAdapter) {
   const [roles, stores] = await Promise.all([
-    adapter.queryOne<{ active_roles: number | null }>(
-      'SELECT COUNT(DISTINCT id) AS active_roles FROM roles WHERE tenant_id = ?',
-      [tenantId]
-    ),
+    adapter.query<{ id: string }>('SELECT id FROM roles WHERE tenant_id = ?', [tenantId]),
     tenantCoreStores(env, tenantId),
   ]);
+  const roleIds = new Set(roles.map((role) => role.id));
   const nowSeconds = Math.floor(Date.now() / 1000);
   const users = new Set<string>();
   await Promise.all(
     stores.map(async ({ adapter: store }) => {
-      let after = '';
+      let after = { userId: '', roleId: '' };
       for (;;) {
-        const page = await store.query<{ user_id: string }>(
-          `SELECT user_id FROM (
-             SELECT ra.subject_id AS user_id
-               FROM role_assignments ra
-               JOIN roles r ON r.id = ra.role_id AND r.tenant_id = ra.tenant_id
-              WHERE ra.tenant_id = ? AND (ra.expires_at IS NULL OR ra.expires_at > ?)
+        const page = await store.query<{ user_id: string; role_id: string }>(
+          `SELECT user_id, role_id FROM (
+             SELECT subject_id AS user_id, role_id
+               FROM role_assignments
+              WHERE tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)
              UNION
-             SELECT ur.user_id
-               FROM user_roles ur
-               JOIN roles r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
-              WHERE ur.tenant_id = ?
+             SELECT user_id, role_id
+               FROM user_roles
+              WHERE tenant_id = ?
            )
-           WHERE user_id > ?
-           ORDER BY user_id
+           WHERE user_id > ? OR (user_id = ? AND role_id > ?)
+           ORDER BY user_id, role_id
            LIMIT ?`,
-          [tenantId, nowSeconds, tenantId, after, ROLE_USER_PAGE]
+          [tenantId, nowSeconds, tenantId, after.userId, after.userId, after.roleId, ROLE_USER_PAGE]
         );
-        for (const row of page) users.add(row.user_id);
+        for (const row of page) if (roleIds.has(row.role_id)) users.add(row.user_id);
         if (page.length < ROLE_USER_PAGE) break;
-        after = page[page.length - 1]!.user_id;
+        const last = page[page.length - 1]!;
+        after = { userId: last.user_id, roleId: last.role_id };
       }
     })
   );
   return {
-    active_roles: Number(roles?.active_roles ?? 0),
+    active_roles: roleIds.size,
     users_with_roles: users.size,
   };
 }

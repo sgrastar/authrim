@@ -37,15 +37,29 @@ import {
   CanonicalRuntimeUserStore,
   findTenantOrganization,
   findTenantRole,
+  resolveSubjectOrganizations,
   resolveSubjectRoles,
+  roleAssignmentHolds,
+  rolePermissions,
   type TenantRBACDatabases,
   hasAdminPermission,
   ORGANIZATION_TYPES,
   isOrganizationType,
   isUniqueConstraintError,
+  countOrganizationMembers,
+  countRoleAssignments,
+  listOrganizationMembersPage,
+  listRoleAssignmentsPage,
+  MergedPageTooDeepError,
 } from '@authrim/ar-lib-core';
+import {
+  accountStoreHolding,
+  routedSubjectContacts,
+  tenantRBACStores,
+  type SubjectContacts,
+  type TenantRBACStores,
+} from './rbac-account-stores';
 import { isInactiveAccountRouteError } from './account-route-errors';
-import { tenantCoreStores } from './compliance/tenant-stores';
 
 /**
  * Hono context type with admin auth variable
@@ -217,23 +231,7 @@ async function subjectAccountForRevocation(
   } catch (error) {
     if (!isInactiveAccountRouteError(error)) throw error;
   }
-  const stores = await tenantCoreStores(c.env, tenantId, { accountsOfRoutedTenant: true });
-  const holding = (
-    await Promise.all(
-      stores.map(async ({ adapter }) =>
-        (await adapter.queryOne<{ id: string }>(
-          `SELECT id FROM identity_accounts
-            WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state <> 'deleted'
-            LIMIT 1`,
-          [tenantId, subjectId]
-        ))
-          ? adapter
-          : null
-      )
-    )
-  ).filter((adapter): adapter is DatabaseAdapter => adapter !== null);
-  if (holding.length > 1) throw new Error('admin_rbac_account_store_ambiguous');
-  return holding[0] ?? null;
+  return accountStoreHolding(c.env, tenantId, subjectId);
 }
 
 /**
@@ -287,6 +285,45 @@ async function fetchRuntimeUserContactMap(
     })
   );
   return map;
+}
+
+/** The contacts of a page of a tenant-wide list, each from the account's own databases. */
+async function subjectContacts(
+  c: Context<{ Bindings: Env }>,
+  stores: TenantRBACStores,
+  tenantId: string,
+  subjectIds: string[]
+): Promise<SubjectContacts> {
+  if (stores.routed) return routedSubjectContacts(c.env, tenantId, subjectIds);
+  return fetchRuntimeUserContactMap(
+    stores.metadata,
+    createAdaptersFromContext(c).piiAdapter,
+    tenantId,
+    subjectIds
+  );
+}
+
+const MAX_LIST_PAGE_SIZE = 100;
+
+/** The page asked for: page from 1, limit from 1 to MAX_LIST_PAGE_SIZE (20 by default). */
+function listPage(c: Context<{ Bindings: Env }>): { page: number; limit: number; offset: number } {
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1);
+  const limit = Math.min(
+    MAX_LIST_PAGE_SIZE,
+    Math.max(1, parseInt(c.req.query('limit') || '20', 10) || 20)
+  );
+  return { page, limit, offset: (page - 1) * limit };
+}
+
+function pageTooDeep(c: Context<{ Bindings: Env }>) {
+  return c.json(
+    {
+      error: 'invalid_request',
+      error_description:
+        "This page is too deep to read across the tenant's account stores; ask for an earlier page",
+    },
+    400
+  );
 }
 
 async function runtimeUserExists(
@@ -410,20 +447,17 @@ export async function adminOrganizationsListHandler(c: Context<{ Bindings: Env }
  */
 export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
+    const stores = await tenantRBACStores(c, tenantId);
 
-    // Execute queries in parallel
-    const [org, memberCount] = await Promise.all([
-      coreAdapter.queryOne<Record<string, unknown>>(
+    // The organisation is in the metadata database, its members in every account database.
+    const [org, memberCounts] = await Promise.all([
+      stores.metadata.queryOne<Record<string, unknown>>(
         'SELECT * FROM organizations WHERE tenant_id = ? AND id = ?',
         [tenantId, orgId]
       ),
-      coreAdapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?',
-        [tenantId, orgId]
-      ),
+      countOrganizationMembers(stores.accounts, tenantId, [orgId]),
     ]);
 
     if (!org) {
@@ -442,7 +476,7 @@ export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>)
       is_active: Boolean(org.is_active),
       created_at: toMilliseconds(org.created_at as number),
       updated_at: toMilliseconds(org.updated_at as number),
-      member_count: memberCount?.count || 0,
+      member_count: memberCounts.get(orgId) ?? 0,
     };
 
     return c.json({
@@ -768,18 +802,13 @@ export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env 
  */
 export async function adminOrganizationMembersListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
-    const page = parseInt(c.req.query('page') || '1');
-    const limit = parseInt(c.req.query('limit') || '20');
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = listPage(c);
+    const stores = await tenantRBACStores(c, tenantId);
 
     // Check if organization exists
-    const org = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?',
-      [tenantId, orgId]
-    );
+    const org = await findTenantOrganization(stores.metadata, tenantId, orgId);
 
     if (!org) {
       return c.json(
@@ -791,42 +820,28 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
       );
     }
 
-    // Execute queries in parallel
-    // PII/Non-PII DB separation: Cannot JOIN, so fetch PII separately after getting membership
-    const [totalResult, members] = await Promise.all([
-      coreAdapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?',
-        [tenantId, orgId]
-      ),
-      coreAdapter.query<Record<string, unknown>>(
-        `SELECT m.subject_id, m.org_id, m.membership_type, m.is_primary, m.created_at
-         FROM subject_org_membership m
-         WHERE m.tenant_id = ? AND m.org_id = ?
-         ORDER BY m.created_at DESC
-         LIMIT ? OFFSET ?`,
-        [tenantId, orgId, limit, offset]
-      ),
-    ]);
-
-    const total = totalResult?.count || 0;
+    // The members are in every account database; their contacts are fetched afterwards.
+    const { total, items } = await listOrganizationMembersPage(stores.accounts, tenantId, orgId, {
+      limit,
+      offset,
+    });
     const totalPages = Math.ceil(total / limit);
-
-    // Fetch PII for member users from PII DB
-    const memberPIIMap = await fetchRuntimeUserContactMap(
-      coreAdapter,
-      piiAdapter,
+    const members = items.map(({ row }) => row);
+    const memberPIIMap = await subjectContacts(
+      c,
+      stores,
       tenantId,
-      members.map((m) => m.subject_id as string)
+      members.map((m) => m.subject_id)
     );
 
-    const formattedMembers = members.map((m: Record<string, unknown>) => {
-      const pii = memberPIIMap.get(m.subject_id as string);
+    const formattedMembers = members.map((m) => {
+      const pii = memberPIIMap.get(m.subject_id);
       return {
         subject_id: m.subject_id,
         org_id: m.org_id,
         membership_type: m.membership_type,
         is_primary: Boolean(m.is_primary),
-        joined_at: toMilliseconds(m.created_at as number),
+        joined_at: toMilliseconds(m.created_at),
         user_email: pii?.email || null,
         user_name: pii?.name || null,
       };
@@ -844,6 +859,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
       },
     });
   } catch (error) {
+    if (error instanceof MergedPageTooDeepError) return pageTooDeep(c);
     const log = getLogger(c).module('ADMIN-RBAC');
     log.error(
       'Admin organization members list error',
@@ -1096,26 +1112,20 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
  */
 export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
-    const roles = await coreAdapter.query<Record<string, unknown>>(
-      `SELECT id, tenant_id, name, display_name, description, permissions_json,
-              is_system, role_type, parent_role_id, created_at, updated_at
-       FROM roles
-       WHERE tenant_id = ?
-       ORDER BY is_system DESC, role_type ASC, name ASC`,
-      [tenantId]
-    );
-
-    // Get assignment counts for all roles
-    const assignmentCounts = await coreAdapter.query<{ role_id: string; count: number }>(
-      `SELECT role_id, COUNT(DISTINCT subject_id) as count
-       FROM role_assignments
-       WHERE tenant_id = ?
-       GROUP BY role_id`,
-      [tenantId]
-    );
-    const countMap = new Map(assignmentCounts.map((r) => [r.role_id, r.count]));
+    const stores = await tenantRBACStores(c, tenantId);
+    // The roles are in the metadata database, their holders in every account database.
+    const [roles, countMap] = await Promise.all([
+      stores.metadata.query<Record<string, unknown>>(
+        `SELECT id, tenant_id, name, display_name, description, permissions_json,
+                is_system, role_type, parent_role_id, created_at, updated_at
+         FROM roles
+         WHERE tenant_id = ?
+         ORDER BY is_system DESC, role_type ASC, name ASC`,
+        [tenantId]
+      ),
+      countRoleAssignments(stores.accounts, tenantId, { per: 'subject' }),
+    ]);
 
     const formattedRoles = roles.map((role: Record<string, unknown>) => ({
       ...role,
@@ -1147,9 +1157,10 @@ export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const roleId = c.req.param('id')!;
+    const stores = await tenantRBACStores(c, tenantId);
+    const coreAdapter = stores.metadata;
 
     const role = await coreAdapter.queryOne<Record<string, unknown>>(
       'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
@@ -1187,11 +1198,10 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Get count of users with this role
-    const assignmentCount = await coreAdapter.queryOne<{ count: number }>(
-      'SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments WHERE tenant_id = ? AND role_id = ?',
-      [tenantId, roleId]
-    );
+    // Users with this role, in every account database
+    const assignmentCount = (
+      await countRoleAssignments(stores.accounts, tenantId, { per: 'subject', roleIds: [roleId] })
+    ).get(roleId);
 
     return c.json({
       role: {
@@ -1199,7 +1209,7 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
         is_system: Boolean(role.is_system),
         created_at: toMilliseconds(role.created_at as number),
         updated_at: toMilliseconds(role.updated_at as number),
-        assignment_count: assignmentCount?.count || 0,
+        assignment_count: assignmentCount ?? 0,
         // Parsed permissions for easier frontend consumption
         added_permissions: ownPermissions,
         effective_permissions: effectivePermissions,
@@ -1971,10 +1981,11 @@ interface OrganizationNode {
  */
 export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const maxDepth = parseInt(c.req.query('max_depth') || '10', 10);
+    const stores = await tenantRBACStores(c, tenantId);
+    const coreAdapter = stores.metadata;
 
     if (!orgId) {
       return c.json(
@@ -2027,23 +2038,12 @@ export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: E
       [orgId, tenantId, tenantId, maxDepth]
     );
 
-    // Get member counts for all organizations
-    const orgIds = descendants.map((o) => o.id);
-    const memberCounts: Record<string, number> = {};
-
-    if (orgIds.length > 0) {
-      const placeholders = orgIds.map(() => '?').join(',');
-      const counts = await coreAdapter.query<{ org_id: string; count: number }>(
-        `SELECT org_id, COUNT(*) as count
-         FROM subject_org_membership
-         WHERE tenant_id = ? AND org_id IN (${placeholders})
-         GROUP BY org_id`,
-        [tenantId, ...orgIds]
-      );
-      for (const row of counts) {
-        memberCounts[row.org_id] = row.count;
-      }
-    }
+    // Member counts for all organizations, from every account database
+    const memberCounts = await countOrganizationMembers(
+      stores.accounts,
+      tenantId,
+      descendants.map((o) => o.id)
+    );
 
     // Build tree structure
     const nodesById: Map<string, OrganizationNode> = new Map();
@@ -2057,7 +2057,7 @@ export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: E
         parent_id: org.parent_id,
         depth: org.depth,
         is_active: org.is_active === 1,
-        member_count: memberCounts[org.id] || 0,
+        member_count: memberCounts.get(org.id) ?? 0,
         children: [],
       });
     }
@@ -2126,17 +2126,15 @@ interface EffectivePermission {
 
 /**
  * GET /api/admin/users/:id/effective-permissions
- * Get user's effective permissions from all sources
+ * Get user's effective permissions
  *
- * Collects permissions from:
- * - Direct user permissions
- * - Role-based permissions
- * - Organization-based permissions
- * - Inherited permissions from parent organizations
+ * As tokens carry them: the permissions of the user's unexpired roles assigned across the tenant
+ * (global, or tenant in this tenant). Roles assigned in one organisation or on one resource are
+ * listed with their scope; their permissions hold there only, so they are not counted here.
+ * Organisation memberships are listed; they grant no permissions of their own.
  */
 export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
 
@@ -2144,94 +2142,44 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
       return c.json({ error: 'invalid_request', error_description: 'User ID is required' }, 400);
     }
 
+    // The user's assignments and memberships are in its account database.
+    if (!(await resolveSubjectAccount(c, userId))) {
+      return c.json({ error: 'not_found', error_description: 'User not found' }, 404);
+    }
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+
     if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json({ error: 'not_found', error_description: 'User not found' }, 404);
     }
 
+    const dbs = rbacDatabasesFromContext(c, coreAdapter);
+    const [userRoles, orgMemberships] = await Promise.all([
+      resolveSubjectRoles(dbs, tenantId, userId),
+      resolveSubjectOrganizations(dbs, tenantId, userId),
+    ]);
+
     const permissions: EffectivePermission[] = [];
     const seenPermissions = new Set<string>();
-
-    // 1. Get direct role assignments
-    const userRoles = await coreAdapter.query<{
-      role_id: string;
-      role_name: string;
-      granted_at: number | null;
-      expires_at: number | null;
-    }>(
-      `SELECT ur.role_id, r.name as role_name, ur.created_at as granted_at, ur.expires_at
-       FROM user_roles ur
-       INNER JOIN roles r ON ur.role_id = r.id
-       WHERE ur.tenant_id = ?
-         AND ur.user_id = ?
-         AND r.tenant_id = ?
-         AND (ur.expires_at IS NULL OR ur.expires_at > ?)`,
-      [tenantId, userId, tenantId, Math.floor(Date.now() / 1000)]
-    );
-
-    // Get permissions for each role
-    for (const role of userRoles) {
-      const rolePermissions = await coreAdapter.query<{ permission: string }>(
-        'SELECT permission FROM role_permissions WHERE role_id = ?',
-        [role.role_id]
-      );
-
-      for (const rp of rolePermissions) {
-        if (!seenPermissions.has(rp.permission)) {
-          seenPermissions.add(rp.permission);
-          permissions.push({
-            permission: rp.permission,
-            source: 'role',
-            source_id: role.role_id,
-            source_name: role.role_name,
-            granted_at: role.granted_at,
-            expires_at: role.expires_at,
-          });
-        }
+    for (const { assignment, role } of userRoles) {
+      if (
+        !roleAssignmentHolds(
+          { scope: assignment.scope_type, scopeTarget: assignment.scope_target },
+          { tenantId }
+        )
+      ) {
+        continue;
       }
-    }
-
-    // 2. Get organization memberships and their roles
-    const orgMemberships = await coreAdapter.query<{
-      org_id: string;
-      org_name: string;
-      role_id: string | null;
-      role_name: string | null;
-      membership_type: string;
-      joined_at: number | null;
-    }>(
-      `SELECT om.org_id as org_id,
-              o.name as org_name,
-              r.id as role_id,
-              COALESCE(r.display_name, r.name, om.membership_type) as role_name,
-              om.membership_type,
-              om.created_at as joined_at
-       FROM subject_org_membership om
-       INNER JOIN organizations o ON om.org_id = o.id AND o.tenant_id = om.tenant_id
-       LEFT JOIN roles r ON r.name = om.membership_type AND r.tenant_id = om.tenant_id
-       WHERE om.subject_id = ? AND om.tenant_id = ?`,
-      [userId, tenantId]
-    );
-
-    for (const membership of orgMemberships) {
-      if (membership.role_id) {
-        const orgRolePermissions = await coreAdapter.query<{ permission: string }>(
-          'SELECT permission FROM role_permissions WHERE role_id = ?',
-          [membership.role_id]
-        );
-
-        for (const rp of orgRolePermissions) {
-          if (!seenPermissions.has(rp.permission)) {
-            seenPermissions.add(rp.permission);
-            permissions.push({
-              permission: rp.permission,
-              source: 'organization',
-              source_id: membership.org_id,
-              source_name: `${membership.org_name} (${membership.role_name ?? membership.membership_type})`,
-              granted_at: membership.joined_at,
-              expires_at: null,
-            });
-          }
-        }
+      for (const permission of rolePermissions(role)) {
+        if (seenPermissions.has(permission)) continue;
+        seenPermissions.add(permission);
+        permissions.push({
+          permission,
+          source: 'role',
+          source_id: role.id,
+          source_name: role.name,
+          granted_at: assignment.created_at,
+          expires_at: assignment.expires_at,
+        });
       }
     }
 
@@ -2255,18 +2203,20 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
         from_organizations: permissions.filter((p) => p.source === 'organization').length,
         from_inherited: permissions.filter((p) => p.source === 'inherited').length,
       },
-      roles: userRoles.map((r) => ({
-        role_id: r.role_id,
-        role_name: r.role_name,
-        granted_at: toMilliseconds(r.granted_at),
-        expires_at: toMilliseconds(r.expires_at),
+      roles: userRoles.map(({ assignment, role }) => ({
+        role_id: role.id,
+        role_name: role.name,
+        scope: assignment.scope_type,
+        scope_target: assignment.scope_target,
+        granted_at: toMilliseconds(assignment.created_at),
+        expires_at: toMilliseconds(assignment.expires_at),
       })),
-      organizations: orgMemberships.map((m) => ({
-        organization_id: m.org_id,
-        organization_name: m.org_name,
-        role_id: m.role_id,
-        role_name: m.role_name,
-        joined_at: toMilliseconds(m.joined_at),
+      organizations: orgMemberships.map(({ membership, organization }) => ({
+        organization_id: organization.id,
+        organization_name: organization.name,
+        role_id: null,
+        role_name: membership.membership_type,
+        joined_at: toMilliseconds(membership.created_at),
       })),
     });
   } catch (error) {
@@ -2293,18 +2243,13 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
  */
 export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const roleId = c.req.param('id')!;
-    const page = parseInt(c.req.query('page') || '1');
-    const limit = parseInt(c.req.query('limit') || '20');
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = listPage(c);
+    const stores = await tenantRBACStores(c, tenantId);
 
     // Check if role exists
-    const role = await coreAdapter.queryOne<{ id: string; name: string }>(
-      'SELECT id, name FROM roles WHERE id = ? AND tenant_id = ?',
-      [roleId, tenantId]
-    );
+    const role = await findTenantRole(stores.metadata, tenantId, { id: roleId });
 
     if (!role) {
       return c.json(
@@ -2316,37 +2261,24 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
       );
     }
 
-    const now = Math.floor(Date.now() / 1000);
-
-    // Get total count
-    const totalResult = await coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments
-       WHERE tenant_id = ? AND role_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
-      [tenantId, roleId, now]
-    );
-
-    const total = totalResult?.count || 0;
+    // The assignments are in every account database; total counts assignments, as listed.
+    const { total, items } = await listRoleAssignmentsPage(stores.accounts, tenantId, roleId, {
+      activeAt: Math.floor(Date.now() / 1000),
+      limit,
+      offset,
+    });
     const totalPages = Math.ceil(total / limit);
+    const assignments = items.map(({ row }) => row);
 
-    // Get assignments with pagination
-    const assignments = await coreAdapter.query<Record<string, unknown>>(
-      `SELECT DISTINCT ra.id, ra.subject_id, ra.scope_type, ra.scope_target, ra.assigned_by, ra.expires_at, ra.created_at
-       FROM role_assignments ra
-       WHERE ra.role_id = ? AND ra.tenant_id = ? AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-       ORDER BY ra.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [roleId, tenantId, now, limit, offset]
-    );
-
-    const userContactMap = await fetchRuntimeUserContactMap(
-      coreAdapter,
-      piiAdapter,
+    const userContactMap = await subjectContacts(
+      c,
+      stores,
       tenantId,
-      assignments.map((a) => a.subject_id as string)
+      assignments.map((a) => a.subject_id)
     );
 
-    const formattedAssignments = assignments.map((a: Record<string, unknown>) => {
-      const pii = userContactMap.get(a.subject_id as string);
+    const formattedAssignments = assignments.map((a) => {
+      const pii = userContactMap.get(a.subject_id);
       return {
         assignment_id: a.id,
         user_id: a.subject_id,
@@ -2355,8 +2287,8 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
         scope: a.scope_type,
         scope_target: a.scope_target,
         assigned_by: a.assigned_by,
-        expires_at: a.expires_at ? toMilliseconds(a.expires_at as number) : null,
-        assigned_at: toMilliseconds(a.created_at as number),
+        expires_at: a.expires_at ? toMilliseconds(a.expires_at) : null,
+        assigned_at: toMilliseconds(a.created_at),
       };
     });
 
@@ -2374,6 +2306,7 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
       },
     });
   } catch (error) {
+    if (error instanceof MergedPageTooDeepError) return pageTooDeep(c);
     const log = getLogger(c).module('ADMIN-RBAC');
     log.error(
       'Admin role assignments list error',
@@ -2743,7 +2676,8 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-RBAC');
 
   try {
-    const { coreAdapter: adapter } = createAdaptersFromContext(c);
+    const stores = await tenantRBACStores(c, tenantId);
+    const adapter = stores.metadata;
 
     // Get the existing role
     const existingRole = await adapter.queryOne<{
@@ -2779,17 +2713,22 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Check if any users are assigned to this role
-    const assignmentCount = await adapter.queryOne<{ count: number }>(
-      'SELECT COUNT(*) as count FROM role_assignments WHERE tenant_id = ? AND role_id = ?',
-      [tenantId, roleId]
-    );
+    // Refused while any user is assigned the role (expired or not), in any account database.
+    // An assignment made after this check (no transaction spans the databases) names a role
+    // that no longer exists, and grants nothing: readers ignore it.
+    const assignedUsers =
+      (
+        await countRoleAssignments(stores.accounts, tenantId, {
+          per: 'subject',
+          roleIds: [roleId],
+        })
+      ).get(roleId) ?? 0;
 
-    if (assignmentCount && assignmentCount.count > 0) {
+    if (assignedUsers > 0) {
       return c.json(
         {
           error: 'conflict',
-          error_description: `Cannot delete role: ${assignmentCount.count} user(s) are still assigned to this role. Remove all assignments first.`,
+          error_description: `Cannot delete role: ${assignedUsers} user(s) are still assigned to this role. Remove all assignments first.`,
         },
         409
       );

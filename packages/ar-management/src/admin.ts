@@ -24,7 +24,6 @@ import {
   resolveAccountDataContextFromHono,
   createAuthContextFromHono,
   createAccountAuthContextFromHono,
-  hasPIIDatabase,
   generateId,
   type DatabaseAdapter,
   createErrorResponse,
@@ -50,6 +49,12 @@ import {
   // Write-Through KV Cache (Phase 3)
   readResponseTextWithLimit,
   CanonicalRuntimeUserStore,
+  ensureDatabaseAdapter,
+  isDatabaseSource,
+  LinkedIdentityRepository,
+  PasskeyRepository,
+  RoleRepository,
+  SubjectIdentifierRepository,
   getTenantMetadataContextFromHono,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   createDataTemporarilyUnavailableResponse,
@@ -93,6 +98,8 @@ import { timeManagementRequestDiagnosticOperation } from './request-diagnostics'
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import { prepareAccountTombstone, writeAccountTombstone } from './account-tombstone-write';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
+import { isInactiveAccountRouteError } from './account-route-errors';
+import { CrossShardAccountExactSearchService } from './cross-shard-account-list';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -1062,6 +1069,64 @@ const ANONYMIZE_REASON_CODES = new Set([
   'consent_withdrawn', // Consent withdrawn
 ]);
 
+/** The databases an anonymization erases a user from. */
+interface AnonymizationTarget {
+  core: DatabaseAdapter;
+  pii: DatabaseAdapter;
+  /** Whether accounts are routed to their own databases (the core is then the account's). */
+  routed: boolean;
+}
+
+/**
+ * The databases of the user to anonymize. A routed tenant keeps the user in its account
+ * databases: an active account is found through its route; one an anonymization already moved
+ * to `deleting` (which account routes refuse: they resolve active accounts only) through the
+ * deletion lookup of the tenant's stores, so a failed anonymization can be finished. A suspended
+ * or locked account is `not_active`.
+ */
+async function anonymizationTarget(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<AnonymizationTarget | 'not_found' | 'not_active'> {
+  if (!usesRoutedAccountStorage(getTenantMetadataContextFromHono(c))) {
+    return {
+      core: createAuthContextFromHono(c, tenantId).coreAdapter,
+      pii: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+      routed: false,
+    };
+  }
+  try {
+    if (!(await resolveAdminTargetAccount(c, userId))) return 'not_found';
+    return {
+      core: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      pii: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+      routed: true,
+    };
+  } catch (error) {
+    if (!isInactiveAccountRouteError(error)) throw error;
+  }
+  const routes = await new CrossShardAccountExactSearchService(c.env).find({
+    tenantId,
+    identifier: userId,
+    purpose: 'account_delete_retry',
+  });
+  if (routes.length === 0) return 'not_active';
+  if (routes.length !== 1 || routes[0]!.legacyUserId !== userId) {
+    throw new Error('admin_anonymize_account_route_invalid');
+  }
+  const binding = (bindingRef: string) => {
+    const source = (c.env as unknown as Record<string, unknown>)[bindingRef];
+    if (!isDatabaseSource(source)) throw new Error('admin_anonymize_account_binding_unavailable');
+    return source;
+  };
+  return {
+    core: ensureDatabaseAdapter(binding(routes[0]!.coreBindingRef), 'admin-anonymize-core'),
+    pii: ensureDatabaseAdapter(binding(routes[0]!.piiBindingRef), 'admin-anonymize-pii'),
+    routed: true,
+  };
+}
+
 /**
  * POST /api/admin/users/:id/anonymize
  * Anonymize (delete) user data per GDPR Article 17
@@ -1112,12 +1177,24 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const target = await anonymizationTarget(c, tenantId, userId);
+    if (target === 'not_found')
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    if (target === 'not_active') {
+      return c.json(
+        {
+          error: 'account_not_active',
+          error_description:
+            'The account is not active; it cannot be anonymized while suspended or locked',
+        },
+        409
+      );
+    }
     const nowTs = Math.floor(Date.now() / 1000);
 
     const runtimeUsers = new CanonicalRuntimeUserStore({
-      coreAdapter: authCtx.coreAdapter,
-      piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+      coreAdapter: target.core,
+      piiAdapter: target.pii,
       tenantId,
     });
     const user = await runtimeUsers.findById(userId, { includeInactive: true });
@@ -1135,7 +1212,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+    const legalHold = await findActiveAccountLegalHold(target.core, tenantId, userId);
 
     if (legalHold) {
       return c.json(
@@ -1198,20 +1275,15 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
           operationId: deletingOperationId,
         });
 
-        if (!hasPIIDatabase(c)) {
-          throw new Error('account_directory_removal_pii_unavailable');
-        }
-        const removalPiiContext = createPIIContextFromHono(c, tenantId);
         const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
           tenantId,
           userId,
-          core: authCtx.coreAdapter,
-          pii: removalPiiContext.defaultPiiAdapter,
+          core: target.core,
+          pii: target.pii,
         });
 
-        if (hasPIIDatabase(c)) {
-          const piiCtx = removalPiiContext;
-          const tombstone = await writeAccountTombstone(piiCtx.defaultPiiAdapter, {
+        {
+          const tombstone = await writeAccountTombstone(target.pii, {
             tenantId,
             userId,
             prepared: tombstoneInput,
@@ -1226,29 +1298,29 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
           tombstoneId = tombstone.id;
           retentionUntil = tombstone.retention_until;
           await eraseAccountPiiAfterDirectoryRemovalPrepared(
-            piiCtx.defaultPiiAdapter,
-            { tenantId, userId, core: authCtx.coreAdapter },
+            target.pii,
+            { tenantId, userId, core: target.core },
             nowTs
           );
-          await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(
+          await new LinkedIdentityRepository(target.pii).deleteByUserId(
             tenantId,
             userId,
-            piiCtx.defaultPiiAdapter
+            target.pii
           );
-          await piiCtx.piiRepositories.identifier.deleteByUserId(
+          await new SubjectIdentifierRepository(target.pii).deleteByUserId(
             tenantId,
             userId,
-            piiCtx.defaultPiiAdapter
+            target.pii
           );
         }
 
-        const sessions = await authCtx.coreAdapter.query<{ id: string }>(
+        const sessions = await target.core.query<{ id: string }>(
           'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
           [tenantId, userId]
         );
         await Promise.all(
           sessions.map((session) =>
-            authCtx.coreAdapter.execute(
+            target.core.execute(
               'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
               [tenantId, session.id]
             )
@@ -1256,13 +1328,24 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
         );
 
         await Promise.all([
-          authCtx.coreAdapter.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
+          target.core.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
             tenantId,
             userId,
           ]),
-          authCtx.repositories.passkey.deleteByUserId(userId),
-          authCtx.repositories.role.removeAllRolesFromUser(userId),
-          authCtx.coreAdapter.execute(
+          new PasskeyRepository(target.core, tenantId).deleteByUserId(userId),
+          // The user's roles and memberships, in its account database; and the roles SCIM gave
+          // it, which SCIM keeps in the tenant metadata database.
+          new RoleRepository(target.core, tenantId).removeAllRolesFromUser(userId),
+          target.routed
+            ? createAuthContextFromHono(c, tenantId).repositories.role.removeAllRolesFromUser(
+                userId
+              )
+            : null,
+          target.core.execute(
+            'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?',
+            [tenantId, userId]
+          ),
+          target.core.execute(
             'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
             [tenantId, userId]
           ),
@@ -1276,7 +1359,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
           sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
           operationId: crypto.randomUUID(),
         });
-        await markAccountDirectoryRemovalsReady(authCtx.coreAdapter, directoryRemovals);
+        await markAccountDirectoryRemovalsReady(target.core, directoryRemovals);
         await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
       }
     );

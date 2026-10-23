@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  adapter: { queryOne: vi.fn() },
+  adapter: { query: vi.fn(), queryOne: vi.fn() },
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -20,6 +20,7 @@ import { adminAccessControlStatsHandler } from '../admin-access-control-stats';
 
 function context() {
   return {
+    get: vi.fn(() => undefined),
     env: {},
     json: vi.fn((body: unknown, status = 200) => Response.json(body, { status })),
   } as never;
@@ -28,9 +29,12 @@ function context() {
 describe('adminAccessControlStatsHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.adapter.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('role_assignments')) return [{ key: 'role-1', count: 2 }];
+      if (sql.includes('FROM roles')) return [{ id: 'role-1' }];
+      throw new Error(`unexpected query: ${sql}`);
+    });
     mocks.adapter.queryOne.mockImplementation(async (sql: string) => {
-      if (sql.includes('role_assignments')) return { count: 2 };
-      if (sql.includes('FROM roles')) return { count: 1 };
       if (sql.includes('user_verified_attributes') && sql.includes('expires_at'))
         return { count: 3 };
       if (sql.includes('user_verified_attributes')) return { count: 4 };
@@ -52,7 +56,9 @@ describe('adminAccessControlStatsHandler', () => {
       rebac: { total_definitions: 5, total_tuples: 6 },
       policies: { total_policies: 8, active_policies: 7 },
     });
-    const sql = mocks.adapter.queryOne.mock.calls.map(([statement]) => statement).join('\n');
+    const sql = [...mocks.adapter.query.mock.calls, ...mocks.adapter.queryOne.mock.calls]
+      .map(([statement]) => statement)
+      .join('\n');
     expect(sql).not.toMatch(/\buser_roles\b|\buser_attributes\b|rebac_|FROM policies\b/);
   });
 });

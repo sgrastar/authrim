@@ -18,6 +18,11 @@ const { mockAdapter, mockAuditLog, mockLoggerError, mockGrantRepo, mockWriteAdmi
     mockWriteAdminAuditLog: vi.fn(),
   }));
 
+const routedStorage = vi.hoisted(() => ({ routed: false }));
+vi.mock('../tenant-routed-storage', () => ({
+  usesRoutedAccountStorage: vi.fn(() => routedStorage.routed),
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -448,6 +453,55 @@ describe('admin-jobs handlers', () => {
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO admin_jobs'),
       expect.arrayContaining(['job-123', 'tenant-a', 'organizations/bulk-members'])
+    );
+  });
+
+  it.each([
+    ['add', "lifecycle_state = 'active'"],
+    ['remove', "lifecycle_state <> 'deleted'"],
+  ] as const)(
+    'checks the members of an organization bulk %s job as the job does',
+    async (action, state) => {
+      routedStorage.routed = false;
+      mockAdapter.queryOne.mockResolvedValue({ id: 'org', tenant_id: 'tenant-a', name: 'Org' });
+      mockAdapter.query.mockResolvedValue([{ id: '00000000-0000-4000-8000-000000000002' }]);
+      const { app, env } = createTestApp();
+
+      const res = await app.request(
+        '/api/admin/jobs/organizations/00000000-0000-4000-8000-000000000001/bulk-members',
+        {
+          method: 'POST',
+          headers: buildHeaders(),
+          body: JSON.stringify({ user_ids: ['00000000-0000-4000-8000-000000000002'], action }),
+        },
+        env
+      );
+
+      expect(res.status).toBe(202);
+      expect(String(mockAdapter.query.mock.calls[0]?.[0])).toContain(state);
+    }
+  );
+
+  it("leaves a routed tenant's members to the job, which reads each in its own store", async () => {
+    routedStorage.routed = true;
+    mockAdapter.queryOne.mockResolvedValue({ id: 'org', tenant_id: 'tenant-a', name: 'Org' });
+    const { app, env } = createTestApp();
+
+    const res = await app.request(
+      '/api/admin/jobs/organizations/00000000-0000-4000-8000-000000000001/bulk-members',
+      {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify({ user_ids: ['00000000-0000-4000-8000-000000000002'] }),
+      },
+      env
+    );
+    routedStorage.routed = false;
+
+    expect(res.status).toBe(202);
+    expect(mockAdapter.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('FROM identity_accounts'),
+      expect.anything()
     );
   });
 

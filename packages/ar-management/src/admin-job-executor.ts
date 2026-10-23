@@ -21,6 +21,8 @@ import {
   readAccountAuthenticationState,
   getTenantSettingsDocument,
   SUBJECT_UPDATED_AT_FORWARD_SQL,
+  createAuditLog,
+  createLogger,
 } from '@authrim/ar-lib-core';
 import {
   initializeFromAccount,
@@ -39,6 +41,8 @@ import {
   type EndedSession,
 } from './session-end-logout';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+import { accessSummaryRows, applyOrganizationBulkMembers, jobRBACStores } from './admin-job-rbac';
+import { removeOrganizationMembership } from './access-revocation';
 import { listScimTokens } from '@authrim/ar-lib-scim';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
@@ -2051,7 +2055,7 @@ export function toCsv(rows: Array<Record<string, unknown>>): string {
 }
 
 async function processReportGenerateJob(
-  _env: Env,
+  env: Env,
   stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
@@ -2074,28 +2078,7 @@ async function processReportGenerateJob(
       );
       break;
     case 'access_summary':
-      rows = [
-        {
-          metric: 'organizations',
-          count:
-            (
-              await adapter.queryOne<{ count: number }>(
-                'SELECT COUNT(*) as count FROM organizations WHERE tenant_id = ?',
-                [job.tenant_id]
-              )
-            )?.count ?? 0,
-        },
-        {
-          metric: 'organization_memberships',
-          count:
-            (
-              await adapter.queryOne<{ count: number }>(
-                'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ?',
-                [job.tenant_id]
-              )
-            )?.count ?? 0,
-        },
-      ];
+      rows = await accessSummaryRows(await jobRBACStores(env, job.tenant_id), job.tenant_id);
       break;
     case 'compliance_audit':
       rows = await countTenantAdminJobs([stores.jobs, adapter], job.tenant_id, fromTs, toTs);
@@ -2145,73 +2128,56 @@ function normalizeMembershipType(role: string | undefined): 'member' | 'admin' |
 }
 
 async function processOrganizationBulkMembersJob(
-  _env: Env,
-  stores: AdminJobStores,
+  env: Env,
+  _stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
-  const adapter = await stores.tenant();
+  // Organisations are read in the tenant metadata database, memberships in each member's.
   const config = parseJsonConfig<OrganizationBulkMembersConfig>(job);
   const membershipType = normalizeMembershipType(config.role);
-  const org = await adapter.queryOne<{ id: string }>(
-    'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
-    [config.organization_id, job.tenant_id]
-  );
-  if (!org) throw new Error('Organization does not belong to the job tenant');
-
-  let succeeded = 0;
-  let skipped = 0;
-  const failures: Array<{ user_id: string; error: string }> = [];
-  const nowTs = Math.floor(Date.now() / 1000);
-
-  for (const userId of config.user_ids) {
-    const user = await adapter.queryOne<{ id: string }>(
-      "SELECT legacy_user_id as id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ? AND lifecycle_state = 'active'",
-      [userId, job.tenant_id]
-    );
-    if (!user) {
-      failures.push({ user_id: userId, error: 'user_not_found' });
-      continue;
-    }
-
-    const existing = await adapter.queryOne<{ id: string }>(
-      `SELECT id FROM subject_org_membership
-       WHERE tenant_id = ? AND org_id = ? AND subject_id = ?`,
-      [job.tenant_id, config.organization_id, userId]
-    );
-
-    if (config.action === 'add') {
-      if (existing) {
-        failures.push({ user_id: userId, error: 'membership_already_exists' });
-        continue;
-      }
-      await adapter.execute(
-        `INSERT INTO subject_org_membership (
-          id, tenant_id, subject_id, org_id, membership_type, is_primary, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
-        [
-          crypto.randomUUID(),
-          job.tenant_id,
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const { succeeded, skipped, failures } = await applyOrganizationBulkMembers(
+    await jobRBACStores(env, job.tenant_id),
+    {
+      tenantId: job.tenant_id,
+      orgId: config.organization_id,
+      action: config.action,
+      membershipType,
+      userIds: config.user_ids,
+      nowSeconds,
+    },
+    // As the Admin API removes one: the member's cached claims are dropped and it is audited,
+    // once for this job and member however often the job runs.
+    (account, userId) =>
+      removeOrganizationMembership(
+        {
+          env,
+          tenantId: job.tenant_id,
+          adapter: account,
+          log: createLogger().module('ADMIN-JOBS'),
+          audit: (action, resource, resourceId, details, stable) =>
+            createAuditLog(env, {
+              tenantId: job.tenant_id,
+              userId: 'admin_job',
+              action,
+              resource,
+              resourceId,
+              ipAddress: 'internal',
+              userAgent: `admin-job:${job.job_type}`,
+              metadata: JSON.stringify({ ...details, admin_job_id: job.id }),
+              severity: 'info',
+              ...(stable ? { id: stable.id, createdAt: stable.at } : {}),
+            }),
+          onCacheFailure: 'warn',
+        },
+        {
           userId,
-          config.organization_id,
-          membershipType,
-          nowTs,
-          nowTs,
-        ]
-      );
-      succeeded += 1;
-      continue;
-    }
-
-    if (!existing) {
-      skipped += 1;
-      continue;
-    }
-    await adapter.execute(
-      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
-      [job.tenant_id, config.organization_id, userId]
-    );
-    succeeded += 1;
-  }
+          orgId: config.organization_id,
+          // The job's own time, the same on every run of it.
+          audit: { id: `${job.id}:org-member-removed:${userId}`, at: job.created_at * 1000 },
+        }
+      ).then(() => undefined)
+  );
 
   const total = config.user_ids.length;
   const failed = failures.length;

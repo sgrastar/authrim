@@ -134,9 +134,6 @@ describe('admin compliance APIs', () => {
       { source: {}, bindingRef: 'DB' },
       { source: {}, bindingRef: 'DB_USERS_1' },
     ]);
-    mocks.core.queryOne.mockImplementation(async (sql: string) =>
-      sql.includes('FROM roles WHERE') ? { active_roles: 2 } : null
-    );
     // Four users with a role in each store, one of them in both.
     const storeUsers = [
       ['user-1', 'user-2', 'user-3', 'user-4'],
@@ -144,7 +141,11 @@ describe('admin compliance APIs', () => {
     ];
     let storeIndex = 0;
     mocks.core.query.mockImplementation(async (sql: string) =>
-      sql.includes('ra.subject_id') ? storeUsers[storeIndex++]!.map((user_id) => ({ user_id })) : []
+      sql.includes('SELECT id FROM roles WHERE')
+        ? [{ id: 'role-1' }, { id: 'role-2' }]
+        : sql.includes('FROM role_assignments')
+          ? storeUsers[storeIndex++]!.map((user_id) => ({ user_id, role_id: 'role-1' }))
+          : []
     );
     const response = await adminComplianceStatusHandler(context());
     expect(response.status).toBe(200);
@@ -187,12 +188,13 @@ describe('admin compliance APIs', () => {
     expect(mocks.countUserMfa).toHaveBeenCalledWith(expect.anything(), 'tenant-a', {
       routed: false,
     });
-    // Users with a role: only unexpired assignments to roles of the tenant.
+    // Users with a role: only unexpired assignments, kept when they name a role of the tenant
+    // (the roles are in another database than the assignments, so no join).
     const rbacSql = String(
       mocks.core.query.mock.calls.find(([sql]) => String(sql).includes('role_assignments'))?.[0]
     );
-    expect(rbacSql).toContain('JOIN roles r ON r.id = ra.role_id AND r.tenant_id = ra.tenant_id');
-    expect(rbacSql).toContain('ra.expires_at IS NULL OR ra.expires_at > ?');
+    expect(rbacSql).not.toContain('JOIN roles');
+    expect(rbacSql).toContain('expires_at IS NULL OR expires_at > ?');
     expect(body.access_control).toEqual({ active_roles: 2, users_with_roles: 7 });
   });
 

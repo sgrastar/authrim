@@ -31,6 +31,11 @@ const mocks = vi.hoisted(() => ({
   /** The user records the deletion removes. */
   users: new Set<string>(),
   routed: false,
+  /** The account's route refuses it: the account is not active (suspended, locked). */
+  accountInactive: false,
+  /** The account was left `deleting` by an anonymization that failed: the deletion lookup finds it. */
+  leftDeleting: false,
+  metadataRoleRemoval: vi.fn(async () => undefined),
   failUserRemoval: false,
   coreAdapter: { queryOne: vi.fn(), execute: vi.fn(), query: vi.fn(), batch: vi.fn() },
   piiAdapter: { queryOne: vi.fn(), execute: vi.fn(), query: vi.fn(), batch: vi.fn() },
@@ -78,9 +83,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       coreAdapter: mocks.coreAdapter,
       repositories: {
         passkey: { deleteByUserId: vi.fn(async () => undefined) },
-        role: { removeAllRolesFromUser: vi.fn(async () => undefined) },
+        role: { removeAllRolesFromUser: mocks.metadataRoleRemoval },
       },
     })),
+    // A routed account's databases: the same in-memory adapter, its own role repository.
+    resolveAccountDataContextFromHono: vi.fn(async () => {
+      if (mocks.accountInactive) {
+        throw new Error('lookup_destination_revalidation_failed', { cause: 'account_inactive' });
+      }
+      return {};
+    }),
+    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
     createPIIContextFromHono: vi.fn(() => ({
       defaultPiiAdapter: mocks.piiAdapter,
       piiRepositories: {
@@ -200,19 +213,24 @@ vi.mock('../cross-shard-account-list', async (importOriginal) => {
     ...actual,
     CrossShardAccountExactSearchService: vi.fn(function () {
       return {
-        find: vi.fn(async ({ identifier }: { identifier: string }) => [
-          {
-            id: `account:${identifier}`,
-            legacyUserId: identifier,
-            tenantId: 'tenant-a',
-            accountType: 'user',
-            lifecycleState: 'active',
-            displayLabel: null,
-            createdAt: 1,
-            coreBindingRef: 'DB',
-            piiBindingRef: 'DB_PII',
-          },
-        ]),
+        // A suspended account is not found by the deletion lookup; one left deleting is.
+        find: vi.fn(async ({ identifier }: { identifier: string }) =>
+          mocks.accountInactive && !mocks.leftDeleting
+            ? []
+            : [
+                {
+                  id: `account:${identifier}`,
+                  legacyUserId: identifier,
+                  tenantId: 'tenant-a',
+                  accountType: 'user',
+                  lifecycleState: 'active',
+                  displayLabel: null,
+                  createdAt: 1,
+                  coreBindingRef: 'DB',
+                  piiBindingRef: 'DB_PII',
+                },
+              ]
+        ),
       };
     }),
   };
@@ -494,6 +512,12 @@ const DELETIONS = [
   ['deleting a user', adminUserDeleteHandler, 'user.deleted', false],
   ['deleting a user in routed account storage', adminUserDeleteHandler, 'user.deleted', true],
   ['anonymizing a user', adminUserAnonymizeHandler, 'user.anonymized', false],
+  [
+    'anonymizing a user in routed account storage',
+    adminUserAnonymizeHandler,
+    'user.anonymized',
+    true,
+  ],
 ] as const;
 
 describe('deleting or anonymizing a user notifies downstream relying parties', () => {
@@ -510,6 +534,8 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
     mocks.users.clear();
     mocks.users.add('user-1');
     mocks.routed = false;
+    mocks.accountInactive = false;
+    mocks.leftDeleting = false;
     mocks.failUserRemoval = false;
     for (const adapter of [mocks.coreAdapter, mocks.piiAdapter]) {
       adapter.queryOne.mockReset().mockResolvedValue(null);
@@ -737,5 +763,47 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
     await settle(pending);
 
     expect(sent).toEqual([]);
+  });
+  it("anonymizing a routed user removes its roles and memberships in the account's database", async () => {
+    mocks.routed = true;
+    const env = createEnv();
+    const { c } = context(env);
+    expect((await adminUserAnonymizeHandler(c)).status).toBe(200);
+    const statements = mocks.coreAdapter.execute.mock.calls.map(([sql]) => String(sql));
+    expect(statements).toContain(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?'
+    );
+    expect(statements).toContain(
+      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?'
+    );
+    // Its SCIM roles, in the account's database and in the metadata database SCIM keeps them in.
+    expect(statements).toContain('DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?');
+    expect(mocks.metadataRoleRemoval).toHaveBeenCalledWith('user-1');
+  });
+
+  it('finishes anonymizing a routed account a failed anonymization left deleting', async () => {
+    mocks.routed = true;
+    mocks.accountInactive = true;
+    mocks.leftDeleting = true;
+    const env = createEnv();
+    const { c } = context(env);
+    expect((await adminUserAnonymizeHandler(c)).status).toBe(200);
+    expect(mocks.users.has('user-1')).toBe(false);
+    const statements = mocks.coreAdapter.execute.mock.calls.map(([sql]) => String(sql));
+    expect(statements).toContain(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?'
+    );
+  });
+
+  it('refuses to anonymize a routed account that is not active, changing nothing', async () => {
+    mocks.routed = true;
+    mocks.accountInactive = true;
+    const env = createEnv();
+    const { c } = context(env);
+    const response = await adminUserAnonymizeHandler(c);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: 'account_not_active' });
+    expect(mocks.users.has('user-1')).toBe(true);
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalled();
   });
 });

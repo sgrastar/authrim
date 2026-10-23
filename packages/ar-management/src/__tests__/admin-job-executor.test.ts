@@ -84,6 +84,17 @@ vi.mock('../session-end-logout', async (importOriginal) => ({
   auditSessionEndLogoutStarted: mockAuditSessionEndLogout,
 }));
 
+// Organisations and memberships are read through the job's RBAC stores (tested on separate
+// databases in admin-job-rbac.test.ts); here they are all the one mock adapter.
+vi.mock('../admin-job-rbac', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../admin-job-rbac')>()),
+  jobRBACStores: vi.fn(async () => ({
+    metadata: mockAdapter,
+    accountOf: async () => mockAdapter,
+    accounts: async () => [mockAdapter],
+  })),
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {

@@ -14,7 +14,7 @@ import {
 export async function tenantCoreStores(
   env: Env,
   tenantId: string,
-  options: { accountsOfRoutedTenant?: boolean } = {}
+  options: { accountsOfRoutedTenant?: boolean; purpose?: string } = {}
 ) {
   const stores = await resolveTenantAssignedDatabaseSourcesFromRegistry(env, {
     tenantId,
@@ -30,6 +30,9 @@ export async function tenantCoreStores(
     .filter((store) => !seen.has(store.bindingRef) && (seen.add(store.bindingRef), true))
     .map((store) => ({
       bindingRef: store.bindingRef,
-      adapter: ensureDatabaseAdapter(store.source, `access-review:${store.bindingRef}`),
+      adapter: ensureDatabaseAdapter(
+        store.source,
+        `${options.purpose ?? 'access-review'}:${store.bindingRef}`
+      ),
     }));
 }
