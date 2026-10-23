@@ -7,6 +7,51 @@ import {
   type Phase8InstalledAdapterPorts,
 } from '../tenant-backup-phase8-adapter';
 
+const bundle = vi.hoisted(() => ({
+  guardInput: undefined as
+    | { loadBundleRoles(context: unknown): Promise<readonly string[]> }
+    | undefined,
+  datasets: vi.fn(),
+  byId: vi.fn(),
+  head: vi.fn(),
+}));
+vi.mock('../tenant-backup-restore-authority', async (original) => {
+  const actual = await original<typeof import('../tenant-backup-restore-authority')>();
+  return {
+    ...actual,
+    createTenantBackupRestoreAuthorityGuard: (
+      input: Parameters<typeof actual.createTenantBackupRestoreAuthorityGuard>[0]
+    ) => {
+      bundle.guardInput = input;
+      return actual.createTenantBackupRestoreAuthorityGuard(input);
+    },
+  };
+});
+vi.mock('../tenant-backup-validated-input-port', async (original) => {
+  const actual = await original<typeof import('../tenant-backup-validated-input-port')>();
+  return {
+    ...actual,
+    createTenantBackupValidatedInputPorts: (
+      ...args: Parameters<typeof actual.createTenantBackupValidatedInputPorts>
+    ) => ({
+      ...actual.createTenantBackupValidatedInputPorts(...args),
+      loadValidatedSqliteDatasets: bundle.datasets,
+      loadValidatedDatasetById: bundle.byId,
+    }),
+  };
+});
+vi.mock(
+  '@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory',
+  async (original) => ({
+    ...(await original<
+      typeof import('@authrim/ar-lib-core/services/tenant-portability/restore-plan-inventory')
+    >()),
+    DatabaseTenantBackupRestorePlanInventory: class {
+      headForLease = bundle.head;
+    },
+  })
+);
+
 function planned(): PlannedInstalledSqliteDataset[] {
   return PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map((registration, ordinal) => ({
     ordinal,
@@ -182,4 +227,68 @@ it('loads import policies from the claimed operation physical plan', async () =>
   expect(loadPlanned).toHaveBeenCalledWith(context);
   expect(loadPlanned).toHaveBeenCalledTimes(1);
   expect(installedPorts.import.assertSources).toHaveBeenCalledWith(context);
+});
+
+it('holds platform-only settings and global Admin assignments to the request authority', async () => {
+  for (const source of ['planned', 'loadPlanned'] as const) {
+    const adapter = createPhase8TenantBackupInstalledAdapter({
+      env: {
+        DB_ADMIN: database(),
+        PII_ENCRYPTION_KEY: '11'.repeat(32),
+        OBJECT_ENCRYPTION_ROOT_KEY: '22'.repeat(32),
+        EXPORT_ARTIFACTS: {} as R2Bucket,
+      } as unknown as Env,
+      ...(source === 'planned' ? { planned: planned() } : { loadPlanned: async () => planned() }),
+      ports: ports(),
+    });
+    const context = { operation: { id: 'operation-a', tenant_id: 'tenant-a' } } as never;
+    for (const datasetId of [
+      'admin.tenant_settings_documents',
+      'admin.admin_role_assignments',
+      'admin.admin_roles',
+    ]) {
+      const policy = await adapter.import.loadPolicy(context, datasetId);
+      expect(policy.admitRow?.id, `${source}:${datasetId}`).toBe(
+        `restore-authority-v1:${datasetId}`
+      );
+      expect(policy.restoreTransform?.id, `${source}:${datasetId}`).toContain(
+        'restore-authority-v1'
+      );
+    }
+    expect((await adapter.import.loadPolicy(context, 'core.users_core')).admitRow).toBeUndefined();
+  }
+});
+
+it('reads the bundle roles from the validated input under the sealed restore plan', async () => {
+  createPhase8TenantBackupInstalledAdapter({
+    env: {
+      DB_ADMIN: database(),
+      PII_ENCRYPTION_KEY: '11'.repeat(32),
+      OBJECT_ENCRYPTION_ROOT_KEY: '22'.repeat(32),
+      EXPORT_ARTIFACTS: {} as R2Bucket,
+    } as unknown as Env,
+    planned: planned(),
+    ports: ports(),
+  });
+  const context = { lease: { tenantId: 'tenant-a', operationId: 'operation-a' } };
+  const rows = ['{"id":["text","role-a"]}', '{"id":["text","role-b"]}'];
+  bundle.datasets.mockResolvedValue([{ policy: { dataset: { id: 'admin.admin_roles' } } }]);
+  bundle.head.mockResolvedValue({ state: 'sealed', chain_digest: 'ab'.repeat(32) });
+  bundle.byId.mockResolvedValue({
+    readNextValidatedRow: async ({ sourceCursor }: { sourceCursor: string | null }) => {
+      const index = sourceCursor === null ? 0 : Number(sourceCursor);
+      return index < rows.length ? { rowJson: rows[index], nextCursor: String(index + 1) } : null;
+    },
+  });
+  await expect(bundle.guardInput!.loadBundleRoles(context)).resolves.toEqual(rows);
+  expect(bundle.byId).toHaveBeenCalledWith(context, 'ab'.repeat(32), 'admin.admin_roles');
+  // No roles in the bundle: nothing to read.
+  bundle.datasets.mockResolvedValue([{ policy: { dataset: { id: 'core.users_core' } } }]);
+  await expect(bundle.guardInput!.loadBundleRoles(context)).resolves.toEqual([]);
+  // A plan that is not sealed is not read.
+  bundle.datasets.mockResolvedValue([{ policy: { dataset: { id: 'admin.admin_roles' } } }]);
+  bundle.head.mockResolvedValue({ state: 'building', chain_digest: 'ab'.repeat(32) });
+  await expect(bundle.guardInput!.loadBundleRoles(context)).rejects.toThrow(
+    'backup_restore_authority_roles_unavailable'
+  );
 });

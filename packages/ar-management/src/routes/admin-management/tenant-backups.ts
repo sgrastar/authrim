@@ -32,6 +32,7 @@ import { uploadTenantBackupPart } from '@authrim/ar-lib-core/services/tenant-por
 import { completeTenantBackupUpload } from '@authrim/ar-lib-core/services/tenant-portability/complete-upload';
 import { TenantBackupImportRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/import-request';
 import { TenantBackupOperationReadModel } from '../../tenant-backup-operation-read-model';
+import { tenantBackupImportAuthority } from '../../tenant-backup-restore-authority';
 
 const SYNCHRONOUS_UPLOAD_COMPLETION_BYTES = 16 * 1024 * 1024;
 
@@ -364,13 +365,16 @@ tenantBackupsRouter.post('/imports', async (c) => {
     return c.json({ error: 'backup_forbidden' }, 403);
   const actorId = auth.actorId ?? auth.userId;
   const id = await stableOperationId('import', auth.tenantId, actorId, input.idempotencyKey);
+  // What the requester may grant now. The restore refuses bundle rows beyond it (settings only the
+  // platform may change, global Admin role assignments); an approver adds nothing to it.
+  const authority = tenantBackupImportAuthority(auth, actorId);
   if (
     !(await writeAdminAuditLog(c, {
       action: 'tenant_backup.import_requested',
       resourceType: 'tenant_backup',
       resourceId: id,
       result: 'success',
-      metadata: { selection, inputCount: input.uploadIds.length },
+      metadata: { selection, inputCount: input.uploadIds.length, authority },
     }))
   )
     return c.json({ error: 'backup_audit_unavailable' }, 503);
@@ -389,6 +393,7 @@ tenantBackupsRouter.post('/imports', async (c) => {
       },
       selection,
       uploadIds: input.uploadIds as string[],
+      authority,
       now: Date.now(),
     });
     return c.json(

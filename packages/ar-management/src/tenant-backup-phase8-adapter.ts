@@ -57,6 +57,10 @@ import {
 import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-object-snapshot-port';
 import { createTenantBackupR2ReferenceSelectionLoader } from './tenant-backup-r2-reference-selection';
 import type { TenantBackupInstalledSqliteExportPorts } from './tenant-backup-sqlite-export-adapter';
+import {
+  ADMIN_ROLES_DATASET,
+  createTenantBackupRestoreAuthorityGuard,
+} from './tenant-backup-restore-authority';
 
 export interface Phase8InstalledAdapterPorts extends Omit<
   Phase5InstalledAdapterPorts,
@@ -274,8 +278,40 @@ export function createPhase8TenantBackupInstalledAdapter(
         }),
     },
   };
+  const restoreAuthority = createTenantBackupRestoreAuthorityGuard({
+    database,
+    now,
+    // The bundle's own role definitions, from the validated input under the sealed restore plan.
+    loadBundleRoles: async (context) => {
+      const datasets = await validatedInput.loadValidatedSqliteDatasets(context);
+      if (!datasets.some(({ policy }) => policy.dataset.id === ADMIN_ROLES_DATASET)) return [];
+      const head = await new DatabaseTenantBackupRestorePlanInventory(
+        database,
+        context.lease,
+        now
+      ).headForLease(context.lease);
+      if (head.state !== 'sealed' || !/^[a-f0-9]{64}$/.test(head.chain_digest))
+        throw new Error('backup_restore_authority_roles_unavailable');
+      const source = await validatedInput.loadValidatedDatasetById(
+        context,
+        head.chain_digest,
+        ADMIN_ROLES_DATASET
+      );
+      const rows: string[] = [];
+      let sourceCursor: string | null = null;
+      for (;;) {
+        const next = await source.readNextValidatedRow({ sourceCursor });
+        if (!next) return rows;
+        // Read only for a platform-tenant restore, a global assignment, or a role an existing
+        // global grant reaches; well above what the role API lets a tenant hold.
+        if (rows.length >= 16384) throw new Error('backup_restore_authority_roles_unavailable');
+        rows.push(next.rowJson);
+        sourceCursor = next.nextCursor;
+      }
+    },
+  });
   const policies = input.planned
-    ? createPhase8SqliteInspectionPolicies(input.planned, policyInput)
+    ? restoreAuthority.wrap(createPhase8SqliteInspectionPolicies(input.planned, policyInput))
     : null;
   let dynamicPolicies: Promise<ReturnType<typeof createPhase8SqliteInspectionPolicies>> | undefined;
   const loadPlanned = input.loadPlanned;
@@ -395,7 +431,7 @@ export function createPhase8TenantBackupInstalledAdapter(
             loadPolicies: async (context: TenantBackupStepContext) => {
               if (!loadPlanned) throw new Error('backup_phase8_plan_loader');
               dynamicPolicies ??= loadInstalledPlan(context).then((planned) =>
-                createPhase8SqliteInspectionPolicies(planned, policyInput)
+                restoreAuthority.wrap(createPhase8SqliteInspectionPolicies(planned, policyInput))
               );
               return dynamicPolicies;
             },

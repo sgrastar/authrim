@@ -42,6 +42,12 @@ import {
   PHASE8_TRANSFORMED_SQLITE_DATASETS,
 } from '../tenant-backup-phase8-row-transform';
 import { planPhase8InstalledSqliteResources } from '../tenant-backup-phase8-plan-loader';
+import {
+  ADMIN_ROLE_ASSIGNMENTS_DATASET,
+  createTenantBackupRestoreAuthorityGuard,
+  TENANT_SETTINGS_DOCUMENTS_DATASET,
+} from '../tenant-backup-restore-authority';
+import { TenantBackupRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const sourcePiiKey = '11'.repeat(32);
@@ -89,7 +95,40 @@ function schemaAdapter(database: DatabaseSync) {
     async queryOne<T>(sql: string, params: unknown[] = []): Promise<T | null> {
       return (database.prepare(sql).get(...params) as T | undefined) ?? null;
     },
+    async execute(sql: string, params: unknown[] = []) {
+      return { success: true, rowsAffected: Number(database.prepare(sql).run(...params).changes) };
+    },
   };
+}
+
+/** An import request for tenant-a, stored where the restore reads it, with `authority`. */
+async function importRequest(
+  database: DatabaseSync,
+  id: string,
+  authority: {
+    actorId: string;
+    platformSettingsCategories: string[];
+    globalAdmin: { permitted: boolean; hierarchyLevel: number };
+  }
+) {
+  await new TenantBackupRequestStore(schemaAdapter(database)).create({
+    id,
+    tenantId: 'tenant-a',
+    actorId: authority.actorId,
+    idempotencyKey: id,
+    intent: {
+      version: 1,
+      kind: 'import',
+      source: { tenantId: 'tenant-a', issuer: 'https://issuer.example', productVersion: '0.4.2' },
+      selection,
+      inputs: [{ id: 'upload-a', digestSha256: 'aa'.repeat(32) }],
+      authority,
+    },
+    now: 1,
+  });
+  return {
+    lease: { tenantId: 'tenant-a', operationId: id, owner: 'worker', fencingToken: 1 },
+  } as never;
 }
 
 async function phase8Plan() {
@@ -227,6 +266,19 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
           id,tenant_id,admin_user_id,admin_role_id,scope_type,assigned_by,created_at
         ) VALUES(
           'assignment-a','tenant-a','source-admin','role-a','tenant','source-admin',1
+        );
+        INSERT INTO admin_role_assignments(
+          id,tenant_id,admin_user_id,admin_role_id,scope_type,scope_id,assigned_by,created_at
+        ) VALUES(
+          'assignment-global','tenant-a','source-admin','role_admin','global',NULL,'source-admin',1
+        );
+        INSERT INTO tenant_settings_documents(
+          tenant_id,scope_type,scope_id,category,document_json,version,revision,projection_state,
+          updated_at,projected_at
+        ) VALUES(
+          'tenant-a','tenant','tenant-a','institution',
+          '{"institution.scopes":["other-university.example"]}',
+          'sha256:${'a'.repeat(16)}',1,'applied',1,1
         );
       `);
       target.admin.exec(`
@@ -378,7 +430,44 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         resolvePluginReference: async (_context, sourceInstallationId) => sourceInstallationId,
         restoreHold: { write: async () => {}, verify: async () => {} },
       });
-      const byId = new Map(policies.map((policy) => [policy.dataset.id, policy]));
+      // The rows that grant more than a tenant: refused for a tenant-only requester, as decoded
+      // from the bundle, before anything is written.
+      const guard = createTenantBackupRestoreAuthorityGuard({
+        database: schemaAdapter(target.admin),
+        loadBundleRoles: async () => restored.get('admin.admin_roles') ?? [],
+      });
+      const tenantOnly = await importRequest(target.admin, 'tenant-only-import', {
+        actorId: 'tenant-admin',
+        platformSettingsCategories: [],
+        globalAdmin: { permitted: false, hierarchyLevel: 0 },
+      });
+      const guarded = new Map(guard.wrap(policies).map((policy) => [policy.dataset.id, policy]));
+      const refusedRows = [
+        ...restored
+          .get(TENANT_SETTINGS_DOCUMENTS_DATASET)!
+          .filter((row) => JSON.parse(row).category[1] === 'institution')
+          .map((row) => [TENANT_SETTINGS_DOCUMENTS_DATASET, row] as const),
+        ...restored
+          .get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!
+          .filter((row) => JSON.parse(row).scope_type[1] === 'global')
+          .map((row) => [ADMIN_ROLE_ASSIGNMENTS_DATASET, row] as const),
+      ];
+      expect(refusedRows).toHaveLength(2);
+      for (const [datasetId, row] of refusedRows)
+        await expect(guarded.get(datasetId)!.admitRow!.admit(tenantOnly, row)).rejects.toThrow(
+          'backup_restore_authority_required'
+        );
+      // A platform operator's DR restore keeps them (the restore below runs as that request).
+      const platformRestore = await importRequest(target.admin, 'platform-import', {
+        actorId: 'platform-admin',
+        platformSettingsCategories: ['institution'],
+        globalAdmin: { permitted: true, hierarchyLevel: 100 },
+      });
+      for (const [datasetId, row] of refusedRows)
+        await guarded.get(datasetId)!.admitRow!.admit(platformRestore, row);
+      const byId = new Map(
+        [...guarded.values()].map((policy) => [policy.dataset.id, policy] as const)
+      );
       for (const entry of planned.filter(({ dataset }) => tenantKeyDatasets.has(dataset.id))) {
         const policy = byId.get(entry.dataset.id)!;
         const column = portableTenantKeyColumn(entry.capture)!;
@@ -402,7 +491,7 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         ordered.push(policy);
       };
       for (const id of byId.keys()) visit(id);
-      const restoreContext = { lease: { tenantId: 'tenant-a' } } as never;
+      const restoreContext = platformRestore;
       for (const policy of ordered) {
         if (policy.restoreDisposition === 'reference_only') continue;
         const entry = planned.find((candidate) => candidate.dataset.id === policy.dataset.id)!;
@@ -510,6 +599,20 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       expect(
         target.admin.prepare("SELECT password_hash FROM admin_users WHERE id='target-admin'").get()
       ).toEqual({ password_hash: 'target-password' });
+      expect(
+        target.admin
+          .prepare(
+            "SELECT document_json FROM tenant_settings_documents WHERE category='institution'"
+          )
+          .get()
+      ).toEqual({ document_json: '{"institution.scopes":["other-university.example"]}' });
+      expect(
+        target.admin
+          .prepare(
+            "SELECT admin_user_id,scope_type FROM admin_role_assignments WHERE id='assignment-global'"
+          )
+          .get()
+      ).toEqual({ admin_user_id: 'target-admin', scope_type: 'global' });
       for (const database of Object.values(target))
         expect(database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     } finally {

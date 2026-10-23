@@ -3,6 +3,7 @@ import {
   type SqliteDatasetInspectionPolicy,
 } from './sqlite-dataset-inspector';
 import type { TenantBundleManifest } from './bundle-manifest';
+import type { TenantBackupStepContext } from './operation-executor';
 import type { DatabaseTenantBundleReferenceIndex } from './validation-index';
 import type { TenantPortableDependency, TenantPortableRecordIdentity } from './reference-contract';
 import { TENANT_PORTABILITY_MODULES } from './module-contract';
@@ -30,6 +31,8 @@ function validIdentity(identity: TenantPortableRecordIdentity, tenantId: string)
  * any uncertain write; dataset/whole-input invariants and reference resolution remain later stages.
  */
 export async function inspectSqliteInputRow(input: {
+  /** The validating operation, for the policy's row admission. */
+  context: TenantBackupStepContext;
   policy: SqliteDatasetInspectionPolicy;
   manifest: TenantBundleManifest;
   rowJson: string;
@@ -52,6 +55,8 @@ export async function inspectSqliteInputRow(input: {
   const bytes = new TextEncoder().encode(input.rowJson);
   if (!bytes.length || bytes.length > 16 * 1024 * 1024 || bytes.includes(10)) fail();
   await input.assertPinnedInput();
+  // Admission sees the complete row before anything about it is recorded.
+  if (input.policy.admitRow) await input.policy.admitRow.admit(input.context, input.rowJson);
   let inspector;
   try {
     inspector = await createSqliteDatasetInspectorFactory(input.policy)(

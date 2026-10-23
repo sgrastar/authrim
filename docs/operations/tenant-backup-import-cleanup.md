@@ -96,6 +96,39 @@ anything of such an import.
    setting up a fresh restore environment; that is an operator decision, not something the
    cleanup does.
 
+## Rows the requester may not restore
+
+An import may write only what the person who asked for it could give through the Admin API. Their
+authority is recorded in the import request when it is created (`authority`: platform-only
+settings categories, and whether they hold the global `*` permission and at which global level),
+and the request cannot be changed afterwards. Approving the import adds nothing to it. Rows of the
+bundle beyond it are refused with `backup_restore_authority_required`:
+
+- settings only the platform may change for a tenant (today `institution`: the institution's
+  scopes and names, which decide what the SAML IdP may assert), at any scope;
+- Admin role assignments with a scope other than `tenant` (global ones) without the global `*`
+  permission, or of a role above the requester's global level;
+- Admin roles named like a system role or a reserved administrator name, and roles that an
+  existing global assignment or pending global invitation leads to through inheritance, unless
+  the requester could restore a global assignment of the highest role involved.
+
+A tenant administrator can therefore restore none of these; a platform operator's DR restore
+keeps them. Unlike a new global assignment through the API, a restore may give a role **at** the
+requester's own global level (so a super_admin can restore a global super_admin, and a DR restore
+of the tenant the platform administrators belong to keeps their access). Every restored global
+assignment is written to `admin_audit_log` first, as `tenant_backup.global_admin_assignment_restored`
+with severity `critical` (requester, assignment, admin, role and scope); if that entry cannot be
+written, the assignment is not written either. A bundle is protected only by the requester's
+passphrase and is not signed by Authrim, so its content is whatever the requester provides; the
+rules above, not the bundle, decide what is restored.
+
+Most refusals happen while the input is validated, before approval and before anything is
+written; a role level is checked again (and only then known for roles of the bundle) when the
+restore writes the row. Either way the import retries the step until it is `waiting`, with
+`backup_restore_authority_required` in the scheduled run's `failureCodes`. Cancel it: the
+cleanup leaves the tenant as it was (`none`) or discards what was written. Ask an operator with
+the needed authority to request the import instead, or remove the rows from the source first.
+
 ## Operating notes
 
 - Do not deploy migrations while an import cleanup is running; the cleanup checks the schema

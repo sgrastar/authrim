@@ -23,6 +23,12 @@ const selection = {
   logs: { audit: false, other: false, sensitive: false, period: 'all' as const },
 };
 
+const authorityOf = (actorId: string) => ({
+  actorId,
+  platformSettingsCategories: ['institution'],
+  globalAdmin: { permitted: false, hierarchyLevel: 0 },
+});
+
 function migrations(...names: string[]) {
   for (const name of names)
     sqlite.exec(
@@ -108,6 +114,7 @@ it('atomically creates an import request with ordered immutable object identitie
     id: 'operation-a',
     tenantId: 'tenant-a',
     actorId: 'admin',
+    authority: authorityOf('admin'),
     idempotencyKey: 'import-request',
     source,
     selection,
@@ -154,6 +161,7 @@ it('returns the same durable request after upload expiry and rejects changed ret
     id: 'operation-a',
     tenantId: 'tenant-a',
     actorId: 'admin',
+    authority: authorityOf('admin'),
     idempotencyKey: 'import-request',
     source,
     selection,
@@ -168,6 +176,60 @@ it('returns the same durable request after upload expiry and rejects changed ret
   await expect(store.create({ ...input, actorId: 'other', now: 20000 })).rejects.toThrow(
     'invalid_backup_import_request'
   );
+  // A retry made with other authority is not the same request.
+  await expect(
+    store.create({
+      ...input,
+      authority: { ...input.authority, platformSettingsCategories: [] },
+      now: 20000,
+    })
+  ).rejects.toThrow('invalid_backup_import_request');
+  // The requester's authority is part of the intent and its digest, bound to the creator.
+  const intent = await new TenantBackupRequestStore(database).load('tenant-a', 'operation-a');
+  expect(intent.authority).toEqual(authorityOf('admin'));
+  expect(() =>
+    sqlite.exec(
+      `UPDATE tenant_backup_operations SET request_json=replace(request_json,'"permitted":false','"permitted":true')`
+    )
+  ).toThrow('immutable');
+});
+
+it('refuses to load an intent whose recorded authority is not its creator', async () => {
+  const requests = new TenantBackupRequestStore(database);
+  await requests.create({
+    id: 'operation-forged',
+    tenantId: 'tenant-a',
+    actorId: 'admin',
+    idempotencyKey: 'forged',
+    intent: {
+      version: 1,
+      kind: 'import',
+      source,
+      selection,
+      inputs: [{ id: 'upload-a', digestSha256: 'aa'.repeat(32) }],
+      authority: authorityOf('platform-admin'),
+    },
+    now: 200,
+  });
+  await expect(requests.load('tenant-a', 'operation-forged')).rejects.toThrow(
+    'invalid_backup_request_intent'
+  );
+});
+
+it('refuses an import request whose recorded authority is not its creator', async () => {
+  await expect(
+    new TenantBackupImportRequestStore(database).create({
+      id: 'operation-a',
+      tenantId: 'tenant-a',
+      actorId: 'admin',
+      authority: authorityOf('other'),
+      idempotencyKey: 'import-request',
+      source,
+      selection,
+      uploadIds: ['upload-a'],
+      now: 200,
+    })
+  ).rejects.toThrow('invalid_backup_import_request');
 });
 
 it('rejects missing, cross-actor and expired uploads without creating partial operations', async () => {
@@ -182,6 +244,7 @@ it('rejects missing, cross-actor and expired uploads without creating partial op
         id: `operation-${key}`,
         tenantId: 'tenant-a',
         actorId: 'admin',
+        authority: authorityOf('admin'),
         idempotencyKey: key,
         source,
         selection,
@@ -194,6 +257,7 @@ it('rejects missing, cross-actor and expired uploads without creating partial op
       id: 'operation-actor',
       tenantId: 'tenant-a',
       actorId: 'other',
+      authority: authorityOf('other'),
       idempotencyKey: 'actor',
       source,
       selection,
@@ -224,6 +288,7 @@ it('rolls back operation creation when authorization changes before the atomic b
       id: 'operation-race',
       tenantId: 'tenant-a',
       actorId: 'admin',
+      authority: authorityOf('admin'),
       idempotencyKey: 'race',
       source,
       selection,
@@ -244,6 +309,7 @@ it('enforces non-null composite input identities in D1 schema', async () => {
     id: 'operation-a',
     tenantId: 'tenant-a',
     actorId: 'admin',
+    authority: authorityOf('admin'),
     idempotencyKey: 'import-request',
     source,
     selection,
@@ -265,6 +331,7 @@ it('binds one accepted content key to each input before starting a multi-bundle 
     id: 'operation-a',
     tenantId: 'tenant-a',
     actorId: 'admin',
+    authority: authorityOf('admin'),
     idempotencyKey: 'import-request',
     source,
     selection,

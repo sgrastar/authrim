@@ -15,6 +15,18 @@ import {
   hasGlobalAdminPermission,
 } from '@authrim/ar-lib-core';
 
+/**
+ * Role names that Admin checks read as authority (platform and tenant administrators), whether or
+ * not a system role carries them: a custom role must not take one.
+ */
+export const RESERVED_ROLE_NAMES: ReadonlySet<string> = new Set([
+  'super_admin',
+  'system_admin',
+  'distributor_admin',
+  'tenant_admin',
+  'org_admin',
+]);
+
 /** Whether the caller's hierarchy is above `level`. A caller without a hierarchy outranks nothing. */
 export function callerOutranks(auth: AdminAuthContext, level: number): boolean {
   return auth.hierarchyLevel !== undefined && level < auth.hierarchyLevel;
