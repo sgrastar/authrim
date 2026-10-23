@@ -25,10 +25,10 @@ const BUILTIN_ADMIN_ROLE_TEMPLATES: AdminRoleTemplateDefinition[] = [
     name: 'support_readonly',
     displayName: 'Support Readonly',
     description:
-      'Summary-level support access without full sensitive detail dereference privileges.',
+      'Summary-level support access: end-user account status without personal data, and no full sensitive detail dereference privileges.',
     hierarchyLevel: 25,
     permissions: [
-      ADMIN_PERMISSIONS.USERS_READ,
+      ADMIN_PERMISSIONS.USERS_STATUS_READ,
       ADMIN_PERMISSIONS.CLIENTS_READ,
       ADMIN_PERMISSIONS.SETTINGS_READ,
       ADMIN_PERMISSIONS.AUDIT_READ,

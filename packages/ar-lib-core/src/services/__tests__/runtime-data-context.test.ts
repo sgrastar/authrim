@@ -347,6 +347,24 @@ describe('runtime account data context', () => {
     expect(piiD1.withSession).not.toHaveBeenCalled();
   });
 
+  it('resolves the account Core route without resolving its PII destination', async () => {
+    // A Core-only reader (the status-only investigation read) must not depend on the PII
+    // store's binding: with it gone, the Core context still resolves, the full context does not.
+    const bindings = env() as unknown as Record<string, unknown>;
+    delete bindings.TDB_PII_A;
+    const context = await resolveAccountCoreDataContext(bindings as unknown as Env, {
+      tenantId: 'tenant-a',
+      accountId: 'account:user-a',
+    });
+    expect(context.coreDb).toBe(bindings.TDB_USERS_A);
+    await expect(
+      resolveAccountDataContext(bindings as unknown as Env, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+      })
+    ).rejects.toThrow();
+  });
+
   it('resolves the minimal OTP user in the Core revalidation batch without touching PII', async () => {
     const bindings = env();
     const usersD1 = (bindings as unknown as Record<string, D1Database>)

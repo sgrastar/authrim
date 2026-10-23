@@ -498,6 +498,9 @@ export const ADMIN_PERMISSIONS = {
 
   // End user management
   USERS_READ: 'admin:users:read',
+  // An account's status alone (lifecycle, lock, credential kinds, session counts), read from Core
+  // without personal data. `admin:users:read` includes it; it never includes `admin:users:read`.
+  USERS_STATUS_READ: 'admin:users:status:read',
   USERS_WRITE: 'admin:users:write',
   USERS_SUSPEND: 'admin:users:suspend',
   USERS_DELETE: 'admin:users:delete',
@@ -829,6 +832,7 @@ export function hasAdminPermission(permissions: string[], required: string): boo
   // bound until role definitions are migrated.
   const compatibilityParent: Readonly<Record<string, string>> = {
     [ADMIN_PERMISSIONS.USERS_SUSPEND]: ADMIN_PERMISSIONS.USERS_WRITE,
+    [ADMIN_PERMISSIONS.USERS_STATUS_READ]: ADMIN_PERMISSIONS.USERS_READ,
     [ADMIN_PERMISSIONS.CLIENTS_CREATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,
     [ADMIN_PERMISSIONS.CLIENTS_UPDATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,
     [ADMIN_PERMISSIONS.CLIENTS_SECRET_ROTATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,

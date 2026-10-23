@@ -964,6 +964,44 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/investigations/subjects/{handle}/status':
+    get:
+      tags: [Users]
+      summary: Read an end user's account status without personal data.
+      description: >-
+        Returns the status of one end user's account as the Core database holds it, for
+        investigating a sign-in problem without personal data. Requires
+        `admin:users:status:read` (included in `admin:users:read`). The handle names the subject
+        through an entry point, and each entry point adds its own requirement: `user:<user id>`
+        is accepted only from callers who also hold `admin:users:read`. The response never
+        contains names, contact values, email domains, user-chosen credential or device names,
+        IP addresses, user agents or external subject identifiers. Parts Core does not record
+        (sessions, linked providers) are reported as not recorded rather than as empty. Every read
+        is recorded in the Admin audit log with its entry point.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: handle
+          in: path
+          required: true
+          description: Subject handle, `user:<user id>`.
+          schema: { type: string, minLength: 1, maxLength: 512 }
+      responses:
+        '200':
+          description: Account status from Core.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationSubjectStatus'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/users/{id}/legal-holds':
     get:
       tags: [Users, Compliance]
@@ -55599,6 +55637,147 @@ components:
           description: >-
             active counts toward the IAL; pending does not yet (verified in the future, or recorded
             and awaiting its audit).
+    InvestigationSubjectStatus:
+      type: object
+      additionalProperties: false
+      required:
+        [subject, source, account, legal_hold, credentials, sessions, devices, linked_providers]
+      description: Times are epoch milliseconds.
+      properties:
+        subject:
+          type: object
+          additionalProperties: false
+          required: [entry_point]
+          properties:
+            entry_point:
+              type: string
+              enum: [user_id]
+              description: How the subject was reached.
+        source:
+          type: string
+          enum: [core]
+        account:
+          type: object
+          additionalProperties: false
+          required:
+            - user_type
+            - registration_state
+            - is_guest
+            - lifecycle_state
+            - status
+            - suspended_at
+            - suspended_until
+            - locked_at
+            - locked_until
+            - created_at
+            - updated_at
+            - last_login_at
+            - guest_deletion_due_at
+          properties:
+            user_type: { type: string, enum: [end_user, admin, m2m] }
+            registration_state: { type: string, enum: [guest, registered] }
+            is_guest: { type: boolean }
+            lifecycle_state: { type: string }
+            status: { type: string }
+            suspended_at: { type: [integer, 'null'] }
+            suspended_until: { type: [integer, 'null'] }
+            locked_at: { type: [integer, 'null'] }
+            locked_until: { type: [integer, 'null'] }
+            created_at: { type: [integer, 'null'] }
+            updated_at: { type: [integer, 'null'] }
+            last_login_at: { type: [integer, 'null'] }
+            guest_deletion_due_at: { type: [integer, 'null'] }
+        legal_hold:
+          type: object
+          additionalProperties: false
+          required: [active]
+          properties:
+            active: { type: boolean }
+        credentials:
+          type: object
+          additionalProperties: false
+          required: [password, email, passkeys, totp]
+          properties:
+            password:
+              type: object
+              additionalProperties: false
+              required: [configured]
+              properties:
+                configured: { type: boolean }
+            email:
+              type: object
+              additionalProperties: false
+              required: [registered, verified]
+              description: Whether an email contact is registered and verified; the address is not read.
+              properties:
+                registered: { type: boolean }
+                verified: { type: boolean }
+            passkeys:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [provider_name, transports, created_at, last_used_at]
+                properties:
+                  provider_name:
+                    type: [string, 'null']
+                    description: Authenticator provider resolved from the AAGUID, not the name the user chose.
+                  transports:
+                    type: array
+                    items: { type: string, enum: [usb, nfc, ble, internal, hybrid, smart-card] }
+                  created_at: { type: [integer, 'null'] }
+                  last_used_at: { type: [integer, 'null'] }
+            totp:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [status, created_at, activated_at, last_used_at]
+                properties:
+                  status: { type: string, enum: [pending, active, disabled] }
+                  created_at: { type: [integer, 'null'] }
+                  activated_at: { type: [integer, 'null'] }
+                  last_used_at: { type: [integer, 'null'] }
+        sessions:
+          $ref: '#/components/schemas/InvestigationNotRecordedInCore'
+        devices:
+          type: object
+          additionalProperties: false
+          required: [available, total, active, items]
+          properties:
+            available: { type: boolean, enum: [true] }
+            total: { type: integer, minimum: 0 }
+            active: { type: integer, minimum: 0 }
+            items:
+              type: array
+              maxItems: 50
+              items:
+                type: object
+                additionalProperties: false
+                required:
+                  [platform, created_at, last_used_at, expires_at, use_count, active, revoked_at]
+                properties:
+                  platform:
+                    type: [string, 'null']
+                    enum: [ios, android, macos, windows, other, null]
+                  created_at: { type: [integer, 'null'] }
+                  last_used_at: { type: [integer, 'null'] }
+                  expires_at: { type: [integer, 'null'] }
+                  use_count: { type: integer, minimum: 0 }
+                  active: { type: boolean }
+                  revoked_at: { type: [integer, 'null'] }
+        linked_providers:
+          $ref: '#/components/schemas/InvestigationNotRecordedInCore'
+    InvestigationNotRecordedInCore:
+      type: object
+      additionalProperties: false
+      required: [available, reason]
+      description: >-
+        A part of the status Core does not record (sessions live in the session store, linked
+        providers in the PII store). It means unknown here, not none.
+      properties:
+        available: { type: boolean, enum: [false] }
+        reason: { type: string, enum: [not_recorded_in_core] }
     AccountLegalHold:
       type: object
       additionalProperties: false

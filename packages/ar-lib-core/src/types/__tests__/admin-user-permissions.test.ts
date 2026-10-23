@@ -20,6 +20,24 @@ describe('operation-level Admin permissions', () => {
     ).toBe(false);
   });
 
+  it('lets users:read include the status-only read, never the other way round', () => {
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.USERS_READ], ADMIN_PERMISSIONS.USERS_STATUS_READ)
+    ).toBe(true);
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.USERS_ALL], ADMIN_PERMISSIONS.USERS_STATUS_READ)
+    ).toBe(true);
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.USERS_STATUS_READ], ADMIN_PERMISSIONS.USERS_READ)
+    ).toBe(false);
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.USERS_WRITE], ADMIN_PERMISSIONS.USERS_STATUS_READ)
+    ).toBe(false);
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.SESSIONS_READ], ADMIN_PERMISSIONS.USERS_STATUS_READ)
+    ).toBe(false);
+  });
+
   it('keeps coarse settings:write as a ceiling for granular settings mutations', () => {
     for (const required of [
       ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE,

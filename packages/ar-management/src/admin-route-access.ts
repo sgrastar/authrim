@@ -416,6 +416,12 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_WRITE,
     'identity assurance evidence'
   ),
+  // The entry point named by the handle adds its own requirement (admin-investigations.ts).
+  readOnly(
+    '/api/admin/investigations/subjects/:handle/status',
+    ADMIN_PERMISSIONS.USERS_STATUS_READ,
+    'end-user account status without personal data'
+  ),
   ...byMethod(
     '/api/admin/users',
     ADMIN_PERMISSIONS.USERS_READ,
