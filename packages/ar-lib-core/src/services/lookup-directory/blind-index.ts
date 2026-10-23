@@ -87,6 +87,7 @@ function requiredBoundedString(value: string, maximumBytes: number, errorCode: s
   if (
     normalized.length === 0 ||
     encoder.encode(normalized).byteLength > maximumBytes ||
+    // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
     /[\u0000-\u001f\u007f]/u.test(normalized)
   ) {
     throw new Error(errorCode);

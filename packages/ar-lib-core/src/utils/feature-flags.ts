@@ -65,7 +65,7 @@ export async function getFeatureFlag(
   }
 
   // 3. Check environment variable
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const envValue = (env as unknown as Record<string, string | undefined>)[flagName];
   if (envValue !== undefined) {
     value = envValue === 'true';

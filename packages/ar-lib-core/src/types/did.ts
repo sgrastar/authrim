@@ -267,7 +267,7 @@ export interface DIDResolver {
  */
 export function parseDID(did: string): ParsedDID | null {
   // DID syntax: did:<method>:<method-specific-id>[/<path>][?<query>][#<fragment>]
-  const regex = /^did:([a-z0-9]+):([^?#\/]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i;
+  const regex = /^did:([a-z0-9]+):([^?#/]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i;
   const match = did.match(regex);
 
   if (!match) {

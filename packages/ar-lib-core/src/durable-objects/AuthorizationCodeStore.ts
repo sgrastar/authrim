@@ -264,7 +264,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for one-time code consumption guarantee
-    this.actorCtx.blockConcurrencyWhile(async () => {
+    void this.actorCtx.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }

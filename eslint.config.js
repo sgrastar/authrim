@@ -113,6 +113,18 @@ export default [
     },
   },
 
+  // The structured logger's console sink, and the Node migration CLI whose
+  // output is its console report.
+  {
+    files: [
+      'packages/ar-lib-core/src/utils/logger.ts',
+      'packages/ar-lib-core/src/migrations/runner.ts',
+    ],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+
   ...PACKAGES_WITH_LINT_TSCONFIG.map((pkg) => ({
     files: [`packages/${pkg}/src/**/*.ts`],
     languageOptions: {

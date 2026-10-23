@@ -71,7 +71,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
     super(ctx, env);
 
     // Restore state on cold start
-    this.ctx.blockConcurrencyWhile(async () => {
+    void this.ctx.blockConcurrencyWhile(async () => {
       // Load tenant ID if stored
       const stored = await this.ctx.storage.get<string>('tenantId');
       if (stored) {

@@ -177,7 +177,7 @@ export class CIBARequestStore {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for CIBA request verification and one-time token issuance
-    state.blockConcurrencyWhile(async () => {
+    void state.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }

@@ -163,7 +163,7 @@ function splitPatchPath(path: string): string[] {
 
 function parsePatchPath(path: string): PatchPathSegment[] {
   return splitPatchPath(path).map((part) => {
-    const filterMatch = part.match(/^([^\[]+)\[([A-Za-z0-9_$.-]+)\s+eq\s+["']([^"']*)["']\]$/);
+    const filterMatch = part.match(/^([^[]+)\[([A-Za-z0-9_$.-]+)\s+eq\s+["']([^"']*)["']\]$/);
     if (!filterMatch) {
       return { key: part };
     }
@@ -667,6 +667,7 @@ export function validateScimUser(user: Partial<ScimUser>): { valid: boolean; err
     errors.push('userName is required');
   } else if (
     new TextEncoder().encode(user.userName.trim()).byteLength > 1024 ||
+    // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
     /[\u0000-\u001f\u007f]/u.test(user.userName)
   ) {
     errors.push('userName is invalid');

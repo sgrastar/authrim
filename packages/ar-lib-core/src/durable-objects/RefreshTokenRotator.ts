@@ -284,7 +284,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for token theft detection and version validation
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }

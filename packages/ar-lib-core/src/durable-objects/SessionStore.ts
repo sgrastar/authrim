@@ -177,7 +177,7 @@ export class SessionStore extends DurableObject<Env> {
     super(ctx, env);
     this.actorCtx = new CloudflareActorContext(ctx);
 
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       if ((await ctx.storage.getAlarm()) === null) {
         await ctx.storage.setAlarm(Date.now() + SESSION_CLEANUP_INTERVAL_MS);
       }

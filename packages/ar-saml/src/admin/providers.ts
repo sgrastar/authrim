@@ -207,6 +207,7 @@ function normalizeSAMLSigningCertificateSubject(
 function readSubjectString(value: unknown, maxLength: number): string {
   return typeof value === 'string'
     ? value
+        // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
         .replace(/[\u0000-\u001f\u007f]/g, '')
         .trim()
         .slice(0, maxLength)
@@ -1371,6 +1372,7 @@ function sanitizeSAMLDRBundleAdminErrorMessage(error: unknown): string {
       /\b(privateKeyPem|privatePEM|passphrase|payload|bundle)\b\s*[:=]\s*\S+/gi,
       '$1=[redacted]'
     )
+    // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

@@ -367,6 +367,7 @@ async function jwkToPublicKeyPem(jwk: JWK): Promise<string> {
 
   // Export as SPKI
   const spki = await crypto.subtle.exportKey('spki', cryptoKey);
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- ar-management type-checks this file with a lib where exportKey() returns ArrayBuffer | JsonWebKey
   const spkiBase64 = btoa(String.fromCharCode(...new Uint8Array(spki as ArrayBuffer)));
 
   // Format as PEM
@@ -407,6 +408,7 @@ export async function generateSelfSignedCertificate(
   // Export as SPKI (SubjectPublicKeyInfo)
   const spki = await crypto.subtle.exportKey('spki', publicKey);
   const tbsCertificate = buildSelfSignedCertificateTbs(
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- ar-management type-checks this file with a lib where exportKey() returns ArrayBuffer | JsonWebKey
     new Uint8Array(spki as ArrayBuffer),
     normalizeCertificateSubject(subject),
     options
@@ -476,10 +478,13 @@ function normalizeCertificateSubject(
 }
 
 function sanitizeSubjectValue(value: string | undefined, maxLength: number): string {
-  return String(value || '')
-    .replace(/[\u0000-\u001f\u007f]/g, '')
-    .trim()
-    .slice(0, maxLength);
+  return (
+    String(value || '')
+      // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+      .trim()
+      .slice(0, maxLength)
+  );
 }
 
 function buildCertificateName(subject: Required<SAMLSigningCertificateSubject>): Uint8Array {
@@ -561,6 +566,7 @@ function normalizeCertificateSubjectAlternativeNames(
 
 function sanitizeDnsName(value: string | undefined): string {
   const normalized = String(value || '')
+    // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
     .replace(/[\u0000-\u001f\u007f]/g, '')
     .trim()
     .toLowerCase()

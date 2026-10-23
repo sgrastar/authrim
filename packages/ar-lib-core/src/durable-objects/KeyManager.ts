@@ -1622,6 +1622,7 @@ export class KeyManager extends DurableObject<Env> {
     await this.initializeState();
 
     const kid = typeof input.kid === 'string' ? input.kid.trim() : '';
+    // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
     if (!kid || kid.length > 256 || /[\u0000-\u001f\u007f]/.test(kid)) {
       throw new Error('Invalid key ID');
     }
@@ -1941,7 +1942,6 @@ export class KeyManager extends DurableObject<Env> {
    * Sanitize EC key data for safe HTTP response (remove private key material)
    */
   private sanitizeECKey(key: StoredECKey): Omit<StoredECKey, 'privatePEM'> {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { privatePEM: _privatePEM, ...safeKey } = key;
     return safeKey;
   }
@@ -1999,7 +1999,6 @@ export class KeyManager extends DurableObject<Env> {
    * Sanitize key data for safe HTTP response (remove private key material)
    */
   private sanitizeKey(key: StoredKey): Omit<StoredKey, 'privatePEM'> {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { privatePEM: _privatePEM, ...safeKey } = key;
     return safeKey;
   }
