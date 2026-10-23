@@ -1,10 +1,12 @@
 import type { Messages } from './ja';
 import { arSettings } from './settings/ar';
 import { arCompliance } from './compliance/ar';
+import { arMappingConsole } from './mapping-console/ar';
 
 export const ar = {
 	...arSettings,
 	...arCompliance,
+	...arMappingConsole,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
