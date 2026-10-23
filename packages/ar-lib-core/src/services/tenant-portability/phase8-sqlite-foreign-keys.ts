@@ -251,16 +251,6 @@ export const PHASE8_SQLITE_FOREIGN_KEY_RULES = [
     to: 'core.identity_subjects',
   },
   {
-    from: 'core.role_assignments',
-    columns: ['role_id'],
-    to: 'core.roles',
-  },
-  {
-    from: 'core.role_assignments',
-    columns: ['subject_id'],
-    to: 'core.users_core',
-  },
-  {
     from: 'core.security_alerts',
     columns: ['tenant_id'],
     to: 'core.tenants',
@@ -279,16 +269,6 @@ export const PHASE8_SQLITE_FOREIGN_KEY_RULES = [
     from: 'core.subject_account_links',
     columns: ['subject_id'],
     to: 'core.identity_subjects',
-  },
-  {
-    from: 'core.subject_org_membership',
-    columns: ['org_id'],
-    to: 'core.organizations',
-  },
-  {
-    from: 'core.subject_org_membership',
-    columns: ['subject_id'],
-    to: 'core.users_core',
   },
   {
     from: 'core.support_operation_actions',

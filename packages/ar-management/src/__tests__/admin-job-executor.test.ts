@@ -100,9 +100,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     ensureDatabaseAdapter: vi.fn((source, partition) =>
-      partition === 'management-generic-jobs' || source === mockAdminDb
-        ? mockAdapter
-        : actual.ensureDatabaseAdapter(source, partition)
+      // The tenant inventory, where a scheduled run reads the tenant's lifecycle state.
+      partition === 'management-generic-job-lifecycle'
+        ? mockTenantMetadataAdapter
+        : partition === 'management-generic-jobs' || source === mockAdminDb
+          ? mockAdapter
+          : actual.ensureDatabaseAdapter(source, partition)
     ),
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
     resolveTenantAssignedDatabaseSourcesFromRegistry:
@@ -336,6 +339,8 @@ describe('generic admin job executor', () => {
         INITIAL_ACCESS_TOKENS: tokenKv,
         EXPORT_ARTIFACTS: r2.bucket,
         DB_ADMIN: mockTenantCoreAdapter,
+        // The tenant inventory, where the lifecycle command moved the tenant.
+        DB: mockAdminDb,
       } as never,
       logger
     );
@@ -384,7 +389,11 @@ describe('generic admin job executor', () => {
       .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-failure', tenant_id: 'tenant-a' });
 
     await processPendingGenericAdminJobs(
-      { BASE_DOMAIN: 'auth.example.com', DB_ADMIN: mockTenantCoreAdapter } as never,
+      {
+        BASE_DOMAIN: 'auth.example.com',
+        DB_ADMIN: mockTenantCoreAdapter,
+        DB: mockAdminDb,
+      } as never,
       logger
     );
 

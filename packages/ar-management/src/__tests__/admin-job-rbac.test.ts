@@ -5,6 +5,8 @@ const routes = vi.hoisted(() => ({
   metadata: null as unknown,
   accounts: new Map<string, unknown>(),
   suspended: new Set<string>(),
+  /** The tenant's user stores, in the registry. */
+  userStores: [] as unknown[],
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
@@ -22,6 +24,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
     if (!coreDb) throw new Error('account_data_route_not_found');
     return { coreDb };
   }),
+  resolveTenantAssignedDatabaseSourcesFromRegistry: vi.fn(async () =>
+    routes.userStores.map((source, index) => ({ bindingRef: `DB_USERS_${index}`, source }))
+  ),
 }));
 
 import {
@@ -30,6 +35,7 @@ import {
   jobRBACStores,
   type JobRBACStores,
 } from '../admin-job-rbac';
+import { removeOrganizationMembership } from '../access-revocation';
 import { openCoreStore } from './helpers/core-schema-sqlite';
 import type { SQLiteDatabase } from './test-sqlite';
 
@@ -37,12 +43,22 @@ type Store = { db: SQLiteDatabase; adapter: DatabaseAdapter };
 
 const NOW = 1_800_000_000;
 
+const audit = vi.fn(async () => undefined);
+/** Removes a membership as the job does: the shared removal, its caches and audit. */
+const removeMembership = (account: DatabaseAdapter, userId: string) =>
+  removeOrganizationMembership(
+    {
+      env: {} as never,
+      tenantId: 'tenant-a',
+      adapter: account,
+      log: { warn: vi.fn() } as never,
+      audit,
+      onCacheFailure: 'warn',
+    },
+    { userId, orgId: 'org-1' }
+  ).then(() => undefined);
+
 function addAccount(store: Store, id: string, lifecycle = 'active') {
-  store.db
-    .prepare(
-      `INSERT INTO users_core (id, tenant_id, created_at, updated_at) VALUES (?, 'tenant-a', ?, ?)`
-    )
-    .run(id, NOW, NOW);
   store.db
     .prepare(
       `INSERT INTO identity_accounts
@@ -97,14 +113,18 @@ describe('admin job RBAC under routed account storage', () => {
   });
 
   it("adds each membership in its member's account database", async () => {
-    const outcome = await applyOrganizationBulkMembers(stores, {
-      tenantId: 'tenant-a',
-      orgId: 'org-1',
-      action: 'add',
-      membershipType: 'admin',
-      userIds: ['user-1', 'user-2', 'user-gone', 'user-unknown'],
-      nowSeconds: NOW,
-    });
+    const outcome = await applyOrganizationBulkMembers(
+      stores,
+      {
+        tenantId: 'tenant-a',
+        orgId: 'org-1',
+        action: 'add',
+        membershipType: 'admin',
+        userIds: ['user-1', 'user-2', 'user-gone', 'user-unknown'],
+        nowSeconds: NOW,
+      },
+      removeMembership
+    );
 
     expect(outcome).toEqual({
       succeeded: 2,
@@ -122,34 +142,46 @@ describe('admin job RBAC under routed account storage', () => {
     ]);
     expect(memberships(metadata)).toEqual([]);
 
-    const again = await applyOrganizationBulkMembers(stores, {
-      tenantId: 'tenant-a',
-      orgId: 'org-1',
-      action: 'add',
-      membershipType: 'member',
-      userIds: ['user-2'],
-      nowSeconds: NOW,
-    });
+    const again = await applyOrganizationBulkMembers(
+      stores,
+      {
+        tenantId: 'tenant-a',
+        orgId: 'org-1',
+        action: 'add',
+        membershipType: 'member',
+        userIds: ['user-2'],
+        nowSeconds: NOW,
+      },
+      removeMembership
+    );
     expect(again.failures).toEqual([{ user_id: 'user-2', error: 'membership_already_exists' }]);
   });
 
   it("removes each membership from its member's account database", async () => {
-    await applyOrganizationBulkMembers(stores, {
-      tenantId: 'tenant-a',
-      orgId: 'org-1',
-      action: 'add',
-      membershipType: 'member',
-      userIds: ['user-1', 'user-2'],
-      nowSeconds: NOW,
-    });
-    const outcome = await applyOrganizationBulkMembers(stores, {
-      tenantId: 'tenant-a',
-      orgId: 'org-1',
-      action: 'remove',
-      membershipType: 'member',
-      userIds: ['user-2', 'user-2'],
-      nowSeconds: NOW,
-    });
+    await applyOrganizationBulkMembers(
+      stores,
+      {
+        tenantId: 'tenant-a',
+        orgId: 'org-1',
+        action: 'add',
+        membershipType: 'member',
+        userIds: ['user-1', 'user-2'],
+        nowSeconds: NOW,
+      },
+      removeMembership
+    );
+    const outcome = await applyOrganizationBulkMembers(
+      stores,
+      {
+        tenantId: 'tenant-a',
+        orgId: 'org-1',
+        action: 'remove',
+        membershipType: 'member',
+        userIds: ['user-2', 'user-2'],
+        nowSeconds: NOW,
+      },
+      removeMembership
+    );
 
     expect(outcome).toEqual({ succeeded: 1, skipped: 1, failures: [] });
     expect(memberships(first)).toHaveLength(1);
@@ -165,14 +197,18 @@ describe('admin job RBAC under routed account storage', () => {
     routes.suspended = new Set(['user-2']);
     const resolved = await jobRBACStores({} as never, 'tenant-a');
 
-    const outcome = await applyOrganizationBulkMembers(resolved, {
-      tenantId: 'tenant-a',
-      orgId: 'org-1',
-      action: 'add',
-      membershipType: 'member',
-      userIds: ['user-2', 'user-unknown', 'user-1'],
-      nowSeconds: NOW,
-    });
+    const outcome = await applyOrganizationBulkMembers(
+      resolved,
+      {
+        tenantId: 'tenant-a',
+        orgId: 'org-1',
+        action: 'add',
+        membershipType: 'member',
+        userIds: ['user-2', 'user-unknown', 'user-1'],
+        nowSeconds: NOW,
+      },
+      removeMembership
+    );
 
     // The suspended member does not stop the job: the members after it are still added.
     expect(outcome).toEqual({
@@ -188,28 +224,88 @@ describe('admin job RBAC under routed account storage', () => {
     ]);
   });
 
-  it('refuses an organisation the tenant does not have', async () => {
-    await expect(
-      applyOrganizationBulkMembers(stores, {
+  it('removes a suspended member, found in its user store, but does not add one', async () => {
+    routes.metadata = metadata.adapter;
+    routes.accounts = new Map([['user-1', first.adapter]]);
+    routes.userStores = [first.adapter, second.adapter];
+    addAccount(second, 'user-suspended', 'suspended');
+    second.db
+      .prepare(
+        `INSERT INTO subject_org_membership
+           (id, tenant_id, subject_id, org_id, membership_type, is_primary, created_at, updated_at)
+         VALUES ('m-s', 'tenant-a', 'user-suspended', 'org-1', 'member', 0, ?, ?)`
+      )
+      .run(NOW, NOW);
+    routes.suspended = new Set(['user-suspended']);
+    const resolved = await jobRBACStores({} as never, 'tenant-a');
+
+    const added = await applyOrganizationBulkMembers(
+      resolved,
+      {
         tenantId: 'tenant-a',
-        orgId: 'org-other',
+        orgId: 'org-2',
         action: 'add',
         membershipType: 'member',
-        userIds: ['user-1'],
+        userIds: ['user-suspended'],
         nowSeconds: NOW,
-      })
+      },
+      removeMembership
+    );
+    expect(added.failures).toEqual([{ user_id: 'user-suspended', error: 'user_not_found' }]);
+
+    const removed = await applyOrganizationBulkMembers(
+      resolved,
+      {
+        tenantId: 'tenant-a',
+        orgId: 'org-1',
+        action: 'remove',
+        membershipType: 'member',
+        userIds: ['user-suspended'],
+        nowSeconds: NOW,
+      },
+      removeMembership
+    );
+    expect(removed).toEqual({ succeeded: 1, skipped: 0, failures: [] });
+    expect(memberships(second)).toEqual([]);
+    expect(audit).toHaveBeenCalledWith(
+      'organization_membership.removed',
+      'organization',
+      'org-1',
+      { user_id: 'user-suspended' },
+      undefined
+    );
+  });
+
+  it('refuses an organisation the tenant does not have', async () => {
+    await expect(
+      applyOrganizationBulkMembers(
+        stores,
+        {
+          tenantId: 'tenant-a',
+          orgId: 'org-other',
+          action: 'add',
+          membershipType: 'member',
+          userIds: ['user-1'],
+          nowSeconds: NOW,
+        },
+        removeMembership
+      )
     ).rejects.toThrow('Organization does not belong to the job tenant');
   });
 
   it('summarises organisations and their memberships across the account databases', async () => {
-    await applyOrganizationBulkMembers(stores, {
-      tenantId: 'tenant-a',
-      orgId: 'org-1',
-      action: 'add',
-      membershipType: 'member',
-      userIds: ['user-1', 'user-2'],
-      nowSeconds: NOW,
-    });
+    await applyOrganizationBulkMembers(
+      stores,
+      {
+        tenantId: 'tenant-a',
+        orgId: 'org-1',
+        action: 'add',
+        membershipType: 'member',
+        userIds: ['user-1', 'user-2'],
+        nowSeconds: NOW,
+      },
+      removeMembership
+    );
     // A membership of an organisation since removed is not one of the tenant's organisations'.
     second.db
       .prepare(

@@ -31,7 +31,7 @@ function openDatabase(): { db: DatabaseSync; adapter: DatabaseAdapter } {
 
 /**
  * Routed account storage keeps tenant settings (roles, organisations, invitations) in the tenant
- * metadata database (`tenant_core/default`) and the account's rows (users_core, role_assignments,
+ * metadata database (`tenant_core/default`) and the account's rows (identity_accounts, role_assignments,
  * subject_org_membership) in its account database (`tenant_core/users`). Two separate SQLite
  * databases stand in for the two D1 databases, so nothing can be found by reading the wrong one.
  */
@@ -66,8 +66,8 @@ describe('invitation assignments under routed account storage', () => {
       .run(NOW + 86_400, NOW, NOW);
     account.db
       .prepare(
-        `INSERT INTO users_core (id, tenant_id, created_at, updated_at)
-         VALUES ('user-new', 'tenant-a', ?, ?)`
+        `INSERT INTO identity_accounts (id, tenant_id, account_type, legacy_user_id, created_at, updated_at)
+         VALUES ('account:user-new', 'tenant-a', 'user', 'user-new', ?, ?)`
       )
       .run(NOW, NOW);
   });

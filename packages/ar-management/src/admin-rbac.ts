@@ -53,11 +53,13 @@ import {
   MergedPageTooDeepError,
 } from '@authrim/ar-lib-core';
 import {
+  accountStoreHolding,
   routedSubjectContacts,
   tenantRBACStores,
   type SubjectContacts,
   type TenantRBACStores,
 } from './rbac-account-stores';
+import { isInactiveAccountRouteError } from './account-route-errors';
 
 /**
  * Hono context type with admin auth variable
@@ -209,6 +211,27 @@ async function resolveSubjectAccount(
     if (error instanceof Error && error.message === 'account_data_route_not_found') return false;
     throw error;
   }
+}
+
+/**
+ * The account database of the subject, for removing a role assignment or membership from it. An
+ * active account is found through its route (resolved onto the request). A suspended or locked
+ * one, which account routes refuse, is found in the tenant's user stores (the one holding its
+ * account, whatever its type), so its access can still be taken away and does not come back when
+ * it is activated again. Null when the tenant has no such account.
+ */
+async function subjectAccountForRevocation(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  subjectId: string
+): Promise<DatabaseAdapter | null> {
+  try {
+    if (!(await resolveSubjectAccount(c, subjectId))) return null;
+    return createAdaptersFromContext(c).coreAdapter;
+  } catch (error) {
+    if (!isInactiveAccountRouteError(error)) throw error;
+  }
+  return accountStoreHolding(c.env, tenantId, subjectId);
 }
 
 /**
@@ -1024,8 +1047,9 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const subjectId = c.req.param('subjectId')!;
-    // The membership is in the user's account database.
-    if (!(await resolveSubjectAccount(c, subjectId))) {
+    // The membership is in the user's account database, suspended or not.
+    const coreAdapter = await subjectAccountForRevocation(c, tenantId, subjectId);
+    if (!coreAdapter) {
       return c.json(
         {
           error: 'not_found',
@@ -1034,7 +1058,6 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
         404
       );
     }
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Check if membership exists
     const membership = await coreAdapter.queryOne<{ subject_id: string }>(
@@ -1454,8 +1477,17 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const assignmentId = c.req.param('assignmentId')!;
-    await resolveAccountDataContextFromHono(c, userId);
-    const { coreAdapter } = createAdaptersFromContext(c);
+    // The assignment is in the user's account database, suspended or not.
+    const coreAdapter = await subjectAccountForRevocation(c, tenantId, userId);
+    if (!coreAdapter) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'The requested resource was not found',
+        },
+        404
+      );
+    }
     const adminAuth = getAdminAuthFromContext(c);
 
     if (adminAuth?.userId === userId) {

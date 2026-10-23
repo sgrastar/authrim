@@ -134,6 +134,7 @@ export function accessTokenConsentClaims(input: {
       input.consentClientId !== input.tokenClientId ? input.consentClientId : undefined,
     authrim_subject_issuer: undefined,
     authrim_subject_ref: undefined,
+    authrim_subject_account: undefined,
     authrim_subject_principal: undefined,
     original_issuer: undefined,
   };

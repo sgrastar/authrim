@@ -4,8 +4,10 @@
 -- foreign key from one to the other cannot hold: in an account database, roles and organizations
 -- are empty, so every assignment would be refused. role_id and org_id stay references by id,
 -- checked against the metadata database when an assignment is made, and an assignment of a role
--- or organisation the tenant no longer has grants nothing. The foreign keys to users_core stay:
--- an assignment and its account are in the same database.
+-- or organisation the tenant no longer has grants nothing. subject_id loses its foreign key to
+-- users_core too: accounts are written as identity_accounts, and users_core (the legacy user
+-- table) is written by nothing, so with it every assignment and membership of an account would
+-- be refused.
 PRAGMA defer_foreign_keys = ON;
 
 CREATE TABLE "__authrim_rebuild_role_assignments" (
@@ -21,8 +23,7 @@ CREATE TABLE "__authrim_rebuild_role_assignments" (
   assigned_by TEXT,
   metadata_json TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY (subject_id) REFERENCES users_core(id) ON DELETE CASCADE
+  updated_at INTEGER NOT NULL
 );
 INSERT INTO "__authrim_rebuild_role_assignments"
   ("rowid","id","tenant_id","subject_id","role_id","scope_type","scope_target","expires_at",
@@ -45,8 +46,7 @@ CREATE TABLE "__authrim_rebuild_subject_org_membership" (
   membership_type TEXT NOT NULL DEFAULT 'member',
   is_primary INTEGER DEFAULT 0,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY (subject_id) REFERENCES users_core(id) ON DELETE CASCADE
+  updated_at INTEGER NOT NULL
 );
 INSERT INTO "__authrim_rebuild_subject_org_membership"
   ("rowid","id","tenant_id","subject_id","org_id","membership_type","is_primary","created_at",

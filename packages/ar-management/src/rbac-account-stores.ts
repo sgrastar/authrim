@@ -14,6 +14,7 @@ import {
   type DatabaseSource,
   type Env,
 } from '@authrim/ar-lib-core';
+import { isInactiveAccountRouteError } from './account-route-errors';
 import { tenantCoreStores } from './compliance/tenant-stores';
 import { CrossShardAccountExactSearchService } from './cross-shard-account-list';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
@@ -58,15 +59,35 @@ export async function tenantRBACStores(
 }
 
 /**
- * Whether resolving an account's route failed because the account there is no longer active
- * (suspended, locked, being deleted): account routes resolve active accounts only.
+ * The one user store of the tenant that holds the account (in any state but deleted), found by
+ * reading each of them: for an account its route refuses (suspended, locked, being deleted),
+ * whatever its type. Null when none holds it.
  */
-export function isInactiveAccountRouteError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.message === 'lookup_destination_revalidation_failed' &&
-    error.cause === 'account_inactive'
-  );
+export async function accountStoreHolding(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<DatabaseAdapter | null> {
+  const stores = await tenantCoreStores(env, tenantId, {
+    accountsOfRoutedTenant: true,
+    purpose: 'rbac-account-store',
+  });
+  const holding = (
+    await Promise.all(
+      stores.map(async ({ adapter }) =>
+        (await adapter.queryOne<{ id: string }>(
+          `SELECT id FROM identity_accounts
+            WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state <> 'deleted'
+            LIMIT 1`,
+          [tenantId, userId]
+        ))
+          ? adapter
+          : null
+      )
+    )
+  ).filter((adapter): adapter is DatabaseAdapter => adapter !== null);
+  if (holding.length > 1) throw new Error('rbac_account_store_ambiguous');
+  return holding[0] ?? null;
 }
 
 export type SubjectContacts = Map<string, { email: string | null; name: string | null }>;

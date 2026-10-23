@@ -21,10 +21,12 @@ import {
   requireAdminPermissions,
   requireAnyRole,
   createAuthContextFromHono,
+  requireDedicatedAdminDatabaseAdapter,
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
+  getTenantMetadataContextFromHono,
   createAuditLogFromContext,
   getLogger,
   listObjectCatalogObjects,
@@ -49,6 +51,7 @@ import {
   isAdminJobTypeCreatableFromAdminApi,
 } from './admin-job-types';
 import { countBulkUserUpdateTargets, validateBulkUserUpdateConfig } from './admin-job-executor';
+import { usesRoutedAccountStorage } from './tenant-routed-storage';
 import {
   USER_IMPORT_MAX_UPLOAD_BYTES,
   buildUserImportResultKey,
@@ -303,11 +306,40 @@ const ListJobsQuerySchema = z.object({
 // =============================================================================
 
 /**
- * Create database adapter from context
+ * The tenant's Core database: the tenant's own data (accounts, organizations).
  */
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
   const tenantId = getTenantIdFromContext(c);
   return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+/**
+ * DB_ADMIN, where the jobs this API creates are kept: their scheduled processors claim them there
+ * and keep their results' object catalog there.
+ */
+function createJobsAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-jobs');
+}
+
+/**
+ * The stores a job is read from: DB_ADMIN, then the tenant's Core database, where the jobs of
+ * workflows that keep theirs there are (tenant deletion, Support Ops snapshots, tenant lifecycle
+ * validation), and those created before this API kept its jobs in DB_ADMIN.
+ */
+function jobReadAdapters(c: Context<{ Bindings: Env }>): DatabaseAdapter[] {
+  return [createJobsAdapter(c), createAdapter(c)];
+}
+
+/** The first store that has the row, with the store (its result artifacts are kept beside it). */
+async function findInJobStores<T>(
+  adapters: DatabaseAdapter[],
+  find: (adapter: DatabaseAdapter) => Promise<T | null>
+): Promise<{ row: T; adapter: DatabaseAdapter } | null> {
+  for (const adapter of adapters) {
+    const row = await find(adapter);
+    if (row) return { row, adapter };
+  }
+  return null;
 }
 
 function getJobResultBucket(env: Env): R2Bucket | null {
@@ -486,6 +518,16 @@ async function getJobResultArtifactRowByArtifactId(
   );
 }
 
+function findJobResultArtifactRowByArtifactId(
+  c: Context<{ Bindings: Env }>,
+  artifactId: string,
+  tenantId: string
+): Promise<{ row: JobResultArtifactRow; adapter: DatabaseAdapter } | null> {
+  return findInJobStores(jobReadAdapters(c), (adapter) =>
+    getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId)
+  );
+}
+
 async function requireJobArtifactAccess(
   c: Context<{ Bindings: Env }>,
   row: Pick<JobResultArtifactRow, 'id' | 'job_type' | 'object_catalog_id' | 'public_artifact_id'>,
@@ -548,10 +590,55 @@ function validateSortField(sort: string): { valid: boolean; error?: string } {
 }
 
 /**
- * Encode cursor from job ID and created_at
+ * The rows of each store's page in the list's order (the sort field, then id ascending, as the
+ * query orders them), a row found in both only once, up to `limit`.
  */
-function encodeCursor(id: string, createdAt: number): string {
-  return Buffer.from(JSON.stringify({ id, created_at: createdAt })).toString('base64url');
+function mergeJobPages(pages: JobRow[][], field: string, desc: boolean, limit: number): JobRow[] {
+  const byId = new Map<string, JobRow>();
+  for (const row of pages.flat()) {
+    if (!byId.has(row.id)) byId.set(row.id, row);
+  }
+  const value = (row: JobRow) => (row as unknown as Record<string, string | number>)[field];
+  return [...byId.values()]
+    .sort((a, b) => {
+      const order = compareJobValues(value(a), value(b));
+      return (desc ? -order : order) || compareJobValues(a.id, b.id);
+    })
+    .slice(0, limit);
+}
+
+/** The ids of these the store has (for the tenant), asked in parts within D1's bound limit. */
+async function jobIdsIn(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  ids: string[]
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let start = 0; start < ids.length; start += 90) {
+    const part = ids.slice(start, start + 90);
+    const rows = await adapter.query<{ id: string }>(
+      `SELECT id FROM admin_jobs WHERE tenant_id = ? AND id IN (${part.map(() => '?').join(', ')})`,
+      [tenantId, ...part]
+    );
+    for (const row of rows) found.add(row.id);
+  }
+  return found;
+}
+
+/** As SQLite orders the list's sort fields: integers by value, text by code unit. */
+function compareJobValues(a: string | number, b: string | number): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Encode cursor from the last row of a page: its id, created_at, and its value of the page's sort
+ * field (with the sort, which the next page must use too).
+ */
+function encodeCursor(row: JobRow, sort: string | undefined, field: string): string {
+  const value = (row as unknown as Record<string, string | number>)[field];
+  return Buffer.from(
+    JSON.stringify({ id: row.id, created_at: row.created_at, sort: sort ?? null, value })
+  ).toString('base64url');
 }
 
 /**
@@ -560,6 +647,9 @@ function encodeCursor(id: string, createdAt: number): string {
 interface CursorData {
   id: string;
   created_at: number;
+  /** The page's sort; absent in a cursor made before it was kept (the default sort). */
+  sort?: string | null;
+  value?: string | number;
 }
 
 /**
@@ -569,8 +659,21 @@ function decodeCursor(cursor: string): CursorData | null {
   try {
     const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
     const parsed = JSON.parse(decoded) as Partial<CursorData>;
-    if (parsed.id && typeof parsed.created_at === 'number') {
-      return { id: parsed.id, created_at: parsed.created_at };
+    if (
+      typeof parsed.id === 'string' &&
+      parsed.id &&
+      typeof parsed.created_at === 'number' &&
+      (parsed.sort === undefined || parsed.sort === null || typeof parsed.sort === 'string') &&
+      (parsed.value === undefined ||
+        typeof parsed.value === 'string' ||
+        typeof parsed.value === 'number')
+    ) {
+      return {
+        id: parsed.id,
+        created_at: parsed.created_at,
+        sort: parsed.sort,
+        value: parsed.value,
+      };
     }
     return null;
   } catch {
@@ -818,24 +921,33 @@ export async function adminJobsListHandler(c: Context<{ Bindings: Env }>) {
   }
 
   try {
-    const adapter = createAdapter(c);
-
     // Build query
     const whereClauses: string[] = ['tenant_id = ?'];
     const bindings: unknown[] = [tenantId];
 
+    // Sort (an allowed field, validated above), then id ascending
+    const sortField = query.sort ? query.sort.replace(/^-/, '') : 'created_at';
+    const sortDesc = query.sort ? query.sort.startsWith('-') : true;
+    const orderBy = `${sortField} ${sortDesc ? 'DESC' : 'ASC'}, id ASC`;
+    const sortValue = (row: JobRow) =>
+      (row as unknown as Record<string, string | number>)[sortField];
+
     // Apply cursor
-    let cursorData: { id: string; created_at: number } | null = null;
+    let after: { value: string | number; id: string } | null = null;
     if (query.cursor) {
-      cursorData = decodeCursor(query.cursor);
-      if (!cursorData) {
+      const cursorData = decodeCursor(query.cursor);
+      // The next page of the same sort: a cursor without one is of the default sort.
+      const cursorValue = sortField === 'created_at' ? cursorData?.created_at : cursorData?.value;
+      if (
+        !cursorData ||
+        (cursorData.sort ?? undefined) !== query.sort ||
+        cursorValue === undefined
+      ) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
           variables: { field: 'cursor', reason: 'Invalid cursor format' },
         });
       }
-      // Cursor-based pagination: get rows after the cursor
-      whereClauses.push('(created_at < ? OR (created_at = ? AND id > ?))');
-      bindings.push(cursorData.created_at, cursorData.created_at, cursorData.id);
+      after = { value: cursorValue, id: cursorData.id };
     }
 
     // Apply filters
@@ -852,28 +964,45 @@ export async function adminJobsListHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Build ORDER BY
-    let orderBy = 'created_at DESC, id ASC';
-    if (query.sort) {
-      const desc = query.sort.startsWith('-');
-      const field = query.sort.replace(/^-/, '');
-      orderBy = `${field} ${desc ? 'DESC' : 'ASC'}, id ASC`;
-    }
-
     // Fetch one extra row to determine has_more
     const limitPlusOne = query.limit + 1;
-    const sql = `
-      SELECT id, tenant_id, job_type, status, progress, error_code, error_message,
-             created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
-             attempt_count, max_attempts, next_run_at, dead_lettered_at
-      FROM admin_jobs
-      WHERE ${whereClauses.join(' AND ')}
-      ORDER BY ${orderBy}
-      LIMIT ?
-    `;
-    bindings.push(limitPlusOne);
+    /** A store's rows after the given one (cursor-based pagination), in the page's order. */
+    const pageAfter = (adapter: DatabaseAdapter, from: typeof after) =>
+      adapter.query<JobRow>(
+        `SELECT id, tenant_id, job_type, status, progress, error_code, error_message,
+                created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
+                attempt_count, max_attempts, next_run_at, dead_lettered_at
+           FROM admin_jobs
+          WHERE ${[
+            ...whereClauses,
+            ...(from
+              ? [`(${sortField} ${sortDesc ? '<' : '>'} ? OR (${sortField} = ? AND id > ?))`]
+              : []),
+          ].join(' AND ')}
+          ORDER BY ${orderBy}
+          LIMIT ?`,
+        [...bindings, ...(from ? [from.value, from.value, from.id] : []), limitPlusOne]
+      );
 
-    const rows = await adapter.query<JobRow>(sql, bindings);
+    // Each store's page, merged in the same order. A job moved to DB_ADMIN whose copy in the
+    // Core database was not removed yet (a move that stopped half way) is DB_ADMIN's row only:
+    // the Core page is read on past such copies until it has a page of its own rows.
+    const [jobsAdapter, coreAdapter] = jobReadAdapters(c);
+    const jobsPage = await pageAfter(jobsAdapter, after);
+    const corePage: JobRow[] = [];
+    for (let from = after; ; ) {
+      const page = await pageAfter(coreAdapter, from);
+      const moved = await jobIdsIn(
+        jobsAdapter,
+        tenantId,
+        page.map((row) => row.id)
+      );
+      corePage.push(...page.filter((row) => !moved.has(row.id)));
+      const last = page[page.length - 1];
+      if (page.length < limitPlusOne || corePage.length >= limitPlusOne || !last) break;
+      from = { value: sortValue(last), id: last.id };
+    }
+    const rows = mergeJobPages([jobsPage, corePage], sortField, sortDesc, limitPlusOne);
 
     // Determine has_more and trim results
     const hasMore = rows.length > query.limit;
@@ -883,7 +1012,7 @@ export async function adminJobsListHandler(c: Context<{ Bindings: Env }>) {
     let nextCursor: string | undefined;
     if (hasMore && data.length > 0) {
       const lastRow = data[data.length - 1];
-      nextCursor = encodeCursor(lastRow.id, lastRow.created_at);
+      nextCursor = encodeCursor(lastRow, query.sort, sortField);
     }
 
     return c.json({
@@ -915,20 +1044,21 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
   }
 
   try {
-    const adapter = createAdapter(c);
-
-    const row = await adapter.queryOne<JobRow>(
-      `SELECT id, tenant_id, job_type, status, progress, config, error_code, error_message,
-              created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
-              attempt_count, max_attempts, next_run_at, dead_lettered_at
-       FROM admin_jobs
-       WHERE id = ? AND tenant_id = ?`,
-      [jobId, tenantId]
+    const found = await findInJobStores(jobReadAdapters(c), (adapter) =>
+      adapter.queryOne<JobRow>(
+        `SELECT id, tenant_id, job_type, status, progress, config, error_code, error_message,
+                created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
+                attempt_count, max_attempts, next_run_at, dead_lettered_at
+         FROM admin_jobs
+         WHERE id = ? AND tenant_id = ?`,
+        [jobId, tenantId]
+      )
     );
 
-    if (!row) {
+    if (!found) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    const row = found.row;
 
     return c.json({
       ...formatJob(row),
@@ -988,10 +1118,13 @@ export async function adminJobResultDownloadHandler(c: Context<{ Bindings: Env }
   }
 
   try {
-    const adapter = createAdapter(c);
-    const row = await getJobResultArtifactRowById(adapter, jobId, tenantId);
+    const found = await findInJobStores(jobReadAdapters(c), (adapter) =>
+      getJobResultArtifactRowById(adapter, jobId, tenantId)
+    );
+    const row = found?.row;
+    const adapter = found?.adapter;
 
-    if (!row || (!row.result_r2_key && !row.object_catalog_id)) {
+    if (!row || !adapter || (!row.result_r2_key && !row.object_catalog_id)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'job_result', id: jobId },
       });
@@ -1093,19 +1226,21 @@ export async function adminJobResultHandler(c: Context<{ Bindings: Env }>) {
   }
 
   try {
-    const adapter = createAdapter(c);
-
-    const row = await adapter.queryOne<JobRow>(
-      `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result, aj.result_r2_key,
-              aj.object_catalog_id, oc.public_artifact_id
-       FROM admin_jobs aj
-       LEFT JOIN object_catalog oc
-         ON oc.id = aj.object_catalog_id
-        AND oc.tenant_id = aj.tenant_id
-        AND oc.deleted_at IS NULL
-       WHERE aj.id = ? AND aj.tenant_id = ?`,
-      [jobId, tenantId]
-    );
+    const row = (
+      await findInJobStores(jobReadAdapters(c), (adapter) =>
+        adapter.queryOne<JobRow>(
+          `SELECT aj.id, aj.tenant_id, aj.job_type, aj.status, aj.result, aj.result_r2_key,
+                  aj.object_catalog_id, oc.public_artifact_id
+           FROM admin_jobs aj
+           LEFT JOIN object_catalog oc
+             ON oc.id = aj.object_catalog_id
+            AND oc.tenant_id = aj.tenant_id
+            AND oc.deleted_at IS NULL
+           WHERE aj.id = ? AND aj.tenant_id = ?`,
+          [jobId, tenantId]
+        )
+      )
+    )?.row;
 
     if (!row) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -1148,9 +1283,10 @@ export async function adminJobResultArtifactManifestHandler(c: Context<{ Binding
   }
 
   try {
-    const adapter = createAdapter(c);
-    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
-    if (!row || !row.object_catalog_id || !row.public_artifact_id) {
+    const found = await findJobResultArtifactRowByArtifactId(c, artifactId, tenantId);
+    const row = found?.row;
+    const adapter = found?.adapter;
+    if (!row || !adapter || !row.object_catalog_id || !row.public_artifact_id) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'job_result_artifact', id: artifactId },
       });
@@ -1197,9 +1333,10 @@ export async function adminJobResultArtifactDownloadHandler(c: Context<{ Binding
   }
 
   try {
-    const adapter = createAdapter(c);
-    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
-    if (!row || (!row.result_r2_key && !row.object_catalog_id)) {
+    const found = await findJobResultArtifactRowByArtifactId(c, artifactId, tenantId);
+    const row = found?.row;
+    const adapter = found?.adapter;
+    if (!row || !adapter || (!row.result_r2_key && !row.object_catalog_id)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'job_result_artifact', id: artifactId },
       });
@@ -1271,9 +1408,10 @@ export async function adminJobResultArtifactChunkHandler(c: Context<{ Bindings: 
   }
 
   try {
-    const adapter = createAdapter(c);
-    const row = await getJobResultArtifactRowByArtifactId(adapter, artifactId, tenantId);
-    if (!row || !row.object_catalog_id) {
+    const found = await findJobResultArtifactRowByArtifactId(c, artifactId, tenantId);
+    const row = found?.row;
+    const adapter = found?.adapter;
+    if (!row || !adapter || !row.object_catalog_id) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'job_result_artifact', id: artifactId },
       });
@@ -1650,7 +1788,7 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
       options = optionsResult.data;
     }
 
-    const adapter = createAdapter(c);
+    const jobsAdapter = createJobsAdapter(c);
     const adminAuth = getAdminAuth(c);
     const createdBy = adminAuth?.adminId ?? 'unknown';
     const jobId = crypto.randomUUID();
@@ -1660,7 +1798,7 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     const estimatedCompletion = nowTs + 5 * 60;
 
     // Create job record
-    await adapter.execute(
+    await jobsAdapter.execute(
       `INSERT INTO admin_jobs (
         id, tenant_id, job_type, status, progress, config, input_r2_key,
         result_r2_key, created_by, created_at, updated_at, estimated_completion
@@ -1761,6 +1899,7 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
     }
 
     const adapter = createAdapter(c);
+    const jobsAdapter = createJobsAdapter(c);
     const adminAuth = getAdminAuth(c);
     const createdBy = adminAuth?.adminId ?? 'unknown';
     const jobId = crypto.randomUUID();
@@ -1772,7 +1911,7 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
     const estimatedCompletion = nowTs + estimatedDuration;
 
     // Create job record
-    await adapter.execute(
+    await jobsAdapter.execute(
       `INSERT INTO admin_jobs (
         id, tenant_id, job_type, status, progress, config,
         created_by, created_at, updated_at, estimated_completion
@@ -1867,7 +2006,7 @@ export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env
       });
     }
 
-    const adapter = createAdapter(c);
+    const jobsAdapter = createJobsAdapter(c);
     const adminAuth = getAdminAuth(c);
     const createdBy = adminAuth?.adminId ?? 'unknown';
     const jobId = crypto.randomUUID();
@@ -1877,7 +2016,7 @@ export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env
     const estimatedCompletion = nowTs + 2 * 60;
 
     // Create job record
-    await adapter.execute(
+    await jobsAdapter.execute(
       `INSERT INTO admin_jobs (
         id, tenant_id, job_type, status, progress, config,
         created_by, created_at, updated_at, estimated_completion
@@ -1979,19 +2118,23 @@ export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env 
       });
     }
 
-    // Validate that all user_ids exist in tenant
-    const userPlaceholders = options.user_ids.map(() => '?').join(',');
-    const existingUsers = await adapter.query<{ id: string }>(
-      `SELECT legacy_user_id as id
-         FROM identity_accounts
-        WHERE legacy_user_id IN (${userPlaceholders})
-          AND tenant_id = ?
-          AND lifecycle_state = 'active'`,
-      [...options.user_ids, tenantId]
-    );
-
-    const existingUserIds = new Set(existingUsers.map((u) => u.id));
-    const invalidUserIds = options.user_ids.filter((id) => !existingUserIds.has(id));
+    // Validate that all user_ids exist in tenant: to join, with an active account; to leave,
+    // with any account not deleted (as the job checks them). A routed tenant keeps each account
+    // in its own store: the job checks each member there and reports one it cannot find.
+    const invalidUserIds: string[] = [];
+    if (!usesRoutedAccountStorage(getTenantMetadataContextFromHono(c))) {
+      const userPlaceholders = options.user_ids.map(() => '?').join(',');
+      const existingUsers = await adapter.query<{ id: string }>(
+        `SELECT legacy_user_id as id
+           FROM identity_accounts
+          WHERE legacy_user_id IN (${userPlaceholders})
+            AND tenant_id = ?
+            AND ${options.action === 'add' ? "lifecycle_state = 'active'" : "lifecycle_state <> 'deleted'"}`,
+        [...options.user_ids, tenantId]
+      );
+      const existingUserIds = new Set(existingUsers.map((u) => u.id));
+      invalidUserIds.push(...options.user_ids.filter((id) => !existingUserIds.has(id)));
+    }
 
     if (invalidUserIds.length > 0) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
@@ -2012,7 +2155,7 @@ export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env 
     const estimatedCompletion = nowTs + estimatedSeconds;
 
     // Create job record
-    await adapter.execute(
+    await createJobsAdapter(c).execute(
       `INSERT INTO admin_jobs (
         id, tenant_id, job_type, status, progress, config,
         created_by, created_at, updated_at, estimated_completion

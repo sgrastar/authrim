@@ -71,8 +71,8 @@ import {
   nonAccountPrincipalKind,
   SUBJECT_PRINCIPAL_CLAIM,
   SUBJECT_REFERENCE_CLAIM,
-  openSubjectReference,
   resolvePresentedTokenAccount,
+  tokenSubjectAccountSource,
   readAccountAuthenticationState,
   updateRefreshTokenFamilyIndexExpiry,
   // Request-level caching (P0 KV Cache Optimization)
@@ -6200,17 +6200,29 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     return idTokenConsent.response;
   }
 
-  let idToken = await createClientIDToken(
-    c.env,
-    getTenantIdFromContext(c),
-    clientMetadata as ClientMetadata,
-    idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-    await lifetimes.idToken(),
-    {
-      userId: metadata.sub!,
-      consentGeneration: metadata.consent_generation ?? cibaConsentWithdrawal.generation,
-    }
-  );
+  let idToken: string;
+  try {
+    idToken = await createClientIDToken(
+      c.env,
+      getTenantIdFromContext(c),
+      clientMetadata as ClientMetadata,
+      idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+      await lifetimes.idToken(),
+      {
+        userId: metadata.sub!,
+        consentGeneration: metadata.consent_generation ?? cibaConsentWithdrawal.generation,
+      }
+    );
+  } catch (error) {
+    log.error('Failed to create ID token', {}, error as Error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create ID token',
+      },
+      500
+    );
+  }
 
   // Encrypt ID token if required
   if (isIDTokenEncryptionRequired(clientMetadata)) {
@@ -7202,36 +7214,45 @@ async function handleTokenExchangeGrant(
   const subjectUserId =
     typeof subjectTokenPayload.sub === 'string' ? subjectTokenPayload.sub : undefined;
   const subjectConsent = accessTokenConsentGrant(subjectTokenPayload);
-  if (
+  // A user subject token whose sub is not shown to be the user's id (an ID token issued with a
+  // mapped sub and no sealed account reference, or before ID tokens said which they carry) names
+  // no account: its sub may equal another user's id, and the exchanged token would act as them.
+  // Nor does a sealed reference with no consent client to open it for.
+  const subjectNamesAccount =
     !isIdJagTokenRequest &&
     !elevationGrantContext &&
-    subjectUserId &&
+    subjectUserId !== undefined &&
     // A user's grant (a consent generation or sealed account reference) names an account whatever
     // its public sub looks like; otherwise a client or admin principal sub names none.
-    tokenNamesAccountSubject(subjectTokenPayload) &&
-    subjectConsent.clientId
+    tokenNamesAccountSubject(subjectTokenPayload);
+  const subjectAccountSource = tokenSubjectAccountSource(subjectTokenPayload);
+  if (
+    subjectNamesAccount &&
+    (subjectAccountSource === 'unproven' ||
+      (subjectAccountSource === 'reference' && !subjectConsent.clientId))
   ) {
+    log.warn('Token exchange subject token does not show which account it names', {
+      action: 'TokenExchange',
+    });
+    return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
+  }
+  if (subjectNamesAccount && subjectConsent.clientId) {
     // The account: the sealed reference when the sub is a pairwise or persistent identifier for
     // it, else the sub.
     const subjectReference = subjectTokenPayload[SUBJECT_REFERENCE_CLAIM];
-    let accountUserId = subjectUserId;
-    if (typeof subjectReference === 'string') {
-      let opened: string | null;
-      try {
-        opened = await openSubjectReference(
-          c.env,
-          { tenantId, clientId: subjectConsent.clientId },
-          subjectReference
-        );
-      } catch (error) {
-        log.error('Failed to open the subject token account reference', {}, error as Error);
+    const presentedAccount = await resolvePresentedTokenAccount(
+      c.env,
+      tenantId,
+      subjectTokenPayload
+    );
+    if (!presentedAccount.ok) {
+      if (presentedAccount.reason === 'unavailable') {
+        log.error('Failed to open the subject token account reference', {});
         return oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503);
       }
-      if (!opened) {
-        return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
-      }
-      accountUserId = opened;
+      return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
     }
+    const accountUserId = presentedAccount.userId;
     let subjectHasAccount = true;
     try {
       await resolveAccountDataContextFromHono(c, accountUserId);
@@ -8182,7 +8203,8 @@ async function handleNativeSSOTokenExchange(
   // The user the ID token was issued for. Its sub is the user's id unless the app's identity
   // mapping issued another (pairwise or persistent): then the sealed account reference it carries
   // (opened for the client whose consent it was granted under, as a Token Exchange of it does)
-  // names the user. An unopenable reference is refused; a missing key is retryable.
+  // names the user. An unopenable reference is refused, as is an ID token that shows neither (its
+  // sub may be a mapped identifier equal to another user's id); a missing key is retryable.
   const presentedAccount = await resolvePresentedTokenAccount(c.env, tenantId, idTokenPayload);
   if (!presentedAccount.ok) {
     if (presentedAccount.reason === 'unavailable') {
@@ -8198,7 +8220,7 @@ async function handleNativeSSOTokenExchange(
     }
     return exchangeInvalidGrant(
       typeof idTokenPayload.sub === 'string' && idTokenPayload.sub.length > 0
-        ? 'ID token subject reference is invalid'
+        ? 'ID token subject does not name an account'
         : 'ID token subject is missing',
       typeof idTokenPayload.sub === 'string' && idTokenPayload.sub.length > 0
         ? 'device_secret_binding_failed'

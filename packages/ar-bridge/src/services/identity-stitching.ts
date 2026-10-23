@@ -21,10 +21,9 @@ import {
   resolveOrgByDomainHash,
   resolveAllOrgsByDomainHash,
   joinOrganization,
-  findTenantRole,
   singleDatabaseRBAC,
   type TenantRBACDatabases,
-  assignRoleToUser,
+  assignScopedRoleToUser,
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
   type ResolvedOrganization,
@@ -1015,6 +1014,40 @@ interface TenantD1JITPlan {
   attributesSet: Array<{ name: string; value: string }>;
 }
 
+type JITRoleAssignment = TenantD1JITPlan['roleAssignments'][number];
+
+/** The role each matched domain mapping gives, scoped to the organisation it joins. */
+function domainMappingRoleAssignments(matches: ResolvedOrganization[]): JITRoleAssignment[] {
+  return matches.flatMap((match) =>
+    match.auto_assign_role_id
+      ? [
+          {
+            roleId: match.auto_assign_role_id,
+            scopeType: 'org',
+            scopeTarget: `org:${match.org_id}`,
+          },
+        ]
+      : []
+  );
+}
+
+function uniqueRoleAssignments(roles: JITRoleAssignment[]): JITRoleAssignment[] {
+  const seen = new Set<string>();
+  return roles.filter((role) => {
+    const key = `${role.roleId}\u0000${role.scopeType}\u0000${role.scopeTarget}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** An organisation role is given only for an organisation the user joined here. */
+function isGrantableRole(role: JITRoleAssignment, orgsJoined: string[]): boolean {
+  return (
+    role.scopeType !== 'org' || orgsJoined.some((orgId) => role.scopeTarget === `org:${orgId}`)
+  );
+}
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return JSON.stringify(value);
@@ -1145,7 +1178,8 @@ async function applyTenantD1JITPlan(
 
   const rolesAssigned: JITProvisioningResult['roles_assigned'] = [];
   for (const role of input.plan.roleAssignments) {
-    const assigned = await assignRoleToUserInternal(
+    if (!isGrantableRole(role, orgsJoined)) continue;
+    const assigned = await assignScopedRoleToUser(
       rbac,
       input.userId,
       role.roleId,
@@ -1162,9 +1196,10 @@ async function applyTenantD1JITPlan(
     }
   }
   if (rolesAssigned.length === 0 && input.plan.defaultRoleId) {
-    const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : 'global';
+    // A global role has an empty target, as the admin API and the role readers expect.
+    const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : '';
     const scopeType = orgsJoined.length > 0 ? 'org' : 'global';
-    const assigned = await assignRoleToUserInternal(
+    const assigned = await assignScopedRoleToUser(
       rbac,
       input.userId,
       input.plan.defaultRoleId,
@@ -1255,7 +1290,10 @@ function parseTenantD1JITPlan(value: string): TenantD1JITPlan {
         Object.keys(value).length === 3 &&
         boundedString((value as Record<string, unknown>).roleId) &&
         boundedString((value as Record<string, unknown>).scopeType, 64) &&
-        boundedString((value as Record<string, unknown>).scopeTarget)
+        // A global rule role has an empty target.
+        (boundedString((value as Record<string, unknown>).scopeTarget) ||
+          ((value as Record<string, unknown>).scopeType === 'global' &&
+            (value as Record<string, unknown>).scopeTarget === ''))
     ) ||
     (plan.defaultRoleId !== null && !boundedString(plan.defaultRoleId)) ||
     !boundedStringArray(plan.matchedRules, 128) ||
@@ -1380,6 +1418,7 @@ async function createTenantD1UserWithJITProvisioning(
   }
 
   const organizationIds = ruleResult.orgs_to_join.filter((orgId) => orgId !== 'auto');
+  let domainMatches: ResolvedOrganization[] = [];
   if (emailDomainHash) {
     const matches = params.jitConfig.join_all_matching_orgs
       ? await resolveAllOrgsByDomainHash(
@@ -1396,6 +1435,7 @@ async function createTenantD1UserWithJITProvisioning(
             params.jitConfig
           ),
         ].filter((value): value is ResolvedOrganization => value !== null);
+    domainMatches = matches;
     for (const organization of matches) {
       if (!organizationIds.includes(organization.org_id)) {
         organizationIds.push(organization.org_id);
@@ -1412,16 +1452,21 @@ async function createTenantD1UserWithJITProvisioning(
     };
   }
 
-  const roleAssignments = ruleResult.roles_to_assign
-    .map((role) => ({
-      roleId: role.role_id,
-      scopeType: role.scope_type,
-      scopeTarget:
-        role.scope_target === 'auto' && organizationIds.length > 0
-          ? `org:${organizationIds[0]}`
-          : role.scope_target,
-    }))
-    .filter((role) => role.scopeTarget !== 'auto');
+  const roleAssignments = uniqueRoleAssignments([
+    ...ruleResult.roles_to_assign
+      .map((role) => ({
+        roleId: role.role_id,
+        scopeType: role.scope_type,
+        scopeTarget:
+          role.scope_target === 'auto' && organizationIds.length > 0
+            ? `org:${organizationIds[0]}`
+            : role.scope_target,
+      }))
+      .filter((role) => role.scopeTarget !== 'auto')
+      // Readers treat a scoped role without a target as tenant-wide, so it is never given.
+      .filter((role) => role.scopeType === 'global' || role.scopeTarget.length > 0),
+    ...domainMappingRoleAssignments(domainMatches),
+  ]);
   const plan: TenantD1JITPlan = {
     schemaVersion: 1,
     customClaimValidation,
@@ -1820,7 +1865,7 @@ async function createUserWithJITProvisioning(
       continue;
     }
 
-    const assignResult = await assignRoleToUserInternal(
+    const assignResult = await assignScopedRoleToUser(
       singleDatabaseRBAC(coreSource),
       id,
       roleAssignment.role_id,
@@ -1840,11 +1885,10 @@ async function createUserWithJITProvisioning(
 
   // Step 7: Assign default role if no roles were assigned
   if (result.roles_assigned.length === 0 && params.jitConfig.default_role_id) {
-    const defaultScopeTarget =
-      result.orgs_joined.length > 0 ? `org:${result.orgs_joined[0]}` : 'global';
+    const defaultScopeTarget = result.orgs_joined.length > 0 ? `org:${result.orgs_joined[0]}` : '';
     const defaultScopeType = result.orgs_joined.length > 0 ? 'org' : 'global';
 
-    const assignResult = await assignRoleToUserInternal(
+    const assignResult = await assignScopedRoleToUser(
       singleDatabaseRBAC(coreSource),
       id,
       params.jitConfig.default_role_id,
@@ -1876,65 +1920,6 @@ async function createUserWithJITProvisioning(
 }
 
 /**
- * Assign role to user (internal helper). The role is a tenant setting (metadata database); the
- * assignment is the user's account data (account database).
- */
-async function assignRoleToUserInternal(
-  dbs: TenantRBACDatabases,
-  userId: string,
-  roleId: string,
-  scopeType: string,
-  scopeTarget: string,
-  tenantId: string
-): Promise<{ success: boolean; assignment_id?: string; error?: string }> {
-  const assignmentId = `ra_${crypto.randomUUID().replace(/-/g, '')}`;
-  const now = Math.floor(Date.now() / 1000);
-
-  try {
-    const coreAdapter = ensureDatabaseAdapter(dbs.account, 'identity-stitching-role-assignment');
-
-    // Check if role exists
-    const roleCheck = await findTenantRole(dbs.metadata, tenantId, { id: roleId });
-
-    if (!roleCheck) {
-      // SECURITY: Do not expose role ID to prevent enumeration
-      return { success: false, error: 'Role not found' };
-    }
-
-    // Check if already assigned
-    const existing = await coreAdapter.queryOne<{ id: string }>(
-      `SELECT id FROM role_assignments
-       WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
-      [tenantId, userId, roleId, scopeType, scopeTarget]
-    );
-
-    if (existing) {
-      return { success: true, assignment_id: existing.id, error: 'Already assigned' };
-    }
-
-    // Create assignment
-    await coreAdapter.execute(
-      `INSERT INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [assignmentId, tenantId, userId, roleId, scopeType, scopeTarget, now, now]
-    );
-
-    return { success: true, assignment_id: assignmentId };
-  } catch (error) {
-    const log = createLogger().module('IDENTITY-STITCHING');
-    log.error(
-      'Database error in assignRoleToUserInternal',
-      { action: 'assign_role' },
-      error as Error
-    );
-    return {
-      success: false,
-      // SECURITY: Do not expose internal error details
-      error: 'Failed to assign role',
-    };
-  }
-}
-
 /**
  * Map deny_code to ExternalIdPErrorCode
  */

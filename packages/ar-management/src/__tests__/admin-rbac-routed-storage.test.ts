@@ -92,7 +92,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       constructor(private readonly options: { coreAdapter: DatabaseAdapter }) {}
       async findById(userId: string) {
         const row = await this.options.coreAdapter.queryOne<{ id: string }>(
-          'SELECT id FROM users_core WHERE id = ?',
+          'SELECT id FROM identity_accounts WHERE legacy_user_id = ?',
           [userId]
         );
         return row ? { id: userId, email: `${userId}@example.test`, name: userId } : null;
@@ -138,9 +138,11 @@ function context(options: { id?: string; query?: Record<string, string> } = {}) 
 function addUser(store: Store, id: string) {
   store.db
     .prepare(
-      `INSERT INTO users_core (id, tenant_id, created_at, updated_at) VALUES (?, 'tenant-a', ?, ?)`
+      `INSERT INTO identity_accounts
+         (id, tenant_id, account_type, lifecycle_state, legacy_user_id, created_at, updated_at)
+       VALUES (?, 'tenant-a', 'user', 'active', ?, ?, ?)`
     )
-    .run(id, NOW, NOW);
+    .run(`account:${id}`, id, NOW, NOW);
   state.accounts.find(({ adapter }) => adapter === store.adapter)!.users.add(id);
 }
 

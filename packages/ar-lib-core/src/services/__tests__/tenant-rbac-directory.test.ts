@@ -29,9 +29,11 @@ function openStore(): Store {
 function addUser(store: Store, id: string) {
   store.db
     .prepare(
-      `INSERT INTO users_core (id, tenant_id, created_at, updated_at) VALUES (?, 'tenant-a', ?, ?)`
+      `INSERT INTO identity_accounts
+         (id, tenant_id, account_type, lifecycle_state, legacy_user_id, created_at, updated_at)
+       VALUES (?, 'tenant-a', 'user', 'active', ?, ?, ?)`
     )
-    .run(id, NOW, NOW);
+    .run(`account:${id}`, id, NOW, NOW);
 }
 
 function assign(

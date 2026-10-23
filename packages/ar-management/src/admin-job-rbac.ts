@@ -12,14 +12,19 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { tenantCoreStores } from './compliance/tenant-stores';
-import { isInactiveAccountRouteError } from './rbac-account-stores';
+import { isInactiveAccountRouteError } from './account-route-errors';
+import { accountStoreHolding } from './rbac-account-stores';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
 
 export interface JobRBACStores {
   /** The tenant metadata database: organisation definitions. */
   metadata: DatabaseAdapter;
-  /** The database of the user's account, or null when the tenant has no active such account. */
-  accountOf(userId: string): Promise<DatabaseAdapter | null>;
+  /**
+   * The database of the user's account, or null when the tenant has no such account: to `join`
+   * an organisation the account must be active; to `leave` one it may be suspended or locked
+   * too, so access can be taken away from it (and does not come back when it is activated).
+   */
+  accountOf(userId: string, purpose: 'join' | 'leave'): Promise<DatabaseAdapter | null>;
   /** Every database the tenant's accounts are in, each once. */
   accounts(): Promise<DatabaseAdapter[]>;
 }
@@ -33,19 +38,17 @@ export async function jobRBACStores(env: Env, tenantId: string): Promise<JobRBAC
   }
   return {
     metadata,
-    async accountOf(userId) {
+    async accountOf(userId, purpose) {
       try {
         const account = await resolveAccountCoreDataContext(env, { tenantId, accountId: userId });
         return ensureDatabaseAdapter(account.coreDb, 'admin-job-rbac-account');
       } catch (error) {
-        // No account, or one no longer active: neither may join or leave an organisation.
-        if (
-          (error instanceof Error && error.message === 'account_data_route_not_found') ||
-          isInactiveAccountRouteError(error)
-        ) {
+        if (error instanceof Error && error.message === 'account_data_route_not_found') {
           return null;
         }
-        throw error;
+        if (!isInactiveAccountRouteError(error)) throw error;
+        // Account routes refuse an account that is not active: it may not join, but it leaves.
+        return purpose === 'leave' ? accountStoreHolding(env, tenantId, userId) : null;
       }
     },
     async accounts() {
@@ -74,13 +77,20 @@ export interface OrganizationBulkMembersOutcome {
 }
 
 /**
+ * Removes a membership the user has from its account's database, as every removal of access does
+ * (the user's cached claims are dropped, the removal is audited).
+ */
+export type MembershipRemoval = (account: DatabaseAdapter, userId: string) => Promise<void>;
+
+/**
  * Adds or removes the users' memberships of the organisation, each in its account's database.
- * A user without an active account fails; adding a membership the user has fails; removing one
- * the user does not have is skipped.
+ * A user without an account (an active one, to be added) fails; adding a membership the user
+ * has fails; removing one the user does not have is skipped.
  */
 export async function applyOrganizationBulkMembers(
   stores: JobRBACStores,
-  input: OrganizationBulkMembersInput
+  input: OrganizationBulkMembersInput,
+  removeMembership: MembershipRemoval
 ): Promise<OrganizationBulkMembersOutcome> {
   const { tenantId, orgId } = input;
   const org = await stores.metadata.queryOne<{ id: string }>(
@@ -91,9 +101,13 @@ export async function applyOrganizationBulkMembers(
 
   const outcome: OrganizationBulkMembersOutcome = { succeeded: 0, skipped: 0, failures: [] };
   for (const userId of input.userIds) {
-    const account = await stores.accountOf(userId);
+    const joining = input.action === 'add';
+    const account = await stores.accountOf(userId, joining ? 'join' : 'leave');
+    // Joining takes an active account; leaving, any account not deleted.
     const user = await account?.queryOne<{ id: string }>(
-      "SELECT legacy_user_id as id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ? AND lifecycle_state = 'active'",
+      `SELECT legacy_user_id as id FROM identity_accounts
+        WHERE legacy_user_id = ? AND tenant_id = ?
+          AND ${joining ? "lifecycle_state = 'active'" : "lifecycle_state <> 'deleted'"}`,
       [userId, tenantId]
     );
     if (!account || !user) {
@@ -107,7 +121,7 @@ export async function applyOrganizationBulkMembers(
       [tenantId, orgId, userId]
     );
 
-    if (input.action === 'add') {
+    if (joining) {
       if (existing) {
         outcome.failures.push({ user_id: userId, error: 'membership_already_exists' });
         continue;
@@ -134,10 +148,7 @@ export async function applyOrganizationBulkMembers(
       outcome.skipped += 1;
       continue;
     }
-    await account.execute(
-      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
-      [tenantId, orgId, userId]
-    );
+    await removeMembership(account, userId);
     outcome.succeeded += 1;
   }
   return outcome;

@@ -19,6 +19,7 @@ import {
   introspectTokenFromContext,
   isNonAccountSubject,
   issueStepUpToken,
+  markIdempotentResponseRetryable,
   parseDelegatedWriteEnvelope,
   projectDownstreamGrantProtectedResource,
   readResponseTextWithLimit,
@@ -904,7 +905,14 @@ export function createProtectedCustomerProfileRouter(
 
   router.patch(
     '/users/:userId',
-    requiredIdempotencyMiddleware({ ttlSeconds: 300, redactFields: [] }),
+    // Reserve the key before the handler runs: a step_up_required answer leaves the key retryable
+    // (bound to the body), and only the reservation keeps two retries from both writing.
+    requiredIdempotencyMiddleware({
+      ttlSeconds: 300,
+      redactFields: [],
+      reserveBeforeExecution: true,
+      failClosedOnStorageError: true,
+    }),
     async (c) => {
       const actor = (c as any).get('delegatedWriteActor') as DelegatedWriteActorContext | undefined;
       if (!actor) {
@@ -956,6 +964,9 @@ export function createProtectedCustomerProfileRouter(
           operationHash,
           ...(idempotencyKey ? { idempotencyKey } : {}),
         });
+        // Nothing was written: the client completes step-up and retries with this
+        // Idempotency-Key, so the idempotency middleware must not replay this response to it.
+        markIdempotentResponseRetryable(c);
         return createStepUpErrorResponse(
           {
             error: 'step_up_required',
@@ -977,6 +988,8 @@ export function createProtectedCustomerProfileRouter(
           receipt,
         });
       } catch (error) {
+        // A refused receipt writes nothing either; a later retry with a valid one must run.
+        markIdempotentResponseRetryable(c);
         if (error instanceof StepUpFlowError) {
           return stepUpFlowErrorToResponse(error);
         }

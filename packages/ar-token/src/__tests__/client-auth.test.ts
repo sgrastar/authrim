@@ -3123,6 +3123,9 @@ describe('Client Authentication Tests', () => {
 
       it("records the sub the app's ID token carries when its identity mapping issues one", async () => {
         mocks.mappedIdTokenSub.value = 'pairwise-sub-for-app';
+        (mockEnv as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = 'ab'.repeat(
+          32
+        );
 
         const { response, registerClientRpc, client } = await exchangeWithinSession();
 
@@ -3139,6 +3142,24 @@ describe('Client Authentication Tests', () => {
           })
         );
       });
+
+      securityRegressionIt(
+        'refuses to issue an ID token with a mapped sub it cannot seal an account reference for',
+        async () => {
+          // The mapped sub equals another user's id: without the reference it would name them.
+          mocks.mappedIdTokenSub.value = 'user-002';
+
+          const { response } = await exchangeWithinSession();
+          const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+          expect(response.status).toBe(500);
+          expect(body).toEqual({
+            error: 'server_error',
+            error_description: 'Failed to create ID token',
+          });
+          expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+        }
+      );
 
       it("records the user's id when the app's ID token carries it", async () => {
         const { response, registerClientRpc } = await exchangeWithinSession();
@@ -3236,6 +3257,7 @@ describe('Client Authentication Tests', () => {
         aud: client.client_id,
         exp: now + 3600,
         ds_hash: 'presented-ds-hash',
+        authrim_subject_account: true,
         scope: 'openid profile',
         ...payloadOverrides,
       });
@@ -3354,6 +3376,7 @@ describe('Client Authentication Tests', () => {
         aud: client.client_id,
         exp: now + 3600,
         ds_hash: 'presented-ds-hash',
+        authrim_subject_account: true,
         scope: 'openid profile',
         ...payloadOverrides,
       });
@@ -3653,6 +3676,29 @@ describe('Client Authentication Tests', () => {
           sub: 'user-001',
         });
       });
+
+      securityRegressionIt(
+        'refuses an ID token with neither a reference nor the mark that its sub is the user id',
+        async () => {
+          // Issued without the key to seal a reference (or before ID tokens marked their sub):
+          // its mapped sub happens to equal the device secret owner's id.
+          const client = setupNativeSSOValidationTest({
+            sub: 'user-001',
+            authrim_subject_account: undefined,
+          });
+          useRootKey(ROOT_KEY);
+
+          const response = await tokenHandler(
+            createNativeSSOTokenExchangeContext(client.client_id)
+          );
+          const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+          expect(response.status).toBe(400);
+          expect(body.error).toBe('invalid_grant');
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+          expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
+        }
+      );
 
       it('still exchanges an ID token whose sub is the user, with no reference', async () => {
         const client = setupNativeSSOValidationTest({ sub: 'user-001' });
@@ -4918,6 +4964,7 @@ describe('Client Authentication Tests', () => {
         aud: client.client_id,
         exp: now + 3600,
         ds_hash: 'subject-ds-hash',
+        authrim_subject_account: true,
         scope: 'openid profile',
       });
       mocks.mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'test-kid-001' });
@@ -4994,6 +5041,7 @@ describe('Client Authentication Tests', () => {
         aud: client.client_id,
         exp: now + 3600,
         ds_hash: 'presented-ds-hash',
+        authrim_subject_account: true,
         scope: 'openid profile',
       });
       mocks.mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'test-kid-001' });

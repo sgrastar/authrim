@@ -23,6 +23,7 @@ import { buildIssuerUrl } from './issuer';
 import { createLogger } from './logger';
 import { getTenantIdFromContext } from '../middleware/request-context';
 import { getPresentedClientCertificateThumbprint } from './mtls';
+import { tokenSubjectAccountSource } from '../services/subject-reference';
 
 const log = createLogger().module('TOKEN_INTROSPECTION');
 
@@ -482,6 +483,26 @@ export async function introspectToken(
         error: 'invalid_token',
         error_description: 'Invalid or expired token',
         wwwAuthenticate: wwwAuth,
+        statusCode: 401,
+      },
+    };
+  }
+
+  // The resources behind this check act on the account the token's sub names. A pairwise or
+  // persistent sub (a token carrying the sealed account reference, which only the authorization
+  // server can open) is not that account's id, nor is the sub of an ID token that does not show
+  // it is the user's id: either may equal another user's id.
+  if (
+    typeof tokenClaims.sub === 'string' &&
+    tokenSubjectAccountSource(tokenClaims as Record<string, unknown>) !== 'sub'
+  ) {
+    log.warn('Token subject is not an account id this resource can act on');
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_token',
+        error_description: 'Invalid or expired token',
+        wwwAuthenticate: isDPoP ? 'DPoP error="invalid_token"' : 'Bearer error="invalid_token"',
         statusCode: 401,
       },
     };
