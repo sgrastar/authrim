@@ -39,6 +39,7 @@ import {
   type EndedSession,
 } from './session-end-logout';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+import { accessSummaryRows, applyOrganizationBulkMembers, jobRBACStores } from './admin-job-rbac';
 import { listScimTokens } from '@authrim/ar-lib-scim';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
@@ -1971,7 +1972,7 @@ export function toCsv(rows: Array<Record<string, unknown>>): string {
 }
 
 async function processReportGenerateJob(
-  _env: Env,
+  env: Env,
   adapter: DatabaseAdapter,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
@@ -1993,28 +1994,7 @@ async function processReportGenerateJob(
       );
       break;
     case 'access_summary':
-      rows = [
-        {
-          metric: 'organizations',
-          count:
-            (
-              await adapter.queryOne<{ count: number }>(
-                'SELECT COUNT(*) as count FROM organizations WHERE tenant_id = ?',
-                [job.tenant_id]
-              )
-            )?.count ?? 0,
-        },
-        {
-          metric: 'organization_memberships',
-          count:
-            (
-              await adapter.queryOne<{ count: number }>(
-                'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ?',
-                [job.tenant_id]
-              )
-            )?.count ?? 0,
-        },
-      ];
+      rows = await accessSummaryRows(await jobRBACStores(env, job.tenant_id), job.tenant_id);
       break;
     case 'compliance_audit':
       rows = await adapter.query<Record<string, unknown>>(
@@ -2071,72 +2051,23 @@ function normalizeMembershipType(role: string | undefined): 'member' | 'admin' |
 }
 
 async function processOrganizationBulkMembersJob(
-  _env: Env,
-  adapter: DatabaseAdapter,
+  env: Env,
+  _adapter: DatabaseAdapter,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   const config = parseJsonConfig<OrganizationBulkMembersConfig>(job);
   const membershipType = normalizeMembershipType(config.role);
-  const org = await adapter.queryOne<{ id: string }>(
-    'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
-    [config.organization_id, job.tenant_id]
+  const { succeeded, skipped, failures } = await applyOrganizationBulkMembers(
+    await jobRBACStores(env, job.tenant_id),
+    {
+      tenantId: job.tenant_id,
+      orgId: config.organization_id,
+      action: config.action,
+      membershipType,
+      userIds: config.user_ids,
+      nowSeconds: Math.floor(Date.now() / 1000),
+    }
   );
-  if (!org) throw new Error('Organization does not belong to the job tenant');
-
-  let succeeded = 0;
-  let skipped = 0;
-  const failures: Array<{ user_id: string; error: string }> = [];
-  const nowTs = Math.floor(Date.now() / 1000);
-
-  for (const userId of config.user_ids) {
-    const user = await adapter.queryOne<{ id: string }>(
-      "SELECT legacy_user_id as id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ? AND lifecycle_state = 'active'",
-      [userId, job.tenant_id]
-    );
-    if (!user) {
-      failures.push({ user_id: userId, error: 'user_not_found' });
-      continue;
-    }
-
-    const existing = await adapter.queryOne<{ id: string }>(
-      `SELECT id FROM subject_org_membership
-       WHERE tenant_id = ? AND org_id = ? AND subject_id = ?`,
-      [job.tenant_id, config.organization_id, userId]
-    );
-
-    if (config.action === 'add') {
-      if (existing) {
-        failures.push({ user_id: userId, error: 'membership_already_exists' });
-        continue;
-      }
-      await adapter.execute(
-        `INSERT INTO subject_org_membership (
-          id, tenant_id, subject_id, org_id, membership_type, is_primary, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
-        [
-          crypto.randomUUID(),
-          job.tenant_id,
-          userId,
-          config.organization_id,
-          membershipType,
-          nowTs,
-          nowTs,
-        ]
-      );
-      succeeded += 1;
-      continue;
-    }
-
-    if (!existing) {
-      skipped += 1;
-      continue;
-    }
-    await adapter.execute(
-      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
-      [job.tenant_id, config.organization_id, userId]
-    );
-    succeeded += 1;
-  }
 
   const total = config.user_ids.length;
   const failed = failures.length;

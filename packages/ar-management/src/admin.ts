@@ -93,6 +93,7 @@ import { timeManagementRequestDiagnosticOperation } from './request-diagnostics'
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import { prepareAccountTombstone, writeAccountTombstone } from './account-tombstone-write';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
+import { isInactiveAccountRouteError } from './rbac-account-stores';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -1112,7 +1113,30 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // A routed tenant keeps the user, and what it holds, in its account databases.
+    const routed = usesRoutedAccountStorage(getTenantMetadataContextFromHono(c));
+    if (routed) {
+      let found: boolean;
+      try {
+        found = await resolveAdminTargetAccount(c, userId);
+      } catch (error) {
+        // Account routes resolve active accounts only; a suspended or locked one is refused
+        // rather than half erased.
+        if (!isInactiveAccountRouteError(error)) throw error;
+        return c.json(
+          {
+            error: 'account_not_active',
+            error_description:
+              'The account is not active; it cannot be anonymized while suspended or locked',
+          },
+          409
+        );
+      }
+      if (!found) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    const authCtx = routed
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
     const nowTs = Math.floor(Date.now() / 1000);
 
     const runtimeUsers = new CanonicalRuntimeUserStore({
@@ -1261,7 +1285,18 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
             userId,
           ]),
           authCtx.repositories.passkey.deleteByUserId(userId),
+          // The user's roles and memberships, in its account database; and the roles SCIM gave
+          // it, which SCIM keeps in the tenant metadata database.
           authCtx.repositories.role.removeAllRolesFromUser(userId),
+          routed
+            ? createAuthContextFromHono(c, tenantId).repositories.role.removeAllRolesFromUser(
+                userId
+              )
+            : null,
+          authCtx.coreAdapter.execute(
+            'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?',
+            [tenantId, userId]
+          ),
           authCtx.coreAdapter.execute(
             'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
             [tenantId, userId]

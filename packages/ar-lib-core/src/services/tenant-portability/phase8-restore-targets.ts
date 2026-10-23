@@ -34,9 +34,20 @@ function sameDataset(left: TenantPortableDataset, right: TenantPortableDataset):
 }
 
 /**
+ * Users datasets the runtime keeps in the tenant metadata database, not with each account:
+ * invitations, and the uses sign-ups hold of them, are read and written there before the
+ * account they are for exists. They stay users data for selection (and their restore holds).
+ */
+const CORE_USERS_DATASETS_IN_METADATA: ReadonlySet<string> = new Set([
+  'core.tenant_invitations',
+  'core.tenant_invitation_redemptions',
+]);
+
+/**
  * Map one logical SQL dataset to its target database role. Core user rows are kept on the users
- * shard; every other Core partition belongs to the default shard. Physical source shard identity
- * never controls the target placement.
+ * shard, except those the runtime keeps in the tenant metadata database; every other Core
+ * partition belongs to the default shard. Physical source shard identity never controls the
+ * target placement (an export reads each dataset from the stores of this role only).
  */
 export function phase8SqliteRestoreTargetRole(
   dataset: TenantPortableDataset
@@ -46,7 +57,9 @@ export function phase8SqliteRestoreTargetRole(
   if (family === 'admin') return 'admin';
   if (family === 'pii') return 'tenant_pii';
   if (family === 'core')
-    return dataset.kind === 'users' ? 'tenant_core/users' : 'tenant_core/default';
+    return dataset.kind === 'users' && !CORE_USERS_DATASETS_IN_METADATA.has(dataset.id)
+      ? 'tenant_core/users'
+      : 'tenant_core/default';
   return invalid();
 }
 

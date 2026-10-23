@@ -186,8 +186,8 @@ describe('admin-rbac schema alignment', () => {
           expect(sql).not.toContain('organization_members');
           expect(params).toEqual(['default', 'org-root', 'org-child']);
           return [
-            { org_id: 'org-root', count: 2 },
-            { org_id: 'org-child', count: 1 },
+            { key: 'org-root', count: 2 },
+            { key: 'org-child', count: 1 },
           ];
         }
 
@@ -213,37 +213,51 @@ describe('admin-rbac schema alignment', () => {
     });
   });
 
-  it('uses subject_org_membership and membership_type to resolve organization permissions', async () => {
+  it('derives effective permissions from tenant-wide role assignments, as tokens do', async () => {
     const coreAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        return null;
-      },
-      query: (sql, params) => {
-        if (sql.includes('FROM user_roles ur')) {
-          return [];
-        }
-
-        if (sql.includes('FROM subject_org_membership om')) {
-          expect(sql).not.toContain('organization_members');
-          expect(sql).toContain('LEFT JOIN roles r ON r.name = om.membership_type');
-          expect(params).toEqual(['user-1', 'default']);
+      query: (sql) => {
+        if (sql.includes('FROM role_assignments')) {
           return [
             {
-              org_id: 'org-1',
-              org_name: 'Acme Org',
+              id: 'ra-1',
               role_id: 'role-admin',
-              role_name: 'Admin',
-              membership_type: 'admin',
-              joined_at: 1700000000,
+              scope_type: 'global',
+              scope_target: '',
+              expires_at: null,
+              assigned_by: null,
+              created_at: 1700000000,
+            },
+            {
+              id: 'ra-2',
+              role_id: 'role-editor',
+              scope_type: 'org',
+              scope_target: 'org:org-1',
+              expires_at: null,
+              assigned_by: null,
+              created_at: 1700000001,
             },
           ];
         }
-
-        if (sql.includes('SELECT permission FROM role_permissions WHERE role_id = ?')) {
-          expect(params).toEqual(['role-admin']);
-          return [{ permission: 'org:manage' }];
+        if (sql.includes('FROM roles')) {
+          return [
+            { id: 'role-admin', name: 'admin', permissions_json: '["org:manage"]' },
+            { id: 'role-editor', name: 'editor', permissions_json: '["doc:write"]' },
+          ];
         }
-
+        if (sql.includes('FROM subject_org_membership')) {
+          return [
+            {
+              id: 'm-1',
+              org_id: 'org-1',
+              membership_type: 'admin',
+              is_primary: 1,
+              created_at: 1700000000,
+            },
+          ];
+        }
+        if (sql.includes('FROM organizations')) {
+          return [{ id: 'org-1', name: 'Acme Org', org_type: 'enterprise', is_active: 1 }];
+        }
         return [];
       },
     });
@@ -258,19 +272,24 @@ describe('admin-rbac schema alignment', () => {
 
     const res = await adminUserEffectivePermissionsHandler(c);
     expect(res.status).toBe(200);
+    expect(mocked.resolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-1');
 
     const body = (await res.json()) as {
       permissions: Array<{ permission: string; source: string; source_name: string }>;
-      summary: { from_organizations: number };
+      roles: Array<{ role_name: string; scope: string }>;
+      organizations: Array<{ organization_name: string; role_name: string }>;
     };
-    expect(body.permissions).toContainEqual(
-      expect.objectContaining({
-        permission: 'org:manage',
-        source: 'organization',
-        source_name: 'Acme Org (Admin)',
-      })
-    );
-    expect(body.summary.from_organizations).toBe(1);
+    // The organisation-scoped role holds in its organisation only: not a tenant-wide permission.
+    expect(body.permissions).toEqual([
+      expect.objectContaining({ permission: 'org:manage', source: 'role', source_name: 'admin' }),
+    ]);
+    expect(body.roles).toEqual([
+      expect.objectContaining({ role_name: 'admin', scope: 'global' }),
+      expect.objectContaining({ role_name: 'editor', scope: 'org' }),
+    ]);
+    expect(body.organizations).toEqual([
+      expect.objectContaining({ organization_name: 'Acme Org', role_name: 'admin' }),
+    ]);
   });
 
   it('lists organization members with membership_type and tenant-scoped pii lookup', async () => {
@@ -286,18 +305,18 @@ describe('admin-rbac schema alignment', () => {
 
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT id FROM organizations WHERE tenant_id = ? AND id = ?')) {
-          expect(params).toEqual(['default', 'org-1']);
-          return { id: 'org-1' };
-        }
-        if (sql.includes('COUNT(*) as count FROM subject_org_membership')) {
+        if (sql.includes('COUNT(*) AS count FROM subject_org_membership')) {
           expect(params).toEqual(['default', 'org-1']);
           return { count: 1 };
         }
         return null;
       },
       query: (sql, params) => {
-        if (sql.includes('FROM subject_org_membership m')) {
+        if (sql.includes('FROM organizations') && sql.includes('id IN')) {
+          expect(params).toEqual(['default', 'org-1']);
+          return [{ id: 'org-1', name: 'Org One' }];
+        }
+        if (sql.includes('FROM subject_org_membership')) {
           expect(params).toEqual(['default', 'org-1', 20, 0]);
           return [
             {
