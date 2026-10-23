@@ -29,6 +29,8 @@ import {
   createPluginLoader,
   idempotencyMiddleware,
   requiredIdempotencyMiddleware,
+  EXPIRED_IDEMPOTENCY_KEYS_CONDITION,
+  IDEMPOTENCY_RESERVATION_RETENTION_SECONDS,
   ensureDatabaseAdapter,
   type DatabaseAdapter,
   createErrorResponse,
@@ -4396,13 +4398,14 @@ async function handleCoveredScheduled(
       });
     }
 
-    // 6. Cleanup expired idempotency keys (24 hour TTL)
+    // 6. Cleanup expired idempotency keys (24 hour TTL). An expired in-progress reservation is
+    // kept longer: deleting it while its handler still runs would let a retry run it again.
     let idempotencyKeysDeleted = 0;
     try {
       idempotencyKeysDeleted = await deleteExpiredTenantRows(
         maintenanceTargets,
-        'DELETE FROM idempotency_keys WHERE tenant_id = ? AND expires_at < ?',
-        (tenantId) => [tenantId, now]
+        `DELETE FROM idempotency_keys WHERE tenant_id = ? AND ${EXPIRED_IDEMPOTENCY_KEYS_CONDITION}`,
+        (tenantId) => [tenantId, now, now - IDEMPOTENCY_RESERVATION_RETENTION_SECONDS]
       );
       log.debug('Deleted expired idempotency keys', {
         count: idempotencyKeysDeleted,

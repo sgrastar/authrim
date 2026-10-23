@@ -11,7 +11,10 @@ const mocked = vi.hoisted(() => ({
   createAuditLogFromContext: vi.fn(async () => undefined),
   invalidateUserCache: vi.fn(async () => undefined),
   invalidateSubjectRBACCache: vi.fn(async () => undefined),
+  tenantCoreStores: vi.fn(),
 }));
+
+vi.mock('../compliance/tenant-stores', () => ({ tenantCoreStores: mocked.tenantCoreStores }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual =
@@ -498,6 +501,65 @@ describe('admin-rbac schema alignment', () => {
       'DELETE FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
       ['default', 'ra-1', 'user-1']
     );
+  });
+
+  it("removes a suspended user's membership and role assignment from its account database", async () => {
+    // Account routes refuse a suspended account (of any type, with or without personal data);
+    // it is found in the user store that holds it.
+    mocked.resolveAccountDataContextFromHono.mockRejectedValue(
+      new Error('lookup_destination_revalidation_failed', { cause: 'account_inactive' })
+    );
+    const metadata = createMockAdapter();
+    const otherStore = createMockAdapter();
+    const account = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM identity_accounts')
+          ? { id: 'account:user-1' }
+          : sql.includes('FROM subject_org_membership')
+            ? { subject_id: 'user-1' }
+            : sql.includes('FROM role_assignments')
+              ? { id: 'ra-1', role_id: 'role-deleted' }
+              : null,
+    });
+    mocked.tenantCoreStores.mockResolvedValue([
+      { bindingRef: 'DB_USERS_0', adapter: otherStore },
+      { bindingRef: 'DB_USERS_1', adapter: account },
+    ]);
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: metadata });
+    const env = {} as never;
+
+    const member = createMockContext({ params: { id: 'org-1', subjectId: 'user-1' }, env });
+    expect((await adminOrganizationMemberRemoveHandler(member)).status).toBe(200);
+    const role = createMockContext({ params: { id: 'user-1', assignmentId: 'ra-1' }, env });
+    role.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 1 });
+    expect((await adminUserRoleRemoveHandler(role)).status).toBe(200);
+
+    expect(mocked.tenantCoreStores).toHaveBeenCalledWith(
+      expect.anything(),
+      'default',
+      expect.objectContaining({ accountsOfRoutedTenant: true })
+    );
+    expect(account.execute).toHaveBeenCalledWith(
+      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
+      ['default', 'org-1', 'user-1']
+    );
+    expect(account.execute).toHaveBeenCalledWith(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
+      ['default', 'ra-1', 'user-1']
+    );
+    expect(metadata.execute).not.toHaveBeenCalled();
+    expect(otherStore.execute).not.toHaveBeenCalled();
+  });
+
+  it('answers not found when removing from an account the tenant does not have', async () => {
+    mocked.resolveAccountDataContextFromHono.mockRejectedValue(
+      new Error('account_data_route_not_found')
+    );
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: createMockAdapter() });
+    const c = createMockContext({ params: { id: 'user-x', assignmentId: 'ra-1' } });
+    c.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 1 });
+    expect((await adminUserRoleRemoveHandler(c)).status).toBe(404);
+    expect(mocked.tenantCoreStores).not.toHaveBeenCalled();
   });
 
   it('rejects assigning a role at the caller hierarchy level', async () => {

@@ -121,8 +121,12 @@
               "checksum": "65fb32122c4d5f632a410cfa866d42d1f8471bc1d0996f235430b9fbd272b317"
             },
             {
-              "path": "027_rbac_assignments_cross_database_references.sql",
-              "checksum": "f20e2fb8f00dc6221154a8dd3b7b2b13b363d71c647dc8b2a025027bc876a94c"
+              "path": "027_admin_api_jobs_moved_to_admin_store.sql",
+              "checksum": "bb886da4f747d3fe649809ec4451f367b29d621cd53c144560c7f414fd43e9a5"
+            },
+            {
+              "path": "028_rbac_assignments_cross_database_references.sql",
+              "checksum": "ae4258e4e8cc193273c7755d9467ae8248d6093fd5a32aee30a29560f48c68c3"
             }
           ]
         },
@@ -698,8 +702,12 @@
           "checksum": "65fb32122c4d5f632a410cfa866d42d1f8471bc1d0996f235430b9fbd272b317"
         },
         {
-          "path": "027_rbac_assignments_cross_database_references.sql",
-          "checksum": "f20e2fb8f00dc6221154a8dd3b7b2b13b363d71c647dc8b2a025027bc876a94c"
+          "path": "027_admin_api_jobs_moved_to_admin_store.sql",
+          "checksum": "bb886da4f747d3fe649809ec4451f367b29d621cd53c144560c7f414fd43e9a5"
+        },
+        {
+          "path": "028_rbac_assignments_cross_database_references.sql",
+          "checksum": "ae4258e4e8cc193273c7755d9467ae8248d6093fd5a32aee30a29560f48c68c3"
         }
       ]
     },

@@ -36,6 +36,10 @@ import {
 } from './admin-shared';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 import {
+  isAdminJobAllowedForTenantLifecycle,
+  readAdminJobTenantLifecycleState,
+} from './admin-job-executor';
+import {
   applyImportedAssurance,
   importedAssuranceEvidence,
   assertAssuranceColumnsFree,
@@ -1765,6 +1769,22 @@ export async function processPendingUserImportJobs(
 
   for (const job of pendingJobs) {
     const startedTs = Math.floor(Date.now() / 1000);
+
+    // Each run's batch, as the generic admin jobs: an import queued while the tenant was active
+    // changes no account once it is suspended, frozen or being deleted.
+    const lifecycleState = await readAdminJobTenantLifecycleState(env, job.tenant_id);
+    if (!isAdminJobAllowedForTenantLifecycle(lifecycleState, 'users/import')) {
+      const blocked = await coreAdapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'partial_failure', error_message = ?, completed_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
+        [`tenant_lifecycle_blocked:${lifecycleState}`, startedTs, startedTs, job.id, job.tenant_id]
+      );
+      if ((blocked.rowsAffected ?? 0) > 0) {
+        await deleteTerminalUserImportInput(inputBucket, job, logger);
+      }
+      continue;
+    }
 
     if (job.status === 'pending') {
       const claimed = await coreAdapter.execute(

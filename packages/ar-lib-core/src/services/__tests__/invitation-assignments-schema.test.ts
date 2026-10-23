@@ -35,7 +35,7 @@ describe('invitation assignments in the real schema', () => {
        VALUES ('tenant-a', 'code-a', 'key-a', 'Tenant A', ?, ?)`
     ).run(NOW, NOW);
     db.prepare(
-      `INSERT INTO users_core (id, tenant_id, created_at, updated_at) VALUES ('user-1', 'tenant-a', ?, ?)`
+      `INSERT INTO identity_accounts (id, tenant_id, account_type, legacy_user_id, created_at, updated_at) VALUES ('account:user-1', 'tenant-a', 'user', 'user-1', ?, ?)`
     ).run(NOW, NOW);
     db.prepare(
       `INSERT INTO roles (id, tenant_id, name, permissions_json, created_at, role_type, is_system)

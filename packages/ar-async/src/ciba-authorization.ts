@@ -12,6 +12,7 @@ import {
   validateCIBARequest,
   validateCIBARequestObject,
   validateCIBAIdTokenHint,
+  resolvePresentedTokenAccount,
   determineDeliveryMode,
   parseLoginHint,
   getClientCached,
@@ -286,7 +287,24 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
       }
 
-      resolvedSubjectId = idTokenValidation.subjectId;
+      // The user the hint was issued for: its sealed account reference when an identity mapping
+      // chose its sub, else its sub when it shows that is the user's id. A hint that shows
+      // neither (its sub may be a mapped identifier equal to another user's id) names no one.
+      const hintAccount = await resolvePresentedTokenAccount(
+        c.env,
+        tenantId,
+        (idTokenValidation.payload ?? {}) as Record<string, unknown>
+      );
+      if (!hintAccount.ok) {
+        if (hintAccount.reason === 'unavailable') {
+          log.error('Failed to open the id_token_hint account reference', {
+            action: 'validate_id_token_hint',
+          });
+          return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+        }
+        return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+      }
+      resolvedSubjectId = hintAccount.userId;
       log.debug('Validated id_token_hint', {
         action: 'validate_id_token_hint',
         subjectId: resolvedSubjectId,

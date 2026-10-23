@@ -9,6 +9,7 @@ import {
   listDomainMappings,
   resolveAllOrgsByDomainHash,
 } from '../org-domain-resolver';
+import { singleDatabaseRBAC } from '../tenant-rbac';
 
 function createMockAdapter(): DatabaseAdapter {
   return {
@@ -91,7 +92,13 @@ describe('org-domain-resolver', () => {
     vi.mocked(adapter.queryOne).mockResolvedValueOnce({ id: 'role-1' }).mockResolvedValueOnce(null);
     vi.mocked(adapter.execute).mockResolvedValueOnce({ success: true, rowsAffected: 1 });
 
-    const result = await assignRoleToUser(adapter, 'user-1', 'role-1', 'org-1', 'tenant-1');
+    const result = await assignRoleToUser(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'role-1',
+      'org-1',
+      'tenant-1'
+    );
 
     expect(result.success).toBe(true);
     expect(adapter.execute).toHaveBeenCalledWith(

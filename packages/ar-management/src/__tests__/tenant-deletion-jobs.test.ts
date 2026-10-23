@@ -613,7 +613,9 @@ describe('tenant deletion jobs', () => {
         }),
       },
     ]);
-    mockAdapter.queryOne.mockResolvedValueOnce({
+    // The backup is kept in DB_ADMIN (none left in the deletion's database).
+    mockAdapter.queryOne.mockResolvedValue(null);
+    mockControlAdapter.queryOne.mockResolvedValueOnce({
       status: 'failed',
       job_type: 'tenant-database/export',
       created_by: 'job-backup-failed',
@@ -624,9 +626,9 @@ describe('tenant deletion jobs', () => {
       }),
     });
 
-    await processPendingTenantDeletionJobs(controlEnvironment({ DB_ADMIN: undefined }), logger);
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
 
-    expect(mockAdapter.queryOne).toHaveBeenCalledWith(
+    expect(mockControlAdapter.queryOne).toHaveBeenCalledWith(
       'SELECT status, job_type, created_by, config FROM admin_jobs WHERE id = ? AND tenant_id = ?',
       [backupJobId, 'target-tenant']
     );
@@ -657,7 +659,8 @@ describe('tenant deletion jobs', () => {
         config: JSON.stringify({ tenant_id: 'target-tenant' }),
       },
     ]);
-    mockAdapter.queryOne.mockResolvedValueOnce({
+    mockAdapter.queryOne.mockResolvedValue(null);
+    mockControlAdapter.queryOne.mockResolvedValueOnce({
       status: 'pending',
       job_type: 'tenant-database/export',
       created_by: 'job-backup-first',
@@ -668,9 +671,14 @@ describe('tenant deletion jobs', () => {
       }),
     });
 
-    await processPendingTenantDeletionJobs(controlEnvironment({ DB_ADMIN: undefined }), logger);
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
 
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
+    // In DB_ADMIN, where the scheduled admin job run claims it.
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT OR IGNORE INTO admin_jobs'),
+      expect.anything()
+    );
+    expect(mockControlAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT OR IGNORE INTO admin_jobs'),
       expect.arrayContaining([
         expect.any(String),
@@ -700,7 +708,8 @@ describe('tenant deletion jobs', () => {
         config: JSON.stringify({ tenant_id: 'target-tenant' }),
       },
     ]);
-    mockAdapter.queryOne.mockResolvedValueOnce({
+    mockAdapter.queryOne.mockResolvedValue(null);
+    mockControlAdapter.queryOne.mockResolvedValueOnce({
       status: 'completed',
       job_type: 'tenant-database/export',
       created_by: 'different-deletion-job',
@@ -711,7 +720,7 @@ describe('tenant deletion jobs', () => {
       }),
     });
 
-    await processPendingTenantDeletionJobs(controlEnvironment({ DB_ADMIN: undefined }), logger);
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
 
     expect(mockAdapter.transaction).not.toHaveBeenCalled();
     expect(mockDisableTenantLookupDirectory).not.toHaveBeenCalled();

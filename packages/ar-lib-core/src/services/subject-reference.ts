@@ -17,6 +17,13 @@ import {
 
 export const SUBJECT_REFERENCE_CLAIM = 'authrim_subject_ref';
 
+/**
+ * The signed claim (true) an ID token carries when its sub is the user's id. An ID token whose sub
+ * an identity mapping chose carries the sealed account reference instead, and one with neither
+ * (issued before this claim, or before mapped subs needed a reference) names no account.
+ */
+export const SUBJECT_ACCOUNT_CLAIM = 'authrim_subject_account';
+
 const REFERENCE_PREFIX = 'sr1.';
 const ROOT_KEY_HEX = /^[0-9a-fA-F]{64}$/u;
 const encoder = new TextEncoder();
@@ -144,6 +151,32 @@ export function tokenRecordsUserGrant(payload: Record<string, unknown>): boolean
   );
 }
 
+/**
+ * Where the account a token this server signed names is read from, by what its issuance path
+ * signed:
+ * - 'reference': its sealed account reference (its sub is a pairwise or persistent identifier);
+ * - 'sub': its sub, the user's id (or a client or admin principal): an access or refresh token
+ *   (one with a token_use and a JWT ID, which no ID token has and no identity mapping output or
+ *   custom claim may set; only ID tokens are mapped, and a Token Exchange that keeps a mapped sub
+ *   keeps its reference), or an ID token that says its sub is the user's id;
+ * - 'unproven': any other token, such as an ID token that says neither or a logout token (a JWT
+ *   ID but no token_use, and the sub the app's ID tokens carry). Its sub may be a mapped
+ *   identifier that equals another user's id, so it names no account.
+ */
+export function tokenSubjectAccountSource(
+  payload: Record<string, unknown>
+): 'reference' | 'sub' | 'unproven' {
+  if (payload[SUBJECT_REFERENCE_CLAIM] !== undefined) return 'reference';
+  if (
+    typeof payload.token_use === 'string' &&
+    typeof payload.jti === 'string' &&
+    payload.jti.length > 0
+  ) {
+    return 'sub';
+  }
+  return payload[SUBJECT_ACCOUNT_CLAIM] === true ? 'sub' : 'unproven';
+}
+
 export type PresentedTokenAccount =
   | { ok: true; userId: string }
   | { ok: false; reason: 'invalid' | 'unavailable' };
@@ -151,9 +184,10 @@ export type PresentedTokenAccount =
 /**
  * The user a token this server signed (an ID token, say) was issued for: the account its sealed
  * reference opens (for the client whose consent the token was granted under) when its sub is a
- * pairwise or persistent identifier for it, else the sub. 'invalid': no sub, a reference that
- * does not open for this tenant and client. 'unavailable': the key to open one is not available
- * (retryable).
+ * pairwise or persistent identifier for it, else the sub when the token shows it is the user's id
+ * (tokenSubjectAccountSource). 'invalid': no sub, a sub not shown to be the user's id, a reference
+ * that does not open for this tenant and client. 'unavailable': the key to open one is not
+ * available (retryable).
  */
 export async function resolvePresentedTokenAccount(
   env: SubjectReferenceEnv,
@@ -162,8 +196,10 @@ export async function resolvePresentedTokenAccount(
 ): Promise<PresentedTokenAccount> {
   const sub = payload.sub;
   if (typeof sub !== 'string' || sub.length === 0) return { ok: false, reason: 'invalid' };
+  const source = tokenSubjectAccountSource(payload);
+  if (source === 'unproven') return { ok: false, reason: 'invalid' };
+  if (source === 'sub') return { ok: true, userId: sub };
   const reference = payload[SUBJECT_REFERENCE_CLAIM];
-  if (reference === undefined) return { ok: true, userId: sub };
   const { clientId } = accessTokenConsentGrant(payload);
   if (typeof reference !== 'string' || !clientId) return { ok: false, reason: 'invalid' };
   let opened: string | null;

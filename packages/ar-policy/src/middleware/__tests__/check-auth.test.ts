@@ -26,6 +26,10 @@ import {
   type CheckAuthContext,
 } from '../check-auth';
 import type { CheckApiKey, CheckApiOperation, RateLimitTier } from '@authrim/ar-lib-core';
+import { SignJWT, exportJWK, generateKeyPair } from 'jose';
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 // Mock @authrim/ar-lib-core with timingSafeEqual and logger
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -528,6 +532,71 @@ describe('Check API Authentication Middleware', () => {
       // Invalid base64
       result = await authenticateCheckApiRequest('Bearer !!!.!!!.!!!', ctx);
       expect(result.authenticated).toBe(false);
+    });
+  });
+
+  describe('Access token whose sub is not an account id', () => {
+    const issuerUrl = 'https://auth.example.com';
+    const keyPair = generateKeyPair('RS256');
+
+    async function signedContext(claims: Record<string, unknown>) {
+      const { privateKey, publicKey } = await keyPair;
+      const jwk = { ...(await exportJWK(publicKey)), kid: 'kid-1', alg: 'RS256' };
+      const token = await new SignJWT({
+        client_id: 'client_test',
+        tenant_id: 'tenant_abc',
+        ...claims,
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: 'kid-1' })
+        .setIssuer(issuerUrl)
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(privateKey);
+      const ctx: CheckAuthContext = { db: createMockDb(), issuerUrl, jwks: { keys: [jwk] } };
+      return { token, ctx };
+    }
+
+    securityRegressionIt(
+      'rejects a token whose mapped sub carries a sealed account reference',
+      async () => {
+        // The mapped sub equals another user's id; the decision would be made for them.
+        const { token, ctx } = await signedContext({
+          sub: 'user_other',
+          jti: 'jti-1',
+          token_use: 'access',
+          authrim_subject_ref: 'sr1.iv.ciphertext',
+        });
+
+        const result = await authenticateCheckApiRequest(`Bearer ${token}`, ctx);
+
+        expect(result.authenticated).toBe(false);
+        expect(result.error).toBe('invalid_token');
+      }
+    );
+
+    securityRegressionIt(
+      'rejects an ID token that does not mark its sub as the user id',
+      async () => {
+        const { token, ctx } = await signedContext({ sub: 'user_other' });
+
+        const result = await authenticateCheckApiRequest(`Bearer ${token}`, ctx);
+
+        expect(result.authenticated).toBe(false);
+        expect(result.error).toBe('invalid_token');
+      }
+    );
+
+    it("accepts an access token whose sub is the user's id", async () => {
+      const { token, ctx } = await signedContext({
+        sub: 'user_123',
+        jti: 'jti-1',
+        token_use: 'access',
+      });
+
+      const result = await authenticateCheckApiRequest(`Bearer ${token}`, ctx);
+
+      expect(result.authenticated).toBe(true);
+      expect(result.subjectId).toBe('user_123');
     });
   });
 
