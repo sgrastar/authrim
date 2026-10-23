@@ -50,11 +50,6 @@
       "required": true
     },
     {
-      "name": "INVESTIGATION_SUBJECT_HMAC_KEYRING",
-      "capability": "sign_in_attempt.subject_hash",
-      "required": false
-    },
-    {
       "name": "OBJECT_ENCRYPTION_ROOT_KEY",
       "capability": "object_encryption.encrypt",
       "required": true

@@ -878,7 +878,9 @@ export function buildProxyHeaders(
 		'x-session-id',
 		'x-diagnostic-session-id',
 		// The screen an email-code send's human verification token came from.
-		'x-authrim-human-verification-action'
+		'x-authrim-human-verification-action',
+		// The Flow interaction a passkey or TOTP sign-in start belongs to (the server checks it).
+		'x-authrim-interaction-id'
 	];
 
 	const headers = new Headers();

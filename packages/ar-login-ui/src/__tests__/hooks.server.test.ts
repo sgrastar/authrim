@@ -373,6 +373,26 @@ describe('Login UI proxy hooks', () => {
 		expect(headers.get('X-Authrim-Human-Verification-Action')).toBe('signup');
 	});
 
+	it('forwards the Flow interaction a sign-in start belongs to', async () => {
+		const { buildProxyHeaders } = await import('../hooks.server');
+		const request = new Request(
+			'https://login.example.com/api/v1/auth/direct/passkey/login/start',
+			{
+				method: 'POST',
+				headers: { 'X-Authrim-Interaction-Id': 'int-1' }
+			}
+		);
+		const event = {
+			request,
+			url: new URL(request.url),
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const headers = buildProxyHeaders(event as never, undefined, 'first.test.authrim.com');
+
+		expect(headers.get('X-Authrim-Interaction-Id')).toBe('int-1');
+	});
+
 	it('preserves binary proxy request bodies and enforces a byte limit', async () => {
 		const { readBoundedProxyBody } = await import('../hooks.server');
 		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);

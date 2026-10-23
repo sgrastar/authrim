@@ -55831,17 +55831,56 @@ components:
           $ref: '#/components/schemas/InvestigationRecentSignInAttempts'
     InvestigationRecentSignInAttempts:
       description: >-
-        The account's recent failed sign-in attempts, newest first (at most 20). Only attempts made
+        The account's recent failed sign-in attempts, newest first (at most 20), with the count and
+        a summary by method and reason of every failure still held, so a burst of attempts cannot
+        hide older ones. Only attempts made
         within a Flow interaction are recorded (`coverage`); sign-ins outside one are not counted.
         Without the investigation keyring the attempts cannot be found and are reported as
         unavailable, not as none.
       oneOf:
         - type: object
           additionalProperties: false
-          required: [available, coverage, items]
+          required: [available, coverage, total, truncated, summary, items]
           properties:
             available: { type: boolean, enum: [true] }
             coverage: { type: string, enum: [flow_interactions] }
+            total:
+              type: integer
+              minimum: 0
+              description: Every recorded failure of the account still held in D1.
+            truncated:
+              type: boolean
+              description: Whether items leaves out older attempts.
+            summary:
+              type: array
+              description: The failures by method and reason, latest first.
+              items:
+                type: object
+                additionalProperties: false
+                required: [method, reason_code, count, first_at, last_at]
+                properties:
+                  method: { type: string, enum: [passkey, totp, email_code, other] }
+                  reason_code:
+                    type: string
+                    enum:
+                      [
+                        challenge_expired,
+                        challenge_mismatch,
+                        method_disabled,
+                        credential_not_found,
+                        verification_failed,
+                        invalid_code,
+                        replay_detected,
+                        rate_limited,
+                        account_mismatch,
+                        account_unavailable,
+                        guest_denied,
+                        service_unavailable,
+                        other,
+                      ]
+                  count: { type: integer, minimum: 1 }
+                  first_at: { type: [integer, 'null'] }
+                  last_at: { type: [integer, 'null'] }
             items:
               type: array
               maxItems: 20

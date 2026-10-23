@@ -28,8 +28,8 @@ read (`GET /api/admin/investigations/subjects/{handle}/status`, its `recent_atte
 ## The investigation keyring
 
 `INVESTIGATION_SUBJECT_HMAC_KEYRING` is a Worker secret (file
-`investigation_subject_hmac_keyring.json` in the keys directory) given to ar-auth, ar-management,
-ar-bridge and ar-saml. It has the tombstone keyring's shape:
+`investigation_subject_hmac_keyring.json` in the keys directory) given only to ar-auth, which
+records attempts, and ar-management, which reads them. It has the tombstone keyring's shape:
 
 ```json
 { "current": 1, "keys": { "1": "<32-byte base64url>" } }

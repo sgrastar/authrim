@@ -332,6 +332,18 @@ export type RecentSignInAttempts =
        * API sign-in, IdP-initiated SAML, re-authentication pages) are not counted here.
        */
       coverage: 'flow_interactions';
+      /** Every recorded failure of the account still held in D1, so a burst cannot hide others. */
+      total: number;
+      /** Whether `items` leaves out older attempts (`total` is larger). */
+      truncated: boolean;
+      /** The failures by method and reason, with their first and last time. */
+      summary: Array<{
+        method: string;
+        reason_code: string;
+        count: number;
+        first_at: number | null;
+        last_at: number | null;
+      }>;
       items: Array<{
         created_at: number | null;
         method: string;
@@ -357,21 +369,73 @@ export async function readRecentSignInAttempts(
 ): Promise<RecentSignInAttempts> {
   if (!keys) return { available: false, reason: 'key_unavailable' };
   const hashes = await investigationSubjectHashes(keys, tenantId, userId);
-  const rows = await flowCore.query<{
-    created_at: number | null;
-    method: string | null;
-    reason_code: string | null;
-  }>(
-    `SELECT created_at, method, reason_code
-       FROM flow_audit_events
-      WHERE tenant_id = ? AND event_type = ? AND subject_hash IN (${hashes.map(() => '?').join(', ')})
-      ORDER BY created_at DESC
-      LIMIT ?`,
-    [tenantId, SIGN_IN_ATTEMPT_FAILED_EVENT, ...hashes, RECENT_ATTEMPTS_LIMIT]
-  );
+  const match = `tenant_id = ? AND event_type = ? AND subject_hash IN (${hashes.map(() => '?').join(', ')})`;
+  const params = [tenantId, SIGN_IN_ATTEMPT_FAILED_EVENT, ...hashes];
+  const [rows, groups] = await Promise.all([
+    flowCore.query<{
+      created_at: number | null;
+      method: string | null;
+      reason_code: string | null;
+    }>(
+      `SELECT created_at, method, reason_code
+         FROM flow_audit_events
+        WHERE ${match}
+        ORDER BY created_at DESC
+        LIMIT ?`,
+      [...params, RECENT_ATTEMPTS_LIMIT]
+    ),
+    // Grouped by the returned (closed) values in SQL, so stored values outside the vocabulary add
+    // up under `other` and the groups are bounded by the vocabularies.
+    flowCore.query<{
+      method: string | null;
+      reason_code: string | null;
+      count: number;
+      first_at: number | null;
+      last_at: number | null;
+    }>(
+      `SELECT CASE WHEN method IN (${placeholders(SIGN_IN_ATTEMPT_METHODS)}) THEN method
+                   ELSE 'other' END AS method,
+              CASE WHEN reason_code IN (${placeholders(SIGN_IN_ATTEMPT_REASON_CODES)})
+                   THEN reason_code ELSE 'other' END AS reason_code,
+              COUNT(*) AS count, MIN(created_at) AS first_at, MAX(created_at) AS last_at
+         FROM flow_audit_events
+        WHERE ${match}
+        GROUP BY 1, 2`,
+      [...SIGN_IN_ATTEMPT_METHODS, ...SIGN_IN_ATTEMPT_REASON_CODES, ...params]
+    ),
+  ]);
+  // The SQL already maps to the closed sets; mapping again keeps the returned values closed
+  // whatever a database returns.
+  const summary = new Map<string, RecentSummaryEntry>();
+  for (const group of groups) {
+    const method = closed(group.method, SIGN_IN_ATTEMPT_METHOD_SET);
+    const reasonCode = closed(group.reason_code, SIGN_IN_ATTEMPT_REASON_SET);
+    const firstAt = toMilliseconds(group.first_at);
+    const lastAt = toMilliseconds(group.last_at);
+    const entry = summary.get(`${method}\u0000${reasonCode}`);
+    if (!entry) {
+      summary.set(`${method}\u0000${reasonCode}`, {
+        method,
+        reason_code: reasonCode,
+        count: Number(group.count),
+        first_at: firstAt,
+        last_at: lastAt,
+      });
+      continue;
+    }
+    entry.count += Number(group.count);
+    entry.first_at = earliest(entry.first_at, firstAt);
+    entry.last_at = latest(entry.last_at, lastAt);
+  }
+  const total = [...summary.values()].reduce((sum, entry) => sum + entry.count, 0);
   return {
     available: true,
     coverage: 'flow_interactions',
+    total,
+    truncated: total > rows.length,
+    summary: [...summary.values()].sort(
+      (left, right) => (right.last_at ?? 0) - (left.last_at ?? 0)
+    ),
     items: rows.map((row) => ({
       created_at: toMilliseconds(row.created_at),
       method: closed(row.method, SIGN_IN_ATTEMPT_METHOD_SET),
@@ -379,6 +443,20 @@ export async function readRecentSignInAttempts(
       reason_code: closed(row.reason_code, SIGN_IN_ATTEMPT_REASON_SET),
     })),
   };
+}
+
+function placeholders(values: readonly unknown[]): string {
+  return values.map(() => '?').join(', ');
+}
+
+type RecentSummaryEntry = Extract<RecentSignInAttempts, { available: true }>['summary'][number];
+
+function earliest(left: number | null, right: number | null): number | null {
+  return left === null ? right : right === null ? left : Math.min(left, right);
+}
+
+function latest(left: number | null, right: number | null): number | null {
+  return left === null ? right : right === null ? left : Math.max(left, right);
 }
 
 const SIGN_IN_ATTEMPT_METHOD_SET: ReadonlySet<string> = new Set(SIGN_IN_ATTEMPT_METHODS);

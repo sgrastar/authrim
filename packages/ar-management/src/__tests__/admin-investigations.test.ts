@@ -599,6 +599,24 @@ describe('status-only investigation read', () => {
     expect((JSON.parse(text) as { recent_attempts: unknown }).recent_attempts).toEqual({
       available: true,
       coverage: 'flow_interactions',
+      total: 2,
+      truncated: false,
+      summary: [
+        {
+          method: 'passkey',
+          reason_code: 'verification_failed',
+          count: 1,
+          first_at: (NOW_SECONDS - 10) * 1000,
+          last_at: (NOW_SECONDS - 10) * 1000,
+        },
+        {
+          method: 'totp',
+          reason_code: 'invalid_code',
+          count: 1,
+          first_at: (NOW_SECONDS - 60) * 1000,
+          last_at: (NOW_SECONDS - 60) * 1000,
+        },
+      ],
       items: [
         {
           created_at: (NOW_SECONDS - 10) * 1000,
@@ -670,6 +688,101 @@ describe('status-only investigation read', () => {
     expect(text).not.toMatch(/Taro/u);
   });
 
+  it('keeps a burst of attempts from hiding older ones: counts and a summary of all', async () => {
+    // One older failure, then a burst of another kind (say, someone trying codes on purpose).
+    await seedAttempts(store, [
+      { userId: USER, method: 'passkey', reasonCode: 'verification_failed', at: NOW_SECONDS - 900 },
+      ...Array.from({ length: 25 }, (_, index) => ({
+        userId: USER,
+        method: 'totp' as const,
+        reasonCode: 'invalid_code' as const,
+        at: NOW_SECONDS - 100 + index,
+      })),
+    ]);
+    const body = await (
+      await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
+    ).json<{
+      recent_attempts: {
+        total: number;
+        truncated: boolean;
+        summary: Array<{ method: string; reason_code: string; count: number }>;
+        items: Array<{ reason_code: string }>;
+      };
+    }>();
+    const attempts = body.recent_attempts;
+    expect(attempts.items).toHaveLength(20);
+    expect(attempts.items.every((item) => item.reason_code === 'invalid_code')).toBe(true);
+    expect(attempts.total).toBe(26);
+    expect(attempts.truncated).toBe(true);
+    expect(
+      attempts.summary.map(({ method, reason_code, count }) => [method, reason_code, count])
+    ).toEqual([
+      ['totp', 'invalid_code', 25],
+      ['passkey', 'verification_failed', 1],
+    ]);
+  });
+
+  it('counts every failure however many distinct stored values there are', async () => {
+    await seedAttempts(store, [
+      { userId: USER, method: 'passkey', reasonCode: 'verification_failed', at: NOW_SECONDS - 900 },
+      ...Array.from({ length: 205 }, (_, index) => ({
+        userId: USER,
+        method: 'totp' as const,
+        reasonCode: 'invalid_code' as const,
+        at: NOW_SECONDS - 300 + index,
+      })),
+    ]);
+    // Every later record carries a different value outside the vocabulary.
+    store.db
+      .prepare(
+        `UPDATE flow_audit_events SET reason_code = 'unknown-' || rowid
+          WHERE event_type = 'flow.sign_in_attempt.failed' AND method = 'totp'`
+      )
+      .run();
+    const body = await (
+      await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
+    ).json<{
+      recent_attempts: {
+        total: number;
+        summary: Array<{ method: string; reason_code: string; count: number }>;
+      };
+    }>();
+    expect(body.recent_attempts.total).toBe(206);
+    expect(
+      body.recent_attempts.summary.map(({ method, reason_code, count }) => [
+        method,
+        reason_code,
+        count,
+      ])
+    ).toEqual([
+      ['totp', 'other', 205],
+      ['passkey', 'verification_failed', 1],
+    ]);
+  });
+
+  it('adds stored values outside the vocabulary up under other in the summary', async () => {
+    await seedAttempts(store, [
+      { userId: USER, method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS - 2 },
+      { userId: USER, method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS - 1 },
+    ]);
+    store.db
+      .prepare(
+        `UPDATE flow_audit_events SET reason_code = 'denied for Taro ' || rowid
+          WHERE event_type = 'flow.sign_in_attempt.failed'`
+      )
+      .run();
+    const text = await (
+      await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
+    ).text();
+    const attempts = (
+      JSON.parse(text) as {
+        recent_attempts: { summary: Array<{ reason_code: string; count: number }> };
+      }
+    ).recent_attempts;
+    expect(attempts.summary).toMatchObject([{ reason_code: 'other', count: 2 }]);
+    expect(text).not.toMatch(/Taro/u);
+  });
+
   it('marks a guest account and its deletion date', async () => {
     store.db
       .prepare(`UPDATE identity_accounts SET registration_state = 'guest' WHERE id = 'account-1'`)
@@ -725,8 +838,8 @@ describe('status-only investigation read', () => {
       })(`user:${USER}`);
       expect(response.status).toBe(200);
       // The tenant's database is read for the attempts recorded with Flow interactions only.
-      expect(metadataStatements).toHaveLength(1);
-      expect(metadataStatements[0]).toMatch(/FROM flow_audit_events/u);
+      expect(metadataStatements).toHaveLength(2);
+      for (const sql of metadataStatements) expect(sql).toMatch(/FROM flow_audit_events/u);
       expect(tripwire.touched).toEqual([]);
     });
 
