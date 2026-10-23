@@ -3,6 +3,7 @@
  * simulation both read and evaluate them, so that a simulation shows what checks decide.
  */
 
+import { roleAssignmentHolds } from '@authrim/ar-lib-core';
 import {
   ATTRIBUTE_CONDITION_TYPES,
   CHECK_API_CONDITION_TYPES,
@@ -125,17 +126,13 @@ const ROLE_CONDITION_TYPES = new Set(['has_role', 'has_any_role', 'has_all_roles
  */
 function rolesForTarget(roles: readonly SubjectRole[], context: PolicyContext): SubjectRole[] {
   const { orgId, id, type } = context.resource;
-  return roles.filter((role) => {
-    if (role.scope === 'global') return true;
-    if (role.scope === 'org') return Boolean(orgId) && role.scopeTarget === `org:${orgId}`;
-    if (role.scope === 'resource') {
-      return (
-        Boolean(id) &&
-        (role.scopeTarget === `resource:${type}:${id}` || role.scopeTarget === `resource:${id}`)
-      );
-    }
-    return false;
-  });
+  // The same matching as the role check of the Check API (roleAssignmentHolds).
+  return roles.filter((role) =>
+    roleAssignmentHolds(
+      { scope: role.scope, scopeTarget: role.scopeTarget },
+      { orgId, resourceType: type, resourceId: id }
+    )
+  );
 }
 
 /** Whether a deny needs a target the request does not give (so it could never apply). */

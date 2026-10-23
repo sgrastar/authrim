@@ -25,6 +25,7 @@ import {
   UserVerifiedAttributeRepository,
   resolvePlatformSettingsWithSources,
   CHECK_API_AUDIT_DEFAULTS,
+  resolveAccountCoreDataContext,
   type CheckApiRequest,
 } from '@authrim/ar-lib-core';
 import {
@@ -211,6 +212,9 @@ async function getCheckService(
 
   const checkService = createUnifiedCheckService({
     db: coreAdapter,
+    // A subject's role assignments and organisation memberships are in its account database.
+    subjectAccountDb: async (tenantId, subjectId) =>
+      (await resolveAccountCoreDataContext(env, { tenantId, accountId: subjectId })).coreDb,
     cache: env.CHECK_CACHE_KV,
     rebacService,
     cacheTTL: 60,

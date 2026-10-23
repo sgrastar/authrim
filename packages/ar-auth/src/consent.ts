@@ -391,6 +391,11 @@ async function handleJsonConsentGet(
   const { challenge_id, userId, clientRow, scopeDetails, metadata } = params;
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAccountAuthContextFromHono(c, tenantId);
+  // Roles and organisations: defined in the tenant metadata database, assigned in the account's.
+  const rbacDbs = {
+    metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+    account: authCtx.coreAdapter,
+  };
 
   // Build client info
   const client: ConsentClientInfo = {
@@ -422,7 +427,7 @@ async function handleJsonConsentGet(
   }
 
   // Get RBAC data (organizations, roles)
-  const rbacData = await getConsentRBACData(authCtx.coreAdapter, userId, tenantId);
+  const rbacData = await getConsentRBACData(rbacDbs, userId, tenantId);
 
   // Parse feature flags from environment
   const features = parseConsentFeatureFlags(
@@ -448,7 +453,7 @@ async function handleJsonConsentGet(
 
   // If targeting a specific org, get roles for that org
   if (targetOrgId) {
-    roles = await getRolesInOrganization(authCtx.coreAdapter, userId, targetOrgId, tenantId);
+    roles = await getRolesInOrganization(rbacDbs, userId, targetOrgId, tenantId);
   }
 
   // Get consent settings

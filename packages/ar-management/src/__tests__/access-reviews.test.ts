@@ -115,6 +115,13 @@ function sqliteStore() {
   db.exec('PRAGMA foreign_keys = OFF');
   const adapter = {
     db,
+    // The adapter shape, so the core library uses it as it is.
+    getType: () => 'sqlite',
+    isHealthy: async () => ({ healthy: true, latencyMs: 0 }),
+    close: async () => undefined,
+    transaction: async () => {
+      throw new Error('not used');
+    },
     async query(sql: string, params?: unknown[]) {
       return db.prepare(sql).all(...values(params));
     },
@@ -230,9 +237,9 @@ describe('access reviews', () => {
          VALUES ('org-1', 'tenant-a', 'org-1', 0, 0)`
       )
       .run();
+    // Roles are defined in the metadata database (`reviews`); the stores hold assignments only.
     db = sqliteStore();
     users1 = sqliteStore();
-    for (const store of [db, users1]) addRole(store, 'role-admin');
     assign(db, 'ra-1', 'user-1');
     assign(users1, 'ra-2', 'user-2');
     mocks.reviewsAdapter = reviews;
@@ -488,9 +495,9 @@ describe('access reviews', () => {
     expect(items(reviews)[0]).toMatchObject({ apply_error: 'insufficient_permissions' });
     expect(mocks.removeRoleAssignment).not.toHaveBeenCalled();
 
-    // A role above the admin: refused as the Admin API refuses it.
-    db.db.prepare("UPDATE roles SET hierarchy_level = 90 WHERE id = 'role-admin'").run();
-    users1.db.prepare("UPDATE roles SET hierarchy_level = 90 WHERE id = 'role-admin'").run();
+    // A role above the admin (as the metadata database defines it, the account stores holding
+    // only the assignments): refused as the Admin API refuses it.
+    reviews.db.prepare("UPDATE roles SET hierarchy_level = 90 WHERE id = 'role-admin'").run();
     const again = await json(
       await completeAccessReview(context({ params: { id: review.review_id } }))
     );

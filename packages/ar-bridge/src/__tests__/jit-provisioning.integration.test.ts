@@ -572,7 +572,8 @@ describe('JIT Provisioning Integration', () => {
 
       expect(mockAssignRoleToUser).toHaveBeenCalledTimes(1);
       expect(mockAssignRoleToUser).toHaveBeenCalledWith(
-        mockEnv.DB,
+        // The role is checked in the metadata database and assigned in the account's.
+        { metadata: mockEnv.DB, account: mockEnv.DB },
         result.userId,
         'role_member',
         'org',
@@ -718,7 +719,8 @@ describe('JIT Provisioning Integration', () => {
         { role_id: 'role_reviewer', scope_type: 'global', scope_target: '' },
       ]);
       expect(mockAssignRoleToUser).toHaveBeenCalledWith(
-        mockEnv.DB,
+        // The role is checked in the metadata database and assigned in the account's.
+        { metadata: mockEnv.DB, account: mockEnv.DB },
         provisioned.userId,
         'role_reviewer',
         'global',

@@ -40,8 +40,12 @@ import {
   toOidcIdentityMappingRuntimeError,
   requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
+  resolveAccountCoreDataContext,
+  resolveSubjectOrganizations,
+  resolveSubjectRoles,
   type DatabaseAdapter,
   type Env,
+  type TenantRBACDatabases,
   type Challenge,
   type FlowAssignmentTargetType,
   type FlowConditionConfig,
@@ -2557,6 +2561,7 @@ async function getLatestCompletedAuthenticationMethod(
 }
 
 async function buildConditionEvaluationContext(
+  c: AuthContext,
   db: DatabaseAdapter,
   tenantId: string,
   interaction: FlowInteractionRow,
@@ -2581,19 +2586,31 @@ async function buildConditionEvaluationContext(
     requested_scope: parseScopeList(requestContext.requested_scope),
     authentication_method: authenticationMethod,
     user: interaction.user_id
-      ? await getFlowConditionUserContext(db, tenantId, interaction.user_id)
+      ? await getFlowConditionUserContext(c, db, tenantId, interaction.user_id)
       : undefined,
   };
 }
 
 async function getFlowConditionUserContext(
+  c: AuthContext,
   db: DatabaseAdapter,
   tenantId: string,
   userId: string
 ): Promise<NonNullable<FlowConditionEvaluationContext['user']>> {
+  // Role and organisation definitions are in the tenant metadata database (`db`); the user's
+  // assignments and memberships in the user's account database. A user the tenant has no account
+  // for has none; one whose account or roles cannot be read throws, so no condition is decided
+  // without them (a condition may route admins to a stronger step).
+  let rbac: TenantRBACDatabases | null = null;
+  try {
+    const account = await resolveAccountCoreDataContext(c.env, { tenantId, accountId: userId });
+    rbac = { metadata: db, account: account.coreDb };
+  } catch (error) {
+    if (!(error instanceof Error && error.message === 'account_data_route_not_found')) throw error;
+  }
   const [roles, orgIds] = await Promise.all([
-    getFlowConditionUserRoles(db, tenantId, userId),
-    getFlowConditionUserOrgIds(db, tenantId, userId),
+    getFlowConditionUserRoles(db, rbac, tenantId, userId),
+    getFlowConditionUserOrgIds(rbac, tenantId, userId),
   ]);
   return {
     roles,
@@ -2602,12 +2619,13 @@ async function getFlowConditionUserContext(
 }
 
 async function getFlowConditionUserRoles(
-  db: DatabaseAdapter,
+  metadata: DatabaseAdapter,
+  rbac: TenantRBACDatabases | null,
   tenantId: string,
   userId: string
 ): Promise<string[]> {
   try {
-    const rows = await db.query<{ name: string }>(
+    const rows = await metadata.query<{ name: string }>(
       `SELECT DISTINCT r.name
          FROM user_roles ur
          JOIN roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id
@@ -2619,66 +2637,26 @@ async function getFlowConditionUserRoles(
     // Optional RBAC tables differ by runtime topology; fail closed below.
   }
 
-  try {
-    const now = Date.now();
-    const rows = await db.query<{ name: string }>(
-      `SELECT DISTINCT r.name
-         FROM role_assignments ra
-         JOIN roles r ON r.tenant_id = ra.tenant_id AND r.id = ra.role_id
-        WHERE ra.tenant_id = ?
-          AND ra.subject_id = ?
-          AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-      [tenantId, userId, now]
-    );
-    return rows.map((row) => row.name).filter(Boolean);
-  } catch {
-    return [];
-  }
+  if (!rbac) return [];
+  const roles = await resolveSubjectRoles(rbac, tenantId, userId);
+  return [...new Set(roles.map(({ role }) => role.name))].filter(Boolean);
 }
 
 async function getFlowConditionUserOrgIds(
-  db: DatabaseAdapter,
+  rbac: TenantRBACDatabases | null,
   tenantId: string,
   userId: string
 ): Promise<string[]> {
-  try {
-    const rows = await db.query<{ org_id: string }>(
-      `SELECT DISTINCT org_id
-         FROM subject_org_membership
-        WHERE tenant_id = ? AND subject_id = ?`,
-      [tenantId, userId]
-    );
-    if (rows.length > 0) return rows.map((row) => row.org_id).filter(Boolean);
-  } catch {
-    // Optional organization tables differ by runtime topology; fail closed below.
-  }
-
-  try {
-    const rows = await db.query<{ org_id: string }>(
-      `SELECT DISTINCT org_id
-         FROM org_memberships
-        WHERE tenant_id = ? AND user_id = ?`,
-      [tenantId, userId]
-    );
-    if (rows.length > 0) return rows.map((row) => row.org_id).filter(Boolean);
-  } catch {
-    // Continue to the alternate table name below.
-  }
-
-  try {
-    const rows = await db.query<{ org_id: string }>(
-      `SELECT DISTINCT org_id
-         FROM organization_memberships
-        WHERE tenant_id = ? AND user_id = ? AND is_active = 1`,
-      [tenantId, userId]
-    );
-    return rows.map((row) => row.org_id).filter(Boolean);
-  } catch {
-    return [];
-  }
+  if (!rbac) return [];
+  // Active organisations only, as tokens, consent and the Check API see them.
+  const memberships = await resolveSubjectOrganizations(rbac, tenantId, userId, {
+    activeOnly: true,
+  });
+  return [...new Set(memberships.map(({ organization }) => organization.id))];
 }
 
 async function resolveConditionSelectedHandle(input: {
+  c: AuthContext;
   db: DatabaseAdapter;
   tenantId: string;
   interaction: FlowInteractionRow;
@@ -2694,12 +2672,25 @@ async function resolveConditionSelectedHandle(input: {
     return { selectedHandle: null, errorCode: 'AR_FLOW_CONDITION_CONFIG_INVALID' };
   }
 
-  const context = await buildConditionEvaluationContext(
-    input.db,
-    input.tenantId,
-    input.interaction,
-    input.runtime
-  );
+  let context: FlowConditionEvaluationContext;
+  try {
+    context = await buildConditionEvaluationContext(
+      input.c,
+      input.db,
+      input.tenantId,
+      input.interaction,
+      input.runtime
+    );
+  } catch (error) {
+    // The user's roles or organisations could not be read: no branch is chosen without them.
+    getLogger(input.c)
+      .module('LOGIN-RUNTIME-FLOW')
+      .warn('Flow condition context unavailable', {
+        tenantId: input.tenantId,
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    return { selectedHandle: null, errorCode: 'AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE' };
+  }
   const result = await evaluateFlowConditionRows(config, context);
   if (!result.matched && result.terminal_error) {
     return { selectedHandle: null, terminalError: result.terminal_error };
@@ -2820,6 +2811,7 @@ async function resolveAutoAdvanceForStep(input: {
 } | null> {
   if (input.step.component === 'condition') {
     return resolveConditionSelectedHandle({
+      c: input.c,
       db: input.db,
       tenantId: input.tenantId,
       interaction: input.interaction,
@@ -5767,6 +5759,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   };
   if (current.step.component === 'condition') {
     branchResolution = await resolveConditionSelectedHandle({
+      c,
       db,
       tenantId,
       interaction,

@@ -21,6 +21,7 @@ import {
   CanonicalRuntimeUserStore,
   createAuditLogFromContext,
   createAuthContextFromHono,
+  findTenantRole,
   createErrorResponse,
   createPIIContextFromHono,
   ensureDatabaseAdapter,
@@ -856,6 +857,8 @@ function permissionFor(item: AccessReviewItemRow): string {
 
 async function applyRevocation(
   context: RevocationContext,
+  /** The tenant metadata database, where the roles are defined. */
+  metadata: DatabaseAdapter,
   admin: AdminAuthContext,
   item: AccessReviewItemRow,
   reviewId: string,
@@ -876,12 +879,16 @@ async function applyRevocation(
     at: firstAttemptAt,
   };
   if (item.permission_type === 'role') {
-    const role = await context.adapter.queryOne<{ hierarchy_level: number }>(
-      `SELECT r.hierarchy_level FROM role_assignments ra
-         JOIN roles r ON r.id = ra.role_id AND r.tenant_id = ra.tenant_id
-        WHERE ra.tenant_id = ? AND ra.id = ?`,
+    // The assignment is in the account's store; the role it gives, in the metadata database. An
+    // assignment already gone, or of a role the tenant no longer has, grants nothing: removing it
+    // needs no hierarchy.
+    const assigned = await context.adapter.queryOne<{ role_id: string }>(
+      'SELECT role_id FROM role_assignments WHERE tenant_id = ? AND id = ?',
       [context.tenantId, item.entitlement_ref]
     );
+    const role = assigned
+      ? await findTenantRole(metadata, context.tenantId, { id: assigned.role_id })
+      : null;
     if (role && !canManageRoleHierarchy(admin, role.hierarchy_level)) {
       return { status: 'failed', error: 'insufficient_role_hierarchy' };
     }
@@ -1079,6 +1086,7 @@ export async function completeAccessReview(c: Context<{ Bindings: Env }>) {
               // A cache left behind keeps the revoked access in new tokens: apply it again.
               onCacheFailure: 'throw',
             },
+            adapter,
             admin,
             item,
             reviewId,

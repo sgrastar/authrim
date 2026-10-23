@@ -21,6 +21,8 @@ import {
   resolveOrgByDomainHash,
   resolveAllOrgsByDomainHash,
   joinOrganization,
+  singleDatabaseRBAC,
+  type TenantRBACDatabases,
   assignScopedRoleToUser,
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
@@ -1162,15 +1164,15 @@ async function applyTenantD1JITPlan(
     validation: input.plan.customClaimValidation,
   });
 
+  // Organisations and roles are defined in the tenant metadata database; the user's memberships
+  // and assignments go to its account database.
+  const rbac: TenantRBACDatabases = {
+    metadata: (await resolveTenantMetadataContext(env, input.tenantId)).coreDb,
+    account: account.coreDb,
+  };
   const orgsJoined: string[] = [];
   for (const orgId of input.plan.organizationIds) {
-    const joined = await joinOrganization(
-      account.coreDb,
-      input.userId,
-      orgId,
-      input.tenantId,
-      'member'
-    );
+    const joined = await joinOrganization(rbac, input.userId, orgId, input.tenantId, 'member');
     if (joined.success) orgsJoined.push(orgId);
   }
 
@@ -1178,7 +1180,7 @@ async function applyTenantD1JITPlan(
   for (const role of input.plan.roleAssignments) {
     if (!isGrantableRole(role, orgsJoined)) continue;
     const assigned = await assignScopedRoleToUser(
-      account.coreDb,
+      rbac,
       input.userId,
       role.roleId,
       role.scopeType,
@@ -1198,7 +1200,7 @@ async function applyTenantD1JITPlan(
     const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : '';
     const scopeType = orgsJoined.length > 0 ? 'org' : 'global';
     const assigned = await assignScopedRoleToUser(
-      account.coreDb,
+      rbac,
       input.userId,
       input.plan.defaultRoleId,
       scopeType,
@@ -1838,7 +1840,7 @@ async function createUserWithJITProvisioning(
   // Actually join the organizations
   for (const orgId of orgsToJoin) {
     const joinResult = await joinOrganization(
-      coreSource,
+      singleDatabaseRBAC(coreSource),
       id,
       orgId,
       params.tenantId,
@@ -1864,7 +1866,7 @@ async function createUserWithJITProvisioning(
     }
 
     const assignResult = await assignScopedRoleToUser(
-      coreSource,
+      singleDatabaseRBAC(coreSource),
       id,
       roleAssignment.role_id,
       roleAssignment.scope_type,
@@ -1887,7 +1889,7 @@ async function createUserWithJITProvisioning(
     const defaultScopeType = result.orgs_joined.length > 0 ? 'org' : 'global';
 
     const assignResult = await assignScopedRoleToUser(
-      coreSource,
+      singleDatabaseRBAC(coreSource),
       id,
       params.jitConfig.default_role_id,
       defaultScopeType,
@@ -1917,6 +1919,7 @@ async function createUserWithJITProvisioning(
   return result;
 }
 
+/**
 /**
  * Map deny_code to ExternalIdPErrorCode
  */

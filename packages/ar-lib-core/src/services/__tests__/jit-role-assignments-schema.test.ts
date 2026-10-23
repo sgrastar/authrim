@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import { assignRoleToUser, assignScopedRoleToUser } from '../org-domain-resolver';
+import { singleDatabaseRBAC } from '../tenant-rbac';
 
 const NOW = 1_800_000_000;
 
@@ -31,7 +32,7 @@ describe('JIT role assignments in the real schema', () => {
        VALUES ('tenant-a', 'code-a', 'key-a', 'Tenant A', ?, ?)`
     ).run(NOW, NOW);
     db.prepare(
-      `INSERT INTO users_core (id, tenant_id, created_at, updated_at) VALUES ('user-1', 'tenant-a', ?, ?)`
+      `INSERT INTO identity_accounts (id, tenant_id, account_type, legacy_user_id, created_at, updated_at) VALUES ('account:user-1', 'tenant-a', 'user', 'user-1', ?, ?)`
     ).run(NOW, NOW);
     db.prepare(
       `INSERT INTO roles (id, tenant_id, name, permissions_json, created_at, role_type, is_system)
@@ -40,8 +41,20 @@ describe('JIT role assignments in the real schema', () => {
   });
 
   it('gives an organisation-scoped role to the user, once', async () => {
-    const first = await assignRoleToUser(adapter, 'user-1', 'role-1', 'org-1', 'tenant-a');
-    const second = await assignRoleToUser(adapter, 'user-1', 'role-1', 'org-1', 'tenant-a');
+    const first = await assignRoleToUser(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'role-1',
+      'org-1',
+      'tenant-a'
+    );
+    const second = await assignRoleToUser(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'role-1',
+      'org-1',
+      'tenant-a'
+    );
 
     expect(first).toMatchObject({ success: true });
     expect(second).toMatchObject({ success: true, error: 'Already assigned' });
@@ -59,7 +72,7 @@ describe('JIT role assignments in the real schema', () => {
 
   it('gives a role at the scope a JIT rule or the default role names', async () => {
     const result = await assignScopedRoleToUser(
-      adapter,
+      singleDatabaseRBAC(adapter),
       'user-1',
       'role-1',
       'global',
@@ -74,7 +87,13 @@ describe('JIT role assignments in the real schema', () => {
   });
 
   it("gives nothing from another tenant's role", async () => {
-    const result = await assignRoleToUser(adapter, 'user-1', 'role-1', 'org-1', 'tenant-b');
+    const result = await assignRoleToUser(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'role-1',
+      'org-1',
+      'tenant-b'
+    );
 
     expect(result).toMatchObject({ success: false, error: 'Role not found' });
     expect(db.prepare('SELECT COUNT(*) AS n FROM role_assignments').get()).toEqual({ n: 0 });

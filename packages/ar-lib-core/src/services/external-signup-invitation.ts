@@ -134,12 +134,15 @@ export async function applyExternalSignupInvitation(
       });
       return false;
     }
-    const assignments = await applyInvitationAssignments(accountDb, {
-      userId,
-      tenantId,
-      roleId: invitation.role_id,
-      orgId: invitation.org_id,
-    });
+    const assignments = await applyInvitationAssignments(
+      { metadata: invitationDb, account: accountDb },
+      {
+        userId,
+        tenantId,
+        roleId: invitation.role_id,
+        orgId: invitation.org_id,
+      }
+    );
     if (invitation.role_id && !assignments.roleAssignment?.success) {
       log.warn('Failed to assign role from invitation', {
         invite_id: inviteId,

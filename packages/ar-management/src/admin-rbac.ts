@@ -35,11 +35,17 @@ import {
   generateId,
   createAuditLogFromContext,
   CanonicalRuntimeUserStore,
+  findTenantOrganization,
+  findTenantRole,
+  resolveSubjectRoles,
+  type TenantRBACDatabases,
   hasAdminPermission,
   ORGANIZATION_TYPES,
   isOrganizationType,
   isUniqueConstraintError,
 } from '@authrim/ar-lib-core';
+import { isInactiveAccountRouteError } from './account-route-errors';
+import { tenantCoreStores } from './compliance/tenant-stores';
 
 /**
  * Hono context type with admin auth variable
@@ -159,6 +165,75 @@ function invalidOrganizationType(c: Context<{ Bindings: Env }>) {
     },
     400
   );
+}
+
+/**
+ * The databases of an account's RBAC: role and organisation definitions in the tenant metadata
+ * database, the account's assignments and memberships in `account` (its account database, from
+ * createAdaptersFromContext after the account was resolved).
+ */
+function rbacDatabasesFromContext(
+  c: Context<{ Bindings: Env }>,
+  account: DatabaseAdapter
+): TenantRBACDatabases {
+  return {
+    metadata: createAuthContextFromHono(c, getTenantIdFromContext(c)).coreAdapter,
+    account,
+  };
+}
+
+/**
+ * Resolves the user's account (its databases) onto the request. False when the tenant has no
+ * account for it.
+ */
+async function resolveSubjectAccount(
+  c: Context<{ Bindings: Env }>,
+  subjectId: string
+): Promise<boolean> {
+  try {
+    await resolveAccountDataContextFromHono(c, subjectId);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return false;
+    throw error;
+  }
+}
+
+/**
+ * The account database of the subject, for removing a role assignment or membership from it. An
+ * active account is found through its route (resolved onto the request). A suspended or locked
+ * one, which account routes refuse, is found in the tenant's user stores (the one holding its
+ * account, whatever its type), so its access can still be taken away and does not come back when
+ * it is activated again. Null when the tenant has no such account.
+ */
+async function subjectAccountForRevocation(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  subjectId: string
+): Promise<DatabaseAdapter | null> {
+  try {
+    if (!(await resolveSubjectAccount(c, subjectId))) return null;
+    return createAdaptersFromContext(c).coreAdapter;
+  } catch (error) {
+    if (!isInactiveAccountRouteError(error)) throw error;
+  }
+  const stores = await tenantCoreStores(c.env, tenantId, { accountsOfRoutedTenant: true });
+  const holding = (
+    await Promise.all(
+      stores.map(async ({ adapter }) =>
+        (await adapter.queryOne<{ id: string }>(
+          `SELECT id FROM identity_accounts
+            WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state <> 'deleted'
+            LIMIT 1`,
+          [tenantId, subjectId]
+        ))
+          ? adapter
+          : null
+      )
+    )
+  ).filter((adapter): adapter is DatabaseAdapter => adapter !== null);
+  if (holding.length > 1) throw new Error('admin_rbac_account_store_ambiguous');
+  return holding[0] ?? null;
 }
 
 /**
@@ -791,7 +866,6 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
  */
 export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const body = await c.req.json<{
@@ -841,10 +915,11 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
       }
     }
 
-    // Check if organization exists
-    const org = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
-      [orgId, tenantId]
+    // Check if organization exists (a tenant setting, in the tenant metadata database)
+    const org = await findTenantOrganization(
+      createAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantId,
+      orgId
     );
 
     if (!org) {
@@ -856,6 +931,18 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
         404
       );
     }
+
+    // The membership is the user's account data, in its account database.
+    if (!(await resolveSubjectAccount(c, subject_id))) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'The requested resource was not found',
+        },
+        404
+      );
+    }
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, subject_id))) {
       return c.json(
@@ -941,10 +1028,20 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
  */
 export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id')!;
     const subjectId = c.req.param('subjectId')!;
+    // The membership is in the user's account database, suspended or not.
+    const coreAdapter = await subjectAccountForRevocation(c, tenantId, subjectId);
+    if (!coreAdapter) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'The requested resource was not found',
+        },
+        404
+      );
+    }
 
     // Check if membership exists
     const membership = await coreAdapter.queryOne<{ subject_id: string }>(
@@ -1153,34 +1250,25 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const now = Math.floor(Date.now() / 1000);
-
     // Get active role assignments with role info
-    const assignments = await coreAdapter.query<Record<string, unknown>>(
-      `SELECT ra.*, r.name as role_name, r.display_name as role_display_name,
-              r.is_system, r.role_type
-       FROM role_assignments ra
-       JOIN roles r ON ra.role_id = r.id
-       WHERE ra.subject_id = ?
-         AND ra.tenant_id = ?
-         AND r.tenant_id = ?
-         AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-       ORDER BY r.name ASC`,
-      [userId, tenantId, tenantId, now]
+    const assignments = await resolveSubjectRoles(
+      rbacDatabasesFromContext(c, coreAdapter),
+      tenantId,
+      userId
     );
 
-    const formattedAssignments = assignments.map((a: Record<string, unknown>) => ({
-      id: a.id,
-      role_id: a.role_id,
-      role_name: a.role_name,
-      role_display_name: a.role_display_name,
-      is_system_role: Boolean(a.is_system),
-      role_type: a.role_type,
-      scope: a.scope_type,
-      scope_target: a.scope_target,
-      assigned_by: a.assigned_by,
-      expires_at: a.expires_at ? toMilliseconds(a.expires_at as number) : null,
-      created_at: toMilliseconds(a.created_at as number),
+    const formattedAssignments = assignments.map(({ assignment, role }) => ({
+      id: assignment.id,
+      role_id: assignment.role_id,
+      role_name: role.name,
+      role_display_name: role.display_name,
+      is_system_role: Boolean(role.is_system),
+      role_type: role.role_type,
+      scope: assignment.scope_type,
+      scope_target: assignment.scope_target,
+      assigned_by: assignment.assigned_by,
+      expires_at: assignment.expires_at ? toMilliseconds(assignment.expires_at) : null,
+      created_at: toMilliseconds(assignment.created_at),
     }));
 
     return c.json({
@@ -1247,19 +1335,13 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
       );
     }
 
-    // Get role (by id or name)
-    let role: Record<string, unknown> | null;
-    if (role_id) {
-      role = await coreAdapter.queryOne<Record<string, unknown>>(
-        'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-        [role_id, tenantId]
-      );
-    } else {
-      role = await coreAdapter.queryOne<Record<string, unknown>>(
-        'SELECT * FROM roles WHERE name = ? AND tenant_id = ?',
-        [role_name, tenantId]
-      );
-    }
+    // Get role (by id or name), from the tenant metadata database; the assignment goes to the
+    // user's account database (coreAdapter).
+    const role = await findTenantRole(
+      rbacDatabasesFromContext(c as unknown as Context<{ Bindings: Env }>, coreAdapter).metadata,
+      tenantId,
+      role_id ? { id: role_id } : { name: role_name! }
+    );
 
     if (!role) {
       return c.json(
@@ -1271,6 +1353,7 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
       );
     }
 
+    // 0 in SQLite/D1, false in PostgreSQL
     if (role.is_assignable === 0 || role.is_assignable === false) {
       return insufficientAdminPermissions(c as unknown as Context<{ Bindings: Env }>);
     }
@@ -1384,24 +1467,37 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const assignmentId = c.req.param('assignmentId')!;
-    await resolveAccountDataContextFromHono(c, userId);
-    const { coreAdapter } = createAdaptersFromContext(c);
+    // The assignment is in the user's account database, suspended or not.
+    const coreAdapter = await subjectAccountForRevocation(c, tenantId, userId);
+    if (!coreAdapter) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'The requested resource was not found',
+        },
+        404
+      );
+    }
     const adminAuth = getAdminAuthFromContext(c);
 
     if (adminAuth?.userId === userId) {
       return insufficientAdminPermissions(c);
     }
 
-    // Check if assignment exists and belongs to this user
-    const assignment = await coreAdapter.queryOne<{ id: string; hierarchy_level: number }>(
-      `SELECT ra.id, r.hierarchy_level
-       FROM role_assignments ra
-       JOIN roles r ON r.id = ra.role_id AND r.tenant_id = ra.tenant_id
-       WHERE ra.tenant_id = ? AND ra.id = ? AND ra.subject_id = ?`,
+    // Check if assignment exists and belongs to this user (in the user's account database), and
+    // the role it gives (in the tenant metadata database)
+    const assigned = await coreAdapter.queryOne<{ id: string; role_id: string }>(
+      `SELECT id, role_id FROM role_assignments
+       WHERE tenant_id = ? AND id = ? AND subject_id = ?`,
       [tenantId, assignmentId, userId]
     );
+    const role = assigned
+      ? await findTenantRole(rbacDatabasesFromContext(c, coreAdapter).metadata, tenantId, {
+          id: assigned.role_id,
+        })
+      : null;
 
-    if (!assignment) {
+    if (!assigned) {
       return c.json(
         {
           error: 'not_found',
@@ -1411,7 +1507,9 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    if (!canManageRoleHierarchy(adminAuth, assignment.hierarchy_level)) {
+    // An assignment of a role the tenant no longer has grants nothing: it can be removed without a
+    // hierarchy to check.
+    if (role && !canManageRoleHierarchy(adminAuth, role.hierarchy_level)) {
       return insufficientAdminPermissions(c);
     }
 
