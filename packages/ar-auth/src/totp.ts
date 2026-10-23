@@ -2,6 +2,11 @@ import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env, TotpCredential, TotpProfile } from '@authrim/ar-lib-core';
 import {
+  accountAuthenticationDenialReason,
+  signInAttemptFailureRecorder,
+  signInAttemptInteractionMetadata,
+} from './sign-in-attempt-recording';
+import {
   AR_ERROR_CODES,
   AUTH_EVENTS,
   BROWSER_STATE_COOKIE_NAME,
@@ -1071,6 +1076,8 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
 
       const challengeId = crypto.randomUUID();
       const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
+      // The Flow interaction this attempt belongs to, once checked (for its failure records).
+      const attemptInteraction = await signInAttemptInteractionMetadata(c, tenantId);
       await timeAuthRequestDiagnosticOperation(c, 'auth_totp_challenge_store', () =>
         challengeStore.storeChallengeRpc({
           id: `totp_login:${challengeId}`,
@@ -1085,6 +1092,7 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
             issued_at: Date.now(),
             authorization_challenge_id: authorizationChallengeId || undefined,
             usage,
+            ...attemptInteraction,
           },
         })
       );
@@ -1147,10 +1155,20 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         log.error('TOTP challenge consume failed', { action: 'challenge_consume' }, error as Error);
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
+      // From here on a failure is recorded with the challenge's Flow interaction, if it has one.
+      const knownUserId =
+        challengeData.userId && challengeData.userId !== 'unknown' ? challengeData.userId : null;
+      const failed = signInAttemptFailureRecorder(
+        c,
+        tenantId,
+        challengeData.metadata,
+        'totp',
+        knownUserId
+      );
 
       const challengeUsage = challengeData.metadata?.usage === 'reauth' ? 'reauth' : 'login';
       if (!(await isTotpUsageAvailable(c.env, tenantId, challengeUsage))) {
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'method_disabled');
       }
       const boundAuthorizationChallengeId = challengeData.metadata?.authorization_challenge_id;
       if (
@@ -1158,13 +1176,20 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         boundAuthorizationChallengeId !== authorizationChallengeId
       ) {
         publishTotpFailure(c, tenantId, 'authorization_challenge_mismatch');
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+          'challenge_mismatch',
+          knownUserId
+        );
       }
 
       const userId = challengeData.userId;
       if (!userId || userId === 'unknown') {
         publishTotpFailure(c, tenantId, 'credential_not_found');
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+          'credential_not_found'
+        );
       }
 
       const encryptionKey = c.env.PII_ENCRYPTION_KEY;
@@ -1172,7 +1197,11 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         log.error('PII_ENCRYPTION_KEY must be configured for TOTP login', {
           action: 'login_verify',
         });
-        return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET),
+          'service_unavailable',
+          userId
+        );
       }
 
       if (usesTenantD1AccountStorage(c)) {
@@ -1181,7 +1210,11 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         } catch (error) {
           if (error instanceof Error && error.message === 'account_data_route_not_found') {
             publishTotpFailure(c, tenantId, 'credential_not_found');
-            return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+            return failed(
+              createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+              'credential_not_found',
+              userId
+            );
           }
           throw error;
         }
@@ -1199,7 +1232,11 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       if (!accountAuthentication || credentials.length === 0) {
         publishTotpFailure(c, tenantId, 'credential_not_found');
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+          'credential_not_found',
+          userId
+        );
       }
       let verifiedCredentialId: string | null = null;
       let verifiedTimeStep: number | null = null;
@@ -1239,17 +1276,25 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           );
         } catch (error) {
           if (!isAccountAuthenticationDeniedError(error)) {
-            return c.json(
-              {
-                error: 'temporarily_unavailable',
-                error_description: 'Authentication state unavailable.',
-              },
-              503,
-              { 'Retry-After': '1' }
+            return failed(
+              c.json(
+                {
+                  error: 'temporarily_unavailable',
+                  error_description: 'Authentication state unavailable.',
+                },
+                503,
+                { 'Retry-After': '1' }
+              ),
+              'service_unavailable',
+              userId
             );
           }
           publishTotpFailure(c, tenantId, 'replay_detected');
-          return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+          return failed(
+            createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+            accountAuthenticationDenialReason(error),
+            userId
+          );
         }
         verifiedCredentialId = credential.id;
         verifiedTimeStep = acceptedTimeStep;
@@ -1259,7 +1304,11 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       if (!verifiedCredentialId || verifiedTimeStep === null || proofVerifiedAtMs === null) {
         publishTotpFailure(c, tenantId, 'invalid_code');
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+          'invalid_code',
+          userId
+        );
       }
 
       const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'totp');

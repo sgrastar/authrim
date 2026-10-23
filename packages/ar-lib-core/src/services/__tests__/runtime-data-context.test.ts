@@ -432,6 +432,19 @@ describe('runtime account data context', () => {
     expect(piiD1.withSession).not.toHaveBeenCalled();
   });
 
+  it('resolves the OTP Core context without resolving the PII destination', async () => {
+    // The OTP path promises not to touch tenant PII: it must not need the PII binding either.
+    const bindings = env() as unknown as Record<string, unknown>;
+    delete bindings.TDB_PII_A;
+    const context = await resolveOtpAccountCoreDataContextByIdentifier(bindings as unknown as Env, {
+      tenantId: 'tenant-a',
+      indexKind: 'email_exact',
+      identifier: 'User-A@Example.com',
+      trustedEmail: 'User-A@Example.com',
+    });
+    expect(context.coreDb).toBe(bindings.TDB_USERS_A);
+  });
+
   it('rejects an OTP email projection that is not bound to the routed identifier', async () => {
     await expect(
       resolveOtpAccountCoreDataContextByIdentifier(env(), {

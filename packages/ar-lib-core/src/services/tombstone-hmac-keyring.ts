@@ -26,18 +26,24 @@ const GENERATION = /^[1-9][0-9]{0,8}$/u;
 const encoder = new TextEncoder();
 const cache = new Map<string, TombstoneHmacKeys>();
 
-/** Parses the keyring secret, or throws `tombstone_hmac_keyring_invalid`. */
-export function parseTombstoneHmacKeyring(value: string): TombstoneHmacKeys {
+/**
+ * Parses a generational HMAC keyring secret (`{"current": <generation>, "keys": {...}}`), or
+ * throws `invalidCode`. Shared by every keyring of this shape.
+ */
+export function parseGenerationalHmacKeyring(
+  value: string,
+  invalidCode: string
+): TombstoneHmacKeys {
   const cached = cache.get(value);
   if (cached) return cached;
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new Error('tombstone_hmac_keyring_invalid');
+    throw new Error(invalidCode);
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('tombstone_hmac_keyring_invalid');
+    throw new Error(invalidCode);
   }
   const { current, keys } = parsed as { current?: unknown; keys?: unknown };
   if (
@@ -49,11 +55,11 @@ export function parseTombstoneHmacKeyring(value: string): TombstoneHmacKeys {
     Array.isArray(keys) ||
     Object.keys(parsed as object).some((key) => key !== 'current' && key !== 'keys')
   ) {
-    throw new Error('tombstone_hmac_keyring_invalid');
+    throw new Error(invalidCode);
   }
   const entries = Object.entries(keys as Record<string, unknown>);
   if (entries.length < 1 || entries.length > MAX_KEYS) {
-    throw new Error('tombstone_hmac_keyring_invalid');
+    throw new Error(invalidCode);
   }
   const readKeys: LookupBlindIndexKey[] = [];
   const secrets = new Set<string>();
@@ -65,19 +71,24 @@ export function parseTombstoneHmacKeyring(value: string): TombstoneHmacKeys {
       encoder.encode(secret).byteLength < MIN_SECRET_BYTES ||
       secrets.has(secret)
     ) {
-      throw new Error('tombstone_hmac_keyring_invalid');
+      throw new Error(invalidCode);
     }
     secrets.add(secret);
     readKeys.push({ generation: Number(generation), secret });
   }
   const writeKey = readKeys.find((key) => key.generation === current);
-  if (!writeKey) throw new Error('tombstone_hmac_keyring_invalid');
+  if (!writeKey) throw new Error(invalidCode);
   const keyring: TombstoneHmacKeys = {
     writeKey,
     readKeys: [writeKey, ...readKeys.filter((key) => key !== writeKey)],
   };
   cache.set(value, keyring);
   return keyring;
+}
+
+/** Parses the keyring secret, or throws `tombstone_hmac_keyring_invalid`. */
+export function parseTombstoneHmacKeyring(value: string): TombstoneHmacKeys {
+  return parseGenerationalHmacKeyring(value, 'tombstone_hmac_keyring_invalid');
 }
 
 /** The environment's tombstone keys, or throws when the secret is missing or malformed. */

@@ -42,6 +42,7 @@ const TENANT = 'default';
 const ORIGIN = 'https://app.example.com';
 const CLIENT_ID = 'web-client';
 const EMAIL = 'user@example.com';
+const INVESTIGATION_KEYRING = JSON.stringify({ current: 1, keys: { '1': 'k'.repeat(43) } });
 
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
   DatabaseSync: new (filename: string) => {
@@ -285,6 +286,7 @@ function createEnv(): Env {
     ALLOWED_ORIGINS: ORIGIN,
     ENABLE_LOGIN_RUNTIME_FLOW: 'true',
     FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
+    INVESTIGATION_SUBJECT_HMAC_KEYRING: INVESTIGATION_KEYRING,
     AUTHRIM_CONFIG: { get: async () => null },
     SETTINGS: {
       get: async (key: string) =>
@@ -338,7 +340,8 @@ class Browser {
 
   async post(
     pathname: string,
-    body: Json
+    body: Json,
+    extraHeaders: Record<string, string> = {}
   ): Promise<{ status: number; json: Json; headers: Headers }> {
     const response = await this.app.request(
       `${ORIGIN}${pathname}`,
@@ -349,6 +352,7 @@ class Browser {
           Origin: ORIGIN,
           Host: 'app.example.com',
           'User-Agent': 'Vitest',
+          ...extraHeaders,
           ...(this.cookies.size
             ? {
                 Cookie: [...this.cookies].map(([name, value]) => `${name}=${value}`).join('; '),
@@ -2307,6 +2311,144 @@ describe('sign-in sequences through the real handlers', () => {
       const done = await resumeAndComplete(browser, start, interaction.id);
       expect(done.final?.status).toBe(200);
       expect(done.continuation).toBeDefined();
+    });
+  });
+
+  describe('failed sign-in attempts', () => {
+    const attempts = () =>
+      (world.db as DatabaseAdapter).query<Record<string, unknown>>(
+        `SELECT interaction_id, user_id, method, reason_code, subject_hash, inquiry_number
+           FROM flow_audit_events WHERE event_type = 'flow.sign_in_attempt.failed'`
+      );
+
+    /** Starts an interaction and sends a code tied to `runtimeInteractionId`. */
+    const sendCode = async (browser: Browser, runtimeInteractionId: string) => {
+      const verifier = `verifier-${crypto.randomUUID()}`;
+      const send = await browser.post('/api/v1/auth/direct/email-code/send', {
+        client_id: CLIENT_ID,
+        email: EMAIL,
+        code_challenge: await s256(verifier),
+        code_challenge_method: 'S256',
+        channel: 'browser',
+        scope: 'openid email',
+        runtime_interaction_id: runtimeInteractionId,
+      });
+      expect(send.status).toBe(200);
+      const code = world.mail.at(-1)?.text.match(/\b(\d{6})\b/)?.[1] as string;
+      return { attemptId: send.json.attempt_id as string, verifier, code };
+    };
+
+    const verifyWrong = (
+      browser: Browser,
+      sent: { attemptId: string; verifier: string; code: string },
+      headers: Record<string, string> = {}
+    ) =>
+      browser.post(
+        '/api/v1/auth/direct/email-code/verify',
+        {
+          attempt_id: sent.attemptId,
+          code: sent.code === '000000' ? '111111' : '000000',
+          code_verifier: sent.verifier,
+          channel: 'browser',
+        },
+        headers
+      );
+
+    it('records a wrong code with its interaction and the account as a subject hash', async () => {
+      const browser = browserWith();
+      const { interaction } = await startFlow(browser, {});
+      const sent = await sendCode(browser, interaction.id);
+
+      expect((await verifyWrong(browser, sent)).status).toBeGreaterThanOrEqual(400);
+
+      const { computeInvestigationSubjectHash, loadInvestigationSubjectHmacKeysFromEnv } =
+        await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+      const keys = loadInvestigationSubjectHmacKeysFromEnv({
+        INVESTIGATION_SUBJECT_HMAC_KEYRING: INVESTIGATION_KEYRING,
+      });
+      expect(await attempts()).toEqual([
+        {
+          interaction_id: interaction.id,
+          user_id: null,
+          method: 'email_code',
+          reason_code: 'invalid_code',
+          subject_hash: await computeInvestigationSubjectHash(
+            keys!.writeKey,
+            TENANT,
+            'user_existing'
+          ),
+          inquiry_number: expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{10}$/u),
+        },
+      ]);
+    });
+
+    it('keeps no interaction it could not check, so nothing is recorded against it', async () => {
+      const browser = browserWith();
+      const sent = await sendCode(browser, `int_${crypto.randomUUID()}`);
+      expect((await verifyWrong(browser, sent)).status).toBeGreaterThanOrEqual(400);
+      expect(await attempts()).toEqual([]);
+    });
+
+    it('records against the interaction checked at send, whatever the verify request names', async () => {
+      const browser = browserWith();
+      const { interaction: checked } = await startFlow(browser, {});
+      const { interaction: other } = await startFlow(browserWith(), {});
+      const sent = await sendCode(browser, checked.id);
+
+      await verifyWrong(browser, sent, { 'X-Authrim-Interaction-Id': other.id });
+
+      expect((await attempts()).map((row) => row.interaction_id)).toEqual([checked.id]);
+    });
+
+    it('records every failure of a known account with its hash, a challenge mismatch too', async () => {
+      const browser = browserWith();
+      const { interaction } = await startFlow(browser, {});
+      const sent = await sendCode(browser, interaction.id);
+      await browser.post('/api/v1/auth/direct/email-code/verify', {
+        attempt_id: sent.attemptId,
+        code: sent.code,
+        code_verifier: 'another-verifier',
+        channel: 'browser',
+      });
+      const [row] = await attempts();
+      expect(row).toMatchObject({ reason_code: 'challenge_mismatch' });
+      expect(row?.subject_hash).toMatch(/^isub:v1:g1:/u);
+    });
+
+    it("records with an interaction of the relying party's client, not the Login UI's", async () => {
+      // The Login UI signs in as its own Direct Auth client; the interaction is the RP's.
+      const browser = browserWith();
+      const { interaction } = await startFlow(browser, { oidcClientId: 'consent-client' });
+      const sent = await sendCode(browser, interaction.id);
+      await verifyWrong(browser, sent);
+      expect((await attempts()).map((row) => row.interaction_id)).toEqual([interaction.id]);
+    });
+
+    it('records nothing more for an attempt refused for too many tries', async () => {
+      // The tries before it were recorded each; the refusal adds no read to its path.
+      const browser = browserWith();
+      const { interaction } = await startFlow(browser, {});
+      const sent = await sendCode(browser, interaction.id);
+      world.rateLimiter = {
+        incrementRpc: async () => ({ allowed: false, retryAfter: 60 }) as never,
+      };
+      try {
+        expect((await verifyWrong(browser, sent)).status).toBe(429);
+      } finally {
+        world.rateLimiter = { incrementRpc: async () => ({ allowed: true }) };
+      }
+      expect(await attempts()).toEqual([]);
+    });
+
+    it('records no subject hash without the investigation keyring, and still records', async () => {
+      const browser = browserWith();
+      delete (browser.env as unknown as Record<string, unknown>).INVESTIGATION_SUBJECT_HMAC_KEYRING;
+      const { interaction } = await startFlow(browser, {});
+      const sent = await sendCode(browser, interaction.id);
+      await verifyWrong(browser, sent);
+      expect((await attempts()).map((row) => [row.reason_code, row.subject_hash])).toEqual([
+        ['invalid_code', null],
+      ]);
     });
   });
 

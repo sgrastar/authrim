@@ -1328,6 +1328,7 @@ describe('Router Worker', () => {
       const allowHeaders = res.headers.get('Access-Control-Allow-Headers');
       expect(allowHeaders).toContain('Idempotency-Key');
       expect(allowHeaders).toContain('Authrim-Step-Up-Receipt');
+      expect(allowHeaders).toContain('X-Authrim-Interaction-Id');
       expect(allowHeaders).not.toContain('X-Session-Id');
     });
 

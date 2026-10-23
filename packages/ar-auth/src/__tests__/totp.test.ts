@@ -100,6 +100,11 @@ const {
 });
 
 // Overrides the deleted-account re-registration check for one test (null: the real check).
+const attemptRecording = vi.hoisted(() => ({
+  resolve: vi.fn(async (..._args: unknown[]) => null as string | null),
+  record: vi.fn(async (..._args: unknown[]) => null as string | null),
+}));
+
 const registrationCheck = vi.hoisted(() => ({
   override: null as null | 'blocked' | 'unavailable',
 }));
@@ -115,6 +120,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       ),
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,
     getSessionStoreForNewSession: mockGetSessionStoreForNewSession,
+    resolveSignInAttemptInteraction: attemptRecording.resolve,
+    recordSignInAttemptFailure: attemptRecording.record,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
@@ -325,6 +332,116 @@ describe('TOTP login handlers', () => {
     );
     return constantTime ? resolveConstantTimeResponse(responsePromise) : responsePromise;
   }
+
+  describe('failed attempts recorded with their Flow interaction', () => {
+    const request = (
+      path: string,
+      body: Record<string, unknown>,
+      headers: Record<string, string>
+    ) =>
+      resolveConstantTimeResponse(
+        createApp().request(
+          path,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify(body),
+          },
+          createEnv(enabledSettings),
+          { waitUntil: vi.fn() } as unknown as ExecutionContext
+        )
+      );
+
+    it('keeps the interaction a start names only once it is checked', async () => {
+      mockRuntimeUserStore.findByEmail.mockResolvedValue({ id: 'user-1', active: 1 });
+      attemptRecording.resolve.mockResolvedValueOnce('int-1');
+      await request(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        { 'X-Authrim-Interaction-Id': 'int-1' }
+      );
+      expect(attemptRecording.resolve).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ tenantId: 'default', interactionId: 'int-1' })
+      );
+      expect(mockChallengeStore.storeChallengeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ attempt_interaction_id: 'int-1' }),
+        })
+      );
+
+      // Not a live interaction of the tenant: nothing is kept.
+      attemptRecording.resolve.mockResolvedValueOnce(null);
+      await request(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        { 'X-Authrim-Interaction-Id': 'int-forged' }
+      );
+      const metadata = mockChallengeStore.storeChallengeRpc.mock.lastCall?.[0]?.metadata;
+      expect(metadata).not.toHaveProperty('attempt_interaction_id');
+    });
+
+    it('records a failure against the interaction the challenge holds, never one the verify names', async () => {
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+        userId: 'user-1',
+        metadata: { attempt_interaction_id: 'int-1' },
+      });
+      mockRuntimeUserStore.findById.mockResolvedValueOnce({ id: 'user-1', active: 1 });
+      mockTotpRepo.findActiveByUserId.mockResolvedValueOnce([]);
+
+      const response = await request(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        { 'X-Authrim-Interaction-Id': 'int-2' }
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      await vi.waitFor(() => expect(attemptRecording.record).toHaveBeenCalledTimes(1));
+      expect(attemptRecording.record.mock.calls[0]?.[2]).toEqual({
+        tenantId: 'default',
+        interactionId: 'int-1',
+        method: 'totp',
+        reasonCode: 'credential_not_found',
+        userId: 'user-1',
+      });
+      expect(attemptRecording.resolve).not.toHaveBeenCalled();
+    });
+
+    it('records a failure of the account the challenge names even before reading it', async () => {
+      // TOTP sign-in turned off after the challenge was issued: the account is known already.
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+        userId: 'user-1',
+        metadata: { attempt_interaction_id: 'int-1' },
+      });
+      await resolveConstantTimeResponse(
+        createApp().request(
+          '/api/auth/totp/login/verify',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ challenge_id: 'challenge', code: '123456' }),
+          },
+          createEnv({}),
+          { waitUntil: vi.fn() } as unknown as ExecutionContext
+        )
+      );
+      await vi.waitFor(() => expect(attemptRecording.record).toHaveBeenCalledTimes(1));
+      expect(attemptRecording.record.mock.calls[0]?.[2]).toMatchObject({
+        reasonCode: 'method_disabled',
+        userId: 'user-1',
+      });
+    });
+
+    it('records nothing for a challenge tied to no interaction', async () => {
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({ userId: 'unknown' });
+      await request(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        { 'X-Authrim-Interaction-Id': 'int-2' }
+      );
+      expect(attemptRecording.record).not.toHaveBeenCalled();
+    });
+  });
 
   describe('rejection and enumeration-resistance boundaries', () => {
     it.each([

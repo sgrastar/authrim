@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { parse as parseYaml } from 'yaml';
 import type { AdminAuthContext, DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
+import {
+  ADMIN_PERMISSIONS,
+  loadInvestigationSubjectHmacKeysFromEnv,
+  recordSignInAttemptFailure,
+  SIGN_IN_ATTEMPT_METHODS,
+  SIGN_IN_ATTEMPT_REASON_CODES,
+} from '@authrim/ar-lib-core';
 
 /**
  * The status-only investigation read (GET /api/admin/investigations/subjects/:handle/status) on
@@ -68,6 +74,47 @@ const USER = 'user-1';
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
 const NOW_MS = NOW_SECONDS * 1000;
 const WINDOWS_HELLO = '08987058-cadc-4b81-b6e1-30de50dcbe96';
+const KEYRING = JSON.stringify({ current: 1, keys: { '1': 'k'.repeat(43) } });
+
+/** A live Flow interaction of `tenantId`, and failed attempts recorded with it the real way. */
+async function seedAttempts(
+  store: Store,
+  attempts: Array<{
+    userId?: string;
+    tenantId?: string;
+    method: 'passkey' | 'totp' | 'email_code';
+    reasonCode: 'invalid_code' | 'credential_not_found' | 'verification_failed';
+    at: number;
+  }>
+) {
+  const keys = loadInvestigationSubjectHmacKeysFromEnv({
+    INVESTIGATION_SUBJECT_HMAC_KEYRING: KEYRING,
+  });
+  for (const [index, attempt] of attempts.entries()) {
+    const tenantId = attempt.tenantId ?? TENANT;
+    const interactionId = `int-${index}`;
+    store.db
+      .prepare(
+        `INSERT INTO flow_interactions (id, tenant_id, flow_id, flow_version_id, client_id, state,
+           current_node_id, contract_hash, signature, expires_at, created_at, updated_at)
+         VALUES (?, ?, 'flow-default-login-no-consent', 'flow-version-default-login-no-consent-v1',
+           'login-ui', 'active', 'authentication', 'contract', 'sig', ?, ?, ?)`
+      )
+      .run(interactionId, tenantId, NOW_SECONDS + 600, NOW_SECONDS, NOW_SECONDS);
+    await recordSignInAttemptFailure(
+      store.adapter,
+      keys,
+      {
+        tenantId,
+        interactionId,
+        method: attempt.method,
+        reasonCode: attempt.reasonCode,
+        userId: attempt.userId ?? null,
+      },
+      attempt.at
+    );
+  }
+}
 
 const PII_TABLES =
   /\b(identity_sensitive_values|users_pii|linked_identities|user_anonymization_map|audit_log_pii|subject_identifiers|tombstones)\b/i;
@@ -251,7 +298,10 @@ function harness(input: {
   permissions: string[];
   core: DatabaseAdapter;
   route?: Record<string, unknown>;
+  /** The investigation keyring the Worker holds (none: null). */
+  keyring?: string | null;
 }) {
+  const keyring = input.keyring === undefined ? KEYRING : input.keyring;
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
     const set = (c as unknown as { set(key: string, value: unknown): void }).set.bind(c);
@@ -280,7 +330,11 @@ function harness(input: {
   );
   const env = new Proxy({} as Env, {
     get: (_target, key) =>
-      typeof key === 'string' && /PII/.test(key) ? piiTouched(`env.${key}`) : undefined,
+      key === 'INVESTIGATION_SUBJECT_HMAC_KEYRING'
+        ? (keyring ?? undefined)
+        : typeof key === 'string' && /PII/.test(key)
+          ? piiTouched(`env.${key}`)
+          : undefined,
   });
   return (handle: string) =>
     app.request(
@@ -344,7 +398,7 @@ describe('status-only investigation read', () => {
       devices: { available: true, total: 2, active: 1 },
     });
     expect(body.devices.items.map((device) => device.platform)).toEqual(['android', 'other']);
-    expect(Object.keys(body.credentials.passkeys[0]!).sort()).toEqual(
+    expect(Object.keys(body.credentials.passkeys[0]).sort()).toEqual(
       ['created_at', 'last_used_at', 'provider_name', 'transports'].sort()
     );
 
@@ -524,6 +578,98 @@ describe('status-only investigation read', () => {
     expect(text).not.toContain('Taro Yamada');
   });
 
+  it("lists the account's recent failed attempts, newest first, and no one else's", async () => {
+    await seedAttempts(store, [
+      { userId: USER, method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS - 60 },
+      { userId: USER, method: 'passkey', reasonCode: 'verification_failed', at: NOW_SECONDS - 10 },
+      // Before the account was known, another account's, another tenant's: not this account's.
+      { method: 'passkey', reasonCode: 'credential_not_found', at: NOW_SECONDS - 5 },
+      { userId: 'user-2', method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS - 4 },
+      {
+        userId: USER,
+        tenantId: 'tenant-b',
+        method: 'totp',
+        reasonCode: 'invalid_code',
+        at: NOW_SECONDS - 3,
+      },
+    ]);
+    const text = await (
+      await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
+    ).text();
+    expect((JSON.parse(text) as { recent_attempts: unknown }).recent_attempts).toEqual({
+      available: true,
+      coverage: 'flow_interactions',
+      items: [
+        {
+          created_at: (NOW_SECONDS - 10) * 1000,
+          method: 'passkey',
+          result: 'failure',
+          reason_code: 'verification_failed',
+        },
+        {
+          created_at: (NOW_SECONDS - 60) * 1000,
+          method: 'totp',
+          result: 'failure',
+          reason_code: 'invalid_code',
+        },
+      ],
+    });
+    // A row of another tenant is never listed, even one carrying this tenant's hash.
+    store.db
+      .prepare(
+        `UPDATE flow_audit_events SET subject_hash = (
+            SELECT subject_hash FROM flow_audit_events
+             WHERE tenant_id = ? AND subject_hash IS NOT NULL LIMIT 1)
+          WHERE tenant_id = 'tenant-b'`
+      )
+      .run(TENANT);
+    const again = await (
+      await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
+    ).json<{ recent_attempts: { items: unknown[] } }>();
+    expect(again.recent_attempts.items).toHaveLength(2);
+    // Neither the hash nor the inquiry number is the operator's to see here.
+    expect(text).not.toMatch(/isub:|inquiry/u);
+    expect(tripwire.touched).toEqual([]);
+  });
+
+  it('reports attempts as unavailable without the investigation keyring, not as none', async () => {
+    await seedAttempts(store, [
+      { userId: USER, method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS },
+    ]);
+    for (const keyring of [null, '{"current":1}']) {
+      const body = await (
+        await harness({ permissions: permissionsFor('users'), core, keyring })(`user:${USER}`)
+      ).json<Record<string, unknown>>();
+      expect(body.recent_attempts).toEqual({ available: false, reason: 'key_unavailable' });
+    }
+  });
+
+  it('returns recorded methods, reasons and nodes only from their closed sets', async () => {
+    await seedAttempts(store, [
+      { userId: USER, method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS },
+    ]);
+    store.db
+      .prepare(
+        `UPDATE flow_audit_events
+            SET method = 'password', reason_code = 'denied for Taro Yamada', node_id = 'Taro-Yamada'
+          WHERE event_type = 'flow.sign_in_attempt.failed'`
+      )
+      .run();
+    const text = await (
+      await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
+    ).text();
+    expect(
+      (JSON.parse(text) as { recent_attempts: { items: unknown[] } }).recent_attempts.items[0]
+    ).toEqual({
+      created_at: NOW_SECONDS * 1000,
+      method: 'other',
+      result: 'failure',
+      reason_code: 'other',
+    });
+    // A Flow node is named by the Flow's author, so it is never returned, whatever it looks like.
+    expect(text).not.toMatch(/Taro/u);
+  });
+
   it('marks a guest account and its deletion date', async () => {
     store.db
       .prepare(`UPDATE identity_accounts SET registration_state = 'guest' WHERE id = 'account-1'`)
@@ -555,6 +701,21 @@ describe('status-only investigation read', () => {
       metadata = guarded(openCoreStore(TENANT).adapter, metadataStatements);
     });
 
+    it("reads attempts from the tenant's Flow database, the status from the account's", async () => {
+      tripwire.routedCore = core;
+      const flow = openCoreStore(TENANT);
+      await seedAttempts(flow, [
+        { userId: USER, method: 'email_code', reasonCode: 'invalid_code', at: NOW_SECONDS },
+      ]);
+      const body = await (
+        await harness({ permissions: permissionsFor('users'), core: flow.adapter, route })(
+          `user:${USER}`
+        )
+      ).json<{ account: { status: string }; recent_attempts: { items: unknown[] } }>();
+      expect(body.account.status).toBe('locked');
+      expect(body.recent_attempts.items).toHaveLength(1);
+    });
+
     it("reads an active account's own Core database through its Core route only", async () => {
       tripwire.routedCore = core;
       const response = await harness({
@@ -563,7 +724,9 @@ describe('status-only investigation read', () => {
         route,
       })(`user:${USER}`);
       expect(response.status).toBe(200);
-      expect(metadataStatements).toEqual([]);
+      // The tenant's database is read for the attempts recorded with Flow interactions only.
+      expect(metadataStatements).toHaveLength(1);
+      expect(metadataStatements[0]).toMatch(/FROM flow_audit_events/u);
       expect(tripwire.touched).toEqual([]);
     });
 
@@ -605,15 +768,27 @@ type Schema = {
   properties?: Record<string, Schema>;
   additionalProperties?: boolean;
   items?: Schema;
+  oneOf?: Schema[];
 };
 
 /**
  * Whether `value` has the shape `schema` documents: every required key, no key it does not list,
  * enums kept. Returns the paths that differ.
  */
-function shapeErrors(schemas: Record<string, Schema>, schema: Schema, value: unknown, path = '$') {
+function shapeErrors(
+  schemas: Record<string, Schema>,
+  schema: Schema,
+  value: unknown,
+  path = '$'
+): string[] {
   const errors: string[] = [];
   const resolved = schema.$ref ? (schemas[schema.$ref.split('/').pop() ?? ''] ?? {}) : schema;
+  if (resolved.oneOf) {
+    const matching = resolved.oneOf.filter(
+      (variant) => shapeErrors(schemas, variant, value, path).length === 0
+    );
+    return matching.length === 1 ? [] : [`${path}: matches ${matching.length} variants`];
+  }
   const typeOf = (item: unknown) =>
     item === null
       ? 'null'
@@ -660,11 +835,14 @@ describe('status-only investigation contract', () => {
     const schemas = spec.components.schemas;
     const store = openCoreStore(TENANT);
     seedSubject(store);
+    await seedAttempts(store, [
+      { userId: USER, method: 'passkey', reasonCode: 'verification_failed', at: NOW_SECONDS },
+    ]);
     const response = await harness({ permissions: permissionsFor('users'), core: store.adapter })(
       `user:${USER}`
     );
     expect(response.status).toBe(200);
-    const body = await response.json<SubjectStatus>();
+    const body = await response.json<SubjectStatus & { recent_attempts: unknown }>();
     const status = schemas.InvestigationSubjectStatus ?? {};
     expect(shapeErrors(schemas, status, body)).toEqual([]);
 
@@ -674,7 +852,7 @@ describe('status-only investigation contract', () => {
       const copy = structuredClone(body) as unknown as Record<string, unknown>;
       let target = copy;
       for (const key of path.slice(0, -1)) target = target[key] as Record<string, unknown>;
-      target[path[path.length - 1]!] = value;
+      target[path[path.length - 1]] = value;
       return shapeErrors(schemas, status, copy);
     };
     expect(broken(['sessions'], null)).not.toEqual([]);
@@ -683,6 +861,19 @@ describe('status-only investigation contract', () => {
     expect(broken(['devices', 'total'], '2')).not.toEqual([]);
     expect(broken(['account', 'locked_at'], 'yesterday')).not.toEqual([]);
     expect(broken(['credentials', 'passkeys', '0', 'device_name'], 'x')).not.toEqual([]);
+    expect(body.recent_attempts).toMatchObject({ available: true, items: [expect.anything()] });
+    expect(broken(['recent_attempts', 'items', '0', 'reason_code'], 'boom')).not.toEqual([]);
+    expect(broken(['recent_attempts'], { available: true, items: [] })).not.toEqual([]);
+  });
+
+  it('documents exactly the recorded vocabulary of methods and reasons, and other', () => {
+    const spec = parseYaml(
+      readFileSync(new URL('../../openapi/admin.openapi.yaml', import.meta.url), 'utf8')
+    ) as { components: { schemas: Record<string, Schema> } };
+    const recorded = spec.components.schemas.InvestigationRecentSignInAttempts?.oneOf?.[0];
+    const item = recorded?.properties?.items?.items?.properties;
+    expect(item?.reason_code?.enum).toEqual([...SIGN_IN_ATTEMPT_REASON_CODES, 'other']);
+    expect(item?.method?.enum).toEqual([...SIGN_IN_ATTEMPT_METHODS, 'other']);
   });
 });
 

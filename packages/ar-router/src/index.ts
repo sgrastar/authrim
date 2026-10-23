@@ -1153,6 +1153,8 @@ app.use('*', async (c, next) => {
       'X-Tenant-Id',
       'X-Diagnostic-Session-Id',
       'X-Authrim-Human-Verification-Action',
+      // The Flow interaction a sign-in attempt belongs to (its failures are recorded with it).
+      'X-Authrim-Interaction-Id',
       'Idempotency-Key',
       'Authrim-Step-Up-Receipt',
     ],

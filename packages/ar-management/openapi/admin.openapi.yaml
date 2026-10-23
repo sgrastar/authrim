@@ -978,7 +978,8 @@ paths:
         returned from closed sets. The response never
         contains names, contact values, email domains, user-chosen credential or device names,
         IP addresses, user agents or external subject identifiers. Parts Core does not record
-        (sessions, linked providers) are reported as not recorded rather than as empty. Every read
+        (sessions, linked providers) are reported as not recorded rather than as empty. Recent
+        failed sign-in attempts are listed when they were made within a Flow interaction. Every read
         is recorded in the Admin audit log with its entry point.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
@@ -55643,7 +55644,17 @@ components:
       type: object
       additionalProperties: false
       required:
-        [subject, source, account, legal_hold, credentials, sessions, devices, linked_providers]
+        [
+          subject,
+          source,
+          account,
+          legal_hold,
+          credentials,
+          sessions,
+          devices,
+          linked_providers,
+          recent_attempts,
+        ]
       description: Times are epoch milliseconds.
       properties:
         subject:
@@ -55805,6 +55816,56 @@ components:
                   revoked_at: { type: [integer, 'null'] }
         linked_providers:
           $ref: '#/components/schemas/InvestigationNotRecordedInCore'
+        recent_attempts:
+          $ref: '#/components/schemas/InvestigationRecentSignInAttempts'
+    InvestigationRecentSignInAttempts:
+      description: >-
+        The account's recent failed sign-in attempts, newest first (at most 20). Only attempts made
+        within a Flow interaction are recorded (`coverage`); sign-ins outside one are not counted.
+        Without the investigation keyring the attempts cannot be found and are reported as
+        unavailable, not as none.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [available, coverage, items]
+          properties:
+            available: { type: boolean, enum: [true] }
+            coverage: { type: string, enum: [flow_interactions] }
+            items:
+              type: array
+              maxItems: 20
+              items:
+                type: object
+                additionalProperties: false
+                required: [created_at, method, result, reason_code]
+                properties:
+                  created_at: { type: [integer, 'null'] }
+                  method: { type: string, enum: [passkey, totp, email_code, other] }
+                  result: { type: string, enum: [failure] }
+                  reason_code:
+                    type: string
+                    enum:
+                      [
+                        challenge_expired,
+                        challenge_mismatch,
+                        method_disabled,
+                        credential_not_found,
+                        verification_failed,
+                        invalid_code,
+                        replay_detected,
+                        rate_limited,
+                        account_mismatch,
+                        account_unavailable,
+                        guest_denied,
+                        service_unavailable,
+                        other,
+                      ]
+        - type: object
+          additionalProperties: false
+          required: [available, reason]
+          properties:
+            available: { type: boolean, enum: [false] }
+            reason: { type: string, enum: [key_unavailable] }
     InvestigationNotRecordedInCore:
       type: object
       additionalProperties: false

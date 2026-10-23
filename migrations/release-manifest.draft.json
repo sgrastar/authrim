@@ -127,6 +127,10 @@
             {
               "path": "028_rbac_assignments_cross_database_references.sql",
               "checksum": "ae4258e4e8cc193273c7755d9467ae8248d6093fd5a32aee30a29560f48c68c3"
+            },
+            {
+              "path": "029_flow_audit_sign_in_attempts.sql",
+              "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
             }
           ]
         },
@@ -548,6 +552,10 @@
             {
               "path": "011_account_webhook_subject_lookup.sql",
               "checksum": "c6cecd791cc77b855555cda34769bedda9fe88e2921997f348c626c74195bbd5"
+            },
+            {
+              "path": "012_flow_audit_sign_in_attempts.sql",
+              "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
             }
           ]
         },
@@ -708,6 +716,10 @@
         {
           "path": "028_rbac_assignments_cross_database_references.sql",
           "checksum": "ae4258e4e8cc193273c7755d9467ae8248d6093fd5a32aee30a29560f48c68c3"
+        },
+        {
+          "path": "029_flow_audit_sign_in_attempts.sql",
+          "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
         }
       ]
     },
@@ -1153,6 +1165,10 @@
         {
           "path": "011_account_webhook_subject_lookup.sql",
           "checksum": "c6cecd791cc77b855555cda34769bedda9fe88e2921997f348c626c74195bbd5"
+        },
+        {
+          "path": "012_flow_audit_sign_in_attempts.sql",
+          "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
         }
       ]
     },

@@ -24,6 +24,11 @@ import {
 import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import {
+  accountAuthenticationDenialReason,
+  signInAttemptFailureRecorder,
+  signInAttemptInteractionMetadata,
+} from './sign-in-attempt-recording';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   isAuthenticationMethodUsageAvailable,
@@ -1634,6 +1639,8 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         // The switch checked here is checked again before the session is created.
         usage: turnstileAction,
         ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
+        // The Flow interaction this attempt belongs to, once checked (for its failure records).
+        ...(await signInAttemptInteractionMetadata(c, tenantId)),
       },
     });
 
@@ -1719,6 +1726,13 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
+    // From here on a failure is recorded with the challenge's Flow interaction, if it has one.
+    const failed = signInAttemptFailureRecorder(
+      c,
+      getTenantIdFromContext(c),
+      challengeData.metadata,
+      'passkey'
+    );
 
     // Passkey sign-in may have been turned off since the challenge was issued.
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
@@ -1727,7 +1741,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       'passkey',
       challengeData.metadata?.usage === 'reauth' ? 'reauth' : 'login'
     );
-    if (methodDisabledError) return methodDisabledError;
+    if (methodDisabledError) return failed(methodDisabledError, 'method_disabled');
 
     // Verify PKCE
     const isValidPKCE = await verifyPKCE(
@@ -1735,10 +1749,10 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       challengeData.metadata?.code_challenge || ''
     );
     if (!isValidPKCE) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'challenge_mismatch');
     }
     if (challengeData.metadata?.channel !== channel) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'challenge_mismatch');
     }
 
     // Get credential ID and lookup passkey
@@ -1753,7 +1767,10 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         rpId: rpID,
       });
     } catch {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'service_unavailable'
+      );
     }
     const accountScoped = Boolean(accountRoute);
     const authCtx = accountScoped
@@ -1787,13 +1804,16 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         } satisfies AuthEventData,
       }).catch(() => {});
 
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED, {
-        extensions: {
-          webauthn_signal: {
-            unknown_credential: true,
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED, {
+          extensions: {
+            webauthn_signal: {
+              unknown_credential: true,
+            },
           },
-        },
-      });
+        }),
+        'credential_not_found'
+      );
     }
 
     // A re-authentication proves only the user it was asked of.
@@ -1801,7 +1821,11 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       challengeData.metadata?.usage === 'reauth' &&
       challengeData.metadata.reauth_user_id !== passkey.user_id
     ) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'account_mismatch',
+        passkey.user_id
+      );
     }
 
     if (
@@ -1812,7 +1836,11 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         credential.response.userHandle !== undefined &&
         !matchesPasskeyUserHandle(credential.response.userHandle, passkey.user_id))
     ) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'account_mismatch',
+        passkey.user_id
+      );
     }
 
     // Verify authentication response
@@ -1843,13 +1871,21 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         action: 'login_finish',
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'verification_failed',
+        passkey.user_id
+      );
     }
 
     const { verified, authenticationInfo } = verification;
 
     if (!verified) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'verification_failed',
+        passkey.user_id
+      );
     }
 
     const proofVerifiedAtMs = Date.now();
@@ -1859,7 +1895,11 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       passkey.user_id
     );
     if (!accountAuthentication) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'account_unavailable',
+        passkey.user_id
+      );
     }
     const guestDenial = await guestCredentialDenial(
       c,
@@ -1867,7 +1907,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       tenantId,
       passkey.user_id
     );
-    if (guestDenial) return guestDenial;
+    if (guestDenial) return failed(guestDenial, 'guest_denied', passkey.user_id);
     try {
       await advancePasskeyAuthenticationState(
         c.env,
@@ -1883,16 +1923,24 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       );
     } catch (error) {
       if (!isAccountAuthenticationDeniedError(error)) {
-        return c.json(
-          {
-            error: 'temporarily_unavailable',
-            error_description: 'Authentication state unavailable.',
-          },
-          503,
-          { 'Retry-After': '1' }
+        return failed(
+          c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Authentication state unavailable.',
+            },
+            503,
+            { 'Retry-After': '1' }
+          ),
+          'service_unavailable',
+          passkey.user_id
         );
       }
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        accountAuthenticationDenialReason(error),
+        passkey.user_id
+      );
     }
 
     c.executionCtx.waitUntil(
@@ -2744,15 +2792,27 @@ async function completeDirectEmailVerification(
   const provenAtMs = Date.now();
   // What the code was sent for still holds: the method's switch for that usage, and a
   // re-authentication proves only the user it was asked of.
+  // An email code attempt's failures are recorded with its Flow interaction, if it has one.
+  const failed = signInAttemptFailureRecorder(
+    c,
+    tenantId,
+    method === 'email_code' ? metadata : null,
+    'email_code',
+    userId
+  );
   const usage = metadata.usage;
   if (usage !== 'login' && usage !== 'signup' && usage !== 'reauth') {
     // Sent before the usage was recorded (or tampered with): ask for a new code.
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
+    return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED), 'challenge_expired');
   }
   const disabled = await rejectIfAuthenticationMethodDisabled(c, tenantId, 'email_otp', usage);
-  if (disabled) return disabled;
+  if (disabled) return failed(disabled, 'method_disabled');
   if (usage === 'reauth' && metadata.reauth_user_id !== userId) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+    return failed(
+      createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+      'account_mismatch',
+      userId
+    );
   }
   const tenantD1 = usesRoutedAccountStorage(c);
   let runtimeUser: CanonicalOtpLoginUser | null;
@@ -2778,11 +2838,15 @@ async function completeDirectEmailVerification(
   }
 
   if (!runtimeUser || runtimeUser.active !== 1) {
-    return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    return failed(
+      createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS),
+      'account_unavailable',
+      userId
+    );
   }
 
   const guestDenial = await guestCredentialDenial(c, coreAdapter, tenantId, userId);
-  if (guestDenial) return guestDenial;
+  if (guestDenial) return failed(guestDenial, 'guest_denied', userId);
 
   const now = Date.now();
   const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
@@ -3493,6 +3557,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       usage: emailCodeUsage,
       ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       ...(boundRuntimeInteractionId ? { runtime_interaction_id: boundRuntimeInteractionId } : {}),
+      // The same interaction, once checked live in this tenant, for the attempt's failure records.
+      ...(await signInAttemptInteractionMetadata(c, tenantId, boundRuntimeInteractionId)),
       ...(signupInvitation ?? {}),
       ...(Object.keys(customFieldValues).length > 0 ? { custom_fields: customFieldValues } : {}),
     };
@@ -3746,6 +3812,14 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
+    // From here on a failure is recorded with the challenge's Flow interaction, if it has one.
+    const failed = signInAttemptFailureRecorder(
+      c,
+      tenantId,
+      challengeData.metadata,
+      'email_code',
+      challengeData.userId ?? null
+    );
 
     // Verify PKCE
     const isValidPKCE = await verifyPKCE(
@@ -3753,10 +3827,10 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       challengeData.metadata?.code_challenge || ''
     );
     if (!isValidPKCE) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'challenge_mismatch');
     }
     if (challengeData.metadata?.channel !== channel) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'challenge_mismatch');
     }
 
     // Verify code hash
@@ -3765,7 +3839,10 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       log.error('OTP_HMAC_SECRET must be configured for direct email-code verification', {
         action: 'direct_email_code_verify',
       });
-      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET),
+        'service_unavailable'
+      );
     }
     const isValidCode = await verifyEmailCodeHash(
       code,
@@ -3777,7 +3854,11 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     );
 
     if (!isValidCode) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+        'invalid_code',
+        challengeData.userId
+      );
     }
 
     try {
@@ -3787,7 +3868,11 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
         type: 'direct_email_code',
       })) as typeof challengeData;
     } catch {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+        'challenge_expired',
+        challengeData.userId
+      );
     }
 
     return completeDirectEmailVerification(c, {

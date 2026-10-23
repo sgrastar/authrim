@@ -11,7 +11,15 @@
  * A part Core does not record is reported as not recorded, never as an empty list or a zero
  * count, so that "unknown here" is not read as "none".
  */
-import { resolveAccountRegistrationState, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import {
+  SIGN_IN_ATTEMPT_FAILED_EVENT,
+  SIGN_IN_ATTEMPT_METHODS,
+  SIGN_IN_ATTEMPT_REASON_CODES,
+  investigationSubjectHashes,
+  resolveAccountRegistrationState,
+  type DatabaseAdapter,
+  type InvestigationSubjectHmacKeys,
+} from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { toMilliseconds, VALID_USER_LIFECYCLE_STATES } from './admin-shared';
 
@@ -312,3 +320,66 @@ export async function readCoreSubjectStatus(
     linked_providers: NOT_RECORDED_IN_CORE,
   };
 }
+
+/** At most this many recent attempts are listed, newest first. */
+export const RECENT_ATTEMPTS_LIMIT = 20;
+
+export type RecentSignInAttempts =
+  | {
+      available: true;
+      /**
+       * Only attempts made within a Flow interaction are recorded: sign-ins outside one (direct
+       * API sign-in, IdP-initiated SAML, re-authentication pages) are not counted here.
+       */
+      coverage: 'flow_interactions';
+      items: Array<{
+        created_at: number | null;
+        method: string;
+        result: 'failure';
+        reason_code: string;
+      }>;
+    }
+  | { available: false; reason: 'key_unavailable' };
+
+/**
+ * The account's recent failed sign-in attempts, from the tenant's Core database holding Flow
+ * interactions (`flowCore`). Records carry only the account's subject hash, so they are found by
+ * hashing the account with every key of the investigation keyring. Without a keyring nothing can
+ * be found, which is reported as unavailable rather than as no attempts.
+ */
+// The Flow node an attempt was at is not returned: node IDs are chosen by a Flow's author and may
+// carry private text.
+export async function readRecentSignInAttempts(
+  flowCore: DatabaseAdapter,
+  keys: InvestigationSubjectHmacKeys | null,
+  tenantId: string,
+  userId: string
+): Promise<RecentSignInAttempts> {
+  if (!keys) return { available: false, reason: 'key_unavailable' };
+  const hashes = await investigationSubjectHashes(keys, tenantId, userId);
+  const rows = await flowCore.query<{
+    created_at: number | null;
+    method: string | null;
+    reason_code: string | null;
+  }>(
+    `SELECT created_at, method, reason_code
+       FROM flow_audit_events
+      WHERE tenant_id = ? AND event_type = ? AND subject_hash IN (${hashes.map(() => '?').join(', ')})
+      ORDER BY created_at DESC
+      LIMIT ?`,
+    [tenantId, SIGN_IN_ATTEMPT_FAILED_EVENT, ...hashes, RECENT_ATTEMPTS_LIMIT]
+  );
+  return {
+    available: true,
+    coverage: 'flow_interactions',
+    items: rows.map((row) => ({
+      created_at: toMilliseconds(row.created_at),
+      method: closed(row.method, SIGN_IN_ATTEMPT_METHOD_SET),
+      result: 'failure',
+      reason_code: closed(row.reason_code, SIGN_IN_ATTEMPT_REASON_SET),
+    })),
+  };
+}
+
+const SIGN_IN_ATTEMPT_METHOD_SET: ReadonlySet<string> = new Set(SIGN_IN_ATTEMPT_METHODS);
+const SIGN_IN_ATTEMPT_REASON_SET: ReadonlySet<string> = new Set(SIGN_IN_ATTEMPT_REASON_CODES);

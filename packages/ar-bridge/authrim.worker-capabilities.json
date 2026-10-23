@@ -80,6 +80,11 @@
       "required": true
     },
     {
+      "name": "INVESTIGATION_SUBJECT_HMAC_KEYRING",
+      "capability": "sign_in_attempt.subject_hash",
+      "required": false
+    },
+    {
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
       "capability": "control_smoke.verify",
       "required": true

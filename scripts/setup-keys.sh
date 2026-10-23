@@ -142,6 +142,21 @@ fi
 echo "📝 Saved to: $TOMBSTONE_HMAC_KEYRING_PATH"
 echo ""
 
+# Generate the investigation keyring (failed sign-in attempts' subject hashes). Same JSON shape
+# and rotation as the tombstone keyring. An existing keyring is kept: its keys must stay readable
+# for as long as attempt records last.
+INVESTIGATION_SUBJECT_HMAC_KEYRING_PATH="$KEYS_DIR/investigation_subject_hmac_keyring.json"
+if [ ! -f "$INVESTIGATION_SUBJECT_HMAC_KEYRING_PATH" ]; then
+    INVESTIGATION_SUBJECT_HMAC_KEY=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n')
+    printf '{"current":1,"keys":{"1":"%s"}}' "$INVESTIGATION_SUBJECT_HMAC_KEY" > "$INVESTIGATION_SUBJECT_HMAC_KEYRING_PATH"
+    chmod 600 "$INVESTIGATION_SUBJECT_HMAC_KEYRING_PATH"
+    echo -e "${GREEN}✅ Investigation subject HMAC keyring generated${NC}"
+else
+    echo -e "${YELLOW}ℹ️  Investigation subject HMAC keyring kept${NC}"
+fi
+echo "📝 Saved to: $INVESTIGATION_SUBJECT_HMAC_KEYRING_PATH"
+echo ""
+
 # Extract public key from private key
 TEMP_PUBLIC_KEY=$(mktemp)
 openssl rsa -in "$PRIVATE_KEY_PATH" -pubout -out "$TEMP_PUBLIC_KEY" 2>/dev/null

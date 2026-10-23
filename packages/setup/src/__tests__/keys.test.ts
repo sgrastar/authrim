@@ -33,6 +33,7 @@ import {
   generateWranglerSecretCommands,
   ensureSupplementalKeyFiles,
   isValidTombstoneHmacKeyring,
+  isValidInvestigationSubjectHmacKeyring,
 } from '../core/keys.js';
 import { AUTHRIM_KEYS_DIR, AUTHRIM_DIR, LEGACY_KEYS_DIR } from '../core/paths.js';
 
@@ -259,6 +260,11 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(
       isValidTombstoneHmacKeyring(
         readFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), 'utf-8')
+      )
+    ).toBe(true);
+    expect(
+      isValidInvestigationSubjectHmacKeyring(
+        readFileSync(join(keysDir, 'investigation_subject_hmac_keyring.json'), 'utf-8')
       )
     ).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
@@ -659,6 +665,32 @@ describe('ensureSupplementalKeyFiles', () => {
     );
   });
 
+  it('keeps a rotated investigation keyring and refuses a malformed one', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const keyPair = generateRsaKeyPair('legacy-key');
+    writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
+    writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
+    writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify({ kid: 'legacy-key', files: {} }));
+    const path = join(keysDir, 'investigation_subject_hmac_keyring.json');
+    // Rotation adds a generation and makes it current; the old one is still read.
+    const rotated = JSON.stringify({
+      current: 2,
+      keys: { '1': 'c'.repeat(43), '2': 'd'.repeat(43) },
+    });
+    writeFileSync(path, rotated);
+
+    const result = await ensureSupplementalKeyFiles(keysDir);
+
+    expect(result.createdFiles).not.toContain(path);
+    expect(readFileSync(path, 'utf-8')).toBe(rotated);
+
+    writeFileSync(path, JSON.stringify({ current: 3, keys: { '1': 'c'.repeat(43) } }));
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      /Invalid supplemental secret: .*investigation_subject_hmac_keyring\.json/u
+    );
+  });
+
   it('backfills keys required by deploy-time Admin Machine Access', async () => {
     const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
     mkdirSync(keysDir, { recursive: true });
@@ -669,7 +701,7 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(26);
+    expect(result.createdFiles).toHaveLength(27);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
@@ -682,6 +714,10 @@ describe('ensureSupplementalKeyFiles', () => {
     expect(JSON.parse(readFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), 'utf-8'))).toEqual(
       { current: 1, keys: { '1': expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } }
     );
+    // Failed sign-in attempts' subject hashes get a keyring of the same shape.
+    expect(
+      JSON.parse(readFileSync(join(keysDir, 'investigation_subject_hmac_keyring.json'), 'utf-8'))
+    ).toEqual({ current: 1, keys: { '1': expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } });
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_mutation_hmac_key.txt'))).toBe(true);

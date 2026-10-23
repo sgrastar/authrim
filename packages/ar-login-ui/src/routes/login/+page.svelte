@@ -1343,7 +1343,8 @@
 			if (turnstileRequired && !cfTurnstileResponse) return;
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({
 				authorizationChallengeId: authorizationChallengeId || undefined,
-				human_verification_response: cfTurnstileResponse
+				human_verification_response: cfTurnstileResponse,
+				runtimeInteractionId: runtimeFlow?.interaction.id
 			});
 			if (optionsError) {
 				throw loginUiDisplayError(getApiErrorMessage(optionsError));
@@ -1592,7 +1593,10 @@
 
 		totpLoading = true;
 		try {
-			const { data, error: apiError } = await totpAPI.startLogin({ identifier });
+			const { data, error: apiError } = await totpAPI.startLogin({
+				identifier,
+				runtimeInteractionId: runtimeFlow?.interaction.id
+			});
 			if (apiError || !data) {
 				throw loginUiDisplayError(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
 			}
