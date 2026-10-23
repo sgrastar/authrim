@@ -80,6 +80,7 @@ export interface KeyMetadata {
     loggingCursorHmacSecret?: string;
     lookupHmacKeySlotA?: string;
     tombstoneHmacKeyring?: string;
+    investigationSubjectHmacKeyring?: string;
     flowRuntimeHmacSecret?: string;
     vcTransactionCodeHmacSecret?: string;
     vcEvidenceHmacSecret?: string;
@@ -442,6 +443,20 @@ export function generateBase64Secret(bytes: number = 32): string {
  */
 export function generateTombstoneHmacKeyring(): string {
   return JSON.stringify({ current: 1, keys: { '1': generateBase64Secret(32) } });
+}
+
+/**
+ * A new investigation keyring (INVESTIGATION_SUBJECT_HMAC_KEYRING), of the tombstone keyring's
+ * shape and rotation: failed sign-in attempts carry their account's hash under it; see ar-lib-core
+ * sign-in-attempts.
+ */
+export function generateInvestigationSubjectHmacKeyring(): string {
+  return generateTombstoneHmacKeyring();
+}
+
+/** Whether a stored investigation keyring has the shape the Workers accept. */
+export function isValidInvestigationSubjectHmacKeyring(value: string): boolean {
+  return isValidTombstoneHmacKeyring(value);
 }
 
 /** Whether a stored tombstone keyring has the shape the Workers accept. */
@@ -1278,6 +1293,16 @@ export async function saveKeysToDirectory(
     const tombstoneHmacKeyring = join(stagingDir, 'tombstone_hmac_keyring.json');
     await writeFile(tombstoneHmacKeyring, generateTombstoneHmacKeyring(), 'utf-8');
     await chmod(tombstoneHmacKeyring, SENSITIVE_FILE_MODE);
+    const investigationSubjectHmacKeyring = join(
+      stagingDir,
+      'investigation_subject_hmac_keyring.json'
+    );
+    await writeFile(
+      investigationSubjectHmacKeyring,
+      generateInvestigationSubjectHmacKeyring(),
+      'utf-8'
+    );
+    await chmod(investigationSubjectHmacKeyring, SENSITIVE_FILE_MODE);
     await writeFile(paths.flowRuntimeHmacSecret, secrets.flowRuntimeHmacSecret, 'utf-8');
     await chmod(paths.flowRuntimeHmacSecret, SENSITIVE_FILE_MODE);
     await writeFile(
@@ -1756,6 +1781,7 @@ export async function ensureSupplementalKeyFiles(
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
     lookupHmacKeySlotA: join(keysDir, 'lookup_hmac_key_slot_a.txt'),
     tombstoneHmacKeyring: join(keysDir, 'tombstone_hmac_keyring.json'),
+    investigationSubjectHmacKeyring: join(keysDir, 'investigation_subject_hmac_keyring.json'),
     flowRuntimeHmacSecret: join(keysDir, 'flow_runtime_hmac_secret.txt'),
     vcTransactionCodeHmacSecret: join(keysDir, 'vc_transaction_code_hmac_secret.txt'),
     vcEvidenceHmacSecret: join(keysDir, 'vc_evidence_hmac_secret.txt'),
@@ -1837,6 +1863,13 @@ export async function ensureSupplementalKeyFiles(
     isValidTombstoneHmacKeyring,
     createdFiles
   );
+  // Failed sign-in attempts' subject hashes: kept as it is once made, like the tombstone keyring.
+  await ensureSupplementalSecret(
+    paths.investigationSubjectHmacKeyring,
+    generateInvestigationSubjectHmacKeyring,
+    isValidInvestigationSubjectHmacKeyring,
+    createdFiles
+  );
   await ensureNotificationPayloadKeySet(
     {
       privateSlotA: paths.notificationPayloadDecryptJwkSlotA,
@@ -1893,6 +1926,7 @@ export async function ensureSupplementalKeyFiles(
     otpHmacSecret: paths.otpHmacSecret,
     loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
     tombstoneHmacKeyring: paths.tombstoneHmacKeyring,
+    investigationSubjectHmacKeyring: paths.investigationSubjectHmacKeyring,
     flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
     vcTransactionCodeHmacSecret: paths.vcTransactionCodeHmacSecret,
     vcEvidenceHmacSecret: paths.vcEvidenceHmacSecret,

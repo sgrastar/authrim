@@ -357,6 +357,26 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(SECRET_KEY_FILES.TOMBSTONE_HMAC_KEYRING).toBe('tombstone_hmac_keyring.json');
   });
 
+  it('gives the investigation keyring to the Workers that record or read sign-in attempts only', () => {
+    // ar-auth records attempts and ar-management reads them; no other Worker holds the key.
+    for (const worker of ['ar-auth', 'ar-management'] as const) {
+      expect(getSecretNamesForWorker(worker)).toContain('INVESTIGATION_SUBJECT_HMAC_KEYRING');
+    }
+    for (const worker of [
+      'ar-bridge',
+      'ar-saml',
+      'ar-token',
+      'ar-userinfo',
+      'ar-discovery',
+      'ar-control',
+    ] as const) {
+      expect(getSecretNamesForWorker(worker)).not.toContain('INVESTIGATION_SUBJECT_HMAC_KEYRING');
+    }
+    expect(SECRET_KEY_FILES.INVESTIGATION_SUBJECT_HMAC_KEYRING).toBe(
+      'investigation_subject_hmac_keyring.json'
+    );
+  });
+
   it('keeps runtime registry private signing material exclusive to Control', () => {
     expect(getSecretNamesForWorker('ar-management')).not.toContain(
       'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK'

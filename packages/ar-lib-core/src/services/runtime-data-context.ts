@@ -600,7 +600,7 @@ export async function resolveOtpAccountCoreDataContextByIdentifier(
   if (input.indexKind === 'email_exact' && input.identifier.trim().toLowerCase() !== trustedEmail) {
     throw new Error('account_data_otp_email_route_mismatch');
   }
-  const base = await resolveAccountRouteBaseByIdentifier(env, {
+  const base = await resolveAccountCoreRouteBaseByIdentifier(env, {
     tenantId: input.tenantId,
     indexKind: input.indexKind,
     identifier,

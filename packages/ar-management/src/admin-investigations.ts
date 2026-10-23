@@ -22,14 +22,16 @@ import {
   getTenantMetadataContextFromHono,
   hasAdminPermission,
   isValidPersistedUserId,
+  loadInvestigationSubjectHmacKeysFromEnv,
   resolveAccountCoreDataContext,
   type DatabaseAdapter,
   type Env,
+  type InvestigationSubjectHmacKeys,
 } from '@authrim/ar-lib-core';
 import { isInactiveAccountRouteError } from './account-route-errors';
 import { getAdminAuth } from './admin-tenant-access';
 import { scheduleAdminAuditLog } from './admin-shared';
-import { readCoreSubjectStatus } from './investigation-subject-status';
+import { readCoreSubjectStatus, readRecentSignInAttempts } from './investigation-subject-status';
 import { accountStoreHolding } from './rbac-account-stores';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
 
@@ -115,6 +117,18 @@ async function subjectCoreAdapter(
   }
 }
 
+/** The investigation keyring, or null when it is missing or malformed (attempts are then unavailable). */
+function investigationKeys(c: Context<{ Bindings: Env }>): InvestigationSubjectHmacKeys | null {
+  try {
+    return loadInvestigationSubjectHmacKeysFromEnv(c.env);
+  } catch {
+    getLogger(c)
+      .module('ADMIN-INVESTIGATION')
+      .warn('Investigation keyring is malformed; recent attempts are unavailable');
+    return null;
+  }
+}
+
 function errorResponse(c: Context<{ Bindings: Env }>, status: 403 | 404 | 500) {
   const body =
     status === 403
@@ -150,9 +164,21 @@ export async function adminInvestigationSubjectStatusHandler(c: Context<{ Bindin
       audit('failure', 'not_found');
       return errorResponse(c, 404);
     }
+    // Attempts are recorded with their Flow interaction, in the tenant's own Core database.
+    const recentAttempts = await readRecentSignInAttempts(
+      createAuthContextFromHono(c, subject.tenantId).coreAdapter,
+      investigationKeys(c),
+      subject.tenantId,
+      subject.userId
+    );
     audit('success');
     return c.json(
-      { subject: { entry_point: subject.entryPoint }, source: 'core', ...status },
+      {
+        subject: { entry_point: subject.entryPoint },
+        source: 'core',
+        ...status,
+        recent_attempts: recentAttempts,
+      },
       200,
       { 'Cache-Control': 'no-store' }
     );

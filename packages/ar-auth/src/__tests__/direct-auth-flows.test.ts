@@ -164,6 +164,11 @@ vi.mock('@authrim/ar-lib-core/services/invitation-auth-core', async (importOrigi
 });
 
 // Overrides the deleted-account re-registration check for one test (null: the real check).
+const attemptRecording = vi.hoisted(() => ({
+  resolve: vi.fn(async (..._args: unknown[]) => null as string | null),
+  record: vi.fn(async (..._args: unknown[]) => null as string | null),
+}));
+
 const registrationCheck = vi.hoisted(() => ({
   override: null as null | 'blocked' | 'unavailable',
 }));
@@ -195,6 +200,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       ),
 
     assertGuestCredentialAuthenticationAllowed: vi.fn(async () => undefined),
+    resolveSignInAttemptInteraction: attemptRecording.resolve,
+    recordSignInAttemptFailure: attemptRecording.record,
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         const core = await mocks.userCore.findById(userId);
@@ -1652,6 +1659,87 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(response.status).toBe(400);
     expect(body.webauthn_signal).toEqual({ unknown_credential: true });
     expect(mocks.verifyAuthenticationResponse).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Flow interaction a passkey start names only once it is checked', async () => {
+    const { directPasskeyLoginStartHandler } = await import('../direct-auth');
+    const start = (interactionId: string) =>
+      directPasskeyLoginStartHandler(
+        createContext(
+          {
+            client_id: 'web-client',
+            code_challenge: 'pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          { ...webHeaders(), 'x-authrim-interaction-id': interactionId },
+          'https://app.example.com/api/v1/auth/direct/passkey/login/start'
+        ) as never
+      );
+
+    attemptRecording.resolve.mockResolvedValueOnce('int-1');
+    expect((await start('int-1')).status).toBe(200);
+    expect(attemptRecording.resolve).toHaveBeenLastCalledWith(expect.anything(), {
+      tenantId: 'tenant_test',
+      interactionId: 'int-1',
+    });
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ attempt_interaction_id: 'int-1' }),
+      })
+    );
+
+    attemptRecording.resolve.mockResolvedValueOnce(null);
+    expect((await start('int-forged')).status).toBe(200);
+    expect(mocks.challengeStore.storeChallengeRpc.mock.lastCall?.[0]?.metadata).not.toHaveProperty(
+      'attempt_interaction_id'
+    );
+  });
+
+  it('records a passkey failure against the interaction its challenge holds', async () => {
+    const codeVerifier = 'passkey-login-code-verifier';
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: await s256Challenge(codeVerifier),
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+        attempt_interaction_id: 'int-1',
+      },
+    });
+    mocks.passkey.findByCredentialId.mockResolvedValue(null);
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginFinishHandler(
+      createContext(
+        {
+          challenge_id: 'challenge_1',
+          credential: {
+            id: 'missing-credential-id',
+            rawId: 'missing-credential-id',
+            response: {},
+            type: 'public-key',
+          },
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        },
+        // Named at verify time: never what the failure is recorded against.
+        { 'x-authrim-interaction-id': 'int-2' }
+      ) as never
+    );
+
+    expect(response.status).toBe(400);
+    await vi.waitFor(() => expect(attemptRecording.record).toHaveBeenCalledTimes(1));
+    expect(attemptRecording.record.mock.calls[0]?.[2]).toEqual({
+      tenantId: 'tenant_test',
+      interactionId: 'int-1',
+      method: 'passkey',
+      reasonCode: 'credential_not_found',
+      userId: null,
+    });
+    expect(attemptRecording.resolve).not.toHaveBeenCalled();
   });
 
   it('uses the browser origin for passkey login through the Login UI proxy', async () => {

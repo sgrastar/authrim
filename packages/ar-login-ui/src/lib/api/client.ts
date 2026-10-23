@@ -648,6 +648,16 @@ function createDirectAuthClient(
 	});
 }
 
+/**
+ * Names the Flow interaction a sign-in attempt belongs to, at its start step, so the server can
+ * record the attempt's failures with it (it checks the interaction before keeping it).
+ */
+function signInAttemptInteractionHeaders(
+	interactionId: string | undefined
+): Record<string, string> {
+	return interactionId ? { 'X-Authrim-Interaction-Id': interactionId } : {};
+}
+
 function directAuthRequestOptions(extraHeaders: Record<string, string> = {}) {
 	return {
 		headers: { ...Object.fromEntries(buildDiagnosticHeaders().entries()), ...extraHeaders },
@@ -1191,6 +1201,8 @@ export const passkeyAPI = {
 		email?: string;
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
+		/** The Flow interaction this sign-in belongs to, when a Flow runs. */
+		runtimeInteractionId?: string;
 	}) {
 		const response = await withDirectAuthResult(() =>
 			createDirectAuthClient().startPasskeyLogin(
@@ -1199,7 +1211,7 @@ export const passkeyAPI = {
 					authorizationChallengeId: data.authorizationChallengeId,
 					humanVerificationResponse: data.human_verification_response
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(signInAttemptInteractionHeaders(data.runtimeInteractionId))
 			)
 		);
 		if (response.data) {
@@ -1390,14 +1402,19 @@ export const emailCodeAPI = {
  * Auth API - TOTP
  */
 export const totpAPI = {
-	async startLogin(data: { identifier?: string; authorizationChallengeId?: string }) {
+	async startLogin(data: {
+		identifier?: string;
+		authorizationChallengeId?: string;
+		/** The Flow interaction this sign-in belongs to, when a Flow runs. */
+		runtimeInteractionId?: string;
+	}) {
 		return withDirectAuthResult(() =>
 			createDirectAuthClient().startTotpLogin(
 				{
 					identifier: data.identifier,
 					authorizationChallengeId: data.authorizationChallengeId
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(signInAttemptInteractionHeaders(data.runtimeInteractionId))
 			)
 		);
 	},
