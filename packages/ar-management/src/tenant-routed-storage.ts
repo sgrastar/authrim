@@ -1,20 +1,6 @@
-import type { TenantMetadataContext } from '@authrim/ar-lib-core';
-
-type LegacyTenantMetadataContext = Partial<TenantMetadataContext> & {
-  storageProfileId?: string;
-};
-
 /**
- * Account data is routed through Lookup for both shared-pool and tenant-exclusive D1 storage.
- * The storageProfileId branch keeps compatibility with metadata emitted before allocationScope.
+ * Whether the tenant's accounts are routed to their own databases. One definition for every
+ * Worker: see usesRoutedAccountStorage in ar-lib-core (ar-auth decides with it too). Re-exported
+ * here so this Worker's modules (and their tests) keep one place to import it from.
  */
-export function usesRoutedAccountStorage(
-  metadata: LegacyTenantMetadataContext | undefined
-): boolean {
-  const allocationScope = metadata?.route?.allocationScope;
-  return (
-    allocationScope === 'shared_pool' ||
-    allocationScope === 'tenant_exclusive' ||
-    metadata?.storageProfileId === 'builtin:storage:tenant-d1'
-  );
-}
+export { usesRoutedAccountStorage } from '@authrim/ar-lib-core';

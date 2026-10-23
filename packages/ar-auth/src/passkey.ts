@@ -11,6 +11,7 @@ import {
   isAuthenticationMethodUsageAvailable,
   isAllowedOrigin,
   parseAllowedOrigins,
+  getSessionStoreBySessionId,
   getSessionStoreForNewSession,
   getSessionClientMetadata,
   getChallengeStoreByChallengeId,
@@ -65,7 +66,7 @@ import {
   resolvePasskeyProvisioningResumeUserId,
   resolveTenantD1PasskeyAccountRoute,
   resolveTenantD1EmailAccountRoute,
-  usesTenantD1AccountStorage,
+  usesRoutedAccountStorage,
 } from './account-provisioning';
 
 // ===== Module-level Logger for Helper Functions =====
@@ -385,7 +386,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const blocked = registration === 'blocked';
 
     // Check if user exists in the canonical runtime user store.
-    const tenantD1 = usesTenantD1AccountStorage(c);
+    const tenantD1 = usesRoutedAccountStorage(c);
     const accountRoute = normalizedEmail
       ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail).catch((error: unknown) => {
           if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
@@ -478,7 +479,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     }
 
     // Get user's existing passkeys via Repository
-    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const accountScoped = usesRoutedAccountStorage(c) && Boolean(accountRoute);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -682,13 +683,27 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const tenantId = getTenantIdFromContext(c);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'passkey_registration');
 
-    if (usesTenantD1AccountStorage(c)) {
+    if (usesRoutedAccountStorage(c)) {
       await resolveAccountDataContextFromHono(c, userId);
     }
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't store the passkey
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
+    // A registration that fails must not leave a session behind, not even one whose creation
+    // committed although its RPC failed. A fresh stub: a failed RPC can break the one it used.
+    const endRegistrationSession = async (): Promise<void> => {
+      try {
+        await getSessionStoreBySessionId(c.env, sessionId, tenantId).stub.invalidateSessionRpc(
+          sessionId
+        );
+      } catch (invalidateError) {
+        log.error('Failed to end the session of a failed passkey registration', {
+          action: 'session_invalidate',
+          errorType: invalidateError instanceof Error ? invalidateError.name : 'Unknown',
+        });
+      }
+    };
 
     let sessionData: { id: string };
     try {
@@ -713,41 +728,51 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         action: 'session_create',
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
+      await endRegistrationSession();
       return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
     }
 
-    // Step 2: Store passkey via the routed account database when tenant-exclusive storage is used.
-    const accountScoped = usesTenantD1AccountStorage(c);
-    const authCtx = accountScoped
-      ? createAccountAuthContextFromHono(c, tenantId)
-      : createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
+    // Step 2: Store passkey in the account database where accounts are routed (either scope).
+    // The session is only for a registration that completes: if storing the passkey or reading
+    // the user back fails, the session just created is ended before the error is answered.
+    let updatedUser: Awaited<ReturnType<CanonicalRuntimeUserStore['findById']>>;
+    try {
+      const accountScoped = usesRoutedAccountStorage(c);
+      const authCtx = accountScoped
+        ? createAccountAuthContextFromHono(c, tenantId)
+        : createAuthContextFromHono(c, tenantId);
+      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
 
-    await authCtx.repositories.passkey.create({
-      id: passkeyId,
-      user_id: userId,
-      credential_id: credentialIDBase64URL,
-      rp_id: rpID,
-      public_key: publicKeyBase64,
-      counter,
-      transports: (credential.response.transports || []) as AuthenticatorTransport[],
-      device_name: deviceName || 'Unknown Device',
-      aaguid: regInfo.aaguid ?? null,
-    });
-    await publishTenantD1PasskeyRoute(c, {
-      tenantId,
-      userId,
-      passkeyId,
-      credentialId: credentialIDBase64URL,
-      rpId: rpID,
-    });
+      await authCtx.repositories.passkey.create({
+        id: passkeyId,
+        user_id: userId,
+        credential_id: credentialIDBase64URL,
+        rp_id: rpID,
+        public_key: publicKeyBase64,
+        counter,
+        transports: (credential.response.transports || []) as AuthenticatorTransport[],
+        device_name: deviceName || 'Unknown Device',
+        aaguid: regInfo.aaguid ?? null,
+      });
+      await publishTenantD1PasskeyRoute(c, {
+        tenantId,
+        userId,
+        passkeyId,
+        credentialId: credentialIDBase64URL,
+        rpId: rpID,
+      });
 
-    // Registration creates an authenticated session, so retain it as the user's first login.
-    await runtimeUsers.touchLastLogin(userId, now);
+      // Registration creates an authenticated session, so retain it as the user's first login.
+      await runtimeUsers.touchLastLogin(userId, now);
 
-    // Registering a passkey proves possession of the authenticator, not the email address.
-    // Keep email verification tied to email-code or explicit verification flows.
-    const updatedUser = await runtimeUsers.findById(userId, { includeInactive: true });
+      // Registering a passkey proves possession of the authenticator, not the email address.
+      // Keep email verification tied to email-code or explicit verification flows.
+      updatedUser = await runtimeUsers.findById(userId, { includeInactive: true });
+      if (!updatedUser) throw new Error('passkey_registration_user_not_found');
+    } catch (error) {
+      await endRegistrationSession();
+      throw error;
+    }
 
     const customFields = challengeData.metadata?.custom_fields;
     if (customFields) {
@@ -772,13 +797,13 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       message: 'Passkey registered successfully',
       userId: userId,
       user: {
-        id: updatedUser!.id,
-        email: updatedUser!.email,
-        name: updatedUser!.name,
-        email_verified: updatedUser!.email_verified,
-        created_at: updatedUser!.created_at,
-        updated_at: updatedUser!.updated_at,
-        last_login_at: updatedUser!.last_login_at,
+        id: updatedUser.id,
+        email: updatedUser.email,
+        name: updatedUser.name,
+        email_verified: updatedUser.email_verified,
+        created_at: updatedUser.created_at,
+        updated_at: updatedUser.updated_at,
+        last_login_at: updatedUser.last_login_at,
       },
     });
   } catch (error) {
@@ -924,7 +949,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
-    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const accountScoped = usesRoutedAccountStorage(c) && Boolean(accountRoute);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
