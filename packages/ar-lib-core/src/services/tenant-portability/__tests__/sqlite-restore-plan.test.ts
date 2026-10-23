@@ -19,7 +19,10 @@ import {
   persistInitializedSqliteRestoreTarget,
   openPlannedSqliteRestoreTarget,
 } from '../sqlite-restore-plan';
-import type { SqliteDatasetInspectionPolicy } from '../sqlite-dataset-inspector';
+import {
+  TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED,
+  type SqliteDatasetInspectionPolicy,
+} from '../sqlite-dataset-inspector';
 import type { TenantBundleManifest } from '../bundle-manifest';
 let admin: DatabaseSync, target: DatabaseSync, now: number;
 function adapter(db: DatabaseSync) {
@@ -776,6 +779,67 @@ it('pins and reapplies an installed row transform during write and verification'
   expect(target.prepare("SELECT value FROM tenants WHERE id='a'").get()).toEqual({
     value: 'mapped-target',
   });
+});
+
+it('keeps the reason of a row the requester may not restore and writes none of its batch', async () => {
+  const refusingPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    restoreTransform: {
+      id: 'test-authority-v1',
+      async transform() {
+        throw new Error(TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED);
+      },
+    },
+  };
+  await persist();
+  await seal();
+  const cursor = JSON.stringify({
+    version: 1,
+    targetId: 'target',
+    targetOrdinal: 0,
+    datasetId: policy.dataset.id,
+    sourceCursor: null,
+    rowsWritten: 0,
+  });
+  const input = {
+    ...openInput(),
+    policy: refusingPolicy,
+    manifest,
+    async readNextValidatedRow({ sourceCursor }: { sourceCursor: string | null }) {
+      return sourceCursor === null ? { rowJson: row, nextCursor: 'row:1' } : null;
+    },
+  };
+  await expect(
+    runSqliteRestoreDatasetStep(
+      {
+        ...context,
+        operation: { ...context.operation, phase: 'apply_sqlite_dataset', cursor_json: cursor },
+      },
+      input
+    )
+  ).rejects.toThrow(TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED);
+  expect(target.prepare("SELECT count(*) AS n FROM tenants WHERE id='a'").get()?.n).toBe(0);
+  // Any other transform failure stays generic.
+  await expect(
+    runSqliteRestoreDatasetStep(
+      {
+        ...context,
+        operation: { ...context.operation, phase: 'apply_sqlite_dataset', cursor_json: cursor },
+      },
+      {
+        ...input,
+        policy: {
+          ...policy,
+          restoreTransform: {
+            id: 'test-broken-v1',
+            async transform() {
+              throw new Error('something_else');
+            },
+          },
+        },
+      }
+    )
+  ).rejects.toThrow('backup_restore_row_transform_failed');
 });
 
 it('writes transformed datasets for one physical target in a single execution batch', async () => {

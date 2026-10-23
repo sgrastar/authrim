@@ -3,6 +3,7 @@ import type { TenantBackupOperation } from './operation-store';
 import type { TenantBackupStepContext } from './operation-executor';
 import {
   encodeTenantBackupRequestIntent,
+  type TenantBackupImportAuthority,
   type TenantBackupRequestIntent,
 } from './operation-request';
 
@@ -54,11 +55,14 @@ export class TenantBackupImportRequestStore {
     source: TenantBackupRequestIntent['source'];
     selection: TenantBackupRequestIntent['selection'];
     uploadIds: string[];
+    /** What the actor may grant, as the Admin API judges it now (see the intent's `authority`). */
+    authority: TenantBackupImportAuthority;
     now: number;
   }): Promise<TenantBackupOperation> {
     for (const value of [input.id, input.tenantId, input.actorId, input.idempotencyKey])
       identifier(value);
     if (
+      input.authority?.actorId !== input.actorId ||
       !Number.isSafeInteger(input.now) ||
       input.now < 0 ||
       !Array.isArray(input.uploadIds) ||
@@ -71,7 +75,14 @@ export class TenantBackupImportRequestStore {
 
     const existing = await this.find(input.tenantId, input.idempotencyKey);
     if (existing)
-      return this.verifyExisting(existing, input.actorId, input.source, input.selection, uploadIds);
+      return this.verifyExisting(
+        existing,
+        input.actorId,
+        input.source,
+        input.selection,
+        uploadIds,
+        input.authority
+      );
 
     const placeholders = uploadIds.map(() => '?').join(',');
     const rows = await this.database.query<UploadedInput>(
@@ -103,6 +114,7 @@ export class TenantBackupImportRequestStore {
         id: upload.id,
         digestSha256: upload.verified_sha256,
       })),
+      authority: input.authority,
     });
     if (encoded.intent.source.tenantId !== input.tenantId) invalid();
     const statements = [
@@ -149,7 +161,14 @@ export class TenantBackupImportRequestStore {
     }
     const created = await this.find(input.tenantId, input.idempotencyKey);
     if (!created) invalid();
-    return this.verifyExisting(created, input.actorId, input.source, input.selection, uploadIds);
+    return this.verifyExisting(
+      created,
+      input.actorId,
+      input.source,
+      input.selection,
+      uploadIds,
+      input.authority
+    );
   }
 
   private find(tenantId: string, idempotencyKey: string): Promise<RequestOperation | null> {
@@ -164,7 +183,8 @@ export class TenantBackupImportRequestStore {
     actorId: string,
     source: TenantBackupRequestIntent['source'],
     selection: TenantBackupRequestIntent['selection'],
-    uploadIds: string[]
+    uploadIds: string[],
+    authority: TenantBackupImportAuthority
   ): Promise<TenantBackupOperation> {
     const inputs = await this.database.query<BoundInput>(
       `SELECT ordinal,upload_id,object_key,object_version,object_etag,size_bytes,digest_sha256,bound_at
@@ -186,6 +206,7 @@ export class TenantBackupImportRequestStore {
       source,
       selection,
       inputs: inputs.map((item) => ({ id: item.upload_id, digestSha256: item.digest_sha256 })),
+      authority,
     });
     if (
       encoded.intent.source.tenantId !== operation.tenant_id ||

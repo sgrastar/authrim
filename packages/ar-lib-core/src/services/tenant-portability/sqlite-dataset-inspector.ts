@@ -41,6 +41,15 @@ export interface SqliteDatasetInspectionPolicy {
       mode: 'write' | 'defer' | 'verify'
     ): Promise<string>;
   };
+  /**
+   * Installed, versioned admission of one source row for the operation in `context`, checked while
+   * the input is validated (before approval and before any target write). A row that the operation
+   * may not restore throws; the error stops validation.
+   */
+  admitRow?: {
+    id: string;
+    admit(context: TenantBackupStepContext, rowJson: string): Promise<void>;
+  };
   /** Quarantine selected source work instead of inserting it into a live target queue. */
   restoreHold?: {
     id: string;
@@ -75,7 +84,8 @@ export interface SqliteDatasetInspectionPolicy {
 export function cloneSqliteDatasetInspectionPolicy(
   policy: SqliteDatasetInspectionPolicy
 ): SqliteDatasetInspectionPolicy {
-  const { inspectRow, identityAliases, restoreTransform, restoreHold, ...serializable } = policy;
+  const { inspectRow, identityAliases, restoreTransform, restoreHold, admitRow, ...serializable } =
+    policy;
   return {
     ...structuredClone(serializable),
     inspectRow,
@@ -93,6 +103,15 @@ export function cloneSqliteDatasetInspectionPolicy(
             id: restoreTransform.id,
             transform: (context, rowJson, mode) =>
               restoreTransform.transform(context, rowJson, mode),
+          },
+        }
+      : {}),
+    ...(admitRow
+      ? {
+          admitRow: {
+            id: admitRow.id,
+            admit: (context: TenantBackupStepContext, rowJson: string) =>
+              admitRow.admit(context, rowJson),
           },
         }
       : {}),
@@ -132,10 +151,17 @@ export function sqliteDatasetInspectionPolicyDescriptor(policy: SqliteDatasetIns
     restorePreservedSeedColumns: policy.restorePreservedSeedColumns,
     restoreTransformId: policy.restoreTransform?.id,
     restoreHoldId: policy.restoreHold?.id,
+    admitRowId: policy.admitRow?.id,
     identityAliasesId: policy.identityAliases?.id,
     restoreTenantKey: policy.restoreTenantKey,
   };
 }
+/**
+ * The error an installed row admission or restore transform throws for a row that the operation's
+ * requester may not restore (see `admitRow`). Restore keeps it as the step's failure code.
+ */
+export const TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED = 'backup_restore_authority_required';
+
 const MAX_ROW_BYTES = 16 * 1024 * 1024;
 const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_ITEMS = 4096;

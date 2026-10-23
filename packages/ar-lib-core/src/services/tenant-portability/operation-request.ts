@@ -14,7 +14,30 @@ export interface TenantBackupRequestIntent {
   selection: TenantBackupSelection;
   /** Authorized, immutable upload handles and exact artifact digests; never object paths. */
   inputs: { id: string; digestSha256: string }[];
+  /**
+   * Import only: who asked for it and what that person could grant when they did. A restore writes
+   * what the bundle holds, so rows the normal Admin API would refuse the person (settings only the
+   * platform may change for a tenant, global Admin role assignments) are refused by this record.
+   * Left out (an import requested before it existed), it grants nothing.
+   */
+  authority?: TenantBackupImportAuthority;
 }
+
+export interface TenantBackupImportAuthority {
+  actorId: string;
+  /** Settings categories only the platform may change for a tenant that the actor may change. */
+  platformSettingsCategories: string[];
+  /** Whether the actor may make global Admin role assignments, and the global level they hold. */
+  globalAdmin: { permitted: boolean; hierarchyLevel: number };
+}
+
+/** The authority of a request that does not record any. */
+export const TENANT_BACKUP_NO_IMPORT_AUTHORITY: Readonly<TenantBackupImportAuthority> =
+  Object.freeze({
+    actorId: '',
+    platformSettingsCategories: [],
+    globalAdmin: { permitted: false, hierarchyLevel: 0 },
+  });
 function invalid(): never {
   throw new Error('invalid_backup_request_intent');
 }
@@ -34,9 +57,52 @@ function identifier(value: unknown): string {
   return value;
 }
 /** Canonical field order, detached values and strict v1 scope. */
+function parseAuthority(value: unknown): TenantBackupImportAuthority {
+  const authority = record(value, ['actorId', 'platformSettingsCategories', 'globalAdmin']);
+  const categories = authority.platformSettingsCategories;
+  if (
+    !Array.isArray(categories) ||
+    categories.length > 64 ||
+    categories.some(
+      (entry, index) =>
+        typeof entry !== 'string' ||
+        !/^[a-z][a-z0-9-]{0,63}$/.test(entry) ||
+        (index > 0 && entry <= (categories[index - 1] as string))
+    )
+  )
+    invalid();
+  const globalAdmin = record(authority.globalAdmin, ['permitted', 'hierarchyLevel']);
+  if (
+    typeof globalAdmin.permitted !== 'boolean' ||
+    // Role levels are numbers, fractions included (the role API accepts them).
+    typeof globalAdmin.hierarchyLevel !== 'number' ||
+    !Number.isFinite(globalAdmin.hierarchyLevel) ||
+    globalAdmin.hierarchyLevel < 0 ||
+    globalAdmin.hierarchyLevel > 1_000_000
+  )
+    invalid();
+  return {
+    actorId: identifier(authority.actorId),
+    platformSettingsCategories: [...(categories as string[])],
+    globalAdmin: {
+      permitted: globalAdmin.permitted,
+      hierarchyLevel: globalAdmin.hierarchyLevel,
+    },
+  };
+}
+
 export function parseTenantBackupRequestIntent(value: unknown): TenantBackupRequestIntent {
-  const root = record(value, ['version', 'kind', 'source', 'selection', 'inputs']);
+  const withAuthority = !!value && typeof value === 'object' && Object.hasOwn(value, 'authority');
+  const root = record(value, [
+    'version',
+    'kind',
+    'source',
+    'selection',
+    'inputs',
+    ...(withAuthority ? ['authority'] : []),
+  ]);
   if (root.version !== 1 || (root.kind !== 'export' && root.kind !== 'import')) invalid();
+  if (withAuthority && root.kind !== 'import') invalid();
   const source = record(root.source, ['tenantId', 'issuer', 'productVersion']);
   if (
     typeof source.issuer !== 'string' ||
@@ -81,6 +147,7 @@ export function parseTenantBackupRequestIntent(value: unknown): TenantBackupRequ
     },
     selection: parseTenantBackupSelection(root.selection),
     inputs,
+    ...(withAuthority ? { authority: parseAuthority(root.authority) } : {}),
   };
 }
 async function digest(json: string): Promise<string> {
@@ -317,6 +384,7 @@ export class TenantBackupRequestStore {
     if (
       intent.source.tenantId !== tenantId ||
       intent.kind !== row.kind ||
+      (intent.authority !== undefined && intent.authority.actorId !== row.created_by) ||
       JSON.stringify(intent) !== row.request_json ||
       (await digest(row.request_json)) !== row.request_digest
     )

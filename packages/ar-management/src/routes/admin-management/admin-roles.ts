@@ -36,6 +36,7 @@ import {
   mayGiveGlobally,
   mayRemoveAssignment,
   roleReachesGlobalAssignment,
+  RESERVED_ROLE_NAMES,
 } from './admin-role-authority';
 
 // Create router
@@ -71,18 +72,6 @@ function hasWritePermission(authContext: AdminAuthContext): boolean {
 function canAccessRole(role: AdminRole, tenantId: string): boolean {
   return role.tenant_id === tenantId || (role.tenant_id === 'default' && role.is_system);
 }
-
-/**
- * Role names that Admin checks read as authority (platform and tenant administrators), whether or
- * not a system role carries them: a custom role must not take one.
- */
-const RESERVED_ROLE_NAMES: ReadonlySet<string> = new Set([
-  'super_admin',
-  'system_admin',
-  'distributor_admin',
-  'tenant_admin',
-  'org_admin',
-]);
 
 function isPlatformAdminRole(roleName: string | undefined): boolean {
   return roleName === 'super_admin';

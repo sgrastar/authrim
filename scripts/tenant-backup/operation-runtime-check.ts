@@ -1374,6 +1374,7 @@ try {
   });
   assert(rowToInspect);
   await inspectSqliteInputRow({
+    context: restoreContext,
     policy: restorePolicy,
     manifest: restoreManifest,
     rowJson: rowToInspect.rowJson,
@@ -1382,6 +1383,7 @@ try {
     assertPinnedInput: async () => {},
   });
   await inspectSqliteInputRow({
+    context: restoreContext,
     policy: restorePolicy,
     manifest: restoreManifest,
     rowJson: rowToInspect.rowJson,
@@ -1391,6 +1393,7 @@ try {
   });
   await assert.rejects(
     inspectSqliteInputRow({
+      context: restoreContext,
       policy: restorePolicy,
       manifest: restoreManifest,
       rowJson: rowToInspect.rowJson,

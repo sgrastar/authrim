@@ -2,6 +2,7 @@ import type { TenantBackupStepContext, TenantBackupStepResult } from './operatio
 import type { TenantBundleManifest } from './bundle-manifest';
 import {
   cloneSqliteDatasetInspectionPolicy,
+  TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED,
   type SqliteDatasetInspectionPolicy,
 } from './sqlite-dataset-inspector';
 import { openPlannedSqliteRestoreTarget } from './sqlite-restore-plan';
@@ -19,6 +20,15 @@ export interface SqliteRestoreDatasetCursor {
 }
 function invalid(): never {
   throw new Error('backup_restore_step_invalid');
+}
+
+/** A row the requester may not restore keeps its reason; any other transform error is generic. */
+function rowTransformFailure(error: unknown): Error {
+  return new Error(
+    error instanceof Error && error.message === TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED
+      ? TENANT_BACKUP_RESTORE_AUTHORITY_REQUIRED
+      : 'backup_restore_row_transform_failed'
+  );
 }
 
 /**
@@ -174,8 +184,8 @@ async function runVerifyBatch(
         rowJson = policy.restoreTransform
           ? await policy.restoreTransform.transform(context, next.rowJson, 'verify')
           : next.rowJson;
-      } catch {
-        throw new Error('backup_restore_row_transform_failed');
+      } catch (error) {
+        throw rowTransformFailure(error);
       }
     const rowBytes = new TextEncoder().encode(rowJson).length;
     if (!rowJson) invalid();
@@ -301,8 +311,8 @@ async function runWriteBatch(
         rowJson = policy.restoreTransform
           ? await policy.restoreTransform.transform(context, next.rowJson, 'write')
           : next.rowJson;
-      } catch {
-        throw new Error('backup_restore_row_transform_failed');
+      } catch (error) {
+        throw rowTransformFailure(error);
       }
     const rowBytes = new TextEncoder().encode(rowJson).length;
     if (!rowJson) invalid();
@@ -607,8 +617,8 @@ async function runSingleStep(
       rowJson = policy.restoreTransform
         ? await policy.restoreTransform.transform(context, next.rowJson, mode)
         : next.rowJson;
-    } catch {
-      throw new Error('backup_restore_row_transform_failed');
+    } catch (error) {
+      throw rowTransformFailure(error);
     }
     if (typeof rowJson !== 'string' || !rowJson) invalid();
     assertTenantBackupSqliteRowFits(rowJson);

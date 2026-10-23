@@ -478,6 +478,13 @@ it('creates an import from verified upload handles with the bundle source identi
       source,
       selection,
       uploadIds: ['upload-original'],
+      // A tenant-only admin may grant neither settings only the platform may change nor global
+      // Admin access, so the restore refuses such rows of the bundle.
+      authority: {
+        actorId: 'admin',
+        platformSettingsCategories: [],
+        globalAdmin: { permitted: false, hierarchyLevel: 0 },
+      },
     })
   );
   expect(state.audit).toHaveBeenCalledWith(
@@ -485,6 +492,41 @@ it('creates an import from verified upload handles with the bundle source identi
     expect.objectContaining({
       action: 'tenant_backup.import_requested',
       resourceId: expect.any(String),
+      metadata: expect.objectContaining({
+        authority: expect.objectContaining({ actorId: 'admin' }),
+      }),
+    })
+  );
+});
+
+it('records the authority of a platform operator who asks for an import', async () => {
+  auth = {
+    ...auth,
+    roles: ['super_admin'],
+    globalRoles: ['super_admin'],
+    tenantScope: ['*'],
+    globalPermissions: ['*'],
+    globalHierarchyLevel: 100,
+  };
+  const response = await request(
+    'imports',
+    'POST',
+    JSON.stringify({
+      idempotencyKey: 'import-request',
+      selection,
+      source: { tenantId: 'tenant-a', issuer: 'https://source.example', productVersion: '0.4.2' },
+      uploadIds: ['upload-original'],
+    }),
+    { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), IMPORT_ARTIFACTS: {} }
+  );
+  expect(response.status).toBe(201);
+  expect(state.importCreate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      authority: {
+        actorId: 'admin',
+        platformSettingsCategories: ['institution'],
+        globalAdmin: { permitted: true, hierarchyLevel: 100 },
+      },
     })
   );
 });

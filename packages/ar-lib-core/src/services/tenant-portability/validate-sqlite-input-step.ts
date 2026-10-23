@@ -132,6 +132,7 @@ export async function runSqliteInputValidationStep(
     const recordCount = records.length;
     const referenceCount = references.length;
     await inspectSqliteInputRow({
+      context,
       policy: input.policy,
       manifest: input.manifest,
       rowJson: row.rowJson,

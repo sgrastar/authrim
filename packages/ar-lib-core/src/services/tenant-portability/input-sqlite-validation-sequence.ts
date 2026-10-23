@@ -302,6 +302,7 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       let overBudget = false;
       for (let rowOrdinal = 0; rowOrdinal < rows.length; rowOrdinal++) {
         await inspectSqliteInputRow({
+          context,
           policy: candidatePolicy,
           manifest: planned.manifest,
           rowJson: rows[rowOrdinal],
