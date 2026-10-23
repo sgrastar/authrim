@@ -13,13 +13,32 @@
  */
 import { resolveAccountRegistrationState, type DatabaseAdapter } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
-import { toMilliseconds } from './admin-shared';
+import { toMilliseconds, VALID_USER_LIFECYCLE_STATES } from './admin-shared';
 
 /** At most this many devices are listed (the counts cover all of them). */
 export const SUBJECT_STATUS_LIST_LIMIT = 50;
 
 const PASSKEY_TRANSPORTS = new Set(['usb', 'nfc', 'ble', 'internal', 'hybrid', 'smart-card']);
 const DEVICE_PLATFORMS = new Set(['ios', 'android', 'macos', 'windows']);
+/**
+ * The account states and statuses Core records (authentication lifecycle, deletion, and the
+ * custom-claim user lifecycle). Stored values are returned only from these closed sets: anything
+ * else is `other`, so no text stored in an account's metadata is echoed.
+ */
+const ACCOUNT_STATES = new Set([
+  'active',
+  'inactive',
+  'suspended',
+  'locked',
+  'deleting',
+  'deleted',
+  ...VALID_USER_LIFECYCLE_STATES,
+]);
+const TOTP_STATUSES = new Set(['pending', 'active', 'disabled']);
+
+function closed(value: unknown, allowed: ReadonlySet<string>): string {
+  return typeof value === 'string' && allowed.has(value) ? value : 'other';
+}
 
 /**
  * A part of the status Core does not hold. Sessions live in the session store (Durable Objects);
@@ -38,7 +57,6 @@ const NOT_RECORDED_IN_CORE: NotRecordedInCore = {
 
 export interface SubjectStatus {
   account: {
-    user_type: string;
     registration_state: 'guest' | 'registered';
     is_guest: boolean;
     lifecycle_state: string;
@@ -90,7 +108,6 @@ export interface SubjectStatus {
 
 interface AccountRow {
   id: string;
-  account_type: string;
   lifecycle_state: string;
   registration_state: 'guest' | 'registered' | null;
   primary_subject_id: string | null;
@@ -116,14 +133,10 @@ function metadataTime(metadata: Record<string, unknown>, key: string): number | 
   return typeof value === 'number' && Number.isFinite(value) ? toMilliseconds(value) : null;
 }
 
-function userTypeOf(accountType: string): string {
-  if (accountType === 'admin') return 'admin';
-  if (accountType === 'service_account') return 'm2m';
-  return 'end_user';
-}
-
 function statusOf(lifecycleState: string, metadata: Record<string, unknown>): string {
-  if (typeof metadata.status === 'string' && metadata.status.trim()) return metadata.status;
+  if (typeof metadata.status === 'string' && metadata.status.trim()) {
+    return closed(metadata.status, ACCOUNT_STATES);
+  }
   if (lifecycleState === 'active') return 'active';
   if (['suspended', 'locked', 'deleted'].includes(lifecycleState)) return lifecycleState;
   return 'inactive';
@@ -148,8 +161,9 @@ function transportsOf(value: string | null): string[] {
 }
 
 /**
- * The status of `userId`'s account in `tenantId`, read from `core` alone. null when the tenant has
- * no account for the user in this database.
+ * The status of `userId`'s end-user account in `tenantId`, read from `core` alone. null when the
+ * tenant has no end-user account for the user in this database: admin and service accounts are
+ * not end users, so they are not answered for here.
  */
 export async function readCoreSubjectStatus(
   core: DatabaseAdapter,
@@ -158,23 +172,21 @@ export async function readCoreSubjectStatus(
   nowMs: number = Date.now()
 ): Promise<SubjectStatus | null> {
   const account = await core.queryOne<AccountRow>(
-    `SELECT id, account_type, lifecycle_state, registration_state, primary_subject_id,
+    `SELECT id, lifecycle_state, registration_state, primary_subject_id,
             metadata_json, created_at, updated_at
        FROM identity_accounts
-      WHERE tenant_id = ? AND legacy_user_id = ?
+      WHERE tenant_id = ? AND legacy_user_id = ? AND account_type = 'user'
       LIMIT 1`,
     [tenantId, userId]
   );
   if (!account) return null;
 
   const [guestLifecycle, legalHold, emailContacts, passkeys, totp, devices] = await Promise.all([
-    account.account_type === 'user'
-      ? core.queryOne<{ phase: string; deletion_due_at: number | null }>(
-          `SELECT phase, deletion_due_at FROM guest_account_lifecycle
-            WHERE tenant_id = ? AND user_id = ?`,
-          [tenantId, userId]
-        )
-      : Promise.resolve(null),
+    core.queryOne<{ phase: string; deletion_due_at: number | null }>(
+      `SELECT phase, deletion_due_at FROM guest_account_lifecycle
+        WHERE tenant_id = ? AND user_id = ?`,
+      [tenantId, userId]
+    ),
     core.queryOne<{ id: string }>(
       `SELECT id FROM legal_holds
         WHERE tenant_id = ? AND subject_type = 'account' AND subject_id = ? AND state = 'active'
@@ -243,10 +255,9 @@ export async function readCoreSubjectStatus(
 
   return {
     account: {
-      user_type: userTypeOf(account.account_type),
       registration_state: registrationState,
       is_guest: registrationState === 'guest',
-      lifecycle_state: account.lifecycle_state,
+      lifecycle_state: closed(account.lifecycle_state, ACCOUNT_STATES),
       status: statusOf(account.lifecycle_state, metadata),
       suspended_at: metadataTime(metadata, 'suspended_at'),
       suspended_until: metadataTime(metadata, 'suspended_until'),
@@ -273,7 +284,7 @@ export async function readCoreSubjectStatus(
         last_used_at: toMilliseconds(passkey.last_used_at),
       })),
       totp: totp.map((credential) => ({
-        status: credential.status,
+        status: closed(credential.status, TOTP_STATUSES),
         created_at: toMilliseconds(credential.created_at),
         activated_at: toMilliseconds(credential.activated_at),
         last_used_at: toMilliseconds(credential.last_used_at),

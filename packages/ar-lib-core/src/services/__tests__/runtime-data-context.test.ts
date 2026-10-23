@@ -365,6 +365,32 @@ describe('runtime account data context', () => {
     ).rejects.toThrow();
   });
 
+  it('still refuses a Core route whose projection names no PII destination', async () => {
+    // Skipping the PII binding is not skipping the route's completeness check.
+    const row = lookupRow();
+    const projection = JSON.parse(row.route_projection_json) as {
+      targets: Array<{ dataRole: string }>;
+    };
+    projection.targets = projection.targets.filter((target) => target.dataRole !== 'tenant_pii');
+    const bindings = env() as unknown as Record<string, unknown>;
+    bindings.LOOKUP_A = d1({
+      lookupRows: [
+        {
+          ...row,
+          // The row's generation is its targets' highest: the Core target's alone now.
+          required_binding_route_generation: 8,
+          route_projection_json: JSON.stringify(projection),
+        },
+      ],
+    });
+    await expect(
+      resolveAccountCoreDataContext(bindings as unknown as Env, {
+        tenantId: 'tenant-a',
+        accountId: 'account:user-a',
+      })
+    ).rejects.toThrow('account_data_route_incomplete');
+  });
+
   it('resolves the minimal OTP user in the Core revalidation batch without touching PII', async () => {
     const bindings = env();
     const usersD1 = (bindings as unknown as Record<string, D1Database>)

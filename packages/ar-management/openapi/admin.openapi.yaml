@@ -973,7 +973,9 @@ paths:
         investigating a sign-in problem without personal data. Requires
         `admin:users:status:read` (included in `admin:users:read`). The handle names the subject
         through an entry point, and each entry point adds its own requirement: `user:<user id>`
-        is accepted only from callers who also hold `admin:users:read`. The response never
+        is accepted only from callers who also hold `admin:users:read`. Only end-user accounts
+        are answered for; admin and service accounts are not found here. Stored states are
+        returned from closed sets. The response never
         contains names, contact values, email domains, user-chosen credential or device names,
         IP addresses, user agents or external subject identifiers. Parts Core does not record
         (sessions, linked providers) are reported as not recorded rather than as empty. Every read
@@ -55660,7 +55662,6 @@ components:
           type: object
           additionalProperties: false
           required:
-            - user_type
             - registration_state
             - is_guest
             - lifecycle_state
@@ -55674,11 +55675,47 @@ components:
             - last_login_at
             - guest_deletion_due_at
           properties:
-            user_type: { type: string, enum: [end_user, admin, m2m] }
             registration_state: { type: string, enum: [guest, registered] }
             is_guest: { type: boolean }
-            lifecycle_state: { type: string }
-            status: { type: string }
+            lifecycle_state:
+              type: string
+              description: A Core account state; any value Core does not define is `other`.
+              enum:
+                [
+                  active,
+                  inactive,
+                  suspended,
+                  locked,
+                  deleting,
+                  deleted,
+                  invited,
+                  pending_verification,
+                  provisioning,
+                  incomplete,
+                  dormant,
+                  archived,
+                  deprovisioned,
+                  other,
+                ]
+            status:
+              type: string
+              enum:
+                [
+                  active,
+                  inactive,
+                  suspended,
+                  locked,
+                  deleting,
+                  deleted,
+                  invited,
+                  pending_verification,
+                  provisioning,
+                  incomplete,
+                  dormant,
+                  archived,
+                  deprovisioned,
+                  other,
+                ]
             suspended_at: { type: [integer, 'null'] }
             suspended_until: { type: [integer, 'null'] }
             locked_at: { type: [integer, 'null'] }
@@ -55734,7 +55771,7 @@ components:
                 additionalProperties: false
                 required: [status, created_at, activated_at, last_used_at]
                 properties:
-                  status: { type: string, enum: [pending, active, disabled] }
+                  status: { type: string, enum: [pending, active, disabled, other] }
                   created_at: { type: [integer, 'null'] }
                   activated_at: { type: [integer, 'null'] }
                   last_used_at: { type: [integer, 'null'] }

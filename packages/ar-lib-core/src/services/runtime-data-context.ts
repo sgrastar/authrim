@@ -277,8 +277,9 @@ function resolveRouteTargetSource(
 }
 
 /**
- * The account's route to its Core destination alone: the PII destination is neither required
- * nor resolved, so a Core-only reader never reaches the PII store's binding.
+ * The account's route to its Core destination alone. The route must still be complete (name a
+ * PII destination too), but that destination's binding is not resolved, so a Core-only reader
+ * never reaches the PII store.
  */
 async function resolveAccountCoreRouteBaseByIdentifier(
   env: Env,
@@ -286,7 +287,9 @@ async function resolveAccountCoreRouteBaseByIdentifier(
 ): Promise<AccountCoreRouteResolutionBase> {
   const base = await resolveAccountMembershipByIdentifier(env, input);
   const coreTarget = routeTargetFor(base.membership, 'tenant_core/users');
-  if (!coreTarget) throw new Error('account_data_route_incomplete');
+  if (!coreTarget || !routeTargetFor(base.membership, 'tenant_pii')) {
+    throw new Error('account_data_route_incomplete');
+  }
   const coreRoute = await resolveRouteTargetSource(env, input.tenantId, 'tenant_core', coreTarget);
   return { ...base, coreResidency: coreTarget.residencyPartition, coreRoute };
 }

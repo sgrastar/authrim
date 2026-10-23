@@ -319,7 +319,6 @@ describe('status-only investigation read', () => {
       subject: { entry_point: 'user_id' },
       source: 'core',
       account: {
-        user_type: 'end_user',
         registration_state: 'registered',
         is_guest: false,
         lifecycle_state: 'locked',
@@ -489,6 +488,40 @@ describe('status-only investigation read', () => {
       { entry_point: 'user_id', reason: 'not_found' },
     ]);
     expect(tripwire.touched).toEqual([]);
+  });
+
+  it.each(['admin', 'service_account'])(
+    'does not answer for a %s account: only end users are investigated here',
+    async (accountType) => {
+      store.db
+        .prepare(`UPDATE identity_accounts SET account_type = ? WHERE id = 'account-1'`)
+        .run(accountType);
+      const response = await harness({ permissions: permissionsFor('users'), core })(
+        `user:${USER}`
+      );
+      expect(response.status).toBe(404);
+      expect(audit.mock.calls[0]?.slice(3)).toEqual([
+        'failure',
+        { entry_point: 'user_id', reason: 'not_found' },
+      ]);
+    }
+  );
+
+  it('returns stored states only from closed sets, never stored text', async () => {
+    store.db
+      .prepare(
+        `UPDATE identity_accounts
+            SET metadata_json = json_set(metadata_json, '$.status', 'locked by Taro Yamada')
+          WHERE id = 'account-1'`
+      )
+      .run();
+    const text = await (
+      await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
+    ).text();
+    const body = JSON.parse(text) as SubjectStatus;
+    expect(body.account.status).toBe('other');
+    expect(body.account.lifecycle_state).toBe('locked');
+    expect(text).not.toContain('Taro Yamada');
   });
 
   it('marks a guest account and its deletion date', async () => {
