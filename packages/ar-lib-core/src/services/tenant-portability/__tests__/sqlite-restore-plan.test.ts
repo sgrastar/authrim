@@ -4,7 +4,8 @@ import {
   runSqliteRestoreSequenceStep,
 } from '../restore-sqlite-sequence';
 import {
-  RESTORE_TRANSFORM_STATEMENT_BUDGET,
+  RESTORE_DATASET_STATEMENTS,
+  RESTORE_STATEMENT_BUDGET,
   runSqliteRestoreDatasetDeferredStep,
   runSqliteRestoreDatasetStep,
   runSqliteRestoreDatasetVerificationStep,
@@ -1603,7 +1604,7 @@ it('splits rows whose transforms issue statements across transitions and resumes
   expect(failures).toBe(1);
   expect((await store.get('a', 'import'))?.phase).toBe('verify_other_restore_stores');
   expect(Math.max(...perTransition.map(({ statements }) => statements))).toBeLessThanOrEqual(
-    RESTORE_TRANSFORM_STATEMENT_BUDGET
+    RESTORE_STATEMENT_BUDGET
   );
   // The two 100-row datasets (600 statements together) no longer share one batch.
   expect(perTransition.every(({ datasets }) => datasets.size <= 1)).toBe(true);
@@ -1625,4 +1626,369 @@ it('splits rows whose transforms issue statements across transitions and resumes
   const writes = transformed.filter(({ mode }) => mode === 'write');
   expect(writes.filter(({ datasetId }) => datasetId === 'core.grants_c').length).toBe(400 + 50);
   expect(writes.length).toBe(600 + 50);
+});
+
+/** The D1 calls of each transition, the way the production adapter makes them (a batch is one). */
+function countedD1(onCall: (statements: readonly string[]) => void) {
+  return (db: DatabaseSync) => {
+    const base = adapter(db);
+    return {
+      async query<T>(sql: string, params: unknown[] = []) {
+        onCall([sql]);
+        return base.query<T>(sql, params);
+      },
+      async queryOne<T>(sql: string, params: unknown[] = []) {
+        onCall([sql]);
+        return base.queryOne<T>(sql, params);
+      },
+      async execute(sql: string, params: unknown[] = []) {
+        onCall([sql]);
+        return base.execute(sql, params);
+      },
+      async batch(statements: { sql: string; params: unknown[] }[]) {
+        onCall(statements.map(({ sql }) => sql));
+        db.exec('BEGIN');
+        try {
+          const results = statements.map(({ sql, params }) => ({
+            success: true,
+            rowsAffected: Number(db.prepare(sql).run(...(params as SQLInputValue[])).changes),
+          }));
+          db.exec('COMMIT');
+          return results;
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      },
+    };
+  };
+}
+
+/**
+ * Persist a sequence of `policies` on the one test target and drive it through the real scheduler,
+ * one transition per run, until the SQL restore is verified. Returns each transition's D1 calls.
+ */
+async function driveSequence(
+  policies: readonly SqliteDatasetInspectionPolicy[],
+  rowsOf: (datasetId: string) => readonly string[]
+): Promise<{ phase: string; calls: (readonly string[])[] }[]> {
+  let calls: (readonly string[])[] = [];
+  const counted = countedD1((statements) => calls.push(statements));
+  const adminDb = counted(admin);
+  const sourceManifest = { ...manifest, datasets: policies.map(({ dataset }) => dataset) };
+  await persist();
+  await persistSqliteRestoreSequence(
+    inventory,
+    1,
+    policies.map((candidate) => ({
+      targetId: 'target',
+      ordinal: 0,
+      policy: candidate,
+      manifest: sourceManifest,
+      recordCount: rowsOf(candidate.dataset.id).length,
+      byteCount: rowsOf(candidate.dataset.id).join('').length,
+    }))
+  );
+  await seal();
+  const saved = await store.checkpoint(
+    context.lease,
+    context.operation.revision,
+    'start_sqlite_restore_sequence',
+    JSON.stringify({
+      version: 1,
+      sequenceOrdinal: 1,
+      jobIndex: 0,
+      datasetCursor: null,
+      completedRows: [],
+      emptyPrepared: true,
+    }),
+    now
+  );
+  if (!saved) throw new Error('checkpoint_missing');
+  await store.release(context.lease, saved.revision, 'queued', now);
+  const handlers = {
+    async run(slice: TenantBackupStepContext) {
+      if (slice.operation.phase === 'restore_other_stores')
+        return {
+          phase: 'verify_restore_targets',
+          cursor: slice.operation.cursor_json,
+          disposition: 'continue' as const,
+        };
+      return runSqliteRestoreSequenceStep(slice, {
+        inventory: new TenantBackupExecutionInventory(adminDb, slice.lease, () => now),
+        sequenceOrdinal: 1,
+        now: () => now,
+        async resolve() {
+          return { ...resource(), database: counted(target) };
+        },
+        async assertValidatedUnpublishedPlan() {},
+        async loadValidatedDataset(job) {
+          const rows = rowsOf(job.datasetId);
+          return {
+            policy: policies.find(({ dataset }) => dataset.id === job.datasetId)!,
+            manifest: sourceManifest,
+            async readNextValidatedRow({ sourceCursor }) {
+              const index = sourceCursor === null ? 0 : Number(sourceCursor.slice(4));
+              return index < rows.length
+                ? { rowJson: rows[index], nextCursor: `row:${index + 1}` }
+                : null;
+            },
+          };
+        },
+      });
+    },
+    async cleanup() {
+      throw new Error('unexpected');
+    },
+  };
+  const transitions: { phase: string; calls: (readonly string[])[] }[] = [];
+  for (let i = 0; i < 400; i++) {
+    const phase = (await store.get('a', 'import'))?.phase ?? '';
+    if (phase === 'verify_other_restore_stores') return transitions;
+    now++;
+    calls = [];
+    const result = await runTenantBackupScheduler(adminDb, handlers, context.signal, () => now);
+    if (result.failures) throw new Error(`transition_failed:${result.failureCodes.join(',')}`);
+    transitions.push({ phase, calls });
+  }
+  throw new Error('sequence_not_finished');
+}
+
+/** Round trips a transition may take: the statement budget plus its fixed lease and plan checks. */
+const TRANSITION_CALLS_MAX = RESTORE_STATEMENT_BUDGET + 100;
+
+function oneRowDataset(id: string): SqliteDatasetInspectionPolicy {
+  const table = id.slice('core.'.length);
+  target.exec(`CREATE TABLE ${table}(id TEXT PRIMARY KEY NOT NULL, tenant_id TEXT NOT NULL)`);
+  return {
+    dataset: { ...policy.dataset, id },
+    restoreAfter: ['core.tenants'],
+    schema: {
+      table,
+      columns: ['id', 'tenant_id'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    async inspectRow() {
+      return [];
+    },
+  };
+}
+
+it('counts each dataset count check against the statement budget of a shared batch', async () => {
+  const small = Array.from({ length: 80 }, (_, index) => oneRowDataset(`core.small_${index}`));
+  const transitions = await driveSequence([policy, ...small], (id) =>
+    id === policy.dataset.id ? [row] : [`{"id":["text","${id}"],"tenant_id":["text","a"]}`]
+  );
+  const calls = transitions.map(({ calls: made }) => made.length);
+  expect(Math.max(...calls)).toBeLessThanOrEqual(TRANSITION_CALLS_MAX);
+  // Writing and finally verifying 81 one-row datasets takes more than one shared batch each.
+  expect(transitions.filter(({ phase }) => phase === 'verify_sealed_sqlite_datasets').length).toBe(
+    2 + Math.ceil(81 / Math.floor(RESTORE_STATEMENT_BUDGET / (2 * RESTORE_DATASET_STATEMENTS)))
+  );
+  for (const { dataset } of small)
+    expect(target.prepare(`SELECT count(*) AS n FROM ${dataset.id.slice(5)}`).get()).toEqual({
+      n: 1,
+    });
+});
+
+it('reconciles generated rows apart from a final shared batch that fills the budget', async () => {
+  target.exec(
+    'CREATE TABLE outbox(id TEXT PRIMARY KEY NOT NULL, tenant_id TEXT NOT NULL, value TEXT NOT NULL)'
+  );
+  target.exec(
+    'CREATE TABLE mapped(id TEXT PRIMARY KEY NOT NULL, tenant_id TEXT NOT NULL, value TEXT NOT NULL)'
+  );
+  const outbox: SqliteDatasetInspectionPolicy = {
+    dataset: { ...policy.dataset, id: 'core.outbox' },
+    restoreAfter: ['core.tenants'],
+    schema: {
+      table: 'outbox',
+      columns: ['id', 'tenant_id', 'value'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    restoreReconcilesGeneratedRows: true,
+    restoreHold: {
+      id: 'test-outbox-hold-v1',
+      async shouldHold() {
+        return false;
+      },
+      async write() {},
+      async verify() {},
+    },
+    async inspectRow() {
+      return [];
+    },
+  };
+  // 160 rows of three statements each, plus its count check: the whole budget but 8.
+  const mapped: SqliteDatasetInspectionPolicy = {
+    dataset: { ...policy.dataset, id: 'core.mapped' },
+    restoreAfter: ['core.tenants', 'core.outbox'],
+    schema: { ...outbox.schema, table: 'mapped' },
+    restoreTransform: {
+      id: 'test-statement-map-v1',
+      statementsPerRow: 2,
+      async transform(_context, rowJson) {
+        return rowJson;
+      },
+    },
+    async inspectRow() {
+      return [];
+    },
+  };
+  const rowsFor = (table: string, count: number) =>
+    Array.from({ length: count }, (_, index) =>
+      JSON.stringify({
+        id: ['text', `${table}-${index}`],
+        tenant_id: ['text', 'a'],
+        value: ['text', 'done'],
+      })
+    );
+  const transitions = await driveSequence([policy, outbox, mapped], (id) =>
+    id === policy.dataset.id
+      ? [row]
+      : id === outbox.dataset.id
+        ? rowsFor('outbox', 300)
+        : rowsFor('mapped', 160)
+  );
+  const reconciles = (calls: (readonly string[])[]) =>
+    calls.some((statements) => statements.some((sql) => /^DELETE FROM "outbox"/.test(sql)));
+  const writesMapped = (calls: (readonly string[])[]) =>
+    calls.some((statements) => statements.some((sql) => /INSERT INTO "mapped"/.test(sql)));
+  const reconciled = transitions.filter(({ calls }) => reconciles(calls));
+  expect(reconciled).toHaveLength(1);
+  expect(writesMapped(reconciled[0].calls)).toBe(false);
+  expect(target.prepare('SELECT count(*) AS n FROM mapped').get()).toEqual({ n: 160 });
+  expect(target.prepare('SELECT count(*) AS n FROM outbox').get()).toEqual({ n: 300 });
+});
+
+it('opens many restore targets over several start transitions and resumes where it stopped', async () => {
+  const count = 10;
+  const databases = Array.from({ length: count }, () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec(
+      readFileSync(
+        new URL(
+          '../../../../../../migrations/core/d1/010_tenant_backup_restore_target.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
+    db.exec('CREATE TABLE empty_rows(id TEXT PRIMARY KEY NOT NULL, tenant_id TEXT NOT NULL)');
+    return db;
+  });
+  try {
+    const physical = (index: number) => ({
+      targetId: `target-${index}`,
+      resourceId: `physical-${index}`,
+      provisioningId: 'provision-op',
+      database: adapter(databases[index]),
+    });
+    for (let index = 0; index < count; index++)
+      await persistInitializedSqliteRestoreTarget({
+        context,
+        inventory,
+        ordinal: index,
+        resource: physical(index),
+        async assertProvisioningOwnership() {},
+      });
+    const empty = (index: number): SqliteDatasetInspectionPolicy => ({
+      ...policy,
+      dataset: { ...policy.dataset, id: `core.empty_${index}` },
+      schema: { ...policy.schema, table: 'empty_rows', tenantColumn: 'tenant_id' },
+    });
+    const sourceManifest = {
+      ...manifest,
+      datasets: Array.from({ length: count }, (_, index) => empty(index).dataset),
+    };
+    await persistSqliteRestoreSequence(
+      inventory,
+      count,
+      Array.from({ length: count }, (_, index) => ({
+        targetId: `target-${index}`,
+        ordinal: index,
+        policy: empty(index),
+        manifest: sourceManifest,
+        recordCount: 0,
+        byteCount: 0,
+      }))
+    );
+    await seal();
+    const input = {
+      inventory,
+      sequenceOrdinal: count,
+      now: () => now,
+      async resolve(resourceId: string) {
+        return physical(Number(resourceId.slice('physical-'.length)));
+      },
+      async assertValidatedUnpublishedPlan() {},
+      async loadValidatedDataset(): Promise<never> {
+        throw new Error('empty_datasets_must_not_be_loaded');
+      },
+    };
+    const opened = () =>
+      databases.filter(
+        (db) =>
+          (
+            db.prepare('SELECT count(*) AS n FROM tenant_backup_restore_targets').get() as {
+              n: number;
+            }
+          ).n > 0
+      ).length;
+    let cursor: string | null = JSON.stringify({
+      version: 1,
+      sequenceOrdinal: count,
+      jobIndex: 0,
+      datasetCursor: null,
+      completedRows: [],
+      emptyPrepared: false,
+    });
+    const perTransition = Math.floor(RESTORE_STATEMENT_BUDGET / 80);
+    const progress: number[] = [];
+    for (let transition = 0; transition < count; transition++) {
+      const result = await runSqliteRestoreSequenceStep(
+        {
+          ...context,
+          operation: {
+            ...context.operation,
+            phase: 'start_sqlite_restore_sequence',
+            cursor_json: cursor,
+          },
+        },
+        input
+      );
+      expect(result.phase).toBe('start_sqlite_restore_sequence');
+      cursor = result.cursor;
+      progress.push(opened());
+      if (JSON.parse(cursor ?? '{}').emptyPrepared) break;
+    }
+    // Each start transition opens at most what the budget allows, and the next one resumes.
+    expect(progress).toEqual([perTransition, count]);
+    expect(JSON.parse(cursor ?? '{}')).toEqual({
+      version: 1,
+      sequenceOrdinal: count,
+      jobIndex: 0,
+      datasetCursor: null,
+      completedRows: [],
+      emptyPrepared: true,
+    });
+    const completed = await runSqliteRestoreSequenceStep(
+      {
+        ...context,
+        operation: {
+          ...context.operation,
+          phase: 'start_sqlite_restore_sequence',
+          cursor_json: cursor,
+        },
+      },
+      input
+    );
+    expect(completed.phase).toBe('restore_other_stores');
+  } finally {
+    for (const db of databases) db.close();
+  }
 });

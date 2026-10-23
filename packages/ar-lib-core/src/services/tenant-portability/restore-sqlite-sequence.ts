@@ -3,8 +3,9 @@ import { encodeTenantBundleManifest } from './bundle-manifest';
 import type { TenantBackupRestorePlanInventoryPort } from './restore-plan-inventory';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import {
+  RESTORE_DATASET_STATEMENTS,
   RESTORE_PAGE_ROWS_MAX,
-  RESTORE_TRANSFORM_STATEMENT_BUDGET,
+  RESTORE_STATEMENT_BUDGET,
   RESTORE_VERIFY_QUERY_BUDGET,
   restoreRowStatements,
   restoreStatementRows,
@@ -46,11 +47,29 @@ const fail = () => new Error('backup_restore_sequence_invalid');
 const EXECUTION_BATCH_ROWS = 500;
 const EXECUTION_BATCH_BYTES = 4 * 1024 * 1024;
 
-/** Rows of a dataset costing `rowStatements` each that still fit after `spent` statements. */
-function statementRows(rowStatements: number, spent: number): number {
-  return rowStatements
-    ? Math.floor((RESTORE_TRANSFORM_STATEMENT_BUDGET - spent) / rowStatements)
-    : Number.POSITIVE_INFINITY;
+/** Round trips opening one restore target for writing costs the first time (pinning its seed). */
+const TARGET_OPEN_STATEMENTS = 80;
+
+/** Rows of a dataset costing `rowStatements` each that fit `room` statements. */
+function statementRows(rowStatements: number, room: number): number {
+  if (room < 0) return 0;
+  return rowStatements ? Math.floor(room / rowStatements) : Number.POSITIVE_INFINITY;
+}
+
+/** Round trips reading back `rows` restored rows of `policy` in grouped queries. */
+function readbackStatements(policy: Source['policy'], rows: number): number {
+  return Math.ceil(
+    (rows * RESTORE_VERIFY_QUERY_BUDGET) /
+      sqliteRestoreVerifyRowBudget(policy, RESTORE_VERIFY_QUERY_BUDGET)
+  );
+}
+
+/**
+ * Round trips replacing one dataset's generated rows costs: its target's checks, the replacing
+ * write, reading the rows back and the count check.
+ */
+function reconcileStatements(job: Job, policy: Source['policy']): number {
+  return 3 * RESTORE_DATASET_STATEMENTS + readbackStatements(policy, job.recordCount);
 }
 
 function canShareExecutionBatch(policy: Source['policy']): boolean {
@@ -166,11 +185,16 @@ async function runDatasetExecutionBatch(
   throw fail();
 }
 
+/**
+ * Open the registered targets from `opened` on, as many as the statement budget allows, and
+ * return how many are open; targets are taken in a fixed order so a later transition resumes.
+ */
 async function openRegisteredRestoreTargets(
   context: TenantBackupStepContext,
   input: Parameters<typeof runSqliteRestoreSequenceStep>[1],
-  jobs: readonly Job[]
-): Promise<void> {
+  jobs: readonly Job[],
+  opened: number
+): Promise<{ opened: number; total: number }> {
   const targets = new Map<string, { targetId: string; targetOrdinal: number }>();
   for (const job of jobs) {
     const existing = targets.get(job.targetId);
@@ -181,7 +205,12 @@ async function openRegisteredRestoreTargets(
     });
   }
 
-  const pending = [...targets.values()];
+  const all = [...targets.values()];
+  if (!Number.isSafeInteger(opened) || opened < 0 || opened > all.length) throw fail();
+  const pending = all.slice(
+    opened,
+    opened + Math.max(1, Math.floor(RESTORE_STATEMENT_BUDGET / TARGET_OPEN_STATEMENTS))
+  );
   for (let offset = 0; offset < pending.length; offset += 4) {
     await Promise.all(
       pending.slice(offset, offset + 4).map((target) =>
@@ -195,6 +224,21 @@ async function openRegisteredRestoreTargets(
       )
     );
   }
+  return { opened: opened + pending.length, total: all.length };
+}
+
+/** Round trips reconciling every dataset of the sequence that needs it costs. */
+async function reconcileReserve(
+  input: Parameters<typeof runSqliteRestoreSequenceStep>[1],
+  jobs: readonly Job[]
+): Promise<number> {
+  let total = 0;
+  for (const job of jobs) {
+    if (!job.reconcilesGeneratedRows) continue;
+    const { policy } = await input.loadValidatedDataset(structuredClone(job));
+    if (policy.restoreReconcilesGeneratedRows === true) total += reconcileStatements(job, policy);
+  }
+  return total;
 }
 
 async function reconcileGeneratedRestoreRows(
@@ -534,7 +578,13 @@ export async function runSqliteRestoreSequenceStep(
     // The sealed plan already authenticates every registered dataset descriptor, including its
     // zero count and zero byte length. Open each physical target once to pin its seed fingerprint
     // and unpublished lease; do not reload policies or query one destination table per empty item.
-    await openRegisteredRestoreTargets(context, input, registeredJobs);
+    // Many targets take several transitions; `targetsOpened` says where the next one resumes.
+    const targets = await openRegisteredRestoreTargets(
+      context,
+      input,
+      registeredJobs,
+      'targetsOpened' in cursor ? (cursor.targetsOpened as number) : 0
+    );
     return {
       phase: 'start_sqlite_restore_sequence',
       cursor: JSON.stringify({
@@ -543,7 +593,9 @@ export async function runSqliteRestoreSequenceStep(
         jobIndex: 0,
         datasetCursor: null,
         completedRows: [],
-        emptyPrepared: true,
+        ...(targets.opened < targets.total
+          ? { emptyPrepared: false, targetsOpened: targets.opened }
+          : { emptyPrepared: true }),
       }),
       disposition: 'continue',
     };
@@ -638,10 +690,21 @@ export async function runSqliteRestoreSequenceStep(
     const batch: { job: Job; loaded: Loaded; rows: string[]; bytes: number }[] = [];
     let batchRows = 0;
     let batchBytes = 0;
+    // Row statements and one count check per dataset; a batch that ends the sequence also leaves
+    // room to reconcile generated rows in this transition.
     let batchStatements = 0;
+    let reserve: number | undefined;
     for (let candidateIndex = index; candidateIndex < jobs.length; candidateIndex++) {
       const candidate = jobs[candidateIndex];
       if (batch.length && candidate.targetId !== batch[0].job.targetId) break;
+      if (candidateIndex === jobs.length - 1)
+        reserve ??= await reconcileReserve(input, registeredJobs);
+      const room =
+        RESTORE_STATEMENT_BUDGET -
+        batchStatements -
+        RESTORE_DATASET_STATEMENTS -
+        (candidateIndex === jobs.length - 1 ? (reserve ?? 0) : 0);
+      if (batch.length && room < 0) break;
       const loaded = await input.loadValidatedDataset(structuredClone(candidate));
       const actual = await descriptor({
         ...loaded,
@@ -656,7 +719,7 @@ export async function runSqliteRestoreSequenceStep(
         loaded,
         candidate,
         head.chain_digest,
-        Math.min(EXECUTION_BATCH_ROWS - batchRows, statementRows(rowStatements, batchStatements)),
+        Math.min(EXECUTION_BATCH_ROWS - batchRows, statementRows(rowStatements, room)),
         EXECUTION_BATCH_BYTES - batchBytes
       );
       if (
@@ -668,7 +731,7 @@ export async function runSqliteRestoreSequenceStep(
       batch.push({ job: candidate, loaded: kept(loaded), ...complete });
       batchRows += complete.rows.length;
       batchBytes += complete.bytes;
-      batchStatements += complete.rows.length * rowStatements;
+      batchStatements += complete.rows.length * rowStatements + RESTORE_DATASET_STATEMENTS;
     }
     if (batch.length) {
       await input.inventory.headForLease(context.lease);
@@ -901,6 +964,7 @@ async function finalizeSqliteTargets(
     let batchBytes = 0;
     // Share of the read-back query budget used so far; wide tables cost more per row.
     let batchQueries = 0;
+    // Row statements, and per dataset its read-back call's checks and its count check.
     let batchStatements = 0;
     const verificationHead = await input.inventory.headForLease(context.lease);
     for (let candidateIndex = verifyIndex; candidateIndex < jobs.length; candidateIndex++) {
@@ -928,15 +992,13 @@ async function finalizeSqliteTargets(
         ((RESTORE_VERIFY_QUERY_BUDGET - batchQueries) * rowsPerBudget) / RESTORE_VERIFY_QUERY_BUDGET
       );
       const rowStatements = restoreRowStatements(loaded.policy);
+      const room = RESTORE_STATEMENT_BUDGET - batchStatements - 2 * RESTORE_DATASET_STATEMENTS;
+      if (batch.length && room < 0) break;
       const complete = await readCompleteDataset(
         loaded,
         candidate,
         verificationHead.chain_digest,
-        Math.min(
-          EXECUTION_BATCH_ROWS - batchRows,
-          queryRows,
-          statementRows(rowStatements, batchStatements)
-        ),
+        Math.min(EXECUTION_BATCH_ROWS - batchRows, queryRows, statementRows(rowStatements, room)),
         EXECUTION_BATCH_BYTES - batchBytes
       );
       if (!complete || complete.rows.length !== completedRows[candidateIndex]) break;
@@ -944,7 +1006,7 @@ async function finalizeSqliteTargets(
       batchRows += complete.rows.length;
       batchBytes += complete.bytes;
       batchQueries += (complete.rows.length * RESTORE_VERIFY_QUERY_BUDGET) / rowsPerBudget;
-      batchStatements += complete.rows.length * rowStatements;
+      batchStatements += complete.rows.length * rowStatements + 2 * RESTORE_DATASET_STATEMENTS;
     }
     if (batch.length) {
       const target = await openPlannedSqliteRestoreTarget({
