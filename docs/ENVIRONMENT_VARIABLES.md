@@ -218,6 +218,12 @@ takes precedence).
 | `ENABLE_RATE_LIMIT`  | boolean | `true`     | Enable rate limiting                                  |
 | `RATE_LIMIT_PROFILE` | string  | `standard` | Rate limit profile (`standard`, `strict`, `loadTest`) |
 
+Authenticator-app (TOTP) sign-in starts are limited per identifier and IP address, outside the
+profiles: `TOTP_RATE_LIMIT_MAX_REQUESTS` (1-100, default `10`) per `TOTP_RATE_LIMIT_WINDOW`
+seconds (60-3600, default `900`). The Settings API values (`rate_limit.totp_max_requests`,
+`rate_limit.totp_window`, platform or tenant) take precedence; a value that is not a whole number
+in range keeps the default.
+
 ### SCIM Configuration
 
 Tenant enablement, the inbound Mapping Set, enabled resource endpoints, and Bulk limits are

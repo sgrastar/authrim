@@ -129,7 +129,7 @@ export const RATE_LIMIT_SETTINGS_META: Record<keyof RateLimitSettings, SettingMe
     description:
       'Authenticator-app sign-in and re-authentication starts per identifier and IP address, and sign-up code checks per sign-up and IP address, allowed per window. Each start allows one code check.',
     min: 1,
-    max: 1000,
+    max: 100,
     integer: true,
     visibility: 'admin',
   },

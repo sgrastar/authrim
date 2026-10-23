@@ -630,9 +630,8 @@ paths:
       description: >-
         Sets all rate-limited endpoints to use the selected profile after runtime cache propagation.
         The loadTest profile always expires automatically; callers may select a 60-3600 second TTL.
-        While a loadTest override is in force, authenticator-app attempts past their own limit
-        (rate_limit.totp_max_requests per rate_limit.totp_window) are counted against the loadTest
-        limit and window instead, when that limit is higher.
+        It does not raise the per-identifier authenticator-app attempt limit
+        (rate_limit.totp_max_requests per rate_limit.totp_window), which is set per tenant.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsRateLimitProfileOverrideUpdate'
@@ -2046,13 +2045,12 @@ paths:
         a passkey or authenticator-app sign-up by a code sent to that email first, an external IdP
         sign-up by the provider reporting the email verified (an email-code sign-up always proves
         it).
-        The rate-limit category includes rate_limit.totp_max_requests (integer 1-1000, default 10)
+        The rate-limit category includes rate_limit.totp_max_requests (integer 1-100, default 10)
         and rate_limit.totp_window (seconds 60-3600, default 900): how many authenticator-app
         sign-in and re-authentication starts are allowed per identifier and IP address, and how
-        many sign-up code checks per sign-up and IP address, per window. While the loadTest rate
-        limit profile is in force (RATE_LIMIT_PROFILE or the profile override) and its limit is
-        higher, the attempts past this limit are counted against the loadTest limit and window
-        instead.
+        many sign-up code checks per sign-up and IP address, per window. The rate limit profile
+        override (loadTest) does not raise them; a conformance run raises them for its tenant
+        here and restores them afterwards.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2396,7 +2394,7 @@ paths:
       description: >-
         Get Setting settings in the Admin Miscellaneous area. Use this operation to retrieve setting
         data without mutating tenant state.
-        The rate-limit category includes rate_limit.totp_max_requests (integer 1-1000, default 10)
+        The rate-limit category includes rate_limit.totp_max_requests (integer 1-100, default 10)
         and rate_limit.totp_window (seconds 60-3600, default 900), the platform default of the
         authenticator-app attempt limit that a tenant can override.
       security:

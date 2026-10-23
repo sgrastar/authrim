@@ -29,7 +29,6 @@ import {
   getTenantIdFromContext,
   profileForTotpPreset,
   publishEvent,
-  readLoadTestRateLimitConfig,
   resolvePostLoginRedirectUrl,
   resolveTotpAttemptLimit,
   resolveAccountDataContextFromHono,
@@ -291,26 +290,16 @@ async function rateLimitTotpLogin(
   // The tenant's limit (rate_limit.totp_max_requests per rate_limit.totp_window; 10 per 15
   // minutes by default).
   const limit = await resolveTotpAttemptLimit(c.env, tenantId);
+  // The loadTest profile does not raise it: this limit is what keeps authenticator-app codes from
+  // being guessed. A conformance run raises it for its tenant through this setting instead.
   const result = await stub.incrementRpc(key, limit);
   if (result.allowed) return null;
-  let retryAfter = result.retryAfter;
-  // While the loadTest profile is in force (a load test or conformance run) and its limit is
-  // higher, the starts past this limit are counted against the loadTest limit and window instead:
-  // up to that many more per loadTest window. This limit's own count keeps growing, so once the
-  // profile ends it applies until its window resets.
-  const loadTest = await readLoadTestRateLimitConfig(c.env);
-  if (loadTest && loadTest.maxRequests > limit.maxRequests) {
-    const loadTestResult = await stub.incrementRpc(`loadtest:${key}`, loadTest);
-    if (loadTestResult.allowed) return null;
-    // Either window ending allows another start: tell the earlier one.
-    retryAfter = Math.min(retryAfter, loadTestResult.retryAfter);
-  }
   // retry_after also in error_details, which the SDK keeps on the errors it raises.
   return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
-    variables: { retry_after: retryAfter },
+    variables: { retry_after: result.retryAfter },
     extensions: {
-      retry_after: retryAfter,
-      error_details: { retry_after: retryAfter },
+      retry_after: result.retryAfter,
+      error_details: { retry_after: result.retryAfter },
     },
   });
 }

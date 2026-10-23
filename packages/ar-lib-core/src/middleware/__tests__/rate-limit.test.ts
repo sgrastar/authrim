@@ -14,7 +14,6 @@ import {
   parseRateLimitProfileOverride,
   rateLimitMiddleware,
   RateLimitProfiles,
-  readLoadTestRateLimitConfig,
 } from '../rate-limit';
 
 // Mock environment
@@ -1733,79 +1732,5 @@ describe('parseRateLimitProfileOverride', () => {
     expect(
       parseRateLimitProfileOverride(formatRateLimitProfileOverride('loadTest', now - 1), now)
     ).toBeNull();
-  });
-});
-
-describe('readLoadTestRateLimitConfig', () => {
-  const kvWith = (values: Record<string, string>): KVNamespace =>
-    ({ get: vi.fn(async (key: string) => values[key] ?? null) }) as unknown as KVNamespace;
-  const inAnHour = () => Date.now() + 60 * 60 * 1000;
-
-  it('gives the loadTest limits while a loadTest override applies', async () => {
-    const env = {
-      AUTHRIM_CONFIG: kvWith({
-        rate_limit_profile_override: formatRateLimitProfileOverride('loadTest', inAnHour()),
-      }),
-      SETTINGS: kvWith({
-        'settings:platform:rate-limit': JSON.stringify({ 'rate_limit.loadtest': 20000 }),
-      }),
-    } as unknown as Env;
-
-    await expect(readLoadTestRateLimitConfig(env)).resolves.toEqual({
-      maxRequests: 20000,
-      windowSeconds: RateLimitProfiles.loadTest.windowSeconds,
-    });
-  });
-
-  it('gives the loadTest limits under RATE_LIMIT_PROFILE=loadTest', async () => {
-    const env = { RATE_LIMIT_PROFILE: 'loadTest' } as unknown as Env;
-    await expect(readLoadTestRateLimitConfig(env)).resolves.toEqual({
-      maxRequests: RateLimitProfiles.loadTest.maxRequests,
-      windowSeconds: RateLimitProfiles.loadTest.windowSeconds,
-    });
-  });
-
-  it.each([
-    ['no override', {}],
-    ['another profile', { rate_limit_profile_override: 'lenient' }],
-    [
-      'an expired loadTest override',
-      { rate_limit_profile_override: formatRateLimitProfileOverride('loadTest', 1) },
-    ],
-  ])('gives nothing for %s', async (_label, values: Record<string, string>) => {
-    const env = { AUTHRIM_CONFIG: kvWith(values) } as unknown as Env;
-    await expect(readLoadTestRateLimitConfig(env)).resolves.toBeNull();
-  });
-
-  it('gives nothing for an override that expires while its limits are read', async () => {
-    const now = Date.now();
-    const env = {
-      AUTHRIM_CONFIG: kvWith({
-        rate_limit_profile_override: formatRateLimitProfileOverride('loadTest', now + 1_000),
-      }),
-      SETTINGS: {
-        get: vi.fn(async () => {
-          vi.setSystemTime(now + 2_000);
-          return null;
-        }),
-      } as unknown as KVNamespace,
-    } as unknown as Env;
-    vi.useFakeTimers({ now });
-    try {
-      await expect(readLoadTestRateLimitConfig(env)).resolves.toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('gives nothing when the override cannot be read', async () => {
-    const env = {
-      AUTHRIM_CONFIG: {
-        get: vi.fn(async () => {
-          throw new Error('kv unavailable');
-        }),
-      } as unknown as KVNamespace,
-    } as unknown as Env;
-    await expect(readLoadTestRateLimitConfig(env)).resolves.toBeNull();
   });
 });

@@ -14,9 +14,9 @@ describe('resolveTotpAttemptLimit from the environment', () => {
   });
 
   it.each([
-    ['fractions', '1000.9', '60.5'],
+    ['fractions', '100.9', '60.5'],
     ['trailing text', '40junk', '600s'],
-    ['values out of range', '1001', '59'],
+    ['values out of range', '101', '59'],
   ])('keeps the defaults for %s', async (_label, maxRequests, windowSeconds) => {
     await expect(
       resolve({ TOTP_RATE_LIMIT_MAX_REQUESTS: maxRequests, TOTP_RATE_LIMIT_WINDOW: windowSeconds })

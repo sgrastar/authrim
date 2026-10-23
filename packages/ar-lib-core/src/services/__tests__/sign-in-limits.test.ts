@@ -132,7 +132,7 @@ describe('sign-in limits', () => {
 
     it.each([
       [0, 59],
-      [1001, 3601],
+      [101, 3601],
       [12.5, 600.5],
       ['40', '600'],
     ])(
@@ -151,11 +151,11 @@ describe('sign-in limits', () => {
 
     it('keeps only the out-of-range value at its default', async () => {
       resolveEffectiveSettings.mockResolvedValue({
-        'rate_limit.totp_max_requests': 1000,
+        'rate_limit.totp_max_requests': 100,
         'rate_limit.totp_window': 30,
       });
       await expect(resolveTotpAttemptLimit(env, 't')).resolves.toEqual({
-        maxRequests: 1000,
+        maxRequests: 100,
         windowSeconds: 900,
       });
     });
