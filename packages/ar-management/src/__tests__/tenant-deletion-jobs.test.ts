@@ -150,6 +150,7 @@ describe('tenant deletion jobs', () => {
       source === 'admin-db' ? mockControlAdapter : mockAdapter
     );
     mockControlAdapter.query.mockReset();
+    mockControlAdapter.query.mockResolvedValue([]);
     mockControlAdapter.queryOne.mockReset();
     mockControlAdapter.execute.mockReset();
     mockControlAdapter.execute.mockResolvedValue({ rowsAffected: 1, success: true });
@@ -308,6 +309,11 @@ describe('tenant deletion jobs', () => {
       'DELETE FROM internal_notification_events WHERE tenant_id = ?',
       ['target-tenant']
     );
+    // The tenant's jobs kept in DB_ADMIN go with it (all but the deletion's own).
+    expect(mockControlAdapter.execute).toHaveBeenCalledWith(
+      'DELETE FROM admin_jobs WHERE tenant_id = ? AND id NOT IN (?)',
+      ['target-tenant', 'job-1']
+    );
     expect(mockControlTx.execute).toHaveBeenCalledWith(
       'DELETE FROM tenant_settings_documents WHERE tenant_id = ?',
       ['target-tenant']
@@ -326,6 +332,113 @@ describe('tenant deletion jobs', () => {
     expect(mockControlAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE tenant_database_registry'),
       ['deleted', expect.any(String), 'job-1', expect.any(String), 'target-tenant']
+    );
+  });
+
+  it('tombstones the result artifacts of the tenant jobs kept in DB_ADMIN before removing them', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-1',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+      },
+    ]);
+    mockControlAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('FROM admin_jobs') && sql.includes('id NOT IN')
+        ? [
+            { object_catalog_id: 'catalog-1', result_r2_key: null },
+            { object_catalog_id: null, result_r2_key: 'exports/target-tenant/result.json' },
+          ]
+        : []
+    );
+    const exportArtifacts = { delete: vi.fn(async () => undefined) };
+
+    await processPendingTenantDeletionJobs(
+      controlEnvironment({ EXPORT_ARTIFACTS: exportArtifacts }),
+      logger
+    );
+
+    const adminSql = mockControlAdapter.execute.mock.calls.map((call) => String(call[0]));
+    const tombstone = adminSql.findIndex((sql) => sql.includes('UPDATE object_catalog'));
+    const removal = adminSql.indexOf(
+      'DELETE FROM admin_jobs WHERE tenant_id = ? AND id NOT IN (?)'
+    );
+    expect(tombstone).toBeGreaterThanOrEqual(0);
+    expect(removal).toBeGreaterThan(tombstone);
+    expect(mockControlAdapter.execute.mock.calls[tombstone]?.[1]).toEqual(
+      expect.arrayContaining(['target-tenant', 'catalog-1'])
+    );
+    expect(exportArtifacts.delete).toHaveBeenCalledWith('exports/target-tenant/result.json');
+  });
+
+  it('tombstones the backup artifacts an export job of the tenant names in its result', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-1',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+      },
+    ]);
+    mockControlAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('FROM admin_jobs') && sql.includes('id NOT IN')
+        ? [
+            {
+              id: 'old-backup',
+              job_type: 'tenant-database/export',
+              object_catalog_id: null,
+              result_r2_key: null,
+              result: JSON.stringify({
+                manifest: { object_catalog_id: 'manifest-1' },
+                table_artifacts: [
+                  { object_catalog_id: 'table-1' },
+                  { object_catalog_id: 'table-2' },
+                ],
+              }),
+            },
+          ]
+        : []
+    );
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    const tombstoned = mockControlAdapter.execute.mock.calls
+      .filter((call) => String(call[0]).includes('UPDATE object_catalog'))
+      .map((call) =>
+        (call[1] as unknown[]).find((value) => String(value).match(/^(manifest|table)-/))
+      );
+    expect([...new Set(tombstoned)].sort()).toEqual(['manifest-1', 'table-1', 'table-2']);
+  });
+
+  it('keeps the job rows while an artifact they find cannot be removed', async () => {
+    mockAdapter.query.mockResolvedValue([
+      {
+        id: 'job-1',
+        tenant_id: 'operator-tenant',
+        config: JSON.stringify({ tenant_id: 'target-tenant', skip_backup: true }),
+      },
+    ]);
+    mockControlAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('FROM admin_jobs') && sql.includes('id NOT IN')
+        ? [
+            {
+              job_type: 'users/import',
+              object_catalog_id: null,
+              result_r2_key: 'imports/target-tenant/result.json',
+              result: null,
+            },
+          ]
+        : []
+    );
+
+    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+
+    expect(mockControlAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM admin_jobs'),
+      expect.anything()
+    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'pending', progress = ?, error_message = ?"),
+      expect.arrayContaining(['tenant_deletion_artifact_storage_unavailable'])
     );
   });
 

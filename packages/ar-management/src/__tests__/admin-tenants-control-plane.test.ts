@@ -986,6 +986,66 @@ describe('Control Plane tenant management', () => {
     );
   });
 
+  it('leaves the tenant cache alone when another command moved the tenant before the move back', async () => {
+    const { putTenantExistsCache, deleteTenantExistsCache, createAuditLogFromContext } =
+      await import('@authrim/ar-lib-core');
+    // A break-glass resume of an active tenant: the command keeps it active, with a validation.
+    let tenantRow = createTenantRow('second', { lifecycle_state: 'active', updated_at: 10 });
+    adapters.defaultAdapter = createAdapter((sql, params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) return tenantRow;
+      if (op === 'execute' && sql.includes('UPDATE tenants SET lifecycle_state = ?')) {
+        // The command's move; then another command freezes the tenant before the move back.
+        if (params[0] === 'active' && tenantRow.updated_at === 10) {
+          tenantRow = { ...tenantRow, updated_at: Number(params[1]) };
+          return { rowsAffected: 1 };
+        }
+        tenantRow = { ...tenantRow, lifecycle_state: 'frozen', updated_at: 99 };
+        return { rowsAffected: 0 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    adapters.lifecycleJobsAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'execute' && sql.includes('INSERT INTO admin_jobs')) {
+        throw new Error('jobs database unavailable');
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    await expect(
+      adminTenantResumeHandler(
+        createContext(
+          {
+            expected_state: 'active',
+            expected_updated_at: 10,
+            reason: 'service restored',
+            break_glass: true,
+          },
+          {},
+          { id: 'second' },
+          {
+            userId: 'platform-admin',
+            roles: ['system_admin'],
+            globalRoles: ['system_admin'],
+            tenantScope: ['*'],
+            permissions: ['admin:tenants:lifecycle:break_glass'],
+          }
+        )
+      )
+    ).rejects.toThrow('jobs database unavailable');
+
+    expect(putTenantExistsCache).not.toHaveBeenCalled();
+    expect(deleteTenantExistsCache).toHaveBeenCalledWith(expect.anything(), 'second');
+    expect(createAuditLogFromContext).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant.lifecycle.resume',
+      'tenant',
+      'second',
+      expect.objectContaining({ job_kept: false, move_stands: false, observed_state: 'frozen' })
+    );
+  });
+
   it('rejects stale lifecycle commands before writing a job', async () => {
     adapters.defaultAdapter = createAdapter((sql, _params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
