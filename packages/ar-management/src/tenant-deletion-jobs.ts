@@ -204,23 +204,38 @@ function shouldRetryTenantDeletion(error: unknown): boolean {
   return !NON_RETRYABLE_DELETION_ERRORS.has(code);
 }
 
+/**
+ * The pre-purge backup: a tenant-database/export job kept in DB_ADMIN (`jobsAdapter`), where the
+ * scheduled admin job run claims it. The deletion job (in `adapter`) waits until it completed.
+ */
 async function ensureDeletionBackupCompleted(
   adapter: Pick<DatabaseAdapter, 'execute' | 'queryOne'>,
+  jobsAdapter: Pick<DatabaseAdapter, 'execute' | 'queryOne'> | null,
   job: TenantDeletionJobRow,
   config: TenantDeletionJobConfig
 ): Promise<{ completed: boolean; backupJobId: string | null }> {
   if (config.skip_backup || config.backup_policy === 'none') {
     return { completed: true, backupJobId: null };
   }
+  // Without DB_ADMIN the backup cannot run: the deletion stops, it never goes on without it.
+  if (!jobsAdapter) throw new Error('tenant_deletion_control_unavailable');
 
   const nowTs = Math.floor(Date.now() / 1000);
   const expectedJobId = backupJobId(job.id);
   if (config.backup_job_id && config.backup_job_id !== expectedJobId) {
     throw new Error('tenant_deletion_backup_job_invalid');
   }
-  if (!config.backup_job_id) {
-    const nextConfig = { ...config, backup_job_id: expectedJobId };
-    await adapter.execute(
+  // A backup requested before backups were kept in DB_ADMIN is in this database: one that ended
+  // counts as it ended; one that never ran (nothing claimed it here) is requested again in
+  // DB_ADMIN and removed here, so the backup is in one store only.
+  const legacy = await adapter.queryOne<TenantDeletionBackupJobRow>(
+    'SELECT status, job_type, created_by, config FROM admin_jobs WHERE id = ? AND tenant_id = ?',
+    [expectedJobId, config.tenant_id]
+  );
+  const legacyEnded = !!legacy && legacy.status !== 'pending' && legacy.status !== 'processing';
+  const backupStore = legacyEnded ? adapter : jobsAdapter;
+  if (!legacyEnded) {
+    await jobsAdapter.execute(
       `INSERT OR IGNORE INTO admin_jobs (
         id, tenant_id, job_type, status, progress, config, created_by, created_at, updated_at
       ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
@@ -235,8 +250,20 @@ async function ensureDeletionBackupCompleted(
         nowTs,
       ]
     );
+    if (legacy) {
+      validateBackupJob(legacy, job);
+      await adapter.execute(
+        `DELETE FROM admin_jobs
+          WHERE id = ? AND tenant_id = ? AND job_type = 'tenant-database/export'
+            AND status IN ('pending', 'processing')`,
+        [expectedJobId, config.tenant_id]
+      );
+    }
+  }
+  if (!config.backup_job_id) {
+    const nextConfig = { ...config, backup_job_id: expectedJobId };
     validateBackupJob(
-      await adapter.queryOne<TenantDeletionBackupJobRow>(
+      await backupStore.queryOne<TenantDeletionBackupJobRow>(
         'SELECT status, job_type, created_by, config FROM admin_jobs WHERE id = ? AND tenant_id = ?',
         [expectedJobId, config.tenant_id]
       ),
@@ -256,7 +283,7 @@ async function ensureDeletionBackupCompleted(
   }
 
   const backup = validateBackupJob(
-    await adapter.queryOne<TenantDeletionBackupJobRow>(
+    await backupStore.queryOne<TenantDeletionBackupJobRow>(
       'SELECT status, job_type, created_by, config FROM admin_jobs WHERE id = ? AND tenant_id = ?',
       [config.backup_job_id, config.tenant_id]
     ),
@@ -439,7 +466,7 @@ async function processPendingTenantDeletionJobsInStore(
       targetTenantId = config.tenant_id;
       const deletionTargetTenantId = config.tenant_id;
 
-      const backup = await ensureDeletionBackupCompleted(coreAdapter, job, config);
+      const backup = await ensureDeletionBackupCompleted(coreAdapter, adminAdapter, job, config);
       if (!backup.completed) {
         log.info('Tenant deletion job waiting for pre-purge backup', {
           job_id: job.id,
