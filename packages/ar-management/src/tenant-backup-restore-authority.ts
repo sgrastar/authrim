@@ -556,6 +556,10 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
         restoreTransform: {
           // Transform ids take [a-z0-9_.:-] only (the policy inspector refuses anything else).
           id: base ? `${base.id}.${GUARD_ID}` : `${GUARD_ID}:${policy.dataset.id}`,
+          // A global assignment's critical audit entry; the guards' other lookups are cached.
+          statementsPerRow:
+            (base?.statementsPerRow ?? 0) +
+            (policy.dataset.id === ADMIN_ROLE_ASSIGNMENTS_DATASET ? 1 : 0),
           async transform(context, rowJson, mode) {
             const transformed = base ? await base.transform(context, rowJson, mode) : rowJson;
             await guard(context, transformed, { mode, sourceRowJson: rowJson });
