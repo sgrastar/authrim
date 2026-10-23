@@ -2,6 +2,19 @@ import { describe, expect, it } from 'vitest';
 import type { Env } from '../../types/env';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import { createAuditLog } from '../audit-log';
+import {
+  ACCOUNT_EVENTS,
+  AUTH_EVENTS,
+  CLIENT_EVENTS,
+  CONSENT_EVENTS,
+  DOMAIN_EVENTS,
+  SCIM_EVENTS,
+  SECURITY_EVENTS,
+  SESSION_EVENTS,
+  SETTINGS_EVENTS,
+  TOKEN_EVENTS,
+  USER_EVENTS,
+} from '../../types/events/event-types';
 
 /**
  * The unified event_log mirror of audit_log, through the real core schema: a failed event must
@@ -179,6 +192,62 @@ describe('createAuditLog event_log mirror', () => {
     expect(row('evt_free_text_code')).toMatchObject({ result: 'failure', error_code: null });
     expect(row('evt_long_code')).toMatchObject({ result: 'failure', error_code: null });
     expect(row('evt_non_string_code')).toMatchObject({ result: 'failure', error_code: null });
+  });
+
+  it('classifies every declared event type, so a new failure type cannot default to success', async () => {
+    const declared = [
+      AUTH_EVENTS,
+      SESSION_EVENTS,
+      TOKEN_EVENTS,
+      CONSENT_EVENTS,
+      USER_EVENTS,
+      ACCOUNT_EVENTS,
+      CLIENT_EVENTS,
+      SECURITY_EVENTS,
+      DOMAIN_EVENTS,
+      SETTINGS_EVENTS,
+      SCIM_EVENTS,
+    ].flatMap((group) => Object.values(group) as string[]);
+    // Reviewed: these record an operation that happened (a revocation, a user's denial, a lock),
+    // not one that failed, so they are successes.
+    const deliberateOutcomes = new Set([
+      'token.access.revoked',
+      'token.refresh.revoked',
+      'token.batch.revoked',
+      'consent.denied',
+      'consent.item_denied',
+      'consent.revoked',
+      'consent.expired',
+      'security.rate_limit.exceeded',
+      'security.account.locked',
+      'security.account.unlocked',
+      'scim.token.revoke',
+    ]);
+    const failed = (type: string) => /(^|[._])failed$/u.test(type);
+    // A failure-sounding name must be a `failed` action or a reviewed outcome above.
+    const unclassified = declared.filter(
+      (type) =>
+        /(fail|deni|deny|reject|block|lock|timeout|timed_out|error|abort|revok|expir|exceed)/u.test(
+          type.split('.').pop() ?? ''
+        ) &&
+        !failed(type) &&
+        !deliberateOutcomes.has(type)
+    );
+    expect(unclassified).toEqual([]);
+
+    const { env, row } = mirrorEnv();
+    for (const [index, type] of declared.entries()) {
+      await createAuditLog(env, {
+        ...base,
+        id: `evt_declared_${index}`,
+        action: type,
+        metadata: '{}',
+      });
+      expect(row(`evt_declared_${index}`), type).toMatchObject({
+        result: failed(type) ? 'failure' : 'success',
+      });
+    }
+    expect(declared.filter(failed).length).toBeGreaterThanOrEqual(12);
   });
 
   it('does not put the actor user id in the anonymized user column', async () => {
