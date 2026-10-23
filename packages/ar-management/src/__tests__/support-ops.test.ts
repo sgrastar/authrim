@@ -168,7 +168,11 @@ vi.mock('../admin-shared', () => ({
   writeAdminAuditLog: mockWriteAdminAuditLog,
 }));
 
-import { ADMIN_PERMISSIONS, compileSupportOpsSelector } from '@authrim/ar-lib-core';
+import {
+  ADMIN_PERMISSIONS,
+  compileSupportOpsSelector,
+  SUPPORT_OPS_ACCOUNT_METADATA_SQL,
+} from '@authrim/ar-lib-core';
 import {
   processPendingSupportOpsSnapshotJobs as processPendingSupportOpsSnapshotJobsImpl,
   supportOpsRouter,
@@ -801,7 +805,7 @@ describe('support operations admin router', () => {
     expect(statements[0]!.sql).toContain("'$.lifecycle_version_ms') AS INTEGER), 0) < ?");
     expect(statements[0]!.params).toContain('support-op:action-1:');
     expect(statements[1]!.sql).toContain(
-      "json_extract(metadata_json, '$.lifecycle_operation_id') = ?"
+      `json_extract(${SUPPORT_OPS_ACCOUNT_METADATA_SQL}, '$.lifecycle_operation_id') = ?`
     );
   });
 
