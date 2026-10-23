@@ -244,7 +244,14 @@ function tenantRows(database: DatabaseSync, tenantId: string) {
 }
 
 async function environment(
-  options: { written?: boolean; legalHold?: boolean; bundleHolds?: number; clients?: number } = {}
+  options: {
+    written?: boolean;
+    legalHold?: boolean;
+    bundleHolds?: number;
+    clients?: number;
+    /** The import's restore step; by default the operation is only ever cleaned up. */
+    run?: () => Promise<never>;
+  } = {}
 ) {
   const databases = {
     core: freshDatabase('core'),
@@ -507,9 +514,11 @@ async function environment(
     runTenantBackupScheduler(
       admin.adapter as never,
       {
-        async run() {
-          throw new Error('unexpected run');
-        },
+        run:
+          options.run ??
+          (async () => {
+            throw new Error('unexpected run');
+          }),
         cleanup: (context) =>
           runTenantBackupOperationCleanupStep({
             database: admin.adapter as never,
@@ -631,6 +640,58 @@ describe('tenant restore discard after a partially written import', () => {
         0
       );
       expect(env.tenantB()).toEqual(before);
+    } finally {
+      env.close();
+    }
+  }, 120_000);
+
+  it('discards an import whose restore refused a row its requester may not restore', async () => {
+    const env = await environment({
+      // As the restore step throws it for a refused row (restore-sqlite-step keeps the code).
+      run: async () => {
+        throw new Error('backup_restore_authority_required');
+      },
+    });
+    const { admin: adminDb } = env.databases;
+    // Rows the restore wrote before the refusal, beside the platform's own global assignment.
+    adminDb.exec(`
+      INSERT INTO admin_users(id,tenant_id,email,name,password_hash,is_active,status,created_at,updated_at)
+      VALUES ('restored-admin','tenant-a','restored@example.test','Restored','x',1,'active',1,1),
+        ('platform-admin','default','platform@example.test','Platform','x',1,'active',1,1);
+      INSERT INTO admin_role_assignments(id,tenant_id,admin_user_id,admin_role_id,scope_type,scope_id,assigned_by,created_at)
+      VALUES ('restored-assignment','tenant-a','restored-admin','role_admin','tenant','tenant-a','x',1),
+        ('platform-assignment','default','platform-admin','role_super_admin','global',NULL,'setup',1);
+    `);
+    try {
+      await env.store.release(env.lease, env.applying.revision, 'queued', env.now.value);
+      // The step keeps failing on the same row: retries end with the import waiting.
+      const failed = await env.drive(12);
+      expect(failed.codes).toEqual(['backup_restore_authority_required']);
+      expect(failed.operation).toMatchObject({
+        state: 'waiting',
+        phase: 'apply_sqlite_dataset',
+      });
+      expect(await env.store.requestCancel('tenant-a', OPERATION, env.now.value)).toMatchObject({
+        state: 'cancelling',
+      });
+      const { operation } = await env.drive();
+      expect(operation).toMatchObject({ state: 'cancelled' });
+      for (const sql of [
+        "SELECT count(*) AS n FROM tenant_settings_documents WHERE tenant_id='tenant-a'",
+        "SELECT count(*) AS n FROM admin_role_assignments WHERE tenant_id='tenant-a'",
+      ])
+        expect(count(adminDb, sql), sql).toBe(0);
+      expect(env.settings.values.has('settings:tenant:tenant-a:security')).toBe(false);
+      expect([...env.settings.values.keys()].some((key) => key.includes('institution'))).toBe(
+        false
+      );
+      // The platform's global assignment, which the restore did not write, is left as it was.
+      expect(
+        count(
+          adminDb,
+          "SELECT count(*) AS n FROM admin_role_assignments WHERE id='platform-assignment'"
+        )
+      ).toBe(1);
     } finally {
       env.close();
     }
