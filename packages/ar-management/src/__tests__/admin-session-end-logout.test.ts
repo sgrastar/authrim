@@ -66,7 +66,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveLogoutConfig: mocks.resolveLogoutConfig,
     resolveLogoutWebhookConfig: mocks.resolveLogoutWebhookConfig,
     // The admin database binding is the in-memory admin_jobs table itself.
-    ensureDatabaseAdapter: vi.fn((source: unknown) => source),
+    // The tenant inventory, where a scheduled run reads the tenant's lifecycle state.
+    ensureDatabaseAdapter: vi.fn((source: unknown, partition?: string) =>
+      partition === 'management-generic-job-lifecycle' ? mocks.tenantAdapter : source
+    ),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.tenantAdapter),
     emitRuntimeLogRecords: vi.fn(async () => ({ tenantKey: 'tk', targetResults: [] })),
     sendBackchannelLogoutFanout: mocks.backchannelFanout,

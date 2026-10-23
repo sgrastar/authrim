@@ -45,6 +45,8 @@ const adapters = vi.hoisted(() => ({
   defaultAdapter: null as MockAdapter | null,
   tenantAdapters: new Map<string, MockAdapter>(),
   adminAdapter: null as MockAdapter | null,
+  /** DB_ADMIN, where tenant lifecycle validation jobs are kept. */
+  lifecycleJobsAdapter: null as MockAdapter | null,
 }));
 
 const ensureTenantRegionShardConfig = vi.hoisted(() => vi.fn(async () => ({})));
@@ -129,6 +131,12 @@ vi.mock('@authrim/ar-lib-core', () => ({
   ],
   buildContractKey: vi.fn((_env: Env, scope: string, tenantId: string) => `${scope}:${tenantId}`),
   buildIssuerUrl: vi.fn((env: Env, tenantId: string) => `https://${tenantId}.${env.BASE_DOMAIN}`),
+  requireDedicatedAdminDatabaseAdapter: vi.fn(() => {
+    if (!adapters.lifecycleJobsAdapter) {
+      throw new Error('lifecycle jobs adapter not configured');
+    }
+    return adapters.lifecycleJobsAdapter;
+  }),
   requireAdminDatabaseAdapter: vi.fn(() => {
     if (!adapters.adminAdapter) {
       throw new Error('admin adapter not configured');
@@ -312,6 +320,7 @@ describe('Control Plane tenant management', () => {
     adapters.defaultAdapter = null;
     adapters.tenantAdapters.clear();
     adapters.adminAdapter = null;
+    adapters.lifecycleJobsAdapter = null;
     vi.clearAllMocks();
   });
 
@@ -915,9 +924,11 @@ describe('Control Plane tenant management', () => {
         };
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes('INSERT INTO admin_jobs')) {
-        return { rowsAffected: 1 };
-      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    adapters.lifecycleJobsAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'execute' && sql.includes('INSERT INTO admin_jobs')) return { rowsAffected: 1 };
       throw new Error(`unexpected SQL: ${sql}`);
     });
 
@@ -934,6 +945,10 @@ describe('Control Plane tenant management', () => {
     expect(body).toMatchObject({ lifecycle_state: 'suspended', status: 'completed' });
     expect(tenantRow.lifecycle_state).toBe('suspended');
     expect(tenantRow.updated_at).toBeGreaterThan(10);
+    expect(adapters.lifecycleJobsAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO admin_jobs'),
+      expect.arrayContaining(['second', 'completed'])
+    );
   });
 
   it('queues resume validation without activating the tenant early', async () => {
@@ -945,9 +960,11 @@ describe('Control Plane tenant management', () => {
         tenantRow = { ...tenantRow, updated_at: Number(params[1]) };
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes('INSERT INTO admin_jobs')) {
-        return { rowsAffected: 1 };
-      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    adapters.lifecycleJobsAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      if (op === 'execute' && sql.includes('INSERT INTO admin_jobs')) return { rowsAffected: 1 };
       throw new Error(`unexpected SQL: ${sql}`);
     });
 
@@ -963,6 +980,10 @@ describe('Control Plane tenant management', () => {
     expect(response.status).toBe(202);
     expect(body).toMatchObject({ lifecycle_state: 'suspended', status: 'pending' });
     expect(tenantRow.lifecycle_state).toBe('suspended');
+    expect(adapters.lifecycleJobsAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO admin_jobs'),
+      expect.arrayContaining(['second', 'pending'])
+    );
   });
 
   it('rejects stale lifecycle commands before writing a job', async () => {
@@ -971,6 +992,10 @@ describe('Control Plane tenant management', () => {
       if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
         return createTenantRow('second', { lifecycle_state: 'active', updated_at: 11 });
       }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    adapters.lifecycleJobsAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
       throw new Error(`unexpected SQL: ${sql}`);
     });
 
@@ -984,10 +1009,14 @@ describe('Control Plane tenant management', () => {
 
     expect(response.status).toBe(409);
     expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+    expect(adapters.lifecycleJobsAdapter.execute).not.toHaveBeenCalled();
   });
 
   it('rejects reuse of an idempotency key with a different payload', async () => {
-    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+    adapters.defaultAdapter = createAdapter((sql) => {
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    adapters.lifecycleJobsAdapter = createAdapter((sql, _params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) {
         return {
           id: 'existing-job',
@@ -1016,11 +1045,16 @@ describe('Control Plane tenant management', () => {
 
     expect(response.status).toBe(409);
     expect(body.error).toBe('idempotency_conflict');
-    expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+    expect(adapters.lifecycleJobsAdapter.execute).not.toHaveBeenCalled();
   });
 
   it('requeues a failed lifecycle validation job with retry history preserved', async () => {
+    // The tenant inventory has no copy of the job (one a move left there is removed).
     adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    adapters.lifecycleJobsAdapter = createAdapter((sql, _params, op) => {
       if (op === 'queryOne' && sql.includes('FROM admin_jobs')) {
         return {
           id: 'lifecycle-job-1',
@@ -1039,7 +1073,7 @@ describe('Control Plane tenant management', () => {
 
     expect(response.status).toBe(202);
     expect(body).toMatchObject({ status: 'pending', lifecycle_state: 'frozen' });
-    expect(adapters.defaultAdapter.execute).toHaveBeenCalledWith(
+    expect(adapters.lifecycleJobsAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining("SET status = 'pending'"),
       expect.arrayContaining(['lifecycle-job-1', 'second'])
     );

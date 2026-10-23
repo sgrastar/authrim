@@ -70,7 +70,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     hasPIIDatabase: vi.fn(() => true),
     isDatabaseSource: vi.fn(() => true),
     // Every binding is the one in-memory adapter its test gives.
-    ensureDatabaseAdapter: vi.fn((source: unknown) => source),
+    // The tenant inventory, where a scheduled run reads the tenant's lifecycle state.
+    ensureDatabaseAdapter: vi.fn((source: unknown, partition?: string) =>
+      partition === 'management-generic-job-lifecycle' ? mocks.tenantAdapter : source
+    ),
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: mocks.coreAdapter,
       repositories: {

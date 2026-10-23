@@ -27,6 +27,18 @@ All Admin Jobs are tenant-owned.
 
 Scheduled execution does not rely on a request tenant context. Processors must use the tenant from the job row.
 
+## Where jobs are kept
+
+The jobs the scheduled runs claim are kept in `admin_jobs` of the Admin database (`DB_ADMIN`): the jobs the creation APIs above create, tenant lifecycle validations, the backup a tenant deletion takes first (`tenant-database/export`), and Support Ops cohort snapshots. The processors keep the Object Catalog entries of their results there too. A processor reads and writes the tenant's own data (accounts, organizations, cohorts) in the tenant's Core database, resolved from the job's `tenant_id`; a lifecycle validation moves the tenant in the tenant inventory (`DB`), where the lifecycle command moved it.
+
+Tenant deletion jobs (`tenants/delete`) stay in `admin_jobs` of the Core database their run scans. The job list, status, result and artifact APIs read both stores: the Admin database first, then the Core database. A job is in one store only.
+
+A lifecycle command moves the tenant first and then keeps its validation job in `DB_ADMIN` (no transaction spans the two databases). When the job cannot be kept, the tenant is moved back and the same request can be sent again.
+
+Jobs that were created in the Core database before this layout were never run. Core D1 migration `027` closes those still `pending` or `processing` as `failed` with `error_code` `admin_job_store_moved`: the four types above (create them again), lifecycle validations (retrying one moves it to `DB_ADMIN`), and Support Ops snapshots with their cohorts (create the cohort again). A deletion's backup that waited in the Core database is requested again in `DB_ADMIN` by the deletion itself, and removed from the Core database; a deletion goes on only once its backup completed.
+
+Imports, like the generic jobs, run only while the tenant is `active`; otherwise the job ends as `partial_failure` with `tenant_lifecycle_blocked:<state>`.
+
 ## Result delivery
 
 Generic Admin Jobs support:

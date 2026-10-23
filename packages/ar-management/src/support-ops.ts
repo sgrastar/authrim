@@ -97,6 +97,7 @@ interface SupportOpsSnapshotJobRow {
   status: 'pending' | 'processing';
   progress: string | null;
   config: string | null;
+  updated_at: number;
 }
 
 interface SupportOpsLogger {
@@ -572,8 +573,9 @@ async function cleanupCohort(
   );
 }
 
+/** The snapshot job, kept in DB_ADMIN (`jobsAdapter`) where the scheduled run claims it. */
 async function createSupportOpsSnapshotJob(
-  coreAdapter: DatabaseAdapter,
+  jobsAdapter: DatabaseAdapter,
   input: {
     jobId?: string;
     tenantId: string;
@@ -611,7 +613,7 @@ async function createSupportOpsSnapshotJob(
     support_case_id: input.supportCaseId ?? null,
   };
 
-  await coreAdapter.execute(
+  await jobsAdapter.execute(
     `INSERT INTO admin_jobs (
       id, tenant_id, job_type, status, progress, config,
       created_by, created_at, updated_at, estimated_completion
@@ -631,8 +633,14 @@ async function createSupportOpsSnapshotJob(
   return jobId;
 }
 
+/** Where a snapshot job is kept (DB_ADMIN), and the tenant's Core database it snapshots. */
+interface SupportOpsSnapshotStores {
+  jobs: DatabaseAdapter;
+  tenant: DatabaseAdapter;
+}
+
 async function updateSnapshotJobFailure(
-  coreAdapter: DatabaseAdapter,
+  stores: SupportOpsSnapshotStores,
   jobId: string,
   tenantId: string,
   cohortId: string,
@@ -640,13 +648,13 @@ async function updateSnapshotJobFailure(
 ): Promise<void> {
   const nowMs = Date.now();
   const nowTs = Math.floor(nowMs / 1000);
-  await coreAdapter.execute(
+  await stores.tenant.execute(
     `UPDATE support_operation_cohorts
         SET snapshot_status = 'failed', snapshot_error = ?, snapshot_job_id = COALESCE(snapshot_job_id, ?)
       WHERE tenant_id = ? AND id = ?`,
     [message, jobId, tenantId, cohortId]
   );
-  await coreAdapter.execute(
+  await stores.jobs.execute(
     `UPDATE admin_jobs
         SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ?
       WHERE tenant_id = ? AND id = ?`,
@@ -655,14 +663,15 @@ async function updateSnapshotJobFailure(
 }
 
 async function processSupportOpsSnapshotJob(
-  coreAdapter: DatabaseAdapter,
+  stores: SupportOpsSnapshotStores,
   job: SupportOpsSnapshotJobRow,
   logger?: SupportOpsLogger
 ): Promise<void> {
+  const coreAdapter = stores.tenant;
   const config = parseSnapshotJobConfig(job.config);
   if (!config) {
     await updateSnapshotJobFailure(
-      coreAdapter,
+      stores,
       job.id,
       job.tenant_id,
       'unknown',
@@ -674,7 +683,7 @@ async function processSupportOpsSnapshotJob(
   const resource = getSupportOpsResource(config.resource);
   if (!resource) {
     await updateSnapshotJobFailure(
-      coreAdapter,
+      stores,
       job.id,
       job.tenant_id,
       config.cohort_id,
@@ -685,7 +694,7 @@ async function processSupportOpsSnapshotJob(
 
   const startedTs = Math.floor(Date.now() / 1000);
   const leaseCutoffTs = startedTs - 15 * 60;
-  const transition = await coreAdapter.execute(
+  const transition = await stores.jobs.execute(
     `UPDATE admin_jobs
         SET status = 'processing', started_at = COALESCE(started_at, ?), updated_at = ?
       WHERE tenant_id = ? AND id = ?
@@ -750,7 +759,7 @@ async function processSupportOpsSnapshotJob(
             [job.tenant_id, config.cohort_id]
           );
           await updateSnapshotJobFailure(
-            coreAdapter,
+            stores,
             job.id,
             job.tenant_id,
             config.cohort_id,
@@ -783,7 +792,7 @@ async function processSupportOpsSnapshotJob(
             config.cohort_id,
           ]
         );
-        await coreAdapter.execute(
+        await stores.jobs.execute(
           `UPDATE admin_jobs
               SET status = 'completed', progress = ?, result = ?, completed_at = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ?`,
@@ -835,7 +844,7 @@ async function processSupportOpsSnapshotJob(
       processedThisRun += rows.length;
 
       const nowTs = Math.floor(Date.now() / 1000);
-      await coreAdapter.execute(
+      await stores.jobs.execute(
         `UPDATE admin_jobs
             SET progress = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
@@ -848,7 +857,7 @@ async function processSupportOpsSnapshotJob(
     }
 
     const nowTs = Math.floor(Date.now() / 1000);
-    await coreAdapter.execute(
+    await stores.jobs.execute(
       `UPDATE admin_jobs
           SET status = 'pending', progress = ?, updated_at = ?
         WHERE tenant_id = ? AND id = ? AND status = 'processing'`,
@@ -856,7 +865,7 @@ async function processSupportOpsSnapshotJob(
     );
   } catch (error) {
     await updateSnapshotJobFailure(
-      coreAdapter,
+      stores,
       job.id,
       job.tenant_id,
       config.cohort_id,
@@ -874,12 +883,9 @@ export async function processPendingSupportOpsSnapshotJobs(
   env: Env,
   logger?: SupportOpsLogger
 ): Promise<void> {
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'support-ops-snapshot-jobs'
-  );
-  const jobs = await coreAdapter.query<SupportOpsSnapshotJobRow>(
-    `SELECT id, tenant_id, status, progress, config
+  const jobsAdapter = requireDedicatedAdminDatabaseAdapter(env, 'support-ops-snapshot-jobs');
+  const jobs = await jobsAdapter.query<SupportOpsSnapshotJobRow>(
+    `SELECT id, tenant_id, status, progress, config, updated_at
        FROM admin_jobs
       WHERE job_type = 'support-ops/cohort-snapshot'
         AND (status = 'pending' OR (status = 'processing' AND updated_at < ?))
@@ -888,7 +894,38 @@ export async function processPendingSupportOpsSnapshotJobs(
     [Math.floor(Date.now() / 1000) - 15 * 60]
   );
   for (const job of jobs) {
-    await processSupportOpsSnapshotJob(coreAdapter, job, logger);
+    let tenant: DatabaseAdapter;
+    try {
+      tenant = await resolveAuthCorePersistenceAdapterFromEnv(env, 'support-ops-snapshot-tenant', {
+        tenantId: job.tenant_id,
+      });
+    } catch (error) {
+      // Failed, not left pending: a job whose tenant cannot be routed would take a slot of
+      // every run. Only as this run found it: another run may have claimed or ended it since.
+      // The cohort stays pending until it expires.
+      const nowTs = Math.floor(Date.now() / 1000);
+      await jobsAdapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ? AND status = ? AND updated_at = ?`,
+        [
+          'snapshot_tenant_database_unavailable',
+          nowTs,
+          nowTs,
+          job.tenant_id,
+          job.id,
+          job.status,
+          job.updated_at,
+        ]
+      );
+      logger?.error(
+        'Support Ops snapshot job tenant database unavailable',
+        { job_id: job.id },
+        error as Error
+      );
+      continue;
+    }
+    await processSupportOpsSnapshotJob({ jobs: jobsAdapter, tenant }, job, logger);
   }
 }
 
@@ -1170,19 +1207,22 @@ supportOpsRouter.post('/cohorts', async (c) => {
       );
       createdCohort = { coreAdapter: authCtx.coreAdapter, tenantId, cohortId };
 
-      await createSupportOpsSnapshotJob(authCtx.coreAdapter, {
-        jobId,
-        tenantId,
-        cohortId,
-        resource: resource.resource,
-        intendedAction,
-        selectorJson,
-        selectorHash: compiled.selectorHash,
-        matchedCount,
-        snapshotCutoff,
-        actor,
-        supportCaseId: body.intent?.support_case_id ?? null,
-      });
+      await createSupportOpsSnapshotJob(
+        requireDedicatedAdminDatabaseAdapter(c.env, 'support-ops-snapshot-jobs'),
+        {
+          jobId,
+          tenantId,
+          cohortId,
+          resource: resource.resource,
+          intendedAction,
+          selectorJson,
+          selectorHash: compiled.selectorHash,
+          matchedCount,
+          snapshotCutoff,
+          actor,
+          supportCaseId: body.intent?.support_case_id ?? null,
+        }
+      );
 
       await auditSupportOps(c, 'support_ops.cohort.create', cohortId, 'success', {
         resource: resource.resource,
