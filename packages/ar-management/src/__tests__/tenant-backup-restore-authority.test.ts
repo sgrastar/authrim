@@ -890,4 +890,15 @@ describe('policy wrapping', () => {
     expect(others.length).toBeGreaterThan(100);
     expect(others.every((policy) => policy === policies.get(policy.dataset.id))).toBe(true);
   });
+
+  it('counts the audit entry of an assignment row in the restore statement budget', () => {
+    const wrapped = guarded();
+    const base = (id: string) => policies.get(id)!.restoreTransform?.statementsPerRow ?? 0;
+    // The frozen-mapping lookup of `admin_user_id`, then the critical audit entry.
+    expect(base(ADMIN_ROLE_ASSIGNMENTS_DATASET)).toBe(1);
+    expect(wrapped.get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!.restoreTransform!.statementsPerRow).toBe(2);
+    // The other guards read only what they cache for the slice.
+    for (const id of [TENANT_SETTINGS_DOCUMENTS_DATASET, ADMIN_ROLES_DATASET])
+      expect(wrapped.get(id)!.restoreTransform!.statementsPerRow).toBe(base(id));
+  });
 });

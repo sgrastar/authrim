@@ -35,6 +35,12 @@ export interface SqliteDatasetInspectionPolicy {
   /** Installed, versioned row rewrite applied after validation and before every target operation. */
   restoreTransform?: {
     id: string;
+    /**
+     * Most D1 statements one call issues for its row (a mapping lookup, an audit entry), not
+     * counting lookups cached for the whole slice. Restore transitions carry fewer such rows so
+     * these stay within the restore statement budget. Absent: the transform issues none.
+     */
+    statementsPerRow?: number;
     transform(
       context: TenantBackupStepContext,
       rowJson: string,
@@ -101,6 +107,9 @@ export function cloneSqliteDatasetInspectionPolicy(
       ? {
           restoreTransform: {
             id: restoreTransform.id,
+            ...(restoreTransform.statementsPerRow !== undefined
+              ? { statementsPerRow: restoreTransform.statementsPerRow }
+              : {}),
             transform: (context, rowJson, mode) =>
               restoreTransform.transform(context, rowJson, mode),
           },

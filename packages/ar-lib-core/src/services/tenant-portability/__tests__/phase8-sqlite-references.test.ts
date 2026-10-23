@@ -416,6 +416,12 @@ describe('Phase 8 SQL references', () => {
     );
     expect(JSON.parse(transformed ?? '{}').admin_user_id).toEqual(text('target-source-a'));
     expect(resolveAdminReference).toHaveBeenCalledWith(expect.anything(), 'source-a');
+    // One frozen-mapping lookup per mapped column sizes the restore batches.
+    expect(assignment?.restoreTransform?.statementsPerRow).toBe(1);
+    const statements = (id: string) =>
+      policies.find(({ dataset }) => dataset.id === id)?.restoreTransform?.statementsPerRow;
+    expect(statements('admin.admin_agent_grants')).toBe(2);
+    expect(statements('admin.approval_requests')).toBe(1);
 
     expect(
       inspectPhase8SqliteReferences(
