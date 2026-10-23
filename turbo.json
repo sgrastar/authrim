@@ -18,6 +18,9 @@
     "lint": {
       "outputs": []
     },
+    "lint:prune-suppressions": {
+      "cache": false
+    },
     "typecheck": {
       "dependsOn": ["^build"],
       "outputs": []
