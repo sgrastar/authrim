@@ -6,7 +6,7 @@
 
 import type { CIBARequestMetadata } from '../types/oidc';
 import { jwtVerify, createLocalJWKSet, errors as joseErrors } from 'jose';
-import type { JWK, JWTVerifyResult, JWTPayload as JoseJWTPayload, JWTHeaderParameters } from 'jose';
+import type { JWK, JWTPayload as JoseJWTPayload } from 'jose';
 import { createLogger } from './logger';
 import { randomCharacters, type RandomBytesSource } from './unbiased-random';
 

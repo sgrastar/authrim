@@ -67,7 +67,12 @@ export default [
     rules: {
       ...tseslint.configs['recommended'].rules,
       ...tseslint.configs['recommended-requiring-type-checking'].rules,
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      // Same options as ar-vc and ar-lib-plugin: a leading _ marks an intentional
+      // unused binding (omitted destructured fields, unused arguments).
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-explicit-any': 'error',

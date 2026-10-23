@@ -27,17 +27,10 @@ import type {
   RuleEvaluationContext,
   RuleEvaluationResult,
   ConditionOperator,
-  DenyErrorCode,
 } from '../types/policy-rules';
 import type { DatabaseAdapter, DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
-import type { ScopeType } from '../types/rbac';
-import {
-  normalizeClaimValue,
-  compareNormalized,
-  getNestedValue,
-  extractAndNormalizeClaim,
-} from '../utils/claim-normalizer';
+import { normalizeClaimValue, compareNormalized, getNestedValue } from '../utils/claim-normalizer';
 
 // =============================================================================
 // Constants

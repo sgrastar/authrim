@@ -364,7 +364,7 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
       } else {
         return this.queryPIILog(client, options, startTime);
       }
-    } catch (error) {
+    } catch {
       return {
         eventEntries: options.logType === 'event' ? [] : undefined,
         piiEntries: options.logType === 'pii' ? [] : undefined,

@@ -8,7 +8,7 @@ import { importJWK, jwtVerify, calculateJwkThumbprint, base64url, type JWK } fro
 import type { DPoPClaims, DPoPValidationResult } from '../types/oidc';
 import type { DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
-import { getDPoPJTIStoreForNewJTI, parseDPoPJTIId } from './dpop-jti-sharding';
+import { getDPoPJTIStoreForNewJTI } from './dpop-jti-sharding';
 import { ALLOWED_DPOP_ALGS } from '../constants';
 import { timingSafeEqual } from './crypto';
 import { createLogger } from './logger';

@@ -14,7 +14,6 @@ import {
 } from '../types/settings/catalog';
 import {
   createSettingsManager,
-  type CategoryMeta,
   type SettingScope,
   type SettingSource,
   type SettingsManager,

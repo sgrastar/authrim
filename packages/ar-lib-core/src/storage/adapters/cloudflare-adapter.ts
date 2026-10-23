@@ -545,7 +545,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    * Set to KV storage (fallback) - DEPRECATED
    * @deprecated CLIENTS KV has been removed. Use D1+CLIENTS_CACHE instead.
    */
-  private async setToKV(key: string, value: string, ttl?: number): Promise<void> {
+  private async setToKV(key: string, _value: string, _ttl?: number): Promise<void> {
     throw new Error(
       `setToKV called with ${key} - CLIENTS KV is deprecated, use D1+CLIENTS_CACHE. ` +
         'If you need general KV storage, use env.KV or create a specific namespace.'

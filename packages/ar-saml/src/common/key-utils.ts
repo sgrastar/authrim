@@ -7,7 +7,6 @@
 
 import type { Env, KeyManager } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
-import { importSPKI, exportSPKI } from 'jose';
 import { requireSAMLTenantId } from './tenant';
 
 /**

@@ -31,11 +31,9 @@ import type {
   TokenClaimAction,
   TokenClaimEvaluationContext,
   TokenClaimEvaluationResult,
-  TokenType,
 } from '../types/token-claim-rules';
 import type { RuleCondition, CompoundCondition, ConditionOperator } from '../types/policy-rules';
 import { normalizeClaimValue, compareNormalized, getNestedValue } from '../utils/claim-normalizer';
-import { getEmbeddingLimits } from '../utils/resource-permissions';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('TOKEN-CLAIM-EVALUATOR');

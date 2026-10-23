@@ -179,7 +179,7 @@ export function createPermissionChangeNotifier(
           try {
             await cache.delete(key);
             debugLog('Deleted cache key', { key });
-          } catch (e) {
+          } catch {
             // Ignore errors for non-existent keys
           }
         })

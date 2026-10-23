@@ -58,7 +58,7 @@ export async function getFeatureFlag(
         });
         return value;
       }
-    } catch (error) {
+    } catch {
       log.warn(`Error reading KV for ${flagName}`);
       // Fall through to environment variable
     }

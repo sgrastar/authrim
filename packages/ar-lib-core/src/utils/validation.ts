@@ -8,8 +8,6 @@
 import type {
   PresentationDefinition,
   InputDescriptor,
-  InputDescriptorConstraints,
-  FieldConstraint,
   SubmissionRequirement,
   ClientIdScheme,
 } from '../types/openid4vp';

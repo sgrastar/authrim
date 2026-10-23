@@ -85,7 +85,7 @@ async function loadDCRSettingsFromKV(env: Env, tenantId: string): Promise<Record
         cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
         return data;
       }
-    } catch (error) {
+    } catch {
       log.warn('Failed to load DCR settings from KV');
     }
   }

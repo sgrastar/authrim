@@ -54,7 +54,6 @@ import type {
   PolicyResolutionResult,
   PolicyResolutionSuccess,
   PolicyResolutionFailure,
-  PolicyResolutionDebug,
   PolicyResolutionStep,
   ContractValidationResult,
   FlowPolicyValidationResult,
@@ -72,7 +71,7 @@ import type {
 } from '../types/contracts/resolver';
 import type { ContractError, ContractWarning } from '../types/contracts/errors';
 import { CONTRACT_ERROR_CODES } from '../types/contracts/errors';
-import type { SigningAlgorithm, GrantType } from '../types/contracts';
+import type { SigningAlgorithm } from '../types/contracts';
 
 // =============================================================================
 // Constants

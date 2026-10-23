@@ -20,7 +20,7 @@ import type { TenantProfile } from '../types/contracts/tenant-profile';
 import type { ClientContract } from '../types/contracts';
 import { createAuthContextFromHono } from '../context';
 import { getClient } from './kv';
-import { loadTenantProfile, loadTenantContract, loadClientContract } from './contract-loader';
+import { loadTenantContract, loadClientContract } from './contract-loader';
 import { getTenantProfile } from '../types/contracts/tenant-profile';
 import { buildVersionedKey, getCacheTTL } from './cache-config';
 import { buildKVKey } from './tenant-context';

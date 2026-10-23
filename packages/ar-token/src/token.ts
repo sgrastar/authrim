@@ -27,7 +27,6 @@ import {
   // Logging
   getLogger,
   createLogger,
-  type Logger,
   // Validation
   validateGrantType,
   validateAuthCode,
@@ -43,7 +42,6 @@ import {
   generateRegionAwareJti,
   storeRefreshToken,
   getRefreshToken,
-  deleteRefreshToken,
   // Configuration Manager (KV > env > default)
   resolveEffectiveSettings,
   requiredAAL,
@@ -105,7 +103,6 @@ import {
   FAPI2_MESSAGE_SIGNING_ALGS,
   validateClientCertificateBinding,
   setBoundedMapEntry,
-  getTenantMetadataContextFromHono,
   resolveAccountDataContextFromHono,
   recordDeviceSecretRouteHint,
   resolveDeviceSecretRouteHint,
@@ -195,7 +192,7 @@ import { timeTokenRequestDiagnosticOperation } from './request-diagnostics';
 // Custom Claim Schema Resolver
 import {} from '@authrim/ar-lib-core';
 // Tenant context
-import { getTenantIdFromContext, hasPIIDatabase } from '@authrim/ar-lib-core';
+import { getTenantIdFromContext } from '@authrim/ar-lib-core';
 import { getDefaultTenantId } from '@authrim/ar-lib-core/utils/issuer';
 // Event System
 import { publishEvent, TOKEN_EVENTS, type TokenEventData } from '@authrim/ar-lib-core';

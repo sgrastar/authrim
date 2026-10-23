@@ -19,7 +19,6 @@ import type {
   SAMLIdPConfig,
   SAMLProviderCreateRequest,
   SAMLProviderUpdateRequest,
-  SAMLProviderResponse,
   MetadataImportRequest,
   SAMLSPProfile,
   SAMLAttributeReleaseRule,
@@ -77,7 +76,6 @@ import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   SAML_BUILTIN_ATTRIBUTE_PRESETS,
   applySAMLAttributePresetToSPConfig,
-  normalizeSAMLSPAttributePresetConfig,
 } from '../idp/attribute-presets';
 import { normalizeAttributeReleaseConsentPolicy } from '../idp/attribute-release-consent';
 import { SAMLMetadataValidationError } from './errors';
@@ -96,7 +94,6 @@ import {
   SINGLE_METADATA_FETCH_LIMIT_BYTES,
   extractEntityDescriptorXml,
   extractEntityDescriptorXmls,
-  fingerprintCertificateSha256,
   getLogoUrl,
   isAggregateMetadata,
   resolveAggregateSignaturePolicy,

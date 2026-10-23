@@ -5,11 +5,7 @@
  * No I/O operations, no side effects - easy to test and maintain.
  */
 
-import type {
-  DiagnosticLogEntry,
-  TokenValidationLogEntry,
-  AuthDecisionLogEntry,
-} from '../services/diagnostic/types.js';
+import type { DiagnosticLogEntry } from '../services/diagnostic/types.js';
 
 /**
  * OIDF submission format entry

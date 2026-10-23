@@ -20,7 +20,6 @@ import type {
   ListUsersRequest,
   ListUsersResponse,
   RelationDefinition,
-  ClosureEntry,
   ReBACConfig,
   RelationExpression,
 } from './types';
