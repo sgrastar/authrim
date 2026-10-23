@@ -172,6 +172,22 @@
       "count": 1
     }
   },
+  "src/common/entity-id.ts": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "src/common/key-utils.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 2
+    },
+    "no-control-regex": {
+      "count": 2
+    }
+  },
   "src/common/signature.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1

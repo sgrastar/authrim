@@ -1941,6 +1941,7 @@ export class KeyManager extends DurableObject<Env> {
    * Sanitize EC key data for safe HTTP response (remove private key material)
    */
   private sanitizeECKey(key: StoredECKey): Omit<StoredECKey, 'privatePEM'> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { privatePEM: _privatePEM, ...safeKey } = key;
     return safeKey;
   }
@@ -1998,6 +1999,7 @@ export class KeyManager extends DurableObject<Env> {
    * Sanitize key data for safe HTTP response (remove private key material)
    */
   private sanitizeKey(key: StoredKey): Omit<StoredKey, 'privatePEM'> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { privatePEM: _privatePEM, ...safeKey } = key;
     return safeKey;
   }

@@ -2978,6 +2978,11 @@
       "count": 4
     }
   },
+  "src/services/tenant-runtime-registry-snapshot.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
   "src/services/token-claim-evaluator.ts": {
     "@typescript-eslint/unbound-method": {
       "count": 1

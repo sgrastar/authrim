@@ -274,7 +274,6 @@ function normalizeCertificateSubject(value: unknown): Required<SAMLSigningCertif
 function readString(value: unknown, maxLength: number): string {
   return typeof value === 'string'
     ? value
-        // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
         .replace(/[\u0000-\u001f\u007f]/g, '')
         .trim()
         .slice(0, maxLength)
