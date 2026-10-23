@@ -199,6 +199,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     rate_limit.moderate
     rate_limit.lenient
     rate_limit.email_max_requests
+    rate_limit.totp_max_requests
     rate_limit.auth_max_failed_attempts
   `,
     ],
@@ -208,6 +209,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     rate_limit.email_window
+    rate_limit.totp_window
   `,
     ],
     [

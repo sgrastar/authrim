@@ -273,6 +273,15 @@ export const PROTECTION: SettingsPageDef = {
 				{ key: 'rate_limit.email_max_requests', depth: 'primary' },
 				{ key: 'rate_limit.email_window', depth: 'primary' }
 			]
+		},
+		{
+			id: 'authenticator-app-attempts',
+			title: 'set.section.totpAttempts',
+			description: 'set.section.totpAttempts.desc',
+			settings: [
+				{ key: 'rate_limit.totp_max_requests', depth: 'primary' },
+				{ key: 'rate_limit.totp_window', depth: 'primary' }
+			]
 		}
 	]
 };

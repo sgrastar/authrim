@@ -1482,6 +1482,27 @@ type RootTranslation = {
 	 */
 	error_unknown: string
 	/**
+	 * T​o​o​ ​m​a​n​y​ ​a​t​t​e​m​p​t​s​.​ ​W​a​i​t​ ​a​ ​w​h​i​l​e​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	error_rateLimited: string
+	/**
+	 * T​o​o​ ​m​a​n​y​ ​a​t​t​e​m​p​t​s​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​b​o​u​t​ ​{​m​i​n​u​t​e​s​}​ ​m​i​n​.
+	 * @param {number} minutes
+	 */
+	error_rateLimitedRetryAfter: RequiredParams<'minutes'>
+	/**
+	 * Y​o​u​ ​h​a​v​e​ ​b​e​e​n​ ​s​i​g​n​e​d​ ​o​u​t​.​ ​Y​o​u​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​e​n​t​ ​b​a​c​k​ ​t​o​ ​t​h​e​ ​a​p​p​ ​b​e​c​a​u​s​e​ ​i​t​s​ ​r​e​t​u​r​n​ ​a​d​d​r​e​s​s​ ​i​s​ ​n​o​t​ ​r​e​g​i​s​t​e​r​e​d​.​ ​O​p​e​n​ ​t​h​e​ ​a​p​p​ ​a​g​a​i​n​ ​y​o​u​r​s​e​l​f​.
+	 */
+	error_unregisteredPostLogoutRedirectUri: string
+	/**
+	 * Y​o​u​ ​h​a​v​e​ ​b​e​e​n​ ​s​i​g​n​e​d​ ​o​u​t​.​ ​Y​o​u​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​e​n​t​ ​b​a​c​k​ ​t​o​ ​t​h​e​ ​a​p​p​ ​b​e​c​a​u​s​e​ ​i​t​s​ ​s​i​g​n​-​o​u​t​ ​r​e​q​u​e​s​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​v​e​r​i​f​i​e​d​.​ ​O​p​e​n​ ​t​h​e​ ​a​p​p​ ​a​g​a​i​n​ ​y​o​u​r​s​e​l​f​.
+	 */
+	error_invalidIdTokenHint: string
+	/**
+	 * Y​o​u​ ​h​a​v​e​ ​b​e​e​n​ ​s​i​g​n​e​d​ ​o​u​t​.​ ​Y​o​u​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​e​n​t​ ​b​a​c​k​ ​t​o​ ​t​h​e​ ​a​p​p​ ​b​e​c​a​u​s​e​ ​i​t​s​ ​s​i​g​n​-​o​u​t​ ​r​e​q​u​e​s​t​ ​w​a​s​ ​i​n​c​o​m​p​l​e​t​e​.​ ​O​p​e​n​ ​t​h​e​ ​a​p​p​ ​a​g​a​i​n​ ​y​o​u​r​s​e​l​f​.
+	 */
+	error_idTokenHintRequired: string
+	/**
 	 * D​e​v​i​c​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
 	 */
 	device_title: string
@@ -1498,7 +1519,7 @@ type RootTranslation = {
 	 */
 	device_codePlaceholder: string
 	/**
-	 * E​n​t​e​r​ ​t​h​e​ ​8​-​c​h​a​r​a​c​t​e​r​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​d​e​v​i​c​e​ ​(​f​o​r​m​a​t​:​ ​X​X​X​X​-​X​X​X​X​)
+	 * E​n​t​e​r​ ​t​h​e​ ​c​o​d​e​ ​s​h​o​w​n​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e
 	 */
 	device_codeHint: string
 	/**
@@ -3241,6 +3262,26 @@ export type TranslationFunctions = {
 	 * An unknown error occurred
 	 */
 	error_unknown: () => LocalizedString
+	/**
+	 * Too many attempts. Wait a while, then try again.
+	 */
+	error_rateLimited: () => LocalizedString
+	/**
+	 * Too many attempts. Try again in about {minutes} min.
+	 */
+	error_rateLimitedRetryAfter: (arg: { minutes: number }) => LocalizedString
+	/**
+	 * You have been signed out. You could not be sent back to the app because its return address is not registered. Open the app again yourself.
+	 */
+	error_unregisteredPostLogoutRedirectUri: () => LocalizedString
+	/**
+	 * You have been signed out. You could not be sent back to the app because its sign-out request could not be verified. Open the app again yourself.
+	 */
+	error_invalidIdTokenHint: () => LocalizedString
+	/**
+	 * You have been signed out. You could not be sent back to the app because its sign-out request was incomplete. Open the app again yourself.
+	 */
+	error_idTokenHintRequired: () => LocalizedString
 	/**
 	 * Device verification
 	 */

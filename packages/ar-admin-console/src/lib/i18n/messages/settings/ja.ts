@@ -132,7 +132,8 @@ export const jaSettings = {
 	'set.k.tokens.exchange_impersonation_enabled.desc':
 		'アプリが、利用者そのものとして振る舞うトークンを受け取れるようにします。なりすましモードのアプリは、オフの間トークン交換を断られます。安全上の影響が大きいので、必要なときだけオンにしてください。',
 	'set.page.protection': '攻撃対策',
-	'set.page.protection.desc': 'ログインや登録のメールが悪用されるのを防ぐ設定です。',
+	'set.page.protection.desc':
+		'ログインや登録のメールと認証アプリのコードが悪用されるのを防ぐ設定です。',
 	'set.section.emailSending': 'メール送信の回数制限',
 	'set.section.emailSending.desc':
 		'ログインコードなどのメールを、同じ宛先へ続けて送れる回数を制限します。迷惑メールの送信に使われるのを防ぎます。',
@@ -142,6 +143,15 @@ export const jaSettings = {
 	'set.k.rate_limit.email_window': '回数を数える期間',
 	'set.k.rate_limit.email_window.desc':
 		'上の回数を数える期間です（5 分から 60 分）。この期間が過ぎると、また送れます。',
+	'set.section.totpAttempts': '認証アプリの試行回数',
+	'set.section.totpAttempts.desc':
+		'認証アプリでのログインを始められる回数を制限します。何度も試してコードを当てられるのを防ぎます。',
+	'set.k.rate_limit.totp_max_requests': '期間内に試せる回数',
+	'set.k.rate_limit.totp_max_requests.desc':
+		'同じアカウント名について、同じネットワークアドレスから認証アプリのログイン（と再認証）を始められる回数と、登録時にコードを確認できる回数です。1 回始めるごとにコードを 1 回入力できます。',
+	'set.k.rate_limit.totp_window': '回数を数える期間',
+	'set.k.rate_limit.totp_window.desc':
+		'上の回数を数える期間です（1 分から 60 分）。この期間が過ぎると、また試せます。',
 	'set.section.introspection': 'トークンのイントロスペクション',
 	'set.section.introspection.desc':
 		'Resource Server がトークンの有効性を問い合わせたときの答えです。',

@@ -363,6 +363,14 @@ const translation = {
 	error_temporarily_unavailable: 'የፍቃድ አገልጋዩ ለጊዜው ጥያቄውን ማስተናገድ አይችልም',
 	error_login_required: 'ማረጋገጫ ያስፈልጋል። ለመቀጠል እባክዎን ይግቡ።',
 	error_unknown: 'ያልታወቀ ስህተት ተከስቷል',
+	error_rateLimited: 'በጣም ብዙ ሙከራዎች። ትንሽ ቆይተው እንደገና ይሞክሩ።',
+	error_rateLimitedRetryAfter: 'በጣም ብዙ ሙከራዎች። ከ{minutes} ደቂቃ ገደማ በኋላ እንደገና ይሞክሩ።',
+	error_unregisteredPostLogoutRedirectUri:
+		'ወጥተዋል። የመተግበሪያው የመመለሻ አድራሻ ስላልተመዘገበ ወደ መተግበሪያው መመለስ አልተቻለም። መተግበሪያውን ራስዎ እንደገና ይክፈቱ።',
+	error_invalidIdTokenHint:
+		'ወጥተዋል። የመተግበሪያው የመውጫ ጥያቄ ሊረጋገጥ ስላልቻለ ወደ መተግበሪያው መመለስ አልተቻለም። መተግበሪያውን ራስዎ እንደገና ይክፈቱ።',
+	error_idTokenHintRequired:
+		'ወጥተዋል። የመተግበሪያው የመውጫ ጥያቄ ያልተሟላ ስለነበር ወደ መተግበሪያው መመለስ አልተቻለም። መተግበሪያውን ራስዎ እንደገና ይክፈቱ።',
 	device_title: 'የመሣሪያ ማረጋገጫ',
 	device_subtitle: 'በመሣሪያዎ ላይ የሚታየውን ኮድ ያስገቡ',
 	device_codeLabel: 'የማረጋገጫ ኮድ',

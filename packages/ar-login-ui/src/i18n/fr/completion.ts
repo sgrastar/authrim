@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Trop de tentatives. Patientez un moment, puis réessayez.',
+	error_rateLimitedRetryAfter: 'Trop de tentatives. Réessayez dans environ {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Vous avez été déconnecté. Le retour vers l’application est impossible, car son adresse de retour n’est pas enregistrée. Rouvrez l’application vous-même.',
+	error_invalidIdTokenHint:
+		'Vous avez été déconnecté. Le retour vers l’application est impossible, car sa demande de déconnexion n’a pas pu être vérifiée. Rouvrez l’application vous-même.',
+	error_idTokenHintRequired:
+		'Vous avez été déconnecté. Le retour vers l’application est impossible, car sa demande de déconnexion était incomplète. Rouvrez l’application vous-même.',
 	common_logoAlt: 'Logo',
 	common_footerLinks: 'Liens du pied de page',
 	common_selectOption: 'Sélectionner une option',

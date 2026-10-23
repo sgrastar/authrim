@@ -396,6 +396,14 @@ const it = createTranslation({
 		'Il server di autorizzazione non può elaborare temporaneamente la richiesta',
 	error_login_required: 'È necessario autenticarsi. Accedi per continuare.',
 	error_unknown: 'Si è verificato un errore sconosciuto',
+	error_rateLimited: 'Troppi tentativi. Attendi un po’ e poi riprova.',
+	error_rateLimitedRetryAfter: 'Troppi tentativi. Riprova tra circa {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Sei uscito. Non è stato possibile tornare all’app perché il suo indirizzo di ritorno non è registrato. Riapri l’app manualmente.',
+	error_invalidIdTokenHint:
+		'Sei uscito. Non è stato possibile tornare all’app perché la sua richiesta di uscita non è stata verificata. Riapri l’app manualmente.',
+	error_idTokenHintRequired:
+		'Sei uscito. Non è stato possibile tornare all’app perché la sua richiesta di uscita era incompleta. Riapri l’app manualmente.',
 	device_title: 'Verifica del dispositivo',
 	device_subtitle: 'Inserisci il codice visualizzato sul dispositivo',
 	device_codeLabel: 'Codice di verifica',

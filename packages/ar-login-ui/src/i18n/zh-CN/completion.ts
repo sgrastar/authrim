@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: '尝试次数过多。请稍等片刻后重试。',
+	error_rateLimitedRetryAfter: '尝试次数过多。请在约 {minutes} 分钟后重试。',
+	error_unregisteredPostLogoutRedirectUri:
+		'您已退出登录。由于应用的返回地址未注册，无法将您带回应用。请自行重新打开应用。',
+	error_invalidIdTokenHint:
+		'您已退出登录。由于无法验证应用的退出请求，无法将您带回应用。请自行重新打开应用。',
+	error_idTokenHintRequired:
+		'您已退出登录。由于应用的退出请求不完整，无法将您带回应用。请自行重新打开应用。',
 	common_logoAlt: '徽标',
 	common_footerLinks: '页脚链接',
 	common_selectOption: '请选择',

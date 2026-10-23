@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Demasiados intentos. Espera un rato y vuelve a intentarlo.',
+	error_rateLimitedRetryAfter: 'Demasiados intentos. Vuelve a intentarlo en unos {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Se ha cerrado la sesión. No se pudo volver a la aplicación porque su dirección de retorno no está registrada. Abre la aplicación de nuevo.',
+	error_invalidIdTokenHint:
+		'Se ha cerrado la sesión. No se pudo volver a la aplicación porque no se pudo verificar su solicitud de cierre de sesión. Abre la aplicación de nuevo.',
+	error_idTokenHintRequired:
+		'Se ha cerrado la sesión. No se pudo volver a la aplicación porque su solicitud de cierre de sesión estaba incompleta. Abre la aplicación de nuevo.',
 	common_logoAlt: 'Logotipo',
 	common_footerLinks: 'Enlaces del pie de página',
 	common_selectOption: 'Selecciona una opción',

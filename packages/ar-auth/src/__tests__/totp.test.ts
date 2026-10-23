@@ -366,6 +366,96 @@ describe('TOTP login handlers', () => {
     });
 
     it.each([
+      [
+        'the tenant setting',
+        { 'rate_limit.totp_max_requests': 40, 'rate_limit.totp_window': 1800 },
+        { windowSeconds: 1800, maxRequests: 40 },
+      ],
+      ['its default where none is set', null, { windowSeconds: 15 * 60, maxRequests: 10 }],
+      [
+        'its default for values out of range',
+        { 'rate_limit.totp_max_requests': 101, 'rate_limit.totp_window': 30 },
+        { windowSeconds: 15 * 60, maxRequests: 10 },
+      ],
+    ])('limits login starts by %s', async (_label, saved, limit) => {
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        createEnv({
+          ...enabledSettings,
+          ...(saved ? { 'settings:tenant:default:rate-limit': saved } : {}),
+        }),
+        true
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockRateLimiter.incrementRpc).toHaveBeenCalledTimes(1);
+      expect(mockRateLimiter.incrementRpc).toHaveBeenCalledWith(
+        expect.stringMatching(/^start:[0-9a-f]{64}:[0-9a-f]{64}$/),
+        limit
+      );
+    });
+
+    it('tells the client when it can start again', async () => {
+      mockRateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 42 });
+
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBe(429);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'slow_down',
+        error_code: 'AR110001',
+        retry_after: 42,
+        error_details: { retry_after: 42 },
+      });
+    });
+
+    it.each([
+      [
+        'a loadTest override',
+        {
+          get: vi.fn(async (key: string) =>
+            key === 'rate_limit_profile_override'
+              ? JSON.stringify({ profile: 'loadTest', expires_at: Date.now() + 30 * 60 * 1000 })
+              : null
+          ),
+        },
+        undefined,
+      ],
+      ['RATE_LIMIT_PROFILE=loadTest', undefined, 'loadTest'],
+    ])(
+      'keeps the limit under %s: it is what keeps codes from being guessed',
+      async (_label, authrimConfig, profile) => {
+        mockRateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 600 });
+        const env = {
+          ...createEnv(enabledSettings),
+          AUTHRIM_CONFIG: authrimConfig,
+          RATE_LIMIT_PROFILE: profile,
+        } as unknown as Env;
+
+        const response = await post(
+          '/api/auth/totp/login/start',
+          { identifier: 'person@example.com' },
+          env,
+          true
+        );
+
+        expect(response.status).toBe(429);
+        expect(mockRateLimiter.incrementRpc).toHaveBeenCalledTimes(1);
+        expect(mockRateLimiter.incrementRpc).toHaveBeenCalledWith(expect.any(String), {
+          windowSeconds: 15 * 60,
+          maxRequests: 10,
+        });
+        expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
       [{}, 'missing challenge and code'],
       [{ challenge_id: 'challenge' }, 'missing code'],
       [{ challenge_id: 'challenge', code: '12ab56' }, 'non-numeric code'],
@@ -997,6 +1087,36 @@ describe('TOTP login handlers', () => {
     expect(response.status).toBe(429);
     expect(mockChallengeStore.getChallengeRpc).not.toHaveBeenCalled();
     expect(mockTotpRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('limits TOTP signup activation attempts by the tenant setting', async () => {
+    const app = createApp();
+    mockRateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 120 });
+
+    const response = await app.request(
+      '/api/auth/totp/signup/activate',
+      {
+        method: 'POST',
+        body: JSON.stringify({ challenge_id: 'signup-challenge', code: '123456' }),
+        headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.10' },
+      },
+      createEnv({
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.totp.signup_enabled': true,
+        },
+        'settings:tenant:default:rate-limit': {
+          'rate_limit.totp_max_requests': 3,
+          'rate_limit.totp_window': 300,
+        },
+      }),
+      { waitUntil: vi.fn() } as unknown as ExecutionContext
+    );
+
+    expect(response.status).toBe(429);
+    expect(mockRateLimiter.incrementRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^signup-activate:/),
+      { windowSeconds: 300, maxRequests: 3 }
+    );
   });
 
   it('refuses, at activation, an address deleted after the sign-up started', async () => {

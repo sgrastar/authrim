@@ -9,6 +9,7 @@ import {
   resolveAuthMaxFailedAttempts,
   resolveEmailCodeTtlSeconds,
   resolveEmailSendLimit,
+  resolveTotpAttemptLimit,
 } from '../sign-in-limits';
 
 const env = {} as EffectiveSettingsEnv;
@@ -103,6 +104,66 @@ describe('sign-in limits', () => {
       resolveEffectiveSettings.mockRejectedValue(new Error('settings unavailable'));
       await expect(resolveEmailSendLimit(env, 't')).resolves.toEqual({
         maxRequests: 3,
+        windowSeconds: 900,
+      });
+    });
+  });
+
+  describe('resolveTotpAttemptLimit', () => {
+    it('reads the tenant authenticator-app limit and its window from rate-limit', async () => {
+      resolveEffectiveSettings.mockResolvedValue({
+        'rate_limit.totp_max_requests': 40,
+        'rate_limit.totp_window': 600,
+      });
+      await expect(resolveTotpAttemptLimit(env, 't')).resolves.toEqual({
+        maxRequests: 40,
+        windowSeconds: 600,
+      });
+      expect(resolveEffectiveSettings).toHaveBeenCalledWith(env, 'rate-limit', { tenantId: 't' });
+    });
+
+    it('keeps 10 per 15 minutes where nothing is set', async () => {
+      resolveEffectiveSettings.mockResolvedValue({});
+      await expect(resolveTotpAttemptLimit(env, 't')).resolves.toEqual({
+        maxRequests: 10,
+        windowSeconds: 900,
+      });
+    });
+
+    it.each([
+      [0, 59],
+      [101, 3601],
+      [12.5, 600.5],
+      ['40', '600'],
+    ])(
+      'keeps each default for values out of range (%j, %j)',
+      async (maxRequests, windowSeconds) => {
+        resolveEffectiveSettings.mockResolvedValue({
+          'rate_limit.totp_max_requests': maxRequests,
+          'rate_limit.totp_window': windowSeconds,
+        });
+        await expect(resolveTotpAttemptLimit(env, 't')).resolves.toEqual({
+          maxRequests: 10,
+          windowSeconds: 900,
+        });
+      }
+    );
+
+    it('keeps only the out-of-range value at its default', async () => {
+      resolveEffectiveSettings.mockResolvedValue({
+        'rate_limit.totp_max_requests': 100,
+        'rate_limit.totp_window': 30,
+      });
+      await expect(resolveTotpAttemptLimit(env, 't')).resolves.toEqual({
+        maxRequests: 100,
+        windowSeconds: 900,
+      });
+    });
+
+    it('keeps the defaults when the settings cannot be read', async () => {
+      resolveEffectiveSettings.mockRejectedValue(new Error('settings unavailable'));
+      await expect(resolveTotpAttemptLimit(env, 't')).resolves.toEqual({
+        maxRequests: 10,
         windowSeconds: 900,
       });
     });

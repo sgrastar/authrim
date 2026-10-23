@@ -132,7 +132,8 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.tokens.exchange_impersonation_enabled.desc':
 		'Eine App kann ein Token erhalten, das als die Person selbst handelt. Solange dies aus ist, wird Apps im Modus Identitätsübernahme der Token-Austausch verweigert. Es hat große Sicherheitsauswirkungen: nur bei Bedarf einschalten.',
 	'set.page.protection': 'Angriffsschutz',
-	'set.page.protection.desc': 'Schützt E-Mails zu Anmeldung und Registrierung vor Missbrauch.',
+	'set.page.protection.desc':
+		'Schützt E-Mails und Authenticator-App-Codes zu Anmeldung und Registrierung vor Missbrauch.',
 	'set.section.emailSending': 'Sendelimit für E-Mails',
 	'set.section.emailSending.desc':
 		'Begrenzt, wie oft E-Mails wie Anmeldecodes hintereinander an denselben Empfänger gesendet werden können, damit sie nicht für Spam missbraucht werden.',
@@ -142,6 +143,15 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.rate_limit.email_window': 'Zeitraum, in dem gezählt wird',
 	'set.k.rate_limit.email_window.desc':
 		'Der Zeitraum, in dem die Zahl oben gezählt wird (5 bis 60 Minuten). Danach darf wieder gesendet werden.',
+	'set.section.totpAttempts': 'Versuche mit der Authenticator-App',
+	'set.section.totpAttempts.desc':
+		'Begrenzt, wie oft eine Anmeldung mit einer Authenticator-App begonnen werden kann, damit die Codes nicht durch viele Versuche erraten werden.',
+	'set.k.rate_limit.totp_max_requests': 'Erlaubte Versuche pro Zeitraum',
+	'set.k.rate_limit.totp_max_requests.desc':
+		'Wie viele Anmeldungen (und erneute Authentifizierungen) mit der Authenticator-App für denselben Kontonamen von derselben Netzwerkadresse begonnen werden können und wie viele Codes eine Registrierung von dort prüfen kann. Jeder Start erlaubt eine Code-Eingabe.',
+	'set.k.rate_limit.totp_window': 'Zeitraum, in dem gezählt wird',
+	'set.k.rate_limit.totp_window.desc':
+		'Der Zeitraum, in dem die Zahl oben gezählt wird (1 bis 60 Minuten). Danach sind wieder Versuche erlaubt.',
 	'set.section.introspection': 'Token-Introspektion',
 	'set.section.introspection.desc':
 		'Die Antwort, die ein Resource Server erhält, wenn er fragt, ob ein Token gültig ist.',

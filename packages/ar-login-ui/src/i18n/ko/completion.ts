@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: '시도 횟수가 너무 많습니다. 잠시 기다린 후 다시 시도하세요.',
+	error_rateLimitedRetryAfter: '시도 횟수가 너무 많습니다. 약 {minutes}분 후에 다시 시도하세요.',
+	error_unregisteredPostLogoutRedirectUri:
+		'로그아웃되었습니다. 앱의 복귀 주소가 등록되어 있지 않아 앱으로 돌아갈 수 없었습니다. 앱을 직접 다시 열어 주세요.',
+	error_invalidIdTokenHint:
+		'로그아웃되었습니다. 앱의 로그아웃 요청을 확인할 수 없어 앱으로 돌아갈 수 없었습니다. 앱을 직접 다시 열어 주세요.',
+	error_idTokenHintRequired:
+		'로그아웃되었습니다. 앱의 로그아웃 요청에 필요한 정보가 없어 앱으로 돌아갈 수 없었습니다. 앱을 직접 다시 열어 주세요.',
 	common_logoAlt: '로고',
 	common_footerLinks: '푸터 링크',
 	common_selectOption: '옵션 선택',
