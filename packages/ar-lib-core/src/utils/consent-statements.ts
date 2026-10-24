@@ -23,7 +23,6 @@ import type {
   ConsentScreenItem,
   ConsentEvidence,
   ResolvedConsentRequirement,
-  ConsentItemHistoryRecord,
   ConsentEnforcement,
   ConsentRecordStatus,
 } from '../types/consent-statements';

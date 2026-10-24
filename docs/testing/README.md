@@ -27,3 +27,4 @@ testing aids.
 | [Security Regression Bank](./security-regression-bank.md)         | reusable regression patterns to convert into tests               |
 | [Release Confidence Checklist](./release-confidence-checklist.md) | change-type checklist for selecting the right verification scope |
 | [Test Improvement Actions](./test-improvement-actions.md)         | concrete actions, habits, and test backlogs                      |
+| [Lint Baseline](./lint-baseline.md)                               | ESLint bulk suppressions: how they behave and when to prune      |

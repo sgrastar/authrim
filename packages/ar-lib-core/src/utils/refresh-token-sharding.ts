@@ -23,9 +23,6 @@ import {
   buildRegionInstanceName,
   getRegionAwareDOStub,
   createRegionId,
-  parseRegionId,
-  type RegionShardConfig,
-  type ShardResolution,
 } from './region-sharding';
 
 // =============================================================================

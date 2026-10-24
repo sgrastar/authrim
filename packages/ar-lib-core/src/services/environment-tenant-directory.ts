@@ -43,7 +43,7 @@ async function mapBounded<T, R>(
     Array.from({ length: Math.min(concurrency, values.length) }, async () => {
       while (cursor < values.length) {
         const index = cursor++;
-        results[index] = await operation(values[index]!);
+        results[index] = await operation(values[index]);
       }
     })
   );

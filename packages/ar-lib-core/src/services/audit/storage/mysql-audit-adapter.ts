@@ -91,9 +91,8 @@ function buildInsertIfNotExistsSql(
   rowCount: number
 ): string {
   const selectStatements = Array.from({ length: rowCount }, (_, rowIdx) => {
-    const offset = rowIdx * columns.length;
     if (rowIdx === 0) {
-      return `SELECT ${columns.map((column, columnIdx) => `? AS \`${column}\``).join(', ')}`;
+      return `SELECT ${columns.map((column) => `? AS \`${column}\``).join(', ')}`;
     }
     return `SELECT ${columns.map(() => '?').join(', ')}`;
   });

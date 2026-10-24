@@ -86,7 +86,7 @@ export async function deviceLookupApiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const body = (await c.req.json()) as { user_code?: unknown };
+    const body = await c.req.json<{ user_code?: unknown }>();
     if (typeof body.user_code !== 'string' || !body.user_code) {
       return c.json(
         {

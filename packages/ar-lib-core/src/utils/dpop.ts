@@ -8,7 +8,7 @@ import { importJWK, jwtVerify, calculateJwkThumbprint, base64url, type JWK } fro
 import type { DPoPClaims, DPoPValidationResult } from '../types/oidc';
 import type { DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
-import { getDPoPJTIStoreForNewJTI, parseDPoPJTIId } from './dpop-jti-sharding';
+import { getDPoPJTIStoreForNewJTI } from './dpop-jti-sharding';
 import { ALLOWED_DPOP_ALGS } from '../constants';
 import { timingSafeEqual } from './crypto';
 import { createLogger } from './logger';
@@ -329,7 +329,7 @@ export async function validateDPoPProof(
 
     if (isEnv) {
       // New region-aware sharding approach
-      const env = envOrJTIStore as Env;
+      const env = envOrJTIStore;
       const shardKey = clientId || claims.jti;
       const { stub: shardedStub } = await getDPoPJTIStoreForNewJTI(
         env,
@@ -340,7 +340,7 @@ export async function validateDPoPProof(
       stub = shardedStub;
     } else {
       // Legacy approach: use DurableObjectNamespace directly
-      const dpopJTIStore = envOrJTIStore as DurableObjectNamespace;
+      const dpopJTIStore = envOrJTIStore;
       const shardKey = clientId || claims.jti;
       const id = dpopJTIStore.idFromName(shardKey);
       stub = dpopJTIStore.get(id);
@@ -361,10 +361,10 @@ export async function validateDPoPProof(
     if (!response.ok) {
       // DO detected replay or internal error
       if (response.status === 400) {
-        const error = (await response.json()) as {
+        const error = await response.json<{
           error: string;
           error_description: string;
-        };
+        }>();
         return {
           valid: false,
           error: 'use_dpop_nonce',

@@ -400,6 +400,7 @@ export async function safeFetchJson<T = unknown>(
     return JSON.parse(text) as T;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- scripts/control-plane type-checks this file with Node types, where Response.json() returns Promise<unknown>
   return response.json() as Promise<T>;
 }
 

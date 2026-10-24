@@ -27,7 +27,6 @@ import type {
   ParsedPermission,
   PermissionInput,
   ResolvedVia,
-  FinalDecision,
   CheckDebugInfo,
   AuditLogConfig,
   VerifiedAttributeForCheck,
@@ -40,7 +39,7 @@ import type {
 import type { CheckAuditService, PermissionCheckAuditEntry } from './check-audit-service';
 import { generateAuditId } from './check-audit-service';
 import type { ReBACService, CheckRequest as ReBACCheckRequest } from '../rebac';
-import { hasIdLevelPermission, getUserIdLevelPermissions } from '../utils/resource-permissions';
+import { hasIdLevelPermission } from '../utils/resource-permissions';
 import { createLogger } from '../utils/logger';
 import {
   resolveSubjectRoles,

@@ -7,15 +7,7 @@
 
 import type { DatabaseAdapter } from '../../db/adapter';
 import { requireTenantId } from '../tenant';
-import {
-  BaseRepository,
-  type BaseEntity,
-  type FilterCondition,
-  type PaginationOptions,
-  type PaginationResult,
-  generateId,
-  getCurrentTimestamp,
-} from '../base';
+import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 import type {
   AdminRole,
   AdminRoleCreateInput,

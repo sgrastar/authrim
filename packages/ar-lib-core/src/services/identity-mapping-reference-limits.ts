@@ -11,7 +11,6 @@ import {
   IDENTITY_MAPPING_SCAN_ROW_LIMIT_KEY,
   IDENTITY_MAPPING_SCAN_TENANT_LIMIT_KEY,
   IDENTITY_MAPPING_SETTINGS_META,
-  type IdentityMappingSettings,
 } from '../types/settings/identity-mapping';
 import {
   resolvePlatformSettingsWithSources,

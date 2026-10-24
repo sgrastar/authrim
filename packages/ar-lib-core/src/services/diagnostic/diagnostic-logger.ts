@@ -11,7 +11,6 @@
 import type { Env } from '../../types/env';
 import type {
   DiagnosticLogEntry,
-  DiagnosticLogWriteResult,
   HttpRequestLogEntry,
   HttpResponseLogEntry,
   TokenValidationLogEntry,

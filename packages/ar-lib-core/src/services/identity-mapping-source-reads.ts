@@ -101,8 +101,7 @@ export function catalogReferenceResolver(
       return stableIds.has(id) ? ref : { ...ref, catalogEntryId: stable };
     }
     if (namesAPart(ref.path)) {
-      const samePlace =
-        mappingSourceSubjectPath(entry) === mappingSourceSubjectPath(ref as MappingSourceReference);
+      const samePlace = mappingSourceSubjectPath(entry) === mappingSourceSubjectPath(ref);
       return stableIds.has(id) || !samePlace ? ref : { ...ref, catalogEntryId: stable };
     }
     if (!options.completePlace || isDestinationOnlyTargetType(entry.targetType)) {

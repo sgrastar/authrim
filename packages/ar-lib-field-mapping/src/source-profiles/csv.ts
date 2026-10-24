@@ -271,7 +271,7 @@ function parseRows(
   let quoted = false;
 
   for (let index = 0; index < input.length; index += 1) {
-    const char = input[index]!;
+    const char = input[index];
     const next = input[index + 1];
 
     if (quoted) {

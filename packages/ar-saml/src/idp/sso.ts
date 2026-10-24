@@ -1327,11 +1327,11 @@ async function checkUserAuthentication(
       return null;
     }
 
-    const session = (await response.json()) as {
+    const session = await response.json<{
       userId?: string;
       createdAt?: number;
       data?: Record<string, unknown>;
-    };
+    }>();
     const data =
       session.data && typeof session.data === 'object' && !Array.isArray(session.data)
         ? session.data

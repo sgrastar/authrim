@@ -105,7 +105,7 @@ function pruneMemoryCache(now: number): void {
     if (value.expiresAt <= now) memoryCache.delete(key);
   }
   while (memoryCache.size >= MAX_MEMORY_CACHE_ENTRIES) {
-    const oldest = memoryCache.keys().next().value as string | undefined;
+    const oldest = memoryCache.keys().next().value;
     if (oldest === undefined) break;
     memoryCache.delete(oldest);
   }
@@ -116,7 +116,7 @@ function pruneAliasMemoryCache(now: number): void {
     if (value.expiresAt <= now) aliasMemoryCache.delete(key);
   }
   while (aliasMemoryCache.size >= MAX_MEMORY_CACHE_ENTRIES) {
-    const oldest = aliasMemoryCache.keys().next().value as string | undefined;
+    const oldest = aliasMemoryCache.keys().next().value;
     if (oldest === undefined) break;
     aliasMemoryCache.delete(oldest);
   }

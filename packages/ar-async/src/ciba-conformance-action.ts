@@ -80,7 +80,7 @@ export async function cibaConformanceActionHandler(c: Context<{ Bindings: Env }>
     })
   );
   if (!getResponse.ok) return c.json({ error: 'not_found' }, 404);
-  const metadata = (await getResponse.json()) as CIBARequestMetadata | null;
+  const metadata = await getResponse.json<CIBARequestMetadata | null>();
   if (!metadata || metadata.status !== 'pending') {
     return c.json({ error: 'invalid_request' }, 400);
   }

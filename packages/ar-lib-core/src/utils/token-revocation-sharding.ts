@@ -42,13 +42,9 @@ function requireTenantId(tenantId: string | undefined, context: string): string 
 import {
   getRegionShardConfig,
   resolveShardForNewResource,
-  resolveRegionForShard,
   buildRegionInstanceName,
   getRegionAwareDOStub,
   createRegionId,
-  parseRegionId,
-  type RegionShardConfig,
-  type ShardResolution,
 } from './region-sharding';
 
 // =============================================================================
@@ -259,12 +255,6 @@ export function generateAccessTokenRandomPart(): string {
  */
 let cachedRevocationConfig: RevocationShardConfig | null = null;
 let cachedRevocationConfigAt = 0;
-
-/**
- * Legacy cache for simple shard count (backward compat).
- */
-let cachedRevocationShardCount: number | null = null;
-let cachedRevocationShardAt = 0;
 
 // =============================================================================
 // Configuration Loading
@@ -691,8 +681,6 @@ export function createNewRevocationGeneration(
  * Useful for testing or when immediate configuration reload is needed.
  */
 export function resetRevocationShardCountCache(): void {
-  cachedRevocationShardCount = null;
-  cachedRevocationShardAt = 0;
   cachedRevocationConfig = null;
   cachedRevocationConfigAt = 0;
 }

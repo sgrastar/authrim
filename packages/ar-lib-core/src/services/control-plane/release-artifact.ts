@@ -9,7 +9,6 @@ import {
   type MigrationLogicalRole,
   type MigrationManifestDialect,
   type MigrationSchemaFamily,
-  type MigrationStreamId,
   type MigrationTargetKind,
 } from './migration-stream-contract.js';
 

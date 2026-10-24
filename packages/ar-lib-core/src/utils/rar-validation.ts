@@ -23,17 +23,9 @@ import type {
   AccountInformationDetail,
   RARValidationResult,
   RARValidationError,
-  RARErrorCode,
 } from '../types/rar';
 
-import {
-  isAIAgentActionDetail,
-  isPaymentInitiationDetail,
-  isAccountInformationDetail,
-  isAuthorizationDetailsBase,
-  DEFAULT_RAR_MAX_SIZE,
-  DEFAULT_RAR_MAX_ENTRIES,
-} from '../types/rar';
+import { DEFAULT_RAR_MAX_SIZE, DEFAULT_RAR_MAX_ENTRIES } from '../types/rar';
 
 // =============================================================================
 // Validation Options

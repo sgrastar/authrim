@@ -392,7 +392,7 @@ function resolvePreferredMethod(
   acceptable: StepUpAcceptableMethods
 ): { method: string; category: string } {
   if (!preferred) {
-    const method = allAllowedMethods(acceptable)[0]!;
+    const method = allAllowedMethods(acceptable)[0];
     const definition = methodDefinition(method)!;
     return { method, category: definition.category };
   }
@@ -1212,7 +1212,7 @@ function generateUnbiasedNumericCode(digits: number): string {
 
   while (true) {
     crypto.getRandomValues(value);
-    const candidate = value[0]!;
+    const candidate = value[0];
     if (candidate < limit) {
       return String(candidate - Math.floor(candidate / max) * max).padStart(digits, '0');
     }
