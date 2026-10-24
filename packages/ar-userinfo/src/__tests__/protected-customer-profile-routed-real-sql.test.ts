@@ -91,7 +91,7 @@ type Databases = {
 /** An unsigned grant token: the route's token verification is replaced to decode it. */
 function grantToken(): string {
   const encode = (value: Record<string, unknown>) =>
-    Buffer.from(JSON.stringify(value)).toString('base64url');
+    btoa(JSON.stringify(value)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
   const scope = {
     resource_class: 'customer_profile',
     resource_ids: [USER],
@@ -153,10 +153,9 @@ function app(allocationScope: 'shared_pool' | 'tenant_exclusive', databases: Dat
     '/api/protected/customer-profiles',
     createProtectedCustomerProfileRouter({
       verifyToken: async ({ token }) =>
-        JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')) as Record<
-          string,
-          unknown
-        >,
+        JSON.parse(
+          atob((token.split('.')[1] ?? '').replace(/-/gu, '+').replace(/_/gu, '/'))
+        ) as Record<string, unknown>,
     })
   );
   return hono;

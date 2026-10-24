@@ -878,7 +878,7 @@ describe('Front-channel Logout', () => {
         sub: 'user-1',
         aud: 'client-123',
         authrim_subject_account: true,
-      });
+      }) as Parameters<typeof frontChannelLogoutHandler>[0];
       // A session whose user is not recorded: the hint names the user.
       mockShardedSessionStore.getSessionRpc.mockReset().mockResolvedValue(null);
       mockShardedSessionStore.getSessionRpc.mockResolvedValueOnce({

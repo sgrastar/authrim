@@ -543,12 +543,10 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       );
 
       expect(response.status).toBe(200);
-      const body = (await response.json()) as {
-        options: { excludeCredentials: Array<{ id: string }> };
-      };
-      expect(body.options.excludeCredentials.map((credential) => credential.id)).toEqual([
-        'YWNjb3VudC1jcmVkZW50aWFs',
-      ]);
+      // Exactly the account database's passkey (an array matches by length too).
+      expect(await response.json()).toMatchObject({
+        options: { excludeCredentials: [{ id: 'YWNjb3VudC1jcmVkZW50aWFs' }] },
+      });
     });
 
     it('stores the migration passkey in the account database', async () => {
@@ -624,13 +622,12 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       );
 
       expect(response.status).toBe(200);
-      const body = (await response.json()) as {
-        options: { user: { name: string }; excludeCredentials: Array<{ id: string }> };
-      };
-      expect(body.options.user.name).toBe(EMAIL);
-      expect(body.options.excludeCredentials.map((credential) => credential.id)).toEqual([
-        'YWNjb3VudC1jcmVkZW50aWFs',
-      ]);
+      expect(await response.json()).toMatchObject({
+        options: {
+          user: { name: EMAIL },
+          excludeCredentials: [{ id: 'YWNjb3VudC1jcmVkZW50aWFs' }],
+        },
+      });
       expect(world.storedChallenges).toEqual(
         expect.arrayContaining([expect.objectContaining({ userId: USER })])
       );
