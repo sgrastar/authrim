@@ -1179,15 +1179,56 @@ describe('support operations admin router', () => {
       expect(mockAdapter.batch).not.toHaveBeenCalled();
     });
 
-    it('queues a cohort above the inline threshold without running account work in the request', async () => {
-      approvedSuspend(1001);
+    it.each([
+      { actionableCount: 1000, attemptsInline: true },
+      { actionableCount: 1001, attemptsInline: false },
+    ])(
+      'retains the durable job at $actionableCount targets with inline attempt=$attemptsInline',
+      async ({ actionableCount, attemptsInline }) => {
+        approvedSuspend(actionableCount);
+        execution.inline.mockImplementation(async () => undefined);
 
-      const response = await execute();
+        const response = await execute();
 
-      expect(response.status).toBe(202);
-      expect(execution.create).toHaveBeenCalledTimes(1);
-      expect(execution.inline).not.toHaveBeenCalled();
-    });
+        expect(response.status).toBe(202);
+        expect(await response.json()).toEqual({
+          action_id: 'action-1',
+          status: 'running',
+          resource: 'User',
+          action: 'suspend',
+          cohort_id: 'cohort-1',
+          job_id: execution.job?.jobId,
+        });
+        expect(execution.create).toHaveBeenCalledTimes(1);
+        expect(execution.create).toHaveBeenCalledWith(
+          mockAdminAdapter,
+          expect.objectContaining({
+            tenantId: 'tenant-a',
+            actionId: 'action-1',
+            actionableCount,
+          })
+        );
+        if (attemptsInline) {
+          expect(execution.inline).toHaveBeenCalledTimes(1);
+          expect(execution.inline).toHaveBeenCalledWith(
+            expect.anything(),
+            'tenant-a',
+            execution.job?.jobId,
+            { maxCallsPerRun: 400, maxTargetsPerRun: 1000 }
+          );
+          expect(execution.create).toHaveBeenCalledBefore(execution.inline);
+        } else {
+          expect(execution.inline).not.toHaveBeenCalled();
+        }
+        expect(execution.remove).not.toHaveBeenCalled();
+        expect(mockAdapter.batch).not.toHaveBeenCalled();
+        expect(
+          mockAdapter.execute.mock.calls.some((call) =>
+            String(call[0]).includes("status = 'failed'")
+          )
+        ).toBe(false);
+      }
+    );
 
     it('refuses execution-store preflight before action/job mutation or audit success', async () => {
       approvedSuspend();
