@@ -5,6 +5,7 @@
  * OIDC Core 6.2: Request Object by Reference
  */
 
+import process from 'node:process';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import {
@@ -29,8 +30,9 @@ async function putSystemSettings(
   }
 }
 
+const nodeProcess = process as NodeJS.Process;
 const securityRegressionIt =
-  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+  nodeProcess.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 /** Error response type for authorization endpoint */
 interface ErrorResponse {
@@ -626,7 +628,7 @@ describe('HTTPS Request URI Security', () => {
       mockFetch.mockResolvedValueOnce(new Response(body, { status: 200 }));
       const unhandled: unknown[] = [];
       const onUnhandled = (reason: unknown) => unhandled.push(reason);
-      process.on('unhandledRejection', onUnhandled);
+      nodeProcess.on('unhandledRejection', onUnhandled);
       try {
         const response = await app.request(
           '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://external.com/request.jwt',
@@ -642,7 +644,7 @@ describe('HTTPS Request URI Security', () => {
         expect(error.get('error_description')).toContain('too large');
         expect(unhandled).toEqual([]);
       } finally {
-        process.off('unhandledRejection', onUnhandled);
+        nodeProcess.off('unhandledRejection', onUnhandled);
       }
     });
 

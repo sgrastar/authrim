@@ -197,9 +197,6 @@
   "src/index.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 4
-    },
-    "no-unsafe-finally": {
-      "count": 1
     }
   },
   "src/issuer.ts": {

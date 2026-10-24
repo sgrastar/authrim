@@ -1,8 +1,10 @@
+import process from 'node:process';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 
+const nodeProcess = process as NodeJS.Process;
 const securityRegressionIt =
-  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+  nodeProcess.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 /**
  * Operator diagnostics on; the first read of any other binding throws `thrown`, so the first
