@@ -4,7 +4,6 @@ import {
   ADMIN_SESSION_PII_FIELDS,
   createAdminPiiAccessLog,
   noteAdminPiiRead,
-  requestPiiStore,
   scheduleAdminPiiAccessLog,
 } from './admin-pii-access-log';
 import {
@@ -25,6 +24,12 @@ import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './admin-shared';
 import { adminActorIdFromContext, startAdminSessionEndLogout } from './admin-session-end';
 import { endedSessionsOf } from './session-end-logout';
+import { getCanonicalAccountStatus } from './account-status';
+import {
+  adminAccountContact,
+  adminAccountContacts,
+  adminAccountCoreAdapter,
+} from './admin-account-storage';
 
 const AVATAR_CONTENT_TYPES: Record<string, string> = {
   gif: 'image/gif',
@@ -61,7 +66,7 @@ function resolveOwnedAvatarFilename(pictureUrl: string, canonicalBaseUrl: string
   }
 }
 
-function createRuntimeUserStore(
+function createAvatarRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
   tenantId: string
 ): CanonicalRuntimeUserStore {
@@ -119,7 +124,7 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const runtimeUsers = createRuntimeUserStore(c, tenantId);
+    const runtimeUsers = createAvatarRuntimeUserStore(c, tenantId);
 
     const runtimeUser = await runtimeUsers.findById(userId);
 
@@ -274,7 +279,7 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const runtimeUsers = createRuntimeUserStore(c, tenantId);
+    const runtimeUsers = createAvatarRuntimeUserStore(c, tenantId);
 
     const runtimeUser = await runtimeUsers.findById(userId);
 
@@ -403,19 +408,11 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
     const total = totalResult?.count || 0;
     const totalPages = Math.ceil(total / limit);
 
-    const userContactMap = new Map<string, { email: string | null; name: string | null }>();
-    if (sessions.length > 0) {
-      const runtimeUsers = createRuntimeUserStore(c, tenantId);
-      const userIds = [...new Set(sessions.map((s) => s.user_id).filter(Boolean))];
-      await Promise.all(
-        userIds.map(async (id) => {
-          const user = await runtimeUsers.findById(id, { includeInactive: true });
-          if (user) {
-            userContactMap.set(id, { email: user.email, name: user.name });
-          }
-        })
-      );
-    }
+    const userContactMap = await adminAccountContacts(
+      c,
+      tenantId,
+      sessions.map((session) => session.user_id)
+    );
 
     const formattedSessions = sessions.map((session) => {
       const userContact = userContactMap.get(session.user_id);
@@ -437,9 +434,21 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
 
     if (formattedSessions.length > 0) {
       const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.sessions.list');
-      const store = requestPiiStore(c, createPIIContextFromHono(c, tenantId).defaultPiiAdapter);
       for (const session of formattedSessions) {
-        noteAdminPiiRead(accessLog, store, session.user_id, session, ADMIN_SESSION_PII_FIELDS);
+        const contact = userContactMap.get(session.user_id);
+        if (contact) {
+          noteAdminPiiRead(
+            accessLog,
+            contact.store,
+            session.user_id,
+            session,
+            ADMIN_SESSION_PII_FIELDS
+          );
+        } else if (session.ip_address || session.user_agent) {
+          // A routed session's client facts are personal data too. Do not disclose them with an
+          // arbitrary default-store audit when the account's PII owner cannot be verified.
+          throw new Error('admin_session_pii_audit_owner_unavailable');
+        }
       }
       scheduleAdminPiiAccessLog(c, accessLog, tenantId);
     }
@@ -486,6 +495,9 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
         sessionData = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
+        if (sessionData && (sessionData.tenantId !== tenantId || sessionData.id !== sessionId)) {
+          return c.json({ error: 'not_found', error_description: 'Session not found' }, 404);
+        }
         if (sessionData) {
           isActive = sessionData.expiresAt > Date.now();
           sessionStoreOk = true;
@@ -517,16 +529,10 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    let userEmail: string | null = null;
-    let userName: string | null = null;
     const userId = sessionData?.userId || session?.user_id;
-    if (userId) {
-      const runtimeUser = await createRuntimeUserStore(c, tenantId).findById(userId, {
-        includeInactive: true,
-      });
-      userEmail = runtimeUser?.email || null;
-      userName = runtimeUser?.name || null;
-    }
+    const contact = userId ? await adminAccountContact(c, tenantId, userId) : null;
+    const userEmail = contact?.email ?? null;
+    const userName = contact?.name ?? null;
 
     const result = {
       id: sessionId,
@@ -539,11 +545,11 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       source: sessionStoreOk ? 'memory' : 'database',
     };
 
-    if (userId) {
+    if (userId && contact) {
       const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.sessions.get');
       noteAdminPiiRead(
         accessLog,
-        requestPiiStore(c, createPIIContextFromHono(c, tenantId).defaultPiiAdapter),
+        contact.store,
         userId,
         { user_email: userEmail, user_name: userName },
         ADMIN_SESSION_PII_FIELDS
@@ -568,7 +574,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
 
 /**
  * Force logout individual session
- * POST /admin/sessions/:id/revoke
+ * DELETE /api/admin/sessions/:id
  */
 export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -576,35 +582,37 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const session = await authCtx.coreAdapter.queryOne<{ id: string; user_id: string }>(
-      'SELECT id, user_id FROM sessions WHERE id = ? AND tenant_id = ?',
-      [sessionId, tenantId]
-    );
-
-    if (!session) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'Session not found',
-        },
-        404
-      );
-    }
-
+    let liveSession: Session | null = null;
+    let sessionStore: ReturnType<typeof getSessionStoreBySessionId>['stub'] | undefined;
     const log = getLogger(c).module('ADMIN');
     if (isShardedSessionId(sessionId)) {
-      try {
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
-        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
+      sessionStore = getSessionStoreBySessionId(c.env, sessionId, tenantId).stub;
+      liveSession = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+      if (liveSession && (liveSession.tenantId !== tenantId || liveSession.id !== sessionId)) {
+        return c.json({ error: 'not_found', error_description: 'Session not found' }, 404);
+      }
+    }
+    const session = liveSession
+      ? null
+      : await authCtx.coreAdapter.queryOne<{ id: string; user_id: string }>(
+          'SELECT id, user_id FROM sessions WHERE id = ? AND tenant_id = ?',
+          [sessionId, tenantId]
+        );
+    const userId = liveSession?.userId ?? session?.user_id;
+    if (!userId) {
+      return c.json({ error: 'not_found', error_description: 'Session not found' }, 404);
+    }
 
-        if (!deleted) {
-          log.warn('Failed to delete session from SessionStore', {
-            action: 'session_delete',
-            sessionId,
-          });
-        }
-      } catch {
-        log.warn('Failed to route to session store', { action: 'session_delete', sessionId });
+    // The DO's tenant-bound owner is authoritative for live sessions. A legacy row is not
+    // required: current sign-in stores the session in SessionStore, not in this SQL table.
+    let ended = false;
+    if (sessionStore) {
+      ended = await sessionStore.invalidateSessionRpc(sessionId);
+      if (!ended) {
+        log.warn('Failed to delete session from SessionStore', {
+          action: 'session_delete',
+          sessionId,
+        });
       }
     } else {
       log.warn('Session is not in sharded format, skipping DO deletion', {
@@ -612,16 +620,28 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
         sessionId,
       });
     }
-
-    await authCtx.coreAdapter.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
-      sessionId,
-      tenantId,
-    ]);
+    try {
+      const removed = await authCtx.coreAdapter.execute(
+        'DELETE FROM sessions WHERE id = ? AND tenant_id = ? AND user_id = ?',
+        [sessionId, tenantId, userId]
+      );
+      ended = ended || (removed.rowsAffected ?? 0) > 0;
+    } finally {
+      // A SQL failure cannot undo a DO invalidation: keep logout for the sessions already ended.
+      if (ended) {
+        await startAdminSessionEndLogout(c, {
+          tenantId,
+          sessions: endedSessionsOf(userId, [sessionId]),
+          trigger: { action: 'session.revoke', actorId: adminActorIdFromContext(c) },
+          log,
+        });
+      }
+    }
 
     log.info('Admin revoked session', {
       action: 'session_revoke',
       sessionId,
-      userId: session.user_id,
+      userId,
     });
 
     return c.json({
@@ -643,7 +663,7 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
 
 /**
  * Revoke all sessions for a user
- * POST /admin/users/:id/revoke-all-sessions
+ * DELETE /api/admin/users/:id/sessions
  *
  * Deletes persisted session rows and invalidates any sharded SessionStore entries
  * that can be located from the persistence index.
@@ -653,9 +673,12 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUser = await createRuntimeUserStore(c, tenantId).findById(userId);
+    const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
+    const account = accountAdapter
+      ? await getCanonicalAccountStatus(accountAdapter, tenantId, userId)
+      : null;
 
-    if (!runtimeUser) {
+    if (!account) {
       return c.json(
         {
           error: 'not_found',

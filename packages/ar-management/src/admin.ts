@@ -6,6 +6,7 @@
 import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { getCanonicalAccountStatus, transitionAccountLifecycle } from './account-status';
+import { adminAccountCoreAdapter } from './admin-account-storage';
 import { withdrawOAuthClientConsent } from './oauth-client-consent-withdrawal';
 import {
   adminActorIdFromContext,
@@ -532,8 +533,10 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const adapter = getCoreAdapter(c, tenantId);
+    const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
+    if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
-    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
+    const user = await getCanonicalAccountStatus(accountAdapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -550,7 +553,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     const ended: EndedSession[] = [];
     let lifecycle: Awaited<ReturnType<typeof transitionAccountLifecycle>>;
     try {
-      lifecycle = await transitionAccountLifecycle(c.env, adapter, {
+      lifecycle = await transitionAccountLifecycle(c.env, accountAdapter, {
         tenantId,
         userId,
         lifecycle: 'suspended',
@@ -740,8 +743,10 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const adapter = getCoreAdapter(c, tenantId);
+    const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
+    if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
-    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
+    const user = await getCanonicalAccountStatus(accountAdapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -757,7 +762,7 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     const ended: EndedSession[] = [];
     let lifecycle: Awaited<ReturnType<typeof transitionAccountLifecycle>>;
     try {
-      lifecycle = await transitionAccountLifecycle(c.env, adapter, {
+      lifecycle = await transitionAccountLifecycle(c.env, accountAdapter, {
         tenantId,
         userId,
         lifecycle: 'locked',
@@ -946,9 +951,11 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const adapter = getCoreAdapter(c, tenantId);
+    const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
+    if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
     // Get current user state (verify tenant ownership)
-    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
+    const user = await getCanonicalAccountStatus(accountAdapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -999,7 +1006,7 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
     const lifecycleOperationId = crypto.randomUUID();
     const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    const lifecycle = await transitionAccountLifecycle(c.env, adapter, {
+    const lifecycle = await transitionAccountLifecycle(c.env, accountAdapter, {
       tenantId,
       userId,
       lifecycle: 'active',

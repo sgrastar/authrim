@@ -38,15 +38,16 @@ export interface CanonicalAccountStatus {
 export async function getCanonicalAccountStatus(
   adapter: DatabaseAdapter,
   tenantId: string,
-  userId: string
+  userId: string,
+  expectedAccountId?: string
 ): Promise<CanonicalAccountStatus | null> {
   const account = await adapter.queryOne<{
     id: string;
     lifecycle_state: string;
     metadata_json: string | null;
   }>(
-    'SELECT id, lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
-    [userId, tenantId]
+    `SELECT id, lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?${expectedAccountId === undefined ? '' : ' AND id = ?'}`,
+    [userId, tenantId, ...(expectedAccountId === undefined ? [] : [expectedAccountId])]
   );
   if (!account) return null;
   const metadata = parseJsonObject(account.metadata_json);
@@ -83,12 +84,13 @@ export async function updateCanonicalAccountStatus(
   status: string,
   metadataPatch: Record<string, unknown> = {},
   versionMs: number,
-  operationId: string
+  operationId: string,
+  expectedAccountId?: string
 ): Promise<boolean> {
   const lifecycleState = status === 'active' ? 'active' : status;
   const account = await adapter.queryOne<{ id: string; primary_subject_id: string | null }>(
-    'SELECT id, primary_subject_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
-    [userId, tenantId]
+    `SELECT id, primary_subject_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?${expectedAccountId === undefined ? '' : ' AND id = ?'}`,
+    [userId, tenantId, ...(expectedAccountId === undefined ? [] : [expectedAccountId])]
   );
   if (!account) return false;
 
@@ -116,8 +118,9 @@ export async function updateCanonicalAccountStatus(
       sql: `UPDATE identity_accounts
                SET lifecycle_state = ?,
                    metadata_json = json_set(COALESCE(metadata_json, '{}'), ${paths.join(', ')}),
-                   updated_at = ?
+                   updated_at = CASE WHEN updated_at > ? THEN updated_at ELSE ? END
              WHERE id = ? AND tenant_id = ?
+               ${expectedAccountId === undefined ? '' : 'AND legacy_user_id = ?'}
                AND ${notDeleted}
                AND (${versionOf('metadata_json')} < ?
                     OR (${versionOf('metadata_json')} = ? AND ${operationOf('metadata_json')} = ?))`,
@@ -125,8 +128,10 @@ export async function updateCanonicalAccountStatus(
         lifecycleState,
         ...values,
         versionMs,
+        versionMs,
         account.id,
         tenantId,
+        ...(expectedAccountId === undefined ? [] : [userId]),
         versionMs,
         versionMs,
         operationId,
@@ -141,6 +146,7 @@ export async function updateCanonicalAccountStatus(
                      AND EXISTS (
                        SELECT 1 FROM identity_accounts a
                         WHERE a.id = ? AND a.tenant_id = ?
+                          ${expectedAccountId === undefined ? '' : 'AND a.legacy_user_id = ?'}
                           AND a.lifecycle_state = ?
                           AND ${versionOf('a.metadata_json')} = ?
                           AND ${operationOf('a.metadata_json')} = ?
@@ -153,6 +159,7 @@ export async function updateCanonicalAccountStatus(
               tenantId,
               account.id,
               tenantId,
+              ...(expectedAccountId === undefined ? [] : [userId]),
               lifecycleState,
               versionMs,
               operationId,
@@ -219,6 +226,8 @@ export async function transitionAccountLifecycle(
   input: {
     tenantId: string;
     userId: string;
+    /** A resolved internal account pin; other callers retain their existing legacy-ID lookup. */
+    expectedAccountId?: string;
     /** The authentication state, and the account's status and lifecycle state. */
     lifecycle: AccountAuthenticationLifecycle;
     status: string;
@@ -271,12 +280,18 @@ export async function transitionAccountLifecycle(
         input.status,
         input.metadataPatch,
         versionMs,
-        input.operationId
+        input.operationId,
+        input.expectedAccountId
       )
     ) {
       return versionMs;
     }
-    const current = await getCanonicalAccountStatus(adapter, input.tenantId, input.userId);
+    const current = await getCanonicalAccountStatus(
+      adapter,
+      input.tenantId,
+      input.userId,
+      input.expectedAccountId
+    );
     if (
       current?.lifecycle_operation_id === input.operationId &&
       current.lifecycle_version_ms !== null &&
@@ -290,7 +305,8 @@ export async function transitionAccountLifecycle(
         input.status,
         input.metadataPatch,
         current.lifecycle_version_ms,
-        input.operationId
+        input.operationId,
+        input.expectedAccountId
       ))
         ? current.lifecycle_version_ms
         : null;

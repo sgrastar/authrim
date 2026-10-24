@@ -36,6 +36,8 @@ import {
 } from '@authrim/ar-lib-core';
 
 export const SESSION_END_LOGOUT_JOB_TYPE = 'users/session-end-logout';
+/** Old consumers must leave new-action jobs pending instead of consuming their retry budget. */
+export const SESSION_REVOKE_LOGOUT_JOB_TYPE = 'users/session-end-logout-v2';
 
 /**
  * Sessions per job. A job is sent within the time a request may keep working after its response
@@ -49,6 +51,7 @@ export type AdminSessionEndAction =
   | 'user.suspend'
   | 'user.lock'
   | 'user.sessions_revoked'
+  | 'session.revoke'
   | 'support_ops.action.execute'
   | 'bulk_user_update'
   | 'user.deleted'
@@ -60,6 +63,7 @@ const ADMIN_SESSION_END_ACTIONS: ReadonlySet<string> = new Set<AdminSessionEndAc
   'user.suspend',
   'user.lock',
   'user.sessions_revoked',
+  'session.revoke',
   'support_ops.action.execute',
   'bulk_user_update',
   'user.deleted',
@@ -244,7 +248,9 @@ export async function enqueueSessionEndLogout(
       params: [
         job.id,
         params.tenantId,
-        SESSION_END_LOGOUT_JOB_TYPE,
+        params.trigger.action === 'session.revoke'
+          ? SESSION_REVOKE_LOGOUT_JOB_TYPE
+          : SESSION_END_LOGOUT_JOB_TYPE,
         JSON.stringify({
           total: job.config.sessions.length,
           processed: 0,

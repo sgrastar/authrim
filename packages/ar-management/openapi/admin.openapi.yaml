@@ -662,9 +662,13 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/AdminSessionList'
+        '500':
+          $ref: '#/components/responses/Error'
       description: >-
         List persisted user sessions for the current tenant, optionally filtered by user and active
-        or expired status.
+        or expired status. User contact information is read from each account's owning data store,
+        including suspended and locked accounts. If the owner required to audit disclosed personal
+        session fields cannot be verified, the request returns an error without disclosing those fields.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -681,9 +685,13 @@ paths:
           $ref: '#/components/responses/AdminSession'
         '404':
           $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       description: >-
         Return a single user session from SessionStore when possible, falling back to the persisted
-        session row.
+        session row. A SessionStore result must belong to the current tenant and requested session ID;
+        a mismatched result returns 404 before contact information is read. Contact information may be
+        returned for suspended or locked accounts in the current tenant.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -699,9 +707,14 @@ paths:
           $ref: '#/components/responses/AdminSessionRevoke'
         '404':
           $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       description: >-
-        Revoke a single user session by invalidating the SessionStore entry when applicable and
-        deleting the persisted session row.
+        Revoke a single user session by invalidating its tenant-owned SessionStore entry when
+        applicable and deleting the matching persisted row. A live SessionStore session does not
+        require a persisted row. A mismatched tenant or session ID returns 404 without invalidation.
+        Unavailable SessionStore access returns 500 without claiming success. Downstream logout is
+        started for a session that was ended, including when later persisted-row cleanup fails.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1438,6 +1451,14 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/AdminUserStatusChangeResult'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       description: >-
         Suspend a user account with a structured reason code and optional token/session revocation
         flags.
@@ -1458,6 +1479,14 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/AdminUserStatusChangeResult'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       description: >-
         Lock a user account with a structured reason code, optional unlock time, and optional
         token/session revocation flags.
@@ -1480,6 +1509,12 @@ paths:
           $ref: '#/components/responses/AdminUserStatusChangeResult'
         '400':
           $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       description: Restore a suspended or locked user account to the active state.
       security:
         - adminBearer: []
@@ -1497,9 +1532,13 @@ paths:
           $ref: '#/components/responses/AdminUserSessionsRevoked'
         '404':
           $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       description: >-
         Revoke all persisted and sharded sessions for a user and update the per-user session
-        revocation epoch.
+        revocation epoch. Suspended and locked accounts remain addressable. This operation does not
+        require reading the user's personal profile. Downstream logout and audit retain the sessions
+        ended by the revocation epoch update.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -12771,7 +12810,17 @@ paths:
       description: >-
         Records an authoritative lifecycle signal from an external source and evaluates the
         resulting account, membership, entitlement, or permission decision. Duplicate source events
-        are handled idempotently.
+        are handled idempotently. An account suspension returns success only after the canonical
+        account result is confirmed. Its first accepted target and observation time remain fixed
+        across retries. A conflicting replay, changed account placement, a newer lifecycle change,
+        or an older event without sufficient execution evidence returns 409; the event is retained
+        without reapplying a new suspension. Confirmed completed events remain idempotent after
+        later lifecycle changes. Cached HTTP responses also require stored completion evidence;
+        missing evidence returns 409 without reapplying the suspension. Storage failures or an
+        unconfirmed result return 500.
+        Account targets use the internal account ID; optional accountId and subjectId must match
+        the canonical account and primary subject. Session logout delivery follows the existing
+        best-effort suspension behavior.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -35554,7 +35603,7 @@ components:
             sourceType: scim
             sourceId: workday
             sourceEventId: evt_123
-            signalType: deprovision
+            signalType: scim_active_false
             targetType: account
             targetId: account_123
     FieldMappingOperationalNotificationCreate:
@@ -61106,6 +61155,7 @@ components:
         sourceEventId:
           type: string
         sourceTimestamp:
+          description: For an account suspension, a nonnegative safe integer Unix timestamp in milliseconds.
           type:
             - integer
             - 'null'
@@ -61115,6 +61165,11 @@ components:
             - 'null'
         signalType:
           type: string
+          enum:
+            - scim_active_false
+            - scim_group_removed
+            - csv_diff_removed
+            - claim_disappeared
         subjectId:
           type:
             - string
