@@ -123,9 +123,33 @@ paths:
       tags:
         - SAML SP
       summary: Start SAML SP login.
+      description: >-
+        With an idp parameter, creates an SP-initiated authentication request and starts the
+        configured redirect or POST binding. Without idp, returns the provider selection page.
+        A well-formed runtime_interaction_id is retained on its provider links as an opaque hint;
+        the selected start checks the interaction's tenant, live state and expiry again.
+      parameters:
+        - name: runtime_interaction_id
+          in: query
+          required: false
+          description: >-
+            Optional Flow interaction identifier for associating failed sign-in attempts with an
+            existing interaction of this tenant. The value is trimmed and used only when it names
+            an unexpired interaction in the created or active state. An absent, empty, malformed,
+            unknown, expired, or other-tenant value is ignored. If the interaction cannot be checked,
+            sign-in continues without this association. This parameter adds no rejection response
+            and does not change the existing sign-in redirects or errors.
+          schema:
+            type: string
       responses:
+        '200':
+          description: Provider selection page or an auto-submitting SAML POST-binding form.
+          content:
+            text/html:
+              schema:
+                type: string
         '302':
-          description: Redirect response.
+          description: Redirects to the selected identity provider using the SAML redirect binding.
   /saml/sp/acs:
     post:
       tags:

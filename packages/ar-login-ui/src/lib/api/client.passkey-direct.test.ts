@@ -18,6 +18,70 @@ async function loadClient() {
 	return import('./client');
 }
 
+describe('naming the Flow interaction of a sign-in attempt', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sessionStorage.clear();
+	});
+
+	const ok = () =>
+		vi
+			.fn<typeof fetch>()
+			.mockResolvedValue(
+				new Response(JSON.stringify({ challenge_id: 'c', options: {} }), { status: 200 })
+			);
+	const headerOf = (fetchMock: ReturnType<typeof ok>) =>
+		new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('X-Authrim-Interaction-Id');
+
+	it('sends it with the passkey, TOTP and directory password starts, and only when a Flow runs', async () => {
+		for (const interactionId of ['int-1', undefined]) {
+			const passkey = ok();
+			vi.stubGlobal('fetch', passkey);
+			const { passkeyAPI, totpAPI, directoryPasswordAPI } = await loadClient();
+			await passkeyAPI.getLoginOptions({ runtimeInteractionId: interactionId });
+			expect(headerOf(passkey)).toBe(interactionId ?? null);
+
+			const totp = ok();
+			vi.stubGlobal('fetch', totp);
+			await totpAPI.startLogin({ identifier: 'person', runtimeInteractionId: interactionId });
+			expect(headerOf(totp)).toBe(interactionId ?? null);
+
+			const directory = ok();
+			vi.stubGlobal('fetch', directory);
+			// Only the request is looked at: what the dummy response leads to does not matter.
+			await directoryPasswordAPI
+				.login({ username: 'person', password: 'secret', runtimeInteractionId: interactionId })
+				.catch(() => undefined);
+			expect(headerOf(directory)).toBe(interactionId ?? null);
+		}
+	});
+
+	it.each(['saml_sp', 'oauth_redirect'] as const)(
+		'adds it to the %s provider start, and only when a Flow runs',
+		async (startMode) => {
+			const { externalIdpAPI } = await loadClient();
+			const named = await externalIdpAPI.startLogin(
+				'idp-1',
+				'https://login.example.com/callback',
+				undefined,
+				startMode,
+				undefined,
+				undefined,
+				undefined,
+				'int-1'
+			);
+			expect(new URL(named.url).searchParams.get('runtime_interaction_id')).toBe('int-1');
+			const unnamed = await externalIdpAPI.startLogin(
+				'idp-1',
+				'https://login.example.com/callback',
+				undefined,
+				startMode
+			);
+			expect(new URL(unnamed.url).searchParams.has('runtime_interaction_id')).toBe(false);
+		}
+	);
+});
+
 describe('LoginUI passkey Direct Auth adapter', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();

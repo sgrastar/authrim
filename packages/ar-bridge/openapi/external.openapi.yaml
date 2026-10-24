@@ -4,6 +4,154 @@ info:
   version: 0.4.2
   description: Browser continuation endpoints owned by the external identity bridge.
 paths:
+  /auth/external/{provider}/start:
+    get:
+      operationId: startExternalIdentityLogin
+      summary: Start external identity provider login
+      description: >-
+        Starts sign-in with the provider identified by its id or slug. Sign-in requires client_id,
+        code_challenge and code_challenge_method=S256. A one-use link_intent issued for the current
+        browser session starts account linking instead; runtime_interaction_id is ignored for
+        linking. The optional interaction association does not alter provider selection,
+        client redirect validation, PKCE, or the normal authorization redirect.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: The configured provider's id or slug.
+          schema:
+            type: string
+        - name: client_id
+          in: query
+          description: Required for sign-in; not required for a validated account-link intent.
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          description: The client's PKCE challenge, required for sign-in.
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          description: Must be S256 for sign-in.
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          description: The post-login redirect, subject to the existing client and tenant validation.
+          schema:
+            type: string
+        - name: link_intent
+          in: query
+          description: One-use account-link intent bound to the current browser session.
+          schema:
+            type: string
+        - name: runtime_interaction_id
+          in: query
+          required: false
+          description: >-
+            Optional Flow interaction identifier for associating failed sign-in attempts with an
+            existing interaction of this tenant. The value is trimmed and used only when it names
+            an unexpired interaction in the created or active state. An absent, empty, malformed,
+            unknown, expired, or other-tenant value is ignored. If the interaction cannot be checked,
+            sign-in continues without this association. This parameter adds no rejection response
+            and does not change the existing sign-in redirects or errors.
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirects to the provider, the client callback, or the account-link result.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        '400':
+          description: Existing sign-in validation failed, such as missing client PKCE or invalid human verification.
+        '403':
+          description: The provider is not permitted for the requested sign-in or re-authentication.
+        '404':
+          description: The provider is unknown or disabled, or a signup invitation is unavailable.
+        '429':
+          description: The authentication request rate limit was exceeded.
+        '500':
+          description: The external login could not be started.
+        '503':
+          description: Provider usage or re-authentication settings are temporarily unavailable.
+  /api/external/{provider}/start:
+    get:
+      operationId: startExternalIdentityLoginApiAlias
+      summary: Start external identity provider login
+      description: >-
+        Starts sign-in with the provider identified by its id or slug. Sign-in requires client_id,
+        code_challenge and code_challenge_method=S256. A one-use link_intent issued for the current
+        browser session starts account linking instead; runtime_interaction_id is ignored for
+        linking. The optional interaction association does not alter provider selection,
+        client redirect validation, PKCE, or the normal authorization redirect.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: The configured provider's id or slug.
+          schema:
+            type: string
+        - name: client_id
+          in: query
+          description: Required for sign-in; not required for a validated account-link intent.
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          description: The client's PKCE challenge, required for sign-in.
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          description: Must be S256 for sign-in.
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          description: The post-login redirect, subject to the existing client and tenant validation.
+          schema:
+            type: string
+        - name: link_intent
+          in: query
+          description: One-use account-link intent bound to the current browser session.
+          schema:
+            type: string
+        - name: runtime_interaction_id
+          in: query
+          required: false
+          description: >-
+            Optional Flow interaction identifier for associating failed sign-in attempts with an
+            existing interaction of this tenant. The value is trimmed and used only when it names
+            an unexpired interaction in the created or active state. An absent, empty, malformed,
+            unknown, expired, or other-tenant value is ignored. If the interaction cannot be checked,
+            sign-in continues without this association. This parameter adds no rejection response
+            and does not change the existing sign-in redirects or errors.
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirects to the provider, the client callback, or the account-link result.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        '400':
+          description: Existing sign-in validation failed, such as missing client PKCE or invalid human verification.
+        '403':
+          description: The provider is not permitted for the requested sign-in or re-authentication.
+        '404':
+          description: The provider is unknown or disabled, or a signup invitation is unavailable.
+        '429':
+          description: The authentication request rate limit was exceeded.
+        '500':
+          description: The external login could not be started.
+        '503':
+          description: Provider usage or re-authentication settings are temporarily unavailable.
   /api/external/links:
     get:
       operationId: listLinkedExternalIdentities

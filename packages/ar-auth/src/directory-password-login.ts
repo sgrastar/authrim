@@ -53,6 +53,11 @@ import {
   resolveEmailSendLimit,
 } from '@authrim/ar-lib-core';
 import {
+  accountAuthenticationDenialReason,
+  signInAttemptFailureRecorder,
+  signInAttemptInteractionMetadata,
+} from './sign-in-attempt-recording';
+import {
   DirectoryPasswordClient,
   DirectoryPasswordError,
   type DirectoryPasswordConnectorConfig,
@@ -446,8 +451,31 @@ async function ensureDirectoryAccountAuthenticationState(
   );
 }
 
+interface DirectoryAttemptBoundary {
+  recordUnexpected?: () => void;
+}
+
+/** Preserve the original rejected promise/HTTP response while observing unexpected failures. */
+function withDirectoryAttemptBoundary(
+  run: (c: Context<{ Bindings: Env }>, boundary: DirectoryAttemptBoundary) => Promise<Response>
+) {
+  return async (c: Context<{ Bindings: Env }>): Promise<Response> => {
+    const boundary: DirectoryAttemptBoundary = {};
+    try {
+      return await run(c, boundary);
+    } catch (error) {
+      try {
+        boundary.recordUnexpected?.();
+      } catch {
+        /* Recording cannot replace the auth failure. */
+      }
+      throw error;
+    }
+  };
+}
+
 export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordFetch) {
-  return async function directoryPasswordLoginHandler(c: Context<{ Bindings: Env }>) {
+  return withDirectoryAttemptBoundary(async function directoryPasswordLoginHandler(c, boundary) {
     const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
     const tenantId = getTenantIdFromContext(c);
 
@@ -470,6 +498,29 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT);
     }
 
+    const record = signInAttemptFailureRecorder(
+      c,
+      tenantId,
+      await signInAttemptInteractionMetadata(c, tenantId),
+      'directory_password'
+    );
+    let recorded = false;
+    let attemptUserId: string | null = null;
+    const failed = <T>(
+      response: T,
+      reason: Parameters<typeof record>[1],
+      userId?: string | null
+    ): T => {
+      if (!recorded) {
+        recorded = true;
+        return record(response, reason, userId === undefined ? attemptUserId : userId);
+      }
+      return response;
+    };
+    boundary.recordUnexpected = () => {
+      failed(undefined, 'service_unavailable');
+    };
+
     const accountRateLimit = await getDirectoryPasswordAccountLimiter(c.env, tenantId, username);
     let turnstileAction: 'login' | 'reauth' = 'login';
     if (authorizationChallengeId) {
@@ -479,9 +530,12 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         authorizationChallengeId
       );
       if (!challengeType) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-          variables: { field: 'authorization_challenge_id' },
-        });
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+            variables: { field: 'authorization_challenge_id' },
+          }),
+          'challenge_mismatch'
+        );
       }
       turnstileAction = challengeType;
     }
@@ -490,16 +544,19 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       turnstileAction,
       request.human_verification_response ?? request.cf_turnstile_response
     );
-    if (turnstileError) return turnstileError;
+    if (turnstileError) return failed(turnstileError, 'verification_failed');
 
     const connector = await resolveDirectoryConnector(c.env, tenantId);
     if (!connector) {
-      return c.json(
-        {
-          error: 'directory_password_not_configured',
-          error_description: 'Directory password login is not configured for this tenant',
-        },
-        404
+      return failed(
+        c.json(
+          {
+            error: 'directory_password_not_configured',
+            error_description: 'Directory password login is not configured for this tenant',
+          },
+          404
+        ),
+        'method_disabled'
       );
     }
 
@@ -510,12 +567,15 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           ? new DirectoryPasswordClient(connector.clientConfig, fetcher)
           : null;
     if (!client) {
-      return c.json(
-        {
-          error: 'directory_password_not_configured',
-          error_description: 'Directory password login is not configured for this tenant',
-        },
-        404
+      return failed(
+        c.json(
+          {
+            error: 'directory_password_not_configured',
+            error_description: 'Directory password login is not configured for this tenant',
+          },
+          404
+        ),
+        'method_disabled'
       );
     }
 
@@ -528,17 +588,20 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       maxRequests: await resolveAuthMaxFailedAttempts(c.env, tenantId),
     });
     if (!accountAttempt.allowed) {
-      return c.json(
-        {
-          error: 'rate_limit_exceeded',
-          error_description: 'Too many login attempts. Please try again later.',
-        },
-        429,
-        {
-          'Retry-After': String(
-            accountAttempt.retryAfter || DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS
-          ),
-        }
+      return failed(
+        c.json(
+          {
+            error: 'rate_limit_exceeded',
+            error_description: 'Too many login attempts. Please try again later.',
+          },
+          429,
+          {
+            'Retry-After': String(
+              accountAttempt.retryAfter || DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS
+            ),
+          }
+        ),
+        'rate_limited'
       );
     }
 
@@ -584,12 +647,15 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
             return recoveryResponse;
           }
         }
-        return c.json(
-          {
-            error: 'connector_unavailable',
-            retryable: error.details.retryable,
-          },
-          error.details.retryable ? 503 : 400
+        return failed(
+          c.json(
+            {
+              error: 'connector_unavailable',
+              retryable: error.details.retryable,
+            },
+            error.details.retryable ? 503 : 400
+          ),
+          'service_unavailable'
         );
       }
       log.error(
@@ -598,8 +664,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         error as Error
       );
       const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
-      if (writeFenceResponse) return writeFenceResponse;
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      if (writeFenceResponse) return failed(writeFenceResponse, 'service_unavailable');
+      return failed(createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR), 'service_unavailable');
     }
 
     if (verdict.result !== 'success') {
@@ -611,7 +677,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         username,
         verdict.reason
       );
-      return c.json({ error: 'invalid_credentials' }, 401);
+      return failed(c.json({ error: 'invalid_credentials' }, 401), 'verification_failed');
     }
 
     await accountRateLimit.limiter.resetRpc(accountRateLimit.key);
@@ -636,7 +702,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         'directory_identity_link_stale',
         verdict.request_id
       );
-      return c.json({ error: 'directory_identity_unmapped' }, 409);
+      return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_unavailable');
     }
     const directoryIdentityLinkConflict = async () => {
       log.warn('Directory identity link conflict during first login', {
@@ -649,11 +715,12 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         'directory_identity_link_conflict',
         verdict.request_id
       );
-      return c.json({ error: 'directory_identity_unmapped' }, 409);
+      return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_unavailable');
     };
     if (match.status === 'conflict') return directoryIdentityLinkConflict();
 
     const runtimeUser = match.status === 'none' ? null : match.runtimeUser;
+    attemptUserId = runtimeUser?.id ?? null;
     const accountStores = match.status === 'none' ? null : match.stores;
     if (match.status === 'found_by_email') {
       try {
@@ -712,14 +779,17 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           });
         }
         const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
-        if (writeFenceResponse) return writeFenceResponse;
-        return c.json(
-          {
-            error: 'temporarily_unavailable',
-            error_description: 'Directory sign-in could not be completed. Please try again.',
-          },
-          503,
-          { 'Retry-After': '1' }
+        if (writeFenceResponse) return failed(writeFenceResponse, 'service_unavailable');
+        return failed(
+          c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Directory sign-in could not be completed. Please try again.',
+            },
+            503,
+            { 'Retry-After': '1' }
+          ),
+          'service_unavailable'
         );
       }
     }
@@ -732,7 +802,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           'directory_identity_unmapped',
           verdict.request_id
         );
-        return c.json({ error: 'directory_identity_unmapped' }, 409);
+        return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_not_linked');
       }
       const pendingStatus = await findDirectoryPendingStatus(
         metadataCore,
@@ -747,7 +817,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           `directory_pending_${pendingStatus}`,
           verdict.request_id
         );
-        return c.json({ error: 'directory_identity_unmapped' }, 409);
+        return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_not_linked');
       }
       const pendingRecorded = await upsertDirectoryPendingUser(metadataCore, {
         tenantId,
@@ -763,7 +833,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           'directory_pending_state_conflict',
           verdict.request_id
         );
-        return c.json({ error: 'directory_identity_unmapped' }, 409);
+        return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_not_linked');
       }
       await publishDirectoryPasswordFailureEvent(
         c,
@@ -771,17 +841,20 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         'pending_provisioning_created',
         verdict.request_id
       );
-      return c.json(
-        {
-          error: 'directory_provisioning_pending',
-          error_description: '管理者の確認が必要です。所属組織の管理者にお問い合わせください。',
-        },
-        403
+      return failed(
+        c.json(
+          {
+            error: 'directory_provisioning_pending',
+            error_description: '管理者の確認が必要です。所属組織の管理者にお問い合わせください。',
+          },
+          403
+        ),
+        'account_not_linked'
       );
     }
 
     if (!runtimeUser || !accountStores) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR), 'service_unavailable');
     }
 
     const now = passwordVerifiedAtMs;
@@ -813,7 +886,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           'directory_migration_blocked',
           verdict.request_id
         );
-        return c.json({ error: 'directory_migration_blocked' }, 403);
+        return failed(c.json({ error: 'directory_migration_blocked' }, 403), 'migration_blocked');
       } else if (migrationDecision.action === 'require_passkey') {
         return createMigrationRequiredResponse(c, {
           tenantId,
@@ -842,7 +915,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         now
       );
       if ('error' in continuation) {
-        return continuation.error;
+        return failed(continuation.error, 'challenge_mismatch');
       }
       authorizationContinuation = continuation;
     }
@@ -851,16 +924,22 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       await ensureDirectoryAccountAuthenticationState(c, tenantId, runtimeUser.id);
     } catch (error) {
       if (!isAccountAuthenticationDeniedError(error)) {
-        return c.json(
-          {
-            error: 'temporarily_unavailable',
-            error_description: 'Authentication state unavailable.',
-          },
-          503,
-          { 'Retry-After': '1' }
+        return failed(
+          c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Authentication state unavailable.',
+            },
+            503,
+            { 'Retry-After': '1' }
+          ),
+          'service_unavailable'
         );
       }
-      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS),
+        accountAuthenticationDenialReason(error)
+      );
     }
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     await sessionStore.createSessionRpc(
@@ -1002,7 +1081,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         : {}),
       redirect_url: postLoginRedirect,
     });
-  };
+  });
 }
 
 export const directoryPasswordLoginHandler = createDirectoryPasswordLoginHandler();

@@ -3,7 +3,8 @@
  * sign-in-attempts).
  *
  * A start step (passkey or TOTP options, email code send) is told the interaction by the Login UI
- * in the `X-Authrim-Interaction-Id` header. It keeps the interaction with its challenge only when
+ * in the `X-Authrim-Interaction-Id` header; the single-step directory password sign-in checks the
+ * header of its own request before anything else. It keeps the interaction with its challenge only when
  * it is a live interaction of the tenant. The verify step reads it from the consumed
  * challenge alone: nothing a request sends at verify time can point a failure at another
  * interaction. Recording runs after the response and never fails a sign-in.

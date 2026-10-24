@@ -17,9 +17,12 @@
  */
 
 import { Hono } from 'hono';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CanonicalRuntimeUserStore,
+  computeInvestigationSubjectHash,
+  loadInvestigationSubjectHmacKeysFromEnv,
+  createDirectoryAuthMigrationCampaign,
   createDirectoryAuthMigrationTransaction,
   directoryIdentityLookupSubject,
   type DatabaseAdapter,
@@ -35,6 +38,8 @@ const CONNECTOR = 'wwcon_8K4M2Q9F7D3H6P1X';
 const DIRECTORY_SUBJECT = 'uid=routed,ou=People,dc=example,dc=com';
 const SESSION = 'g1:apac:1:session_signed_in';
 const PII_ENCRYPTION_KEY = 'a'.repeat(64);
+const ATTEMPT_INTERACTION = 'int-routed-directory';
+const ATTEMPT_KEYRING = JSON.stringify({ current: 1, keys: { '1': 'b'.repeat(43) } });
 
 const world = vi.hoisted(() => ({
   accountCore: undefined as unknown,
@@ -222,10 +227,10 @@ function app(
   return hono;
 }
 
-function env(): Env {
+function env(options: { directoryEnabled?: boolean; keyring?: string | null } = {}): Env {
   const settings: Record<string, unknown> = {
     [`settings:tenant:${TENANT}:directory-connectors`]: {
-      enabled: true,
+      enabled: options.directoryEnabled ?? true,
       default_connector_id: 'campus',
       auto_provision: false,
       connectors: [
@@ -253,6 +258,11 @@ function env(): Env {
     ALLOWED_ORIGINS: ORIGIN,
     ISSUER_URL: 'https://auth.example.com',
     PII_ENCRYPTION_KEY,
+    ...(options.keyring === null
+      ? {}
+      : {
+          INVESTIGATION_SUBJECT_HMAC_KEYRING: options.keyring ?? ATTEMPT_KEYRING,
+        }),
     WORDWARDEN_SECRET: 'active-secret',
     SETTINGS: kv,
     AUTHRIM_CONFIG: kv,
@@ -269,8 +279,14 @@ function env(): Env {
   } as unknown as Env;
 }
 
+const background: Promise<unknown>[] = [];
+const flushBackground = async () => {
+  while (background.length) await Promise.all(background.splice(0));
+};
 const executionCtx = {
-  waitUntil: () => undefined,
+  waitUntil: (task: Promise<unknown>) => {
+    background.push(task);
+  },
   passThroughOnException: () => undefined,
   props: {},
 };
@@ -369,7 +385,55 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       await seedAccount(databases);
     });
 
-    async function signInWithDirectoryPassword(email: string | null): Promise<Response> {
+    afterEach(async () => {
+      await flushBackground();
+      for (const database of Object.values(databases)) {
+        (database.raw as unknown as { close(): void }).close();
+      }
+    });
+
+    function seedAttemptInteraction(tenantId = TENANT, state = 'active'): void {
+      const now = Math.floor(Date.now() / 1000);
+      databases.metadata.raw
+        .prepare(
+          `INSERT INTO flow_interactions
+        (id,tenant_id,flow_id,flow_version_id,state,contract_hash,signature,expires_at,created_at,updated_at)
+        VALUES(?,?,'flow-default-login-no-consent','flow-version-default-login-no-consent-v1',?,'contract','signature',?,?,?)`
+        )
+        .run(ATTEMPT_INTERACTION, tenantId, state, now + 600, now, now);
+    }
+
+    function attemptRows(database = databases.metadata): Array<Record<string, unknown>> {
+      return database.raw
+        .prepare("SELECT * FROM flow_audit_events WHERE event_type='flow.sign_in_attempt.failed'")
+        .all() as Array<Record<string, unknown>>;
+    }
+
+    async function expectKnownAccountFailure(reasonCode: string): Promise<void> {
+      await flushBackground();
+      const keys = loadInvestigationSubjectHmacKeysFromEnv({
+        INVESTIGATION_SUBJECT_HMAC_KEYRING: ATTEMPT_KEYRING,
+      });
+      expect(attemptRows()).toHaveLength(1);
+      expect(attemptRows()[0]).toMatchObject({
+        tenant_id: TENANT,
+        interaction_id: ATTEMPT_INTERACTION,
+        method: 'directory_password',
+        reason_code: reasonCode,
+        user_id: null,
+        metadata_json: null,
+        subject_hash: await computeInvestigationSubjectHash(keys!.writeKey, TENANT, USER),
+      });
+      expect(attemptRows(databases.accountCore)).toEqual([]);
+      for (const pii of [USER, EMAIL, DIRECTORY_SUBJECT, 'correct']) {
+        expect(JSON.stringify(attemptRows())).not.toContain(pii);
+      }
+    }
+
+    async function signInWithDirectoryPassword(
+      email: string | null,
+      options: { interactionId?: string; directoryEnabled?: boolean; keyring?: string | null } = {}
+    ): Promise<Response> {
       const handler = createDirectoryPasswordLoginHandler(directoryFetcher(email));
       return app(allocationScope, databases, (h) =>
         h.post('/api/auth/directory-password/login', handler)
@@ -377,13 +441,173 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
         '/api/auth/directory-password/login',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: ORIGIN,
+            ...(options.interactionId ? { 'X-Authrim-Interaction-Id': options.interactionId } : {}),
+          },
           body: JSON.stringify({ username: 'routed', password: 'correct' }),
         },
-        env(),
+        env(options),
         executionCtx
       );
     }
+
+    it('records connector removal against the validated Flow without inventing an account', async () => {
+      seedAttemptInteraction();
+
+      const response = await signInWithDirectoryPassword(EMAIL, {
+        interactionId: ATTEMPT_INTERACTION,
+        directoryEnabled: false,
+      });
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ error: 'directory_password_not_configured' });
+      await flushBackground();
+      expect(attemptRows()).toHaveLength(1);
+      expect(attemptRows()[0]).toMatchObject({
+        method: 'directory_password',
+        reason_code: 'method_disabled',
+        user_id: null,
+        subject_hash: null,
+      });
+      expect(attemptRows(databases.accountCore)).toEqual([]);
+      expect(world.createdSessions).toEqual([]);
+    }, 20_000);
+
+    it('records a post-password metadata database failure with the routed account HMAC', async () => {
+      seedAttemptInteraction();
+      databases.metadata.raw.exec('DROP TABLE directory_auth_migration_campaigns');
+
+      const response = await signInWithDirectoryPassword(EMAIL, {
+        interactionId: ATTEMPT_INTERACTION,
+      });
+
+      expect(response.status).toBe(500);
+      expect(world.createdSessions).toEqual([]);
+      await expectKnownAccountFailure('service_unavailable');
+      expect(
+        count(databases.accountCore.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
+      ).toBe(1);
+      expect(
+        count(databases.metadata.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
+      ).toBe(0);
+    }, 20_000);
+
+    it('records a route reservation refusal while preserving cleanup of only the new account link', async () => {
+      seedAttemptInteraction();
+      world.failDirectoryRoutePublication = 'directory_identifier_reservation_conflict';
+
+      const response = await signInWithDirectoryPassword(EMAIL, {
+        interactionId: ATTEMPT_INTERACTION,
+      });
+
+      expect(response.status).toBe(503);
+      expect(
+        count(databases.accountCore.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
+      ).toBe(0);
+      expect(world.publishedDirectoryRoutes).toEqual([]);
+      expect(world.createdSessions).toEqual([]);
+      await expectKnownAccountFailure('service_unavailable');
+    }, 20_000);
+
+    it.each(['absent', 'unknown', 'foreign-tenant', 'completed'])(
+      'does not record a %s Flow boundary',
+      async (boundary) => {
+        if (boundary === 'foreign-tenant') seedAttemptInteraction('tenant-other');
+        if (boundary === 'completed') seedAttemptInteraction(TENANT, 'completed');
+        world.failDirectoryRoutePublication = 'directory_identifier_reservation_conflict';
+
+        const response = await signInWithDirectoryPassword(EMAIL, {
+          ...(boundary === 'absent' ? {} : { interactionId: ATTEMPT_INTERACTION }),
+        });
+
+        expect(response.status).toBe(503);
+        await flushBackground();
+        expect(attemptRows()).toEqual([]);
+        expect(attemptRows(databases.accountCore)).toEqual([]);
+        expect(
+          count(databases.accountCore.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
+        ).toBe(0);
+      },
+      20_000
+    );
+
+    it.each([null, '{malformed'])(
+      'records without a subject hash when the optional keyring is %j',
+      async (keyring) => {
+        seedAttemptInteraction();
+        world.failDirectoryRoutePublication = 'directory_identifier_reservation_conflict';
+
+        const response = await signInWithDirectoryPassword(EMAIL, {
+          interactionId: ATTEMPT_INTERACTION,
+          keyring,
+        });
+
+        expect(response.status).toBe(503);
+        await flushBackground();
+        expect(attemptRows()).toHaveLength(1);
+        expect(attemptRows()[0]).toMatchObject({
+          reason_code: 'service_unavailable',
+          user_id: null,
+          subject_hash: null,
+        });
+        expect(attemptRows(databases.accountCore)).toEqual([]);
+        expect(world.createdSessions).toEqual([]);
+      },
+      20_000
+    );
+
+    it('does not turn a passkey migration continuation into a failed attempt', async () => {
+      seedAttemptInteraction();
+      await createDirectoryAuthMigrationCampaign(databases.metadata, {
+        tenantId: TENANT,
+        name: 'Fixture passkey migration',
+        status: 'active',
+        mode: 'require_passkey_after_directory',
+        emailCodeFallbackMode: 'disabled',
+        targetPolicy: { assignments: [{ type: 'user', user_id: USER }] },
+      });
+
+      const response = await signInWithDirectoryPassword(EMAIL, {
+        interactionId: ATTEMPT_INTERACTION,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        migration: { required: true, action: 'require_passkey' },
+      });
+      await flushBackground();
+      expect(attemptRows()).toEqual([]);
+      expect(
+        count(
+          databases.metadata.raw,
+          'SELECT COUNT(*) AS n FROM directory_auth_migration_transactions'
+        )
+      ).toBe(1);
+      expect(world.createdSessions).toEqual([]);
+    }, 20_000);
+
+    it('keeps the existing terminal response and cleanup when best-effort recording SQL fails', async () => {
+      seedAttemptInteraction();
+      databases.metadata.raw
+        .exec(`CREATE TRIGGER reject_attempt_fixture BEFORE INSERT ON flow_audit_events
+        BEGIN SELECT RAISE(ABORT,'private-recording-fixture'); END`);
+      world.failDirectoryRoutePublication = 'directory_identifier_reservation_conflict';
+
+      const response = await signInWithDirectoryPassword(EMAIL, {
+        interactionId: ATTEMPT_INTERACTION,
+      });
+
+      expect(response.status).toBe(503);
+      await flushBackground();
+      expect(attemptRows()).toEqual([]);
+      expect(
+        count(databases.accountCore.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
+      ).toBe(0);
+      expect(world.createdSessions).toEqual([]);
+    }, 20_000);
 
     it('signs a linked directory identity in through its route to the account database', async () => {
       insertDirectoryLink(databases.accountCore, USER);

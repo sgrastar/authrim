@@ -343,6 +343,7 @@ describe('SECRET_UPLOAD_PLAN', () => {
       'LOOKUP_HMAC_KEY_SLOT_B',
       'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
       'TOMBSTONE_HMAC_KEYRING',
+      'INVESTIGATION_SUBJECT_HMAC_KEYRING',
     ]);
     expect(getSecretNamesForWorker('ar-bridge')).not.toContain('ADMIN_API_SECRET');
   });
@@ -358,17 +359,16 @@ describe('SECRET_UPLOAD_PLAN', () => {
   });
 
   it('gives the investigation keyring to the Workers that record or read sign-in attempts only', () => {
-    // ar-auth records attempts and ar-management reads them; no other Worker holds the key.
-    for (const worker of ['ar-auth', 'ar-management'] as const) {
+    // ar-auth, ar-bridge and ar-saml record attempts; ar-management reads them.
+    for (const worker of ['ar-auth', 'ar-bridge', 'ar-saml', 'ar-management'] as const) {
       expect(getSecretNamesForWorker(worker)).toContain('INVESTIGATION_SUBJECT_HMAC_KEYRING');
     }
     for (const worker of [
-      'ar-bridge',
-      'ar-saml',
       'ar-token',
       'ar-userinfo',
       'ar-discovery',
       'ar-control',
+      'ar-vc',
     ] as const) {
       expect(getSecretNamesForWorker(worker)).not.toContain('INVESTIGATION_SUBJECT_HMAC_KEYRING');
     }

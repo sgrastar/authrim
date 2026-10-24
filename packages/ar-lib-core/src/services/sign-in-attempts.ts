@@ -18,7 +18,14 @@ import type { LookupBlindIndexKey } from './lookup-directory/blind-index';
 import { parseGenerationalHmacKeyring, type TombstoneHmacKeys } from './tombstone-hmac-keyring';
 
 /** The sign-in methods whose failures are recorded. */
-export const SIGN_IN_ATTEMPT_METHODS = ['passkey', 'totp', 'email_code'] as const;
+export const SIGN_IN_ATTEMPT_METHODS = [
+  'passkey',
+  'totp',
+  'email_code',
+  'directory_password',
+  'external_idp',
+  'saml',
+] as const;
 export type SignInAttemptMethod = (typeof SIGN_IN_ATTEMPT_METHODS)[number];
 
 /**
@@ -38,6 +45,14 @@ export const SIGN_IN_ATTEMPT_REASON_CODES = [
   'account_unavailable',
   'guest_denied',
   'service_unavailable',
+  'account_not_linked',
+  'migration_blocked',
+  'upstream_error',
+  'email_not_verified',
+  'signup_disabled',
+  'assurance_not_met',
+  'policy_denied',
+  'provisioning_failed',
 ] as const;
 export type SignInAttemptReasonCode = (typeof SIGN_IN_ATTEMPT_REASON_CODES)[number];
 
@@ -181,6 +196,26 @@ export interface SignInAttemptFailure {
   reasonCode: SignInAttemptReasonCode;
   /** The account, once the attempt knows it; recorded only as its subject hash. */
   userId?: string | null;
+  /** An opaque ID from consumed server state; only its domain-separated digest is stored. */
+  dedupeKey?: string;
+}
+
+async function signInAttemptEventId(input: SignInAttemptFailure): Promise<string | null> {
+  if (input.dedupeKey === undefined) return null;
+  // JSON's array encoding separates fields unambiguously. No raw state/token/account is stored.
+  const encoded = JSON.stringify([
+    'authrim.sign-in-attempt.failed.id',
+    1,
+    input.tenantId,
+    input.interactionId,
+    input.method,
+    input.dedupeKey,
+  ]);
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(encoded));
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
+  return `sia:v1:${hex}`;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -204,7 +239,11 @@ export async function recordSignInAttemptFailure(
   if (
     !SIGN_IN_ATTEMPT_METHODS.includes(input.method) ||
     !SIGN_IN_ATTEMPT_REASON_CODES.includes(input.reasonCode) ||
-    !INTERACTION_ID.test(input.interactionId)
+    !INTERACTION_ID.test(input.interactionId) ||
+    (input.dedupeKey !== undefined &&
+      (typeof input.dedupeKey !== 'string' ||
+        input.dedupeKey.length === 0 ||
+        input.dedupeKey.length > 256))
   ) {
     throw new Error('sign_in_attempt_failure_invalid');
   }
@@ -226,18 +265,19 @@ export async function recordSignInAttemptFailure(
     keys && input.userId
       ? await computeInvestigationSubjectHash(keys.writeKey, input.tenantId, input.userId)
       : null;
+  const eventId = await signInAttemptEventId(input);
 
   for (let attempt = 1; ; attempt++) {
     const inquiryNumber = generateInquiryNumber();
     try {
-      await core.execute(
+      const inserted = await core.execute(
         `INSERT INTO flow_audit_events (
           id, tenant_id, interaction_id, flow_id, flow_version_id, user_id, client_id, saml_sp_id,
           node_id, branch_handle_id, event_type, result, error_code, contract_hash, metadata_json,
           method, reason_code, subject_hash, inquiry_number, created_at
-        ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, 'failure', NULL, ?, NULL, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, 'failure', NULL, ?, NULL, ?, ?, ?, ?, ?)${eventId ? ' ON CONFLICT(id) DO NOTHING' : ''}`,
         [
-          crypto.randomUUID(),
+          eventId ?? crypto.randomUUID(),
           input.tenantId,
           input.interactionId,
           interaction.flow_id,
@@ -254,9 +294,61 @@ export async function recordSignInAttemptFailure(
           nowSeconds,
         ]
       );
+      if (eventId && inserted.rowsAffected === 0) {
+        const existing = await core.queryOne<{ inquiry_number: string }>(
+          `SELECT inquiry_number FROM flow_audit_events
+            WHERE id=? AND tenant_id=? AND interaction_id=? AND method=? AND event_type=?`,
+          [
+            eventId,
+            input.tenantId,
+            input.interactionId,
+            input.method,
+            SIGN_IN_ATTEMPT_FAILED_EVENT,
+          ],
+          { consistencyClass: 'primary_required' }
+        );
+        return existing?.inquiry_number ?? null;
+      }
       return inquiryNumber;
     } catch (error) {
       if (attempt >= INQUIRY_ATTEMPTS || !isUniqueViolation(error)) throw error;
     }
+  }
+}
+
+/**
+ * Records a failed attempt after the response, for Workers outside a Hono request helper: the
+ * recording waits on `waitUntil`, never the response, and a failure to record is only reported
+ * (by `onError`, which must log no more than the error's type).
+ */
+export function scheduleSignInAttemptFailureRecord(
+  options: {
+    waitUntil?: ((promise: Promise<unknown>) => void) | null;
+    core: () => Promise<DatabaseAdapter> | DatabaseAdapter;
+    env: { INVESTIGATION_SUBJECT_HMAC_KEYRING?: string };
+    onError?: (error: unknown) => void;
+  },
+  input: Omit<SignInAttemptFailure, 'interactionId'> & { interactionId: string | null | undefined }
+): void {
+  const interactionId = input.interactionId;
+  if (!interactionId || !INTERACTION_ID.test(interactionId)) return;
+  const recording = (async () => {
+    let keys: InvestigationSubjectHmacKeys | null = null;
+    try {
+      keys = loadInvestigationSubjectHmacKeysFromEnv(options.env);
+    } catch (error) {
+      // A malformed keyring: the attempt is still recorded, without the subject hash.
+      options.onError?.(error);
+    }
+    await recordSignInAttemptFailure(await options.core(), keys, {
+      ...input,
+      interactionId,
+      userId: input.userId && input.userId !== 'unknown' ? input.userId : null,
+    });
+  })().catch((error: unknown) => options.onError?.(error));
+  try {
+    if (options.waitUntil) options.waitUntil(recording);
+  } catch {
+    // No execution context: the recording runs on its own.
   }
 }

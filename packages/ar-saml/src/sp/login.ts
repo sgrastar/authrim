@@ -24,6 +24,7 @@ import {
   readExternalProviderReauthPolicy,
   readExternalProviderUsagePolicy,
   resolveAuthCorePersistenceAdapterFromEnv,
+  resolveSignInAttemptInteraction,
   resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
@@ -115,7 +116,8 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
           idps,
           returnUrl,
           c.req.query('authorization_challenge_id') || undefined,
-          c.req.query('invite_token')
+          c.req.query('invite_token'),
+          c.req.query('runtime_interaction_id')
         )
       );
     }
@@ -218,11 +220,25 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
       }
     }
+    // The Flow interaction this sign-in belongs to, once checked a live interaction of the tenant:
+    // the ACS records the sign-in's failures with it.
+    // Best effort: a check that cannot be made leaves the sign-in unrecorded, never refused.
+    const requestedInteractionId = c.req.query('runtime_interaction_id');
+    const attemptInteractionId = requestedInteractionId
+      ? await (async () =>
+          resolveSignInAttemptInteraction(
+            await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', {
+              tenantId,
+            }),
+            { tenantId, interactionId: requestedInteractionId }
+          ))().catch(() => null)
+      : null;
     const requestContext: SAMLRequestContext | undefined =
-      reauthentication || invitation
+      reauthentication || invitation || attemptInteractionId
         ? {
             ...(reauthentication ? { spReauthentication: reauthentication } : {}),
             ...(invitation ? { invitation } : {}),
+            ...(attemptInteractionId ? { attemptInteractionId } : {}),
           }
         : undefined;
     await storeAuthnRequest(
@@ -428,7 +444,8 @@ function buildIdPSelectionPage(
   idps: Array<{ id: string; name: string; entityId: string }>,
   returnUrl: string,
   authorizationChallengeId?: string,
-  inviteToken?: string
+  inviteToken?: string,
+  runtimeInteractionId?: string
 ): string {
   // A choice answering an authorization challenge (a re-authentication) keeps answering it, and
   // a sign-in started from an invitation keeps its invitation.
@@ -439,10 +456,17 @@ function buildIdPSelectionPage(
     (isUsableInvitationToken(inviteToken)
       ? `&invite_token=${encodeURIComponent(inviteToken)}`
       : '');
+  // This is only an opaque navigation hint. The selected provider start checks its tenant,
+  // live state and expiry before storing it with the AuthnRequest.
+  const interactionId = runtimeInteractionId?.trim();
+  const interaction =
+    interactionId && /^[A-Za-z0-9_-]{1,128}$/u.test(interactionId)
+      ? `&runtime_interaction_id=${encodeURIComponent(interactionId)}`
+      : '';
   const idpLinks = idps
     .map(
       (idp) =>
-        `<li><a href="${issuerUrl}/saml/sp/login?idp=${encodeURIComponent(idp.id)}&return_url=${encodeURIComponent(returnUrl)}${challenge}">${escapeHtml(idp.name)}</a></li>`
+        `<li><a href="${issuerUrl}/saml/sp/login?idp=${encodeURIComponent(idp.id)}&return_url=${encodeURIComponent(returnUrl)}${challenge}${interaction}">${escapeHtml(idp.name)}</a></li>`
     )
     .join('\n');
 

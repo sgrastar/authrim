@@ -1494,6 +1494,8 @@ export const directoryPasswordAPI = {
 		authorizationChallengeId?: string;
 		deferAuthorizationContinuation?: boolean;
 		human_verification_response?: string;
+		/** The Flow interaction this sign-in belongs to, when a Flow runs. */
+		runtimeInteractionId?: string;
 	}) {
 		const session = (await withDirectAuthResult(() =>
 			createDirectAuthClient().loginWithDirectoryPassword(
@@ -1505,7 +1507,7 @@ export const directoryPasswordAPI = {
 					deferAuthorizationContinuation: data.deferAuthorizationContinuation,
 					humanVerificationResponse: data.human_verification_response
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(signInAttemptInteractionHeaders(data.runtimeInteractionId))
 			)
 		)) as {
 			data?:
@@ -2026,7 +2028,9 @@ export const externalIdpAPI = {
 		/** The /authorize challenge this sign-in answers (a re-authentication asks the IdP anew). */
 		authorizationChallengeId?: string,
 		/** The invitation a sign-up started from; applied only to an account the sign-in creates. */
-		inviteToken?: string
+		inviteToken?: string,
+		/** The Flow interaction this sign-in belongs to (the server checks it), when a Flow runs. */
+		runtimeInteractionId?: string
 	): Promise<{
 		url: string;
 	}> {
@@ -2041,6 +2045,9 @@ export const externalIdpAPI = {
 		}
 		if (inviteToken) {
 			targetUrl.searchParams.set('invite_token', inviteToken);
+		}
+		if (runtimeInteractionId) {
+			targetUrl.searchParams.set('runtime_interaction_id', runtimeInteractionId);
 		}
 
 		if (startMode === 'saml_sp') {
