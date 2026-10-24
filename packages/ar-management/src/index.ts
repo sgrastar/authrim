@@ -273,23 +273,24 @@ function managementRequestDiagnosticStartMiddleware() {
       await next();
     } finally {
       const state = getMiddlewareDiagnosticState(c);
-      if (!state) return;
-      recordMiddlewareDiagnosticSpan(c, 'mg_handler_downstream');
-      state.spans.push({
-        name: 'mg_total',
-        durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
-      });
-      appendMiddlewareDiagnosticServerTiming(c, state.spans);
-      c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
-      getLogger(c)
-        .module('MANAGEMENT-REQUEST-TIMING')
-        .info('Management request middleware diagnostics', {
-          diagnosticSessionId: state.sessionId,
-          method: c.req.method,
-          path: c.req.path,
-          status: c.res.status,
-          timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+      if (state) {
+        recordMiddlewareDiagnosticSpan(c, 'mg_handler_downstream');
+        state.spans.push({
+          name: 'mg_total',
+          durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
         });
+        appendMiddlewareDiagnosticServerTiming(c, state.spans);
+        c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
+        getLogger(c)
+          .module('MANAGEMENT-REQUEST-TIMING')
+          .info('Management request middleware diagnostics', {
+            diagnosticSessionId: state.sessionId,
+            method: c.req.method,
+            path: c.req.path,
+            status: c.res.status,
+            timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+          });
+      }
     }
   };
 }
