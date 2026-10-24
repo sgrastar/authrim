@@ -14,6 +14,7 @@ import {
   resolveEffectiveSettings,
   buildRequestIssuerUrl,
   getLogger,
+  getWaitUntilFromContext,
   getTenantIdFromContext,
   type JWEAlgorithm,
   type JWEEncryption,
@@ -40,6 +41,10 @@ import {
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { SignJWT } from 'jose';
+import {
+  scheduleIdentityMappingFailure,
+  type IdentityMappingFailureContext,
+} from '@authrim/ar-lib-core/services/identity-mapping-failures';
 
 // ===== Key Caching for Performance Optimization =====
 // Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
@@ -330,6 +335,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const userClaims: Record<string, unknown> = claimEvaluation.claims;
 
   if (client_id && clientMetadata) {
+    const failureContext: IdentityMappingFailureContext = {};
     try {
       const authCtx = createAuthContextFromHono(c, tenantId);
       const mapped = await applyOIDCIdentityMapping({
@@ -337,6 +343,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         env: c.env,
         tenantId,
         clientId: client_id,
+        failureContext,
         sectorIdentifier: clientMetadata.sector_identifier_uri,
         selector: clientMetadata.identity_mapping,
         destinationSurface: 'userinfo',
@@ -359,6 +366,21 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         Object.assign(userClaims, mapped.claims);
       }
     } catch (mappingError) {
+      failureContext.code ??=
+        mappingError instanceof OIDCIdentityMappingRuntimeError
+          ? mappingError.details.code
+          : 'mapping_failed';
+      try {
+        scheduleIdentityMappingFailure({
+          env: c.env,
+          tenantId,
+          clientId: client_id,
+          failure: failureContext,
+          waitUntil: getWaitUntilFromContext(c),
+        });
+      } catch {
+        // Failure accounting is optional and cannot replace the protocol response.
+      }
       log.error(
         'Failed to apply OIDC identity mapping for userinfo',
         { client_id },

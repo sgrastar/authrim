@@ -1274,10 +1274,10 @@ it('pins input manifests and module policies and rejects overlapping dataset tar
   );
 });
 
-it('persists and bulk-confirms a complete 310-empty-dataset Phase 8 SQL sequence', async () => {
+it('persists and bulk-confirms a complete 311-empty-dataset Phase 8 SQL sequence', async () => {
   await persist();
   const policies = Array.from(
-    { length: 310 },
+    { length: 311 },
     (_, index): SqliteDatasetInspectionPolicy => ({
       ...policy,
       dataset: { ...policy.dataset, id: `core.phase8_${index}` },
@@ -1302,7 +1302,7 @@ it('persists and bulk-confirms a complete 310-empty-dataset Phase 8 SQL sequence
   );
   await seal();
   const saved = (await inventory.readPage(1))[0];
-  expect(JSON.parse(saved.payload_json).jobs).toHaveLength(310);
+  expect(JSON.parse(saved.payload_json).jobs).toHaveLength(311);
 
   const start = {
     ...context,

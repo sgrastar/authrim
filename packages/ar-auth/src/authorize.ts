@@ -41,6 +41,7 @@ import {
   findOAuthClientConsentRevocation,
   accessTokenConsentClaims,
   releaseIDTokenClaims,
+  getWaitUntilFromContext,
   resolveAssuranceClaims,
   type OAuthClientConsentRevocationState,
   getChallengeStoreByChallengeId,
@@ -5029,6 +5030,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           tenantId,
           clientId: validClientId,
           clientMetadata,
+          waitUntil: getWaitUntilFromContext(c),
           loadUserAttributes: (userId, names) =>
             loadUserAttributesForMapping(c, tenantId, userId, names),
           log,

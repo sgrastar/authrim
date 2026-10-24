@@ -26,6 +26,7 @@ import {
   resolveAppSecurityRequirements,
   // Logging
   getLogger,
+  getWaitUntilFromContext,
   createLogger,
   // Validation
   validateGrantType,
@@ -964,6 +965,7 @@ function idTokenReleaseContext(
     tenantId,
     clientId,
     clientMetadata,
+    waitUntil: getWaitUntilFromContext(c),
     // The user's attributes an identity mapping reads, the same whatever this grant's scope or
     // claims request puts in the ID token.
     loadUserAttributes: async (userId, names) => {

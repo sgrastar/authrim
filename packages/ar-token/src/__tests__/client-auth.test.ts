@@ -32,6 +32,7 @@ import {
   type TestClientMetadata,
 } from './helpers/fixtures';
 import { evidenceRow, useEvidenceAdapter } from './helpers/identity-assurance';
+import { issuanceFailureDatabase } from './helpers/identity-mapping-issuance-fixture';
 
 const securityRegressionIt =
   process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
@@ -686,6 +687,43 @@ function resetAllMocks() {
 
 describe('Client Authentication Tests', () => {
   let mockEnv: MockEnv;
+  const failureStores: Array<ReturnType<typeof issuanceFailureDatabase>> = [];
+  function failureStore() {
+    const store = issuanceFailureDatabase();
+    failureStores.push(store);
+    Object.assign(mockEnv, { DB_ADMIN: store.adapter });
+    return store;
+  }
+  async function expectOneMappingFailure(
+    ctx: ReturnType<typeof createMockContext>,
+    store: ReturnType<typeof issuanceFailureDatabase>,
+    clientId: string
+  ) {
+    await Promise.all(vi.mocked(ctx.executionCtx, true).waitUntil.mock.calls.map(([work]) => work));
+    expect(store.rows()).toHaveLength(1);
+    expect(store.rows()[0]).toMatchObject({
+      tenant_id: 'default',
+      client_id: clientId,
+      code: 'set_missing',
+      tier: 'client',
+      set_id: 'set-gone',
+      count: 1,
+    });
+    expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+    expect(Object.keys(store.rows()[0]).sort()).toEqual(
+      [
+        'id',
+        'tenant_id',
+        'client_id',
+        'code',
+        'tier',
+        'set_id',
+        'first_at',
+        'last_at',
+        'count',
+      ].sort()
+    );
+  }
 
   beforeEach(() => {
     resetAllMocks();
@@ -729,6 +767,7 @@ describe('Client Authentication Tests', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    for (const store of failureStores.splice(0)) store.db.close();
   });
 
   describe('Authorization code post-consumption binding security regressions', () => {
@@ -1418,6 +1457,7 @@ describe('Client Authentication Tests', () => {
       });
       const response = await tokenHandler(ctx);
       return {
+        ctx,
         response,
         body: await parseJsonResponse<Record<string, unknown>>(response),
       };
@@ -1437,6 +1477,22 @@ describe('Client Authentication Tests', () => {
         ...overrides,
       };
     }
+
+    it('records exactly one mapping failure after the CIBA grant is consumed', async () => {
+      const store = failureStore();
+      const client = createCIBAClient({
+        client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+        identity_mapping: { fieldMappingSetId: 'set-gone' },
+      });
+      configureCIBARequest(
+        client,
+        baseCIBAMetadata(client, { status: 'approved', sub: 'user-123' })
+      );
+      const { ctx, response, body } = await requestCIBAToken(client);
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({ error: 'invalid_client' });
+      await expectOneMappingFailure(ctx, store, client.client_id);
+    });
 
     securityRegressionIt(
       '[security regression][AO-17] rejects a residual client secret for a private_key_jwt client before polling CIBA state',
@@ -1873,23 +1929,39 @@ describe('Client Authentication Tests', () => {
         body?: Record<string, string>;
       } = {}
     ) {
-      const response = await tokenHandler(
-        createMockContext({
-          headers: options.headers,
-          body: {
-            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            device_code: deviceCode,
-            client_id: clientId,
-            ...options.body,
-          },
-          env: mockEnv,
-        })
-      );
+      const ctx = createMockContext({
+        headers: options.headers,
+        body: {
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          device_code: deviceCode,
+          client_id: clientId,
+          ...options.body,
+        },
+        env: mockEnv,
+      });
+      const response = await tokenHandler(ctx);
       return {
+        ctx,
         response,
         body: await parseJsonResponse<Record<string, unknown>>(response),
       };
     }
+
+    it('records exactly one mapping failure for an approved device code', async () => {
+      const store = failureStore();
+      configureDeviceCode(baseDeviceMetadata({ status: 'approved', sub: 'user-123' }));
+      mocks.mockGetClientCached.mockResolvedValue(
+        createPublicClient({
+          client_id: clientId,
+          grant_types: ['urn:ietf:params:oauth:grant-type:device_code'],
+          identity_mapping: { fieldMappingSetId: 'set-gone' },
+        })
+      );
+      const { ctx, response, body } = await requestDeviceToken();
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({ error: 'invalid_client' });
+      await expectOneMappingFailure(ctx, store, clientId);
+    });
 
     it('fails closed when device storage returns no metadata', async () => {
       configureDeviceCode({});
@@ -2422,6 +2494,41 @@ describe('Client Authentication Tests', () => {
   // ==========================================================================
 
   describe('Direct Auth custom grant', () => {
+    it('records exactly one mapping failure for a redeemed Direct Auth artifact', async () => {
+      const store = failureStore();
+      const client = createPublicClient({ identity_mapping: { fieldMappingSetId: 'set-gone' } });
+      const verifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
+      const data = createAuthCodeData({ redirectUri: DIRECT_AUTH_REDIRECT_URI, sid: undefined });
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetChallengeStoreByChallengeId.mockResolvedValue({
+        consumeChallengeRpc: vi.fn().mockResolvedValue({
+          challenge: await createPkceChallenge(verifier),
+          userId: data.userId,
+          metadata: { client_id: client.client_id, channel: 'browser', transaction_id: 'txn-b6' },
+        }),
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'browser-jkt' });
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(data),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+      const ctx = createMockContext({
+        headers: { DPoP: 'dpop-proof' },
+        body: {
+          grant_type: DIRECT_AUTH_GRANT_TYPE,
+          direct_auth_artifact: 'artifact-b6',
+          client_id: client.client_id,
+          code_verifier: verifier,
+          channel: 'browser',
+        },
+        env: mockEnv,
+      });
+      const response = await tokenHandler(ctx);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+      await expectOneMappingFailure(ctx, store, client.client_id);
+    });
     describe('identity assurance (IAL)', () => {
       async function finishDirectAuth(
         clientOverrides: Partial<TestClientMetadata>,
@@ -3211,6 +3318,18 @@ describe('Client Authentication Tests', () => {
   // ==========================================================================
 
   describe('Native SSO token exchange', () => {
+    it('records exactly one mapping failure for Native SSO', async () => {
+      const store = failureStore();
+      const client = setupNativeSSOValidationTest(
+        {},
+        { identity_mapping: { fieldMappingSetId: 'set-gone' } }
+      );
+      const ctx = createNativeSSOTokenExchangeContext(client.client_id);
+      const response = await tokenHandler(ctx);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+      await expectOneMappingFailure(ctx, store, client.client_id);
+    });
     function setupNativeSSOValidationTest(
       payloadOverrides: Record<string, unknown> = {},
       clientOverrides: Partial<TestClientMetadata> = {}

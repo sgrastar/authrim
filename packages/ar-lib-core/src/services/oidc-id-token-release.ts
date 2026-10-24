@@ -19,6 +19,10 @@ import type { Env } from '../types/env';
 import type { Logger } from '../utils/logger';
 import { applyOIDCIdentityMapping, OIDCIdentityMappingRuntimeError } from './oidc-identity-mapping';
 import {
+  scheduleIdentityMappingFailure,
+  type IdentityMappingFailureContext,
+} from './identity-mapping-failures';
+import {
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
 } from './oidc-attribute-release-consent';
@@ -62,6 +66,8 @@ export interface IDTokenReleaseContext {
   tenantId: string;
   clientId: string;
   clientMetadata: ClientMetadata;
+  /** The request-bound lifetime for the optional failure counter write. */
+  waitUntil?: (promise: Promise<unknown>) => void;
   /**
    * The user's attributes an identity mapping reads, loaded for the user the ID token is for.
    * Called only when the mapping reads attributes the ID token's claims lack, with their names
@@ -114,12 +120,14 @@ export async function mapIDTokenClaims(
 ): Promise<IDTokenReleaseResult> {
   const { clientId } = ctx;
   const userId = typeof claims.sub === 'string' ? claims.sub : '';
+  const failureContext: IdentityMappingFailureContext = {};
   try {
     const mapped = await applyOIDCIdentityMapping({
       adapter: ctx.adapter,
       env: ctx.env,
       tenantId: ctx.tenantId,
       clientId,
+      failureContext,
       sectorIdentifier: ctx.clientMetadata.sector_identifier_uri,
       selector: ctx.clientMetadata.identity_mapping,
       destinationSurface: 'id_token',
@@ -134,6 +142,19 @@ export async function mapIDTokenClaims(
     });
     return { ok: true, claims: mapped.claims };
   } catch (error) {
+    failureContext.code ??=
+      error instanceof OIDCIdentityMappingRuntimeError ? error.details.code : 'mapping_failed';
+    try {
+      scheduleIdentityMappingFailure({
+        env: ctx.env,
+        tenantId: ctx.tenantId,
+        clientId,
+        failure: failureContext,
+        waitUntil: ctx.waitUntil,
+      });
+    } catch {
+      // Recording a failure must preserve the issuance error even if scheduling itself throws.
+    }
     ctx.log.error(
       'Failed to apply OIDC identity mapping for ID token',
       { clientId },

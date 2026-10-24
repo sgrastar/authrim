@@ -39,6 +39,12 @@ export function openAdminDatabase(): SQLiteDatabase {
       'utf8'
     )
   );
+  db.exec(
+    readFileSync(
+      resolve(REPO_ROOT, 'migrations/admin/d1/051_identity_mapping_failures.sql'),
+      'utf8'
+    )
+  );
   return db;
 }
 

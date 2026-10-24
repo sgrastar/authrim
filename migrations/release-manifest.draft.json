@@ -394,6 +394,10 @@
             {
               "path": "050_identity_mapping_level_history.sql",
               "checksum": "ff422be4ce0c17d59a332e0cb06966c67a532d575f9982fbf9aa39b3c5e88e65"
+            },
+            {
+              "path": "051_identity_mapping_failures.sql",
+              "checksum": "267b99dcd63f0b73ba22de7a1a8aabadb4c6c103497bcf6f1280aa5a916d6025"
             }
           ]
         },
@@ -999,6 +1003,10 @@
         {
           "path": "050_identity_mapping_level_history.sql",
           "checksum": "ff422be4ce0c17d59a332e0cb06966c67a532d575f9982fbf9aa39b3c5e88e65"
+        },
+        {
+          "path": "051_identity_mapping_failures.sql",
+          "checksum": "267b99dcd63f0b73ba22de7a1a8aabadb4c6c103497bcf6f1280aa5a916d6025"
         }
       ]
     },

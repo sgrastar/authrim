@@ -16,6 +16,28 @@ import { parseTenantBackupSelection, tenantDatasetSelectionRule } from '../selec
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 
 describe('tenant backup dataset registry coverage', () => {
+  it('selects failure aggregates only with other logs and preserves their cumulative meaning', () => {
+    const policy = TENANT_DATASET_POLICIES.find(
+      ({ family, table }) => family === 'admin' && table === 'identity_mapping_failures'
+    );
+    expect(policy?.kind).toBe('history');
+    if (!policy) throw new Error('mapping_failure_policy_missing');
+    for (const other of [false, true]) {
+      const selection = parseTenantBackupSelection({
+        settings: true,
+        users: false,
+        admin: false,
+        artifacts: false,
+        logs: { audit: true, other, sensitive: true, period: 7 },
+      });
+      expect(tenantDatasetSelectionRule(policy.kind, selection)).toEqual(
+        other
+          ? { action: 'selected', timeFilter: 'log_window' }
+          : { action: 'excluded', reason: 'not_selected' }
+      );
+    }
+  });
+
   it('selects mapping level history as audit evidence with users and settings disabled', () => {
     const policy = TENANT_DATASET_POLICIES.find(
       ({ family, table }) => family === 'admin' && table === 'identity_mapping_level_history'

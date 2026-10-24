@@ -946,6 +946,11 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_READ,
     'identity mapping level history'
   ),
+  readOnly(
+    '/api/admin/identity-mapping/failures',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping failure records'
+  ),
   rule({
     pattern: '/api/admin/identity-mapping/history/:id/restore',
     methods: ['POST'],

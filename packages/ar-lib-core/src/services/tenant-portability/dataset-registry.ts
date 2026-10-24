@@ -180,7 +180,7 @@ const TABLE_GROUPS: Partial<
     `,
     history: `
       admin_destination_health_events admin_login_attempts federation_metadata_validation_events federation_selected_entity_import_events
-       logging_delivery_event_aggregates logging_delivery_events
+      identity_mapping_failures logging_delivery_event_aggregates logging_delivery_events
       logging_destination_override_history mapping_events
     `,
     log_dependencies: `

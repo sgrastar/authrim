@@ -51,6 +51,7 @@ import {
   type TestAuthCodeData,
 } from './helpers/fixtures';
 import { evidenceRow, useEvidenceD1 } from './helpers/identity-assurance';
+import { issuanceFailureDatabase } from './helpers/identity-mapping-issuance-fixture';
 
 function createConfidentialClient(
   overrides?: Parameters<typeof createConfidentialClientFixture>[0]
@@ -1160,6 +1161,7 @@ describe('Security-Critical Tests', () => {
     } as const;
     let consentedUsers: Set<string>;
     let releaseChecks: Array<{ subjectId: string; claims: Record<string, unknown> }>;
+    let releaseRequestContext: ReturnType<typeof createMockContext>;
 
     function mapSubTo(sub: string) {
       identityRelease.apply.mockImplementation((input) => {
@@ -1213,19 +1215,18 @@ describe('Security-Critical Tests', () => {
         consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
         registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
       });
-      return tokenHandler(
-        createMockContext({
-          method: 'POST',
-          body: {
-            grant_type: 'authorization_code',
-            code: 'valid-auth-code',
-            redirect_uri: authCodeData.redirectUri,
-            client_id: client.client_id,
-            client_secret: 'valid-secret',
-          },
-          env: mockEnv,
-        })
-      );
+      releaseRequestContext = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'authorization_code',
+          code: 'valid-auth-code',
+          redirect_uri: authCodeData.redirectUri,
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: mockEnv,
+      });
+      return tokenHandler(releaseRequestContext);
     }
 
     async function refreshForUser(scope = 'openid profile') {
@@ -1249,18 +1250,17 @@ describe('Security-Critical Tests', () => {
       mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
         rotateRpc: vi.fn().mockResolvedValue({ newJti: 'rt-new-jti-002', newVersion: 2 }),
       });
-      return tokenHandler(
-        createMockContext({
-          method: 'POST',
-          body: {
-            grant_type: 'refresh_token',
-            refresh_token: createTestRefreshTokenJWT({ client_id: client.client_id }),
-            client_id: client.client_id,
-            client_secret: 'valid-secret',
-          },
-          env: mockEnv,
-        })
-      );
+      releaseRequestContext = createMockContext({
+        method: 'POST',
+        body: {
+          grant_type: 'refresh_token',
+          refresh_token: createTestRefreshTokenJWT({ client_id: client.client_id }),
+          client_id: client.client_id,
+          client_secret: 'valid-secret',
+        },
+        env: mockEnv,
+      });
+      return tokenHandler(releaseRequestContext);
     }
 
     const flows = [
@@ -1284,6 +1284,33 @@ describe('Security-Critical Tests', () => {
       });
 
       describe.each(flows)('on the %s grant', (_grant, exchange) => {
+        it('records one scalar failure on the real dedicated Admin database', async () => {
+          const store = issuanceFailureDatabase();
+          try {
+            Object.assign(mockEnv, { DB_ADMIN: store.adapter });
+            withDefault('set-gone');
+            const response = await exchange();
+            expect(response.status).toBe(400);
+            await Promise.all(
+              vi
+                .mocked(releaseRequestContext.executionCtx, true)
+                .waitUntil.mock.calls.map(([work]) => work)
+            );
+            expect(store.rows()).toHaveLength(1);
+            expect(store.rows()[0]).toMatchObject({
+              tenant_id: 'default',
+              client_id: 'confidential-client-001',
+              code: 'set_missing',
+              tier: 'tenant_default',
+              set_id: 'set-gone',
+              count: 1,
+            });
+            expect(JSON.stringify(store.rows())).not.toContain(USER_ID);
+            expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+          } finally {
+            store.db.close();
+          }
+        });
         it('issues the ID token as it is when nothing is named, with or without the Admin database', async () => {
           for (const adminBound of [true, false]) {
             if (!adminBound) delete (mockEnv as unknown as { DB_ADMIN?: unknown }).DB_ADMIN;
