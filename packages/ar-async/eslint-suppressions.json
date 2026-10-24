@@ -277,11 +277,6 @@
       "count": 4
     }
   },
-  "src/ciba-authorization.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/ciba-deny.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1

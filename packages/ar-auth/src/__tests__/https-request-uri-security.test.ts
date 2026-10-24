@@ -5,6 +5,7 @@
  * OIDC Core 6.2: Request Object by Reference
  */
 
+import process from 'node:process';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import {
@@ -29,8 +30,9 @@ async function putSystemSettings(
   }
 }
 
+const nodeProcess = process as NodeJS.Process;
 const securityRegressionIt =
-  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+  nodeProcess.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 /** Error response type for authorization endpoint */
 interface ErrorResponse {
@@ -610,6 +612,40 @@ describe('HTTPS Request URI Security', () => {
       // It will fail for other reasons (null body), but not for size
       const error = getRedirectedOAuthError(response);
       expect(error.get('error_description')).not.toContain('too large');
+    });
+
+    it('rejects an oversized streamed body without an unhandled rejection from cancelling it', async () => {
+      // A body with no Content-Length that streams past the limit, and whose cancel fails (the
+      // upstream connection is already gone).
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(150_000));
+        },
+        cancel() {
+          throw new Error('upstream connection reset');
+        },
+      });
+      mockFetch.mockResolvedValueOnce(new Response(body, { status: 200 }));
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      nodeProcess.on('unhandledRejection', onUnhandled);
+      try {
+        const response = await app.request(
+          '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://external.com/request.jwt',
+          { method: 'GET' },
+          { ...mockEnv, ENABLE_HTTPS_REQUEST_URI: 'true' }
+        );
+        // Node reports an unhandled rejection once the microtask queue drains.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const error = getRedirectedOAuthError(response);
+        expect(error.get('error')).toBe('invalid_request_uri');
+        expect(error.get('error_description')).toContain('too large');
+        expect(unhandled).toEqual([]);
+      } finally {
+        nodeProcess.off('unhandledRejection', onUnhandled);
+      }
     });
 
     it('lets a saved size limit win over the environment variable', async () => {

@@ -354,9 +354,6 @@
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
     },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
     },
@@ -646,9 +643,6 @@
   },
   "src/authorize.ts": {
     "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
-    "@typescript-eslint/no-floating-promises": {
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
@@ -973,9 +967,6 @@
   "src/index.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 22
-    },
-    "no-unsafe-finally": {
-      "count": 1
     }
   },
   "src/issuer.ts": {

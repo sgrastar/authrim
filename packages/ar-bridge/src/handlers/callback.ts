@@ -1898,33 +1898,6 @@ async function recordExternalProviderSession(
 }
 
 /**
- * Build session cookie
- */
-function buildSessionCookie(sessionId: string, issuerUrl: string): string {
-  const domain = new URL(issuerUrl).hostname;
-  const isSecure = issuerUrl.startsWith('https://');
-
-  const parts = [
-    `authrim_session=${sessionId}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    'Max-Age=3600', // 1 hour
-  ];
-
-  if (isSecure) {
-    parts.push('Secure');
-  }
-
-  // Don't set domain for localhost
-  if (!domain.includes('localhost') && !domain.includes('127.0.0.1')) {
-    parts.push(`Domain=${domain}`);
-  }
-
-  return parts.join('; ');
-}
-
-/**
  * Decrypt client secret
  * Requires RP_TOKEN_ENCRYPTION_KEY to be configured
  */

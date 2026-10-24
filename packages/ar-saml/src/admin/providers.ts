@@ -3875,14 +3875,6 @@ function normalizeFederationTrustPolicy(value: unknown): SAMLFederationTrustProf
   return value === 'strict' || value === 'warn' || value === 'disabled' ? value : undefined;
 }
 
-async function hashStableJson(value: unknown): Promise<string> {
-  const bytes = new TextEncoder().encode(stableJson(value));
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
 function stableJson(value: unknown): string {
   return JSON.stringify(sortForStableJson(value));
 }

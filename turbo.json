@@ -13,6 +13,7 @@
     },
     "test": {
       "dependsOn": ["build"],
+      "env": ["AUTHRIM_SECURITY_REGRESSION_SUITE"],
       "outputs": ["coverage/**"]
     },
     "lint": {

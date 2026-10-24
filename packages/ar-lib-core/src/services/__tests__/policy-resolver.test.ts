@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PolicyResolverService } from '../policy-resolver';
 
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
 function tenant(overrides: Record<string, unknown> = {}) {
   return {
     tenantId: 'tenant-a',
@@ -228,7 +231,7 @@ describe('PolicyResolverService', () => {
     expect(result.validatedFields).toEqual(expect.arrayContaining(['oauth.accessTokenExpiry']));
   });
 
-  it('handles permissive branches and validates an empty flow result', async () => {
+  it('handles permissive branches', async () => {
     const permissiveTenant = tenant({
       oauth: {
         ...(tenant().oauth as object),
@@ -278,13 +281,11 @@ describe('PolicyResolverService', () => {
         clientInfo: { applicationType: 'web', isFirstParty: false },
       },
     });
-    if (!result.success) throw new Error('expected success');
-    await expect(
-      new PolicyResolverService().validateFlowAgainstPolicy(result.policy, 'flow')
-    ).resolves.toEqual({
-      valid: true,
-      violations: [],
-      warnings: [],
-    });
+  });
+
+  securityRegressionIt('offers no flow-against-policy check that passes every flow', () => {
+    // validateFlowAgainstPolicy read neither the policy nor the flow and always returned valid.
+    // No caller used it; a future one would have taken that as approval.
+    expect('validateFlowAgainstPolicy' in new PolicyResolverService()).toBe(false);
   });
 });

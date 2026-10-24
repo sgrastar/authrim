@@ -458,7 +458,11 @@ export class DiagnosticLogger {
 
     const interval = this.settings['diagnostic-logging.batch_interval_ms'];
     this.flushTimer = setTimeout(() => {
-      this.flushBuffer();
+      // Nothing awaits a timer callback. The R2 adapter returns write failures in its result
+      // rather than rejecting; anything that still rejects is logged here, not left unhandled.
+      this.flushBuffer().catch((error: unknown) => {
+        log.warn('Diagnostic log flush failed', {}, error as Error);
+      });
       this.flushTimer = undefined;
     }, interval);
   }
