@@ -2921,7 +2921,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         return sendError('invalid_authorization_details', errorMessage);
       }
 
-      // Use sanitized version
+      // The validated entries, re-serialised. sanitize is off, so the fields a known type does not
+      // define stay; allowedTypes is what keeps unknown types out.
       authorization_details = JSON.stringify(rarValidation.sanitized);
     } catch {
       return sendError('invalid_authorization_details', 'authorization_details must be valid JSON');
