@@ -9,7 +9,7 @@
  * returns null, which yields `404 ADMIN_RESOURCE_NOT_FOUND`.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
@@ -41,7 +41,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       ...actual.ADMIN_PERMISSIONS,
       APPROVALS_GRANT_ISSUE: 'admin:approvals:grant:issue',
     },
-    adminAuthMiddleware: vi.fn(() => async (c: any, next: () => Promise<void>) => {
+    adminAuthMiddleware: vi.fn(() => async (c: Context, next: () => Promise<void>) => {
       c.set('adminAuth', {
         userId: 'admin-1',
         authMethod: 'session',
@@ -69,15 +69,19 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ElevationGrantRepository: vi.fn(function MockElevationGrantRepository() {
       return mocks.grantRepo;
     }),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
   };
 });
 vi.mock('../../admin-shared', () => ({ writeAdminAuditLog: vi.fn() }));
 vi.mock('../../approval-transport-detail', () => ({
-  appendApprovalTransportEvent: vi.fn(async (_c, _a, _r, request) => request),
+  appendApprovalTransportEvent: vi.fn(
+    async (_c: unknown, _a: unknown, _r: unknown, request: unknown) => request
+  ),
   loadApprovalTransportDetail: vi.fn(),
 }));
 
@@ -97,7 +101,7 @@ async function post(path: string, body: unknown, raw?: string) {
     },
     env
   );
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalid = (field: string, reason: string) => ({

@@ -22,10 +22,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuditLogFromContext: vi.fn(),
     produceNotificationDelivery: vi.fn(async () => ({ delivery: 'delivered' })),
     getLogger: () => ({ module: () => ({ warn: vi.fn(), error: vi.fn() }) }),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
   };
 });
 
@@ -38,10 +40,12 @@ vi.mock('../../request-issuer', () => ({
     `https://${tenantId}.example.test`,
 }));
 vi.mock('../../tenant-alias-directory', () => ({
-  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
-    ...input,
-    routeProjection: {},
-  })),
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(
+    async (_env: unknown, input: Record<string, unknown>) => ({
+      ...input,
+      routeProjection: {},
+    })
+  ),
   prepareTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
   ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
   disableTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
@@ -64,7 +68,7 @@ async function post(rawBody: string) {
     headers: { 'content-type': 'application/json' },
     body: rawBody,
   });
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const postJson = (value: unknown) => post(JSON.stringify(value));
@@ -254,11 +258,11 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
     const result = await postJson({});
     expect(result.status).toBe(201);
     expect(result.body).toEqual({
-      id: expect.any(String),
+      id: expect.any(String) as unknown,
       invite_url: expect.stringMatching(
         /^https:\/\/tenant-a\.example\.test\/discover\?invite_token=[0-9a-f]{64}$/
-      ),
-      token: expect.stringMatching(/^[0-9a-f]{64}$/),
+      ) as unknown,
+      token: expect.stringMatching(/^[0-9a-f]{64}$/) as unknown,
       expires_at: NOW + 72 * 3600,
       email_sent: false,
     });

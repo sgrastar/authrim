@@ -26,10 +26,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     resolveTenantAssignedDatabaseSourcesFromRegistry: vi.fn(async () => []),
     ensureDatabaseAdapter: vi.fn(() => mocks.adapter),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
   };
 });
 
@@ -47,16 +49,16 @@ function context(body: unknown, bodyError = false) {
         : vi.fn().mockResolvedValue(body),
     },
     env: {},
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status: number = 200) => Response.json(value, { status })),
   } as never;
 }
 
 async function update(body: unknown, bodyError = false) {
   const response = await updateCategoryRetention(context(body, bodyError));
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
-const invalid = (field: string, reason: string) => ({
+const invalid = (field: string, reason: unknown) => ({
   status: 400,
   body: { error: 'AR130003', variables: { field, reason } },
 });
@@ -170,7 +172,7 @@ describe('zod pins: UpdateLookupRetentionSchema (PUT /data-retention/categories/
     expect(result.body).toEqual({
       category: 'lookup_directory',
       retention_days: 365,
-      updated_at: expect.any(String),
+      updated_at: expect.any(String) as unknown,
     });
     // shortening below the stored 180 needs confirmation + the matching current value
     expect(await update({ retention_days: 60 })).toEqual({

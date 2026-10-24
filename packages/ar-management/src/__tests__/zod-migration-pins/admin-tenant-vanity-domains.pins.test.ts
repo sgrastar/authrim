@@ -8,7 +8,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  adapter: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn(), transaction: vi.fn() },
+  adapter: {
+    query: vi.fn(),
+    queryOne: vi.fn(),
+    execute: vi.fn(),
+    transaction: vi.fn<(callback: (tx: unknown) => Promise<unknown>) => Promise<unknown>>(),
+  },
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -17,17 +22,19 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     resolveOptionalCoreAdapterFromHono: vi.fn(() => mocks.adapter),
-    resolveTenantDatabaseSourceFromRegistry: vi.fn(async (_env, input) => ({
-      tenantId: input.tenantId,
-      source: mocks.adapter,
-    })),
+    resolveTenantDatabaseSourceFromRegistry: vi.fn(
+      async (_env: unknown, input: { tenantId: string }) => ({
+        tenantId: input.tenantId,
+        source: mocks.adapter,
+      })
+    ),
     loadVerifiedLookupBucketAssignmentProvider: vi.fn(async () => ({})),
     LookupRouteResolver: class {
       async resolveAliases() {
         return [{ tenantId: 'tenant-a', routeProjection: {} }];
       }
     },
-    ensureDatabaseAdapter: vi.fn((db) => db),
+    ensureDatabaseAdapter: vi.fn((db: unknown) => db),
     invalidateTenantVanityDomainCache: vi.fn(async () => undefined),
     createAuditLogFromContext: vi.fn(async () => undefined),
     safeFetch: vi.fn(),
@@ -37,10 +44,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 vi.mock('../../tenant-alias-directory', () => ({
-  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
-    ...input,
-    routeProjection: {},
-  })),
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(
+    async (_env: unknown, input: Record<string, unknown>) => ({
+      ...input,
+      routeProjection: {},
+    })
+  ),
   prepareTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
   activateTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
   ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
@@ -115,13 +124,13 @@ function context(body: unknown, asSystemAdmin = false, bodyError = false) {
       TENANT_RUNTIME_REGISTRY: { get: vi.fn() },
       TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
     },
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status: number = 200) => Response.json(value, { status })),
   } as never;
 }
 
 async function run(handler: (c: never) => Promise<Response>, c: never) {
   const response = await handler(c);
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const REJECTED = { status: 400, body: INVALID_VALUE_BODY };

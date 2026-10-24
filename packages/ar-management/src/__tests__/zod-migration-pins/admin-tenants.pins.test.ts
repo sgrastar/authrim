@@ -6,7 +6,7 @@
  * `{ error: code, ...options }` so `variables.reason` (joined zod messages) is pinned.
  * The lifecycle command handler builds its own `{ error, error_description }` body (no mock needed).
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 const stores = vi.hoisted(() => ({
   platform: null as unknown,
@@ -24,10 +24,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: vi.fn(() => ({
       module: vi.fn(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() })),
     })),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
   };
 });
 
@@ -44,12 +46,14 @@ import {
   adminTenantUpdateHandler,
 } from '../../admin-tenants';
 
+type RecordedQuery = (sql: string, params: unknown[]) => Promise<unknown>;
+
 interface RecordingAdapter {
   calls: Array<{ op: string; sql: string; params: unknown[] }>;
-  query: ReturnType<typeof vi.fn>;
-  queryOne: ReturnType<typeof vi.fn>;
-  execute: ReturnType<typeof vi.fn>;
-  transaction: ReturnType<typeof vi.fn>;
+  query: Mock<RecordedQuery>;
+  queryOne: Mock<RecordedQuery>;
+  execute: Mock<RecordedQuery>;
+  transaction: Mock<(fn: (tx: RecordingAdapter) => Promise<unknown>) => Promise<unknown>>;
 }
 
 function adapter(
@@ -57,15 +61,15 @@ function adapter(
 ): RecordingAdapter {
   const self: RecordingAdapter = {
     calls: [],
-    query: vi.fn(async (sql: string, params: unknown[] = []) => {
+    query: vi.fn<RecordedQuery>(async (sql, params = []) => {
       self.calls.push({ op: 'query', sql, params });
       return handler(sql, params, 'query') ?? [];
     }),
-    queryOne: vi.fn(async (sql: string, params: unknown[] = []) => {
+    queryOne: vi.fn<RecordedQuery>(async (sql, params = []) => {
       self.calls.push({ op: 'queryOne', sql, params });
       return handler(sql, params, 'queryOne') ?? null;
     }),
-    execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+    execute: vi.fn<RecordedQuery>(async (sql, params = []) => {
       self.calls.push({ op: 'execute', sql, params });
       return handler(sql, params, 'execute') ?? { rowsAffected: 1 };
     }),
@@ -97,7 +101,7 @@ function context(body: unknown, params: Record<string, string> = {}, idempotency
       AUTHRIM_ENVIRONMENT_NAME: 'test',
       DB: {},
     },
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status: number = 200) => Response.json(value, { status })),
     get: vi.fn((key: string) => (key === 'adminAuth' ? ADMIN_AUTH : undefined)),
     header: vi.fn(),
   } as never;
@@ -105,7 +109,7 @@ function context(body: unknown, params: Record<string, string> = {}, idempotency
 
 async function run(handler: (c: never) => Promise<Response>, c: never) {
   const response = await handler(c);
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalidBody = (reason: string) => ({
@@ -213,7 +217,7 @@ describe('zod pins: CreateTenantSchema (POST /tenants)', () => {
       'create',
       null,
       null,
-      expect.any(String),
+      expect.any(String) as unknown,
       'default',
       'tenant_exclusive',
     ]);

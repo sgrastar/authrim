@@ -6,6 +6,7 @@
  * `{ error: code, ...options }` so `variables.reason` (joined zod messages) is pinned.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Context } from 'hono';
 
 const mocks = vi.hoisted(() => ({
   core: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
@@ -20,17 +21,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.core })),
     createAuditLogFromContext: vi.fn(),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
     getLogger: vi.fn(() => ({ module: vi.fn(() => ({ error: vi.fn() })) })),
   };
 });
 
 vi.mock('../../audit-hot-query', () => ({
   getAuditHotQuerySupport: mocks.hotSupport,
-  createAuditHotQueryUnsupportedResponse: vi.fn((c) => c.json({ error: 'unsupported' }, 503)),
+  createAuditHotQueryUnsupportedResponse: vi.fn((c: Context) =>
+    c.json({ error: 'unsupported' }, 503)
+  ),
   getAuditHotQuerySqlSpec: vi.fn(() => ({ tableName: 'audit_events', actionColumn: 'action' })),
   getAuditTimeRange: vi.fn((from: number, to: number) => [from, to]),
 }));
@@ -59,13 +64,13 @@ function context(
         : vi.fn().mockResolvedValue(options.body),
     },
     env: {},
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status: number = 200) => Response.json(value, { status })),
   } as never;
 }
 
 async function run(handler: (c: never) => Promise<Response>, c: never) {
   const response = await handler(c);
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalid = (field: string, reason: string) => ({

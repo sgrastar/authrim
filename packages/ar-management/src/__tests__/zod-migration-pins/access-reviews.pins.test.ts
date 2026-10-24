@@ -15,10 +15,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
     createAuditLogFromContext: vi.fn(),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
     getLogger: vi.fn(() => ({
       module: vi.fn(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() })),
     })),
@@ -49,13 +51,13 @@ function context(body: unknown, bodyError = false) {
         : vi.fn().mockResolvedValue(body),
     },
     env: {},
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status: number = 200) => Response.json(value, { status })),
   } as never;
 }
 
 async function run(handler: (c: never) => Promise<Response>, body: unknown, bodyError = false) {
   const response = await handler(context(body, bodyError));
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalid = (field: string, reason: string) => ({

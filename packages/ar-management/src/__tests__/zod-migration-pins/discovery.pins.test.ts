@@ -50,7 +50,7 @@ const mocked = vi.hoisted(() => {
 
     async query<T>(query: string, params: unknown[]): Promise<T[]> {
       if (query.includes('FROM users_pii WHERE email = ?')) {
-        const email = String(params[0] ?? '');
+        const email = typeof params[0] === 'string' ? params[0] : '';
         return state.users
           .filter((user) => user.email === email && user.is_active === 1)
           .map((user) => ({ id: user.id, tenant_id: user.tenant_id })) as T[];
@@ -153,11 +153,11 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ),
     loadVerifiedLookupBucketAssignmentProvider: mocked.lookupAssignmentsMock,
     LookupRouteResolver: class {
-      async resolveAlias(input: unknown) {
+      async resolveAlias(input: unknown): Promise<unknown> {
         return mocked.tenantAliasResolveMock(input);
       }
 
-      async resolveAliases(input: unknown) {
+      async resolveAliases(input: unknown): Promise<unknown> {
         return mocked.tenantAliasesResolveManyMock(input);
       }
     },
@@ -210,7 +210,7 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
 
 function createMockAdapter(
   options: {
-    queryOne?: (sql: string, params: unknown[]) => unknown | Promise<unknown>;
+    queryOne?: (sql: string, params: unknown[]) => unknown;
   } = {}
 ) {
   return {
@@ -219,7 +219,7 @@ function createMockAdapter(
       async (sql: string, params: unknown[]) => options.queryOne?.(sql, params) ?? null
     ),
     execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
-    transaction: vi.fn(async (fn: any) => fn()),
+    transaction: vi.fn(async (fn: () => Promise<unknown>) => fn()),
     batch: vi.fn().mockResolvedValue([]),
     isHealthy: vi.fn().mockResolvedValue(true),
     getType: vi.fn().mockReturnValue('mock'),
@@ -319,7 +319,7 @@ async function post(path: string, body: unknown, host = 'auth.example.com', raw?
   );
   return {
     status: response.status,
-    body: (await response.json()) as Record<string, unknown>,
+    body: await response.json<Record<string, unknown>>(),
     cacheControl: response.headers.get('Cache-Control'),
   };
 }

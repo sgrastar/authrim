@@ -106,7 +106,7 @@ async function send(method: string, path: string, body?: unknown, rawBody?: stri
     },
     createEnv()
   );
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const putAudit = (body: unknown, id = 'pin-audit') =>
@@ -516,7 +516,7 @@ describe('zod pins: tenant runtime registry emergency purge body (strict)', () =
       deployment_target: 'edge-a',
       snapshot_key: 'tenant:acme:runtime-registry:snapshot:tenant:edge-a',
       generation_key: 'tenant:acme:runtime-registry:generation:tenant:edge-a',
-      purged_at: expect.any(String),
+      purged_at: expect.any(String) as unknown,
     });
   });
 });

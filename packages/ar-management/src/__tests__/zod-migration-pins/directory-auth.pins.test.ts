@@ -89,7 +89,7 @@ function context(body: unknown, bodyError = false) {
           }
         : undefined
     ),
-    json: (payload: unknown, status = 200) => Response.json(payload, { status }),
+    json: (payload: unknown, status: number = 200) => Response.json(payload, { status }),
   } as never;
 }
 
@@ -101,7 +101,7 @@ async function run(
 ): Promise<Outcome> {
   try {
     const response = await handler(context(body, bodyError));
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, body: await response.json<Record<string, unknown>>() };
   } catch (error) {
     return { threw: error instanceof Error ? error.message : String(error) };
   }
@@ -109,7 +109,11 @@ async function run(
 
 const INVALID_REQUEST = {
   status: 400,
-  body: { error: 'invalid_request', error_description: expect.any(String), error_code: 'AR060003' },
+  body: {
+    error: 'invalid_request',
+    error_description: expect.any(String) as unknown,
+    error_code: 'AR060003',
+  },
 };
 const STOP = { threw: 'stop after validation' };
 /** Evidence export / support bundle: the persistence error is caught and turned into this body. */
@@ -117,9 +121,9 @@ const STOP_CAUGHT = {
   status: 500,
   body: {
     error: 'server_error',
-    error_description: expect.any(String),
+    error_description: expect.any(String) as unknown,
     error_code: 'AR900001',
-    error_id: expect.any(String),
+    error_id: expect.any(String) as unknown,
   },
 };
 

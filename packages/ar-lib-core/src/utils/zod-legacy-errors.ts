@@ -446,7 +446,13 @@ export function toLegacyZodIssue(issue: LegacyZodIssueSource): LegacyZodIssue {
       return {
         code: 'invalid_union',
         unionErrors: (issue.errors ?? []).map((issues) => ({
-          issues: issues.map(toLegacyZodIssue),
+          // zod 4 keeps branch paths relative to their union; zod 3 used full input paths.
+          issues: toLegacyZodIssues(
+            issues.map((nested) => ({
+              ...nested,
+              path: [...base.path, ...(nested.path ?? [])],
+            }))
+          ),
           name: 'ZodError',
         })),
         ...base,

@@ -6,6 +6,7 @@
  * and takes the HTTP status from the real implementation.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Context } from 'hono';
 
 const mocks = vi.hoisted(() => ({
   audit: { queryOne: vi.fn(), query: vi.fn() },
@@ -20,17 +21,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: { queryOne: vi.fn(), query: vi.fn() },
     })),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
     getLogger: vi.fn(() => ({ module: vi.fn(() => ({ error: vi.fn() })) })),
   };
 });
 
 vi.mock('../../audit-hot-query', () => ({
   getAuditHotQuerySupport: mocks.hotSupport,
-  createAuditHotQueryUnsupportedResponse: vi.fn((c) => c.json({ error: 'unsupported' }, 503)),
+  createAuditHotQueryUnsupportedResponse: vi.fn((c: Context) =>
+    c.json({ error: 'unsupported' }, 503)
+  ),
   getAuditHotQuerySqlSpec: vi.fn(() => ({
     tableName: 'audit_events',
     actionColumn: 'action',
@@ -64,13 +69,13 @@ function context(query: Record<string, string | undefined>, id = clientId) {
       param: vi.fn((name: string) => (name === 'id' ? id : undefined)),
     },
     env: {},
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status: number = 200) => Response.json(value, { status })),
   } as never;
 }
 
 async function call(handler: (c: never) => Promise<Response>, query: Record<string, string>) {
   const response = await handler(context(query));
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalid = (reason: string) => ({
@@ -152,7 +157,7 @@ describe('zod pins: admin-stats StatsQuerySchema', () => {
     ],
   ])('rejects: %s', async (_name, query, reason) => {
     expect(await call(adminStatsTokensHandler, query as Record<string, string>)).toEqual(
-      invalid(reason as string)
+      invalid(reason)
     );
   });
 

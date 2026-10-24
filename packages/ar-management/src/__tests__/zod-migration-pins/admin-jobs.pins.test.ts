@@ -24,10 +24,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
     createAuditLogFromContext: vi.fn(async () => undefined),
     getLogger: vi.fn(() => ({ module: () => ({ error: vi.fn() }) })),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
   };
 });
 
@@ -71,7 +73,7 @@ async function send(method: string, path: string, body?: unknown) {
     },
     {} as Env
   );
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalid = (field: string, reason: string) => ({
@@ -218,7 +220,7 @@ describe('zod pins: BulkUpdateOptionsSchema (POST /jobs/users/bulk-update)', () 
       values: { status: 'suspended' },
       dry_run: false,
       result_delivery: 'auto',
-      lifecycle_version_ms: expect.any(Number),
+      lifecycle_version_ms: expect.any(Number) as unknown,
     });
     expect(result.body.dry_run).toBe(false);
   });
@@ -240,7 +242,7 @@ describe('zod pins: BulkUpdateOptionsSchema (POST /jobs/users/bulk-update)', () 
       dry_run: true,
       batch_size: 1000,
       result_delivery: 'artifact',
-      lifecycle_version_ms: expect.any(Number),
+      lifecycle_version_ms: expect.any(Number) as unknown,
     });
   });
 });

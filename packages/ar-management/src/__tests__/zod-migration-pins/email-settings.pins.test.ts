@@ -31,7 +31,7 @@ function createMockKV(values: Record<string, string> = {}) {
     }),
     list: vi.fn(async () => ({ keys: [] })),
     getWithMetadata: vi.fn(async () => ({ value: null, metadata: null })),
-  } as unknown as KVNamespace;
+  };
 }
 
 function registryKv() {
@@ -64,34 +64,43 @@ function registryKv() {
   });
 }
 
-const configKv = vi.hoisted(() => ({ current: null as unknown as KVNamespace }));
+const configKv = vi.hoisted(() => ({
+  current: undefined as ReturnType<typeof createMockKV> | undefined,
+}));
+type PluginRunner = NonNullable<Env['PLUGIN_RUNNER']>;
 
 function context(
   body: unknown,
   options: { settingsKv?: KVNamespace | null; bodyError?: boolean } = {}
 ) {
   const pluginRunner = {
-    configureNotificationInstallation: vi.fn(async (input) => ({
-      ...input,
-      state: input.enabled ? ('enabled' as const) : ('disabled' as const),
-      configVersion: 1,
-    })),
-    replacePluginCredentials: vi.fn(async (input) => ({
-      operationId: input.operationId,
-      installationId: input.installationId,
-      configVersion: input.expectedConfigVersion + 1,
-      credentialCount: input.credentials.length,
-    })),
+    configureNotificationInstallation: vi.fn(
+      async (input: Parameters<PluginRunner['configureNotificationInstallation']>[0]) => ({
+        ...input,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 1,
+      })
+    ),
+    replacePluginCredentials: vi.fn(
+      async (input: Parameters<PluginRunner['replacePluginCredentials']>[0]) => ({
+        operationId: input.operationId,
+        installationId: input.installationId,
+        configVersion: input.expectedConfigVersion + 1,
+        credentialCount: input.credentials.length,
+      })
+    ),
     resolveNotificationProviderOrder: vi.fn(async () => {
       throw new Error('plugin_notification_provider_order_unavailable');
     }),
-    replaceNotificationProviderOrder: vi.fn(async (input) => ({
-      tenantId: input.tenantId,
-      channel: input.channel,
-      configVersion: input.expectedConfigVersion + 1,
-      state: input.installationIds.length > 0 ? ('enabled' as const) : ('disabled' as const),
-      installationIds: input.installationIds,
-    })),
+    replaceNotificationProviderOrder: vi.fn(
+      async (input: Parameters<PluginRunner['replaceNotificationProviderOrder']>[0]) => ({
+        tenantId: input.tenantId,
+        channel: input.channel,
+        configVersion: input.expectedConfigVersion + 1,
+        state: input.installationIds.length > 0 ? ('enabled' as const) : ('disabled' as const),
+        installationIds: input.installationIds,
+      })
+    ),
   };
   return {
     req: {
@@ -117,13 +126,15 @@ function context(
           }
         : undefined
     ),
-    json: vi.fn((value, status = 200) => new Response(JSON.stringify(value), { status })),
+    json: vi.fn(
+      (value: unknown, status: number = 200) => new Response(JSON.stringify(value), { status })
+    ),
   } as never;
 }
 
 async function update(body: unknown, options: Parameters<typeof context>[1] = {}) {
-  const response = (await updateTenantEmailSettingsHandler(context(body, options))) as Response;
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  const response = await updateTenantEmailSettingsHandler(context(body, options));
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 describe('zod pins: UpdateTenantEmailSettingsSchema (PUT tenant email settings)', () => {
@@ -138,7 +149,7 @@ describe('zod pins: UpdateTenantEmailSettingsSchema (PUT tenant email settings)'
       status: 400,
       body: {
         error: 'invalid_request',
-        error_description: expect.any(String),
+        error_description: expect.any(String) as unknown,
         error_code: 'AR060003',
       },
     });
@@ -177,7 +188,7 @@ describe('zod pins: UpdateTenantEmailSettingsSchema (PUT tenant email settings)'
     expect((result.body.providers as Array<{ id: string }>).map((provider) => provider.id)).toEqual(
       ['notifier-resend', 'notifier-cloudflare']
     );
-    expect(configKv.current.put).toHaveBeenCalledWith(
+    expect(configKv.current?.put).toHaveBeenCalledWith(
       'settings:tenant:tenant-a:email-settings',
       JSON.stringify({
         strategy: 'priority_failover',

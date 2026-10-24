@@ -76,19 +76,23 @@ function context(options: { body?: unknown; settings?: Record<string, unknown> }
           }
         : undefined
     ),
-    json: (payload: unknown, status = 200) => Response.json(payload, { status }),
+    json: (payload: unknown, status: number = 200) => Response.json(payload, { status }),
     _settings: settings,
   };
 }
 
 async function run(handler: (c: never) => Promise<Response>, c: ReturnType<typeof context>) {
   const response = await handler(c as never);
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const INVALID_REQUEST = {
   status: 400,
-  body: { error: 'invalid_request', error_description: expect.any(String), error_code: 'AR060003' },
+  body: {
+    error: 'invalid_request',
+    error_description: expect.any(String) as unknown,
+    error_code: 'AR060003',
+  },
 };
 
 const WWCON = 'wwcon_8K4M2Q9F7D3H6P1X';
@@ -353,8 +357,8 @@ describe('zod pins: DirectoryConnectorsUpdateSchema (PUT directory connectors)',
       endpoint_url: '',
       auth_mode: 'hmac',
     });
-    const stored = JSON.parse(
-      c._settings.values.get('settings:tenant:tenant-a:directory-connectors')!
+    const stored: unknown = JSON.parse(
+      c._settings.values.get('settings:tenant:tenant-a:directory-connectors') ?? 'null'
     );
     expect(stored).toEqual({
       enabled: false,

@@ -23,10 +23,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       queryOne: vi.fn(),
       execute: vi.fn(),
     })),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
   };
 });
 vi.mock('../../approval-completion-artifact', () => ({
@@ -55,7 +57,7 @@ async function post(path: string, body: unknown, raw?: string) {
     },
     env
   );
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalid = (field: string, reason: string) => ({

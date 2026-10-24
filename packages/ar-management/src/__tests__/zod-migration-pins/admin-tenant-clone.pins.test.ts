@@ -20,19 +20,23 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuditLog: vi.fn(),
     requireAdminDatabaseAdapter: vi.fn(() => mocks.source),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.source),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
     getLogger: vi.fn(() => ({ module: vi.fn(() => ({ error: vi.fn() })) })),
   };
 });
 
 vi.mock('../../tenant-alias-directory', () => ({
-  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
-    ...input,
-    routeProjection: {},
-  })),
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(
+    async (_env: unknown, input: Record<string, unknown>) => ({
+      ...input,
+      routeProjection: {},
+    })
+  ),
   prepareTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
   activateTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
   ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
@@ -47,7 +51,7 @@ vi.mock('../../single-tenant-guard', () => ({
 }));
 vi.mock('../../admin-tenants', () => ({
   beginTenantProvisioning: vi.fn(),
-  formatTenantProvisioningOperation: vi.fn((operation) => operation),
+  formatTenantProvisioningOperation: vi.fn((operation: unknown) => operation),
   provisionTenant: vi.fn(),
   activateProvisionedTenant: vi.fn(),
   rotateProvisionedTenantSigningKey: vi.fn(),
@@ -71,13 +75,13 @@ function context(body: unknown, bodyError = false) {
     },
     env: {},
     get: vi.fn(() => ({ userId: 'admin-1' })),
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status: number = 200) => Response.json(value, { status })),
   } as never;
 }
 
 async function clone(body: unknown, bodyError = false) {
   const response = await adminTenantCloneHandler(context(body, bodyError));
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalid = (field: string, reason: string) => ({

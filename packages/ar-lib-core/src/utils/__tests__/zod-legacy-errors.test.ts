@@ -134,6 +134,55 @@ const CASES: Case[] = [
   ],
 ];
 
+const UNION_CASES: Case[] = [
+  [
+    'nested object union',
+    (q) => q.object({ profile: q.object({ sink: q.union([q.string(), q.number()]) }) }),
+    (q) => q.object({ profile: q.object({ sink: q.union([q.string(), q.number()]) }) }),
+    { profile: { sink: null } },
+  ],
+  [
+    'array union',
+    (q) => q.object({ sinks: q.array(q.union([q.string(), q.number()])) }),
+    (q) => q.object({ sinks: q.array(q.union([q.string(), q.number()])) }),
+    { sinks: [null, false] },
+  ],
+  [
+    'union inside union',
+    (q) =>
+      q.object({
+        groups: q.array(
+          q.union([
+            q.object({ kind: q.literal('group'), sink: q.union([q.string(), q.number()]) }),
+            q.boolean(),
+          ])
+        ),
+      }),
+    (q) =>
+      q.object({
+        groups: q.array(
+          q.union([
+            q.object({ kind: q.literal('group'), sink: q.union([q.string(), q.number()]) }),
+            q.boolean(),
+          ])
+        ),
+      }),
+    { groups: [{ kind: 'group', sink: null }] },
+  ],
+  [
+    'record value union',
+    (q) =>
+      q.object({
+        entries: q.union([q.record(q.string(), q.union([q.string(), q.number()])), q.boolean()]),
+      }),
+    (q) =>
+      q.object({
+        entries: q.union([q.record(q.string(), q.union([q.string(), q.number()])), q.boolean()]),
+      }),
+    { entries: { enabled: null } },
+  ],
+];
+
 describe('legacy zod error output', () => {
   it.each(CASES)('matches zod 3 for %s', (_name, v3, v4, input) => {
     const legacy = v3(z3).safeParse(input);
@@ -149,6 +198,18 @@ describe('legacy zod error output', () => {
     expect(actual).toEqual(expected);
     expect(modern.error.issues.map((issue) => issue.message)).toEqual(
       legacy.error.issues.map((issue) => issue.message)
+    );
+  });
+
+  it.each(UNION_CASES)('matches zod 3 issues for %s', (_name, v3, v4, input) => {
+    const legacy = v3(z3).safeParse(input);
+    const modern = v4(z).safeParse(input, { error: legacyZodErrorMessage, reportInput: true });
+    expect(legacy.success).toBe(false);
+    expect(modern.success).toBe(false);
+    if (legacy.success || modern.success) return;
+
+    expect(JSON.parse(JSON.stringify(toLegacyZodIssues(modern.error.issues)))).toEqual(
+      JSON.parse(JSON.stringify(legacy.error.issues))
     );
   });
 

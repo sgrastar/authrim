@@ -19,10 +19,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getEmailDomainHashConfig: vi.fn(async () => ({ currentVersion: 2 })),
     generateEmailDomainHashWithVersion: vi.fn(async () => ({ hash: 'hash-1', version: 2 })),
     getLogger: vi.fn(() => ({ module: vi.fn(() => ({ error: vi.fn() })) })),
-    createErrorResponse: vi.fn(async (c, code, options) => {
-      const real = await actual.createErrorResponse(c, code, options);
-      return Response.json({ error: code, ...options }, { status: real.status });
-    }),
+    createErrorResponse: vi.fn(
+      async (...[c, code, options]: Parameters<typeof actual.createErrorResponse>) => {
+        const real = await actual.createErrorResponse(c, code, options);
+        return Response.json({ error: code, ...options }, { status: real.status });
+      }
+    ),
   };
 });
 
@@ -42,13 +44,13 @@ function context(body: unknown, id = 'mapping-1') {
       json: vi.fn().mockResolvedValue(body),
     },
     env: {},
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status: number = 200) => Response.json(value, { status })),
   } as never;
 }
 
 async function run(handler: (c: never) => Promise<Response>, body: unknown) {
   const response = await handler(context(body));
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json<Record<string, unknown>>() };
 }
 
 const invalidBody = (reason: string) => ({
