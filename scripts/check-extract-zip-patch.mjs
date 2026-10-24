@@ -3,8 +3,30 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { parse } from 'yaml';
 
 const require = createRequire(import.meta.url);
+if (!process.argv[2]) {
+  const lockfile = parse(await readFile(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8'));
+  assert.equal(String(lockfile?.lockfileVersion), '9.0', 'Unsupported dependency lockfile');
+  for (const key of ['packages', 'snapshots']) {
+    assert(
+      lockfile[key] &&
+        typeof lockfile[key] === 'object' &&
+        !Array.isArray(lockfile[key]) &&
+        Object.keys(lockfile[key]).length > 0,
+      `Dependency lockfile must contain ${key}`
+    );
+  }
+  const hasExtractZip = [
+    ...Object.keys(lockfile.packages),
+    ...Object.keys(lockfile.snapshots),
+  ].some((key) => /^\/?extract-zip(?:@|\/)/.test(key));
+  if (!hasExtractZip) {
+    console.log('extract-zip is absent from the dependency lockfile; no legacy patch is needed');
+    process.exit(0);
+  }
+}
 const extract = require(process.argv[2] || 'extract-zip');
 const fixtures = {
   malicious:
