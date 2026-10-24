@@ -11594,6 +11594,97 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/identity-mapping/preview-effective:
+    post:
+      tags:
+        - Field Mapping
+      operationId: postApiAdminIdentityMappingPreviewEffective
+      summary: Preview which Mapping Set an app (or the tenant) would be bound to if a choice were saved.
+      description: >-
+        Nothing is written. The answer is the effective endpoint's, `before` (what is saved) and
+        `after` (with the proposal), from the same selection. `proposal.client` is an app's own
+        choice (a set, `{ "mode": "none" }`, or null to follow the defaults; needs `client_id` and
+        the clients read permission); `proposal.tenant_default` is the tenant's default (a set ID,
+        `none`, or null to have none of its own). A proposal is checked as a save checks it: a
+        malformed one is the save's 400, and a set a save would refuse (missing, another tenant's,
+        not active, not one release path, a platform set for an app) gives `after.selection` of
+        kind `failed` with code `proposal_refused` and the tier, and `refusals` with the save's
+        reason codes. An app of another tenant, and one that does not exist, are 404. Needs the
+        settings read permission. This read-only inspection remains available while release
+        mutations are paused or rollout status is unavailable. Rate limited with the moderate profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityMappingPreviewEffectiveRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingPreviewEffective'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/sets/compare:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminIdentityMappingCompareSets
+      summary: Compare the claims of two Mapping Sets.
+      description: >-
+        How the claims of set `b` differ from those of set `a` (each the calling tenant's or the
+        platform's; another tenant's, and one that does not exist, are 404): the changes a change
+        preview gives (`added`, `removed`, `renamed`, `profile_changed`, `source_changed`,
+        `transform_changed`, `type_changed`, `validation_changed`, and `profile_field_*`), read as
+        the runtime reads the sets. Validation changes name the field and effect without returning
+        rule parameters or attribute values. Type changes preserve each source's type. Needs the settings
+        read permission. Rate limited with the moderate profile.
+      parameters:
+        - name: a
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: b
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingCompareSets'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/identity-mapping/sets:
     get:
       tags:
@@ -38125,6 +38216,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/IdentityMappingSetChangePreviewResponse'
+    IdentityMappingPreviewEffective:
+      description: What an app or the tenant is bound to now, and with the proposal.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentityMappingPreviewEffectiveResponse'
+    IdentityMappingCompareSets:
+      description: The changes of the claims of set b against set a.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentityMappingCompareSetsResponse'
     IdentityMappingTestUsers:
       description: The tenant's test users.
       content:
@@ -57724,6 +57827,102 @@ components:
           type: string
           enum:
             - draft_not_compiled
+    IdentityMappingPreviewEffectiveRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - proposal
+      properties:
+        client_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        proposal:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            client:
+              description: >-
+                The app's own choice: `{ "fieldMappingSetId": "…" }` (with the optional pinned
+                version and destination namespace), `{ "mode": "none" }`, or null.
+              oneOf:
+                - $ref: '#/components/schemas/OIDCIdentityMappingSelector'
+                - type: 'null'
+            tenant_default:
+              description: A Mapping Set ID, `none`, or null (no default of the tenant's own).
+              type:
+                - string
+                - 'null'
+    IdentityMappingPreviewEffectiveResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - clientId
+        - before
+        - after
+      properties:
+        tenantId:
+          type: string
+        clientId:
+          type:
+            - string
+            - 'null'
+        before:
+          $ref: '#/components/schemas/IdentityMappingEffectiveResponse'
+        after:
+          $ref: '#/components/schemas/IdentityMappingEffectiveResponse'
+        refusals:
+          type: array
+          description: Why a save of the proposal would be refused; `after` binds nothing then.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - tier
+              - reason
+              - message
+            properties:
+              tier:
+                type: string
+                enum:
+                  - client
+                  - tenant_default
+              reason:
+                type: string
+              message:
+                type: string
+    IdentityMappingCompareSetsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - a
+        - b
+        - changes
+      properties:
+        a:
+          $ref: '#/components/schemas/IdentityMappingComparedSet'
+        b:
+          $ref: '#/components/schemas/IdentityMappingComparedSet'
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/IdentityMappingClaimChange'
+    IdentityMappingComparedSet:
+      type: object
+      additionalProperties: false
+      required:
+        - setId
+        - owner
+      properties:
+        setId:
+          type: string
+        owner:
+          type: string
+          enum:
+            - tenant
+            - platform
     IdentityMappingTestUserAttributes:
       type: object
       description: Attribute key → a made-up value.
@@ -58242,6 +58441,7 @@ components:
                 - default_setting_invalid
                 - client_selector_invalid
                 - settings_unreadable
+                - proposal_refused
               description: >-
                 A level is set and not usable. The selection does not fall to the next level.
                 `settings_unreadable` (no `tier`: the settings decide both defaults) is given only

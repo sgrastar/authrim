@@ -104,20 +104,6 @@ export async function readSetFactsForTenants(
   }
 }
 
-/** The same for the sets one tenant's selection names. */
-async function readSetFacts(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string,
-  setIds: string[]
-): Promise<Map<string, SetFacts> | null> {
-  const facts = await readSetFactsForTenants(
-    c.env,
-    'identity-mapping-effective',
-    new Map([[tenantId, setIds]])
-  );
-  return facts?.get(tenantId) ?? null;
-}
-
 function describeSet(setId: string | undefined, facts: ReadonlyMap<string, SetFacts> | null) {
   if (!setId || !facts) return {};
   const fact = facts.get(setId);
@@ -201,6 +187,65 @@ export async function readImplicitActivationWarnings(
   }
 }
 
+/**
+ * The answer of the effective endpoint for an app's choice (`clientSelector`, null for the
+ * tenant's view), or for a choice that is not saved: the tenant's level as `tenantDefaultProposal`
+ * says (see `selectIdentityMapping`). Null when the settings cannot be read.
+ */
+export async function effectiveMappingView(
+  env: Env,
+  tenantId: string,
+  input: {
+    clientId: string | null;
+    clientSelector: unknown;
+    tenantDefaultProposal?: { value: unknown };
+  }
+) {
+  let selection: IdentityMappingSelection | null = null;
+  let failure: IdentityMappingSelectionError | null = null;
+  try {
+    selection = await selectIdentityMapping({
+      env,
+      tenantId,
+      protocol: 'oidc',
+      clientSelector: input.clientSelector,
+      // Every level, so the chain shows what each says; and past the cache, so a default just
+      // saved is shown.
+      inspectDefaults: true,
+      fresh: true,
+      ...(input.tenantDefaultProposal
+        ? { tenantDefaultProposal: input.tenantDefaultProposal }
+        : {}),
+    });
+  } catch (error) {
+    if (!(error instanceof IdentityMappingSelectionError)) throw error;
+    if (error.code === 'settings_unreadable' || !error.chain) return null;
+    failure = error;
+  }
+
+  const chain = selection?.chain ?? failure?.chain ?? [];
+  const setIds = [...new Set(chain.flatMap((entry) => (entry.setId ? [entry.setId] : [])))];
+  const facts =
+    (
+      await readSetFactsForTenants(env, 'identity-mapping-effective', new Map([[tenantId, setIds]]))
+    )?.get(tenantId) ?? null;
+
+  const implicit =
+    selection?.kind === 'none' && selection.reason === 'no_default'
+      ? await readImplicitActivationWarnings(env, tenantId, input.clientId ?? undefined)
+      : { warnings: [] };
+
+  return {
+    tenantId,
+    clientId: input.clientId,
+    selection: failure
+      ? describeSelectionFailure(failure)
+      : describeSelection(selection as IdentityMappingSelection, facts),
+    chain: describeChain(chain, facts),
+    ...implicit,
+  };
+}
+
 export async function adminIdentityMappingEffectiveHandler(c: Context<{ Bindings: Env }>) {
   const clientId = c.req.query('client_id');
   if (
@@ -232,51 +277,20 @@ export async function adminIdentityMappingEffectiveHandler(c: Context<{ Bindings
       clientSelector = row.identity_mapping;
     }
 
-    let selection: IdentityMappingSelection | null = null;
-    let failure: IdentityMappingSelectionError | null = null;
-    try {
-      selection = await selectIdentityMapping({
-        env: c.env,
-        tenantId,
-        protocol: 'oidc',
-        clientSelector,
-        // Every level, so the chain shows what each says; and past the cache, so a default just
-        // saved is shown.
-        inspectDefaults: true,
-        fresh: true,
-      });
-    } catch (error) {
-      if (!(error instanceof IdentityMappingSelectionError)) throw error;
-      if (error.code === 'settings_unreadable' || !error.chain) {
-        return c.json(
-          {
-            error: 'temporarily_unavailable',
-            error_description: 'The settings that decide the Mapping Set cannot be read right now',
-          },
-          503
-        );
-      }
-      failure = error;
-    }
-
-    const chain = selection?.chain ?? failure?.chain ?? [];
-    const setIds = [...new Set(chain.flatMap((entry) => (entry.setId ? [entry.setId] : [])))];
-    const facts = await readSetFacts(c, tenantId, setIds);
-
-    const implicit =
-      selection?.kind === 'none' && selection.reason === 'no_default'
-        ? await readImplicitActivationWarnings(c.env, tenantId, clientId)
-        : { warnings: [] };
-
-    return c.json({
-      tenantId,
+    const view = await effectiveMappingView(c.env, tenantId, {
       clientId: clientId ?? null,
-      selection: selection
-        ? describeSelection(selection, facts)
-        : describeSelectionFailure(failure!),
-      chain: describeChain(chain, facts),
-      ...implicit,
+      clientSelector,
     });
+    if (!view) {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'The settings that decide the Mapping Set cannot be read right now',
+        },
+        503
+      );
+    }
+    return c.json(view);
   } catch {
     return c.json(
       { error: 'internal_error', error_description: 'The Mapping Set selection could not be read' },

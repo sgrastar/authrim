@@ -123,7 +123,7 @@ function registeredScopes(raw: string | null): Set<string> {
 type ProfileFields = Map<string, Map<string, DestinationProfileConsentField[]>>;
 
 /** The OIDC fields of each Destination Profile named, by claim. */
-async function readProfileFields(
+export async function readProfileFields(
   admin: DatabaseAdapter,
   ownerTenantId: string,
   profileIds: ReadonlyArray<string | null | undefined>
@@ -154,14 +154,15 @@ async function readProfileFields(
  * the mapping also changes keeps both: an app that does not release the mapping's namespace still
  * sees what the profile does to its standard claim.
  */
-function profileFieldChanges(
+export function profileFieldChanges(
   profiles: ProfileFields,
   before: string | null,
-  after: string | null
+  after: string | null,
+  afterProfiles: ProfileFields = profiles
 ): ClaimChange[] {
-  if (!before || !after || before === after) return [];
+  if (!before || !after || (before === after && profiles === afterProfiles)) return [];
   const was = profiles.get(before) ?? new Map<string, DestinationProfileConsentField[]>();
-  const now = profiles.get(after) ?? new Map<string, DestinationProfileConsentField[]>();
+  const now = afterProfiles.get(after) ?? new Map<string, DestinationProfileConsentField[]>();
   const describe = (fields: DestinationProfileConsentField[] | undefined) =>
     JSON.stringify(
       // Everything the release judges a field by: when it is in play, and what it accepts.

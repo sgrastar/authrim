@@ -554,7 +554,7 @@ function validateOptionalClaimsParameterPolicyField(
   return { ok: true, value: policy };
 }
 
-function validateOptionalIdentityMappingSelectorField(
+export function validateOptionalIdentityMappingSelectorField(
   value: unknown,
   field: string
 ):
