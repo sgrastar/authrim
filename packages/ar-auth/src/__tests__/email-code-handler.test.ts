@@ -70,10 +70,16 @@ vi.mock('@authrim/ar-lib-core', async () => {
         write
       ),
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
-    getTenantMetadataContextFromHono: vi.fn((c) =>
-      c.env.__TENANT_D1
-        ? { tenantId: 'tenant-1', storageProfileId: 'builtin:storage:tenant-d1' }
-        : undefined
+    getTenantMetadataContextFromHono: vi.fn(
+      (c: { env: { __TENANT_D1?: true | 'shared_pool' } }) => {
+        // __TENANT_D1 names the allocation scope; true is tenant-exclusive.
+        const scope = c.env.__TENANT_D1;
+        if (!scope) return undefined;
+        return {
+          tenantId: 'tenant-1',
+          route: { allocationScope: scope === 'shared_pool' ? 'shared_pool' : 'tenant_exclusive' },
+        };
+      }
     ),
     resolveAccountDataContextByIdentifierFromHono:
       mocks.resolveAccountDataContextByIdentifierFromHono,
@@ -954,25 +960,36 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.notifierSend).not.toHaveBeenCalled();
     });
 
-    it('uses the routed account and the Core-only OTP projection for an existing tenant-D1 user', async () => {
-      const response = await post(
-        '/send',
-        { email: 'User@Example.com' },
-        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true }
-      );
+    // Both allocation scopes route accounts: a shared-pool tenant's account is not in the tenant
+    // metadata database either.
+    it.each([
+      ['tenant-exclusive', true],
+      ['shared-pool', 'shared_pool'],
+    ] as const)(
+      'uses the routed account and the Core-only OTP projection for an existing %s user',
+      async (_scope, tenantD1) => {
+        const response = await post(
+          '/send',
+          { email: 'User@Example.com' },
+          { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: tenantD1 }
+        );
 
-      expect(response.status).toBe(200);
-      expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).toHaveBeenCalledWith(
-        expect.anything(),
-        {
-          indexKind: 'email_exact',
-          identifier: 'user@example.com',
-          trustedEmail: 'user@example.com',
-        }
-      );
-      expect(mocks.findForOtpLogin).not.toHaveBeenCalled();
-      expect(mocks.findByEmail).not.toHaveBeenCalled();
-    });
+        expect(response.status).toBe(200);
+        expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).toHaveBeenCalledWith(
+          expect.anything(),
+          {
+            indexKind: 'email_exact',
+            identifier: 'user@example.com',
+            trustedEmail: 'user@example.com',
+          }
+        );
+        expect(mocks.findForOtpLogin).not.toHaveBeenCalled();
+        expect(mocks.findByEmail).not.toHaveBeenCalled();
+        // The code is saved for the routed account and sent.
+        expect(mocks.storeChallengeRpc).toHaveBeenCalled();
+        expect(mocks.notifierSend).toHaveBeenCalled();
+      }
+    );
 
     it('answers as usual when no notifier is configured', async () => {
       mocks.getNotifier.mockReturnValueOnce(null);
@@ -1201,37 +1218,43 @@ describe('email code handlers through HTTP', () => {
       );
     });
 
-    it('resolves the challenge account route before tenant-D1 user reads', async () => {
-      const response = await post(
-        '/verify',
-        { code: '123456', email: 'user@example.com' },
-        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true },
-        cookie
-      );
+    it.each([
+      ['tenant-exclusive', true],
+      ['shared-pool', 'shared_pool'],
+    ] as const)(
+      'resolves the challenge account route before %s user reads',
+      async (_scope, tenantD1) => {
+        const response = await post(
+          '/verify',
+          { code: '123456', email: 'user@example.com' },
+          { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: tenantD1 },
+          cookie
+        );
 
-      expect(response.status).toBe(200);
-      expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).toHaveBeenCalledWith(
-        expect.anything(),
-        {
-          indexKind: 'account_id',
-          identifier: 'account:user-1',
-          expectedAccountId: 'account:user-1',
-          expectedLegacyUserId: 'user-1',
-          trustedEmail: 'user@example.com',
-        }
-      );
-      expect(mocks.resolveAccountDataContextFromHono).not.toHaveBeenCalled();
-      expect(mocks.createAccountAuthContextFromHono).not.toHaveBeenCalled();
-      expect(mocks.findForOtpLogin).not.toHaveBeenCalled();
-      expect(mocks.markOtpLoginEmailVerified).toHaveBeenCalledWith(
-        { adapter: 'tenant-core' },
-        'tenant-1',
-        'user-1',
-        expect.any(Number)
-      );
-      expect(mocks.markEmailVerifiedForOtpLogin).not.toHaveBeenCalled();
-      expect(mocks.markEmailVerifiedAndTouchLastLogin).not.toHaveBeenCalled();
-    });
+        expect(response.status).toBe(200);
+        expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).toHaveBeenCalledWith(
+          expect.anything(),
+          {
+            indexKind: 'account_id',
+            identifier: 'account:user-1',
+            expectedAccountId: 'account:user-1',
+            expectedLegacyUserId: 'user-1',
+            trustedEmail: 'user@example.com',
+          }
+        );
+        expect(mocks.resolveAccountDataContextFromHono).not.toHaveBeenCalled();
+        expect(mocks.createAccountAuthContextFromHono).not.toHaveBeenCalled();
+        expect(mocks.findForOtpLogin).not.toHaveBeenCalled();
+        expect(mocks.markOtpLoginEmailVerified).toHaveBeenCalledWith(
+          { adapter: 'tenant-core' },
+          'tenant-1',
+          'user-1',
+          expect.any(Number)
+        );
+        expect(mocks.markEmailVerifiedForOtpLogin).not.toHaveBeenCalled();
+        expect(mocks.markEmailVerifiedAndTouchLastLogin).not.toHaveBeenCalled();
+      }
+    );
 
     it('skips the tenant-D1 Core update when the routed email is already verified', async () => {
       mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockResolvedValueOnce({

@@ -114,7 +114,7 @@ function createContext(authorization?: string, tenantExclusive = false) {
     get: vi.fn((key: string) => {
       if (key === 'tenantId') return 'default';
       if (key === 'tenantMetadataContext' && tenantExclusive) {
-        return { tenantId: 'default', storageProfileId: 'builtin:storage:tenant-d1' };
+        return { tenantId: 'default', route: { allocationScope: 'tenant_exclusive' } };
       }
       return undefined;
     }),

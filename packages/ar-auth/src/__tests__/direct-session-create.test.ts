@@ -345,7 +345,7 @@ describe('managed Direct Auth browser session finish', () => {
     context.get = vi.fn((key: string) => {
       if (key === 'tenantId') return 'tenant_test';
       if (key === 'tenantMetadataContext') {
-        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
       }
       return undefined;
     }) as never;
@@ -381,7 +381,6 @@ describe('managed Direct Auth browser session finish', () => {
       if (key === 'tenantMetadataContext') {
         return {
           tenantId: 'tenant_test',
-          storageProfileId: 'builtin:storage:shared-pool',
           route: { allocationScope: 'shared_pool' },
         };
       }
