@@ -210,7 +210,7 @@ function dropUserIdentifiers(
     // Nested secrets and PII fields too (a session ID inside a context object is still the
     // session cookie).
     if (
-      piiFields.has(key) ||
+      piiFields.has(normalized) ||
       USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST.has(normalized) ||
       SECRET_FIELD_NORMALIZED_BLACKLIST.has(normalized)
     ) {
@@ -250,11 +250,14 @@ export function sanitizeEventDetails(
     .map(([field]) => field);
 
   const sanitized = { ...details };
-  const piiFieldSet: ReadonlySet<string> = new Set(piiFields);
+  // Matched normalized, as the other lists are (ip_address, IpAddress and ipAddress alike).
+  const piiFieldSet: ReadonlySet<string> = new Set(piiFields.map(normalizeKey));
 
   // 1. Remove PII fields
-  for (const field of piiFields) {
-    delete sanitized[field];
+  for (const key of Object.keys(sanitized)) {
+    if (piiFieldSet.has(normalizeKey(key))) {
+      delete sanitized[key];
+    }
   }
 
   // 2. Remove secret fields (normalized exact-match)

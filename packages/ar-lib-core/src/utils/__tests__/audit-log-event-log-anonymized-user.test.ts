@@ -569,4 +569,17 @@ describe('sanitizeEventDetails user identifiers', () => {
       profile: { tier: 'gold' },
     });
   });
+
+  it('matches PII fields in any spelling, at the top level and nested', () => {
+    expect(
+      sanitizeEventDetails(
+        {
+          Email: 'a@example.com',
+          device_fingerprint: 'fp',
+          context: { government_id: 'X1', 'birth-date': '2000-01-01', BirthDate: 'x', kept: 1 },
+        },
+        DEFAULT_PII_CONFIG
+      )
+    ).toEqual({ context: { kept: 1 } });
+  });
 });
