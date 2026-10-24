@@ -6,7 +6,7 @@ import {
   buildRequestIssuerUrl,
   consumeStepUpReceipt,
   createDelegatedWriteEnvelopeErrorResponse,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createDownstreamGrantProtectedResourceMiddleware,
   createDownstreamGrantServiceAuthorizer,
   createPIIContextFromHono,
@@ -283,7 +283,8 @@ async function loadProtectedCustomerProfileFromEnv(input: {
   userId: string;
 }): Promise<ProtectedCustomerProfileResource | null> {
   await resolveAccountDataContextFromHono(input.c, input.userId);
-  const authCtx = createAuthContextFromHono(input.c, input.tenantId);
+  // The account's own Core database, with its PII database: the account just resolved.
+  const authCtx = createAccountAuthContextFromHono(input.c, input.tenantId);
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -605,7 +606,8 @@ async function updateProtectedCustomerProfileFromEnv(input: {
   update: CustomerProfileUpdateInput;
 }): Promise<ProtectedCustomerProfileResource | null> {
   await resolveAccountDataContextFromHono(input.c, input.subjectUserId);
-  const authCtx = createAuthContextFromHono(input.c, input.tenantId);
+  // The account's own Core database, with its PII database: the account just resolved.
+  const authCtx = createAccountAuthContextFromHono(input.c, input.tenantId);
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,

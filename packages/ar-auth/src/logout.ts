@@ -57,7 +57,6 @@ import {
   isNativeSSOEnabled,
   DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE,
   normalizeDeviceSecretLogoutScope,
-  revokeDeviceSecretsForLogoutScope,
   type RevokeDeviceSecretsForLogoutScopeResult,
   // Event System
   publishEvent,
@@ -77,6 +76,10 @@ import {
   tokenSubjectAccountSource,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import {
+  mergeDeviceSecretLogoutResults,
+  revokeSessionDeviceSecrets,
+} from './logout-device-secrets';
 import type {
   LogoutConfig,
   LogoutWebhookConfig,
@@ -96,6 +99,34 @@ interface BackchannelLogoutEvents {
 
 const LOGOUT_CONFIRMATION_COOKIE_NAME = 'authrim_logout_confirmation';
 const LOGOUT_CONFIRMATION_TTL_SECONDS = 300;
+
+/**
+ * The answer to a logout that could not revoke what a session leaves behind (its guest resume
+ * credential, its Native SSO device secrets) before ending it: the session is kept, so a retry
+ * can still find what to revoke. Null for any other error.
+ */
+function signOutUnavailableResponse(
+  c: Context<{ Bindings: Env }>,
+  error: unknown
+): Response | null {
+  if (!(error instanceof Error)) return null;
+  if (error.message === 'guest_resume_revocation_failed') {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Guest sign-out could not be completed',
+      },
+      503
+    );
+  }
+  if (error.message === 'device_secret_revocation_failed') {
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'Sign-out could not be completed' },
+      503
+    );
+  }
+  return null;
+}
 
 function escapeLogoutHtml(value: string): string {
   return value
@@ -446,43 +477,6 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       idTokenValid,
     });
 
-    if (sessionId && isShardedSessionId(sessionId)) {
-      try {
-        // Collect session info before deletion (pass userId from id_token_hint as fallback)
-        await collectSessionData(sessionId, userId);
-
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
-        await revokeGuestResumeForSession(
-          c,
-          (await sessionStore.getSessionRpc(sessionId).catch(() => {
-            throw new Error('guest_resume_revocation_failed');
-          })) as Session | null
-        );
-        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
-
-        if (deleted) {
-          deletedSessions.push(sessionId);
-          log.info('Cookie session deleted', { sessionId: sessionId.substring(0, 30) });
-        } else {
-          log.warn('Failed to delete cookie session', { sessionId });
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message === 'guest_resume_revocation_failed') {
-          return c.json(
-            {
-              error: 'temporarily_unavailable',
-              error_description: 'Guest sign-out could not be completed',
-            },
-            503
-          );
-        }
-        log.warn('Failed to route to session store', {
-          sessionId,
-          error: (error as Error).message,
-        });
-      }
-    }
-
     // Resolve the RP-specific OIDC sid to the internal OP session key. The two
     // identifiers deliberately occupy different namespaces.
     let hintedSessionId: string | null = null;
@@ -496,6 +490,73 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             });
             return null;
           });
+    }
+
+    // Native SSO device secrets of a session the logout ends are revoked before the session ends:
+    // the session names their user (and so, where accounts are routed, their database), and a
+    // failure keeps the session, so that the logout can be retried instead of leaving the secrets
+    // usable. The id_token_hint's client narrows only the session the hint is for.
+    const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
+    const revokeEndingSessionDeviceSecrets = async (
+      endingSessionId: string,
+      session: Session | null
+    ): Promise<void> => {
+      // A session already gone has nothing of its own left to revoke: a hint alone (perhaps old)
+      // must not widen a revocation to the user's newer devices.
+      if (!nativeSSOEnabled || !session) return;
+      const result = await revokeSessionDeviceSecrets(c, {
+        tenantId,
+        issuer,
+        sessionId: endingSessionId,
+        userId: session.userId || userId,
+        clientId: endingSessionId === hintedSessionId ? clientId : undefined,
+        scope: logoutScope,
+        reason: 'logout',
+        callerAuthMode: 'session',
+      }).catch((error: unknown) => {
+        log.error('Failed to revoke device secrets', {}, error as Error);
+        throw new Error('device_secret_revocation_failed');
+      });
+      deviceSecretLogoutResult = mergeDeviceSecretLogoutResults(deviceSecretLogoutResult, result);
+      if (result.revokedDeviceSecrets > 0 || result.revokedInstallations > 0) {
+        log.info('Revoked device secrets', {
+          revokedCount: result.revokedDeviceSecrets,
+          revokedInstallations: result.revokedInstallations,
+          logoutScope: result.scope,
+          trustGroupId: result.trustGroupId,
+          targetClientId: result.clientId,
+          action: 'NativeSSO',
+        });
+      }
+    };
+
+    if (sessionId && isShardedSessionId(sessionId)) {
+      try {
+        // Collect session info before deletion (pass userId from id_token_hint as fallback)
+        await collectSessionData(sessionId, userId);
+
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+        const cookieSession = (await sessionStore.getSessionRpc(sessionId).catch(() => {
+          throw new Error('guest_resume_revocation_failed');
+        })) as Session | null;
+        await revokeGuestResumeForSession(c, cookieSession);
+        await revokeEndingSessionDeviceSecrets(sessionId, cookieSession);
+        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
+
+        if (deleted) {
+          deletedSessions.push(sessionId);
+          log.info('Cookie session deleted', { sessionId: sessionId.substring(0, 30) });
+        } else {
+          log.warn('Failed to delete cookie session', { sessionId });
+        }
+      } catch (error) {
+        const unavailable = signOutUnavailableResponse(c, error);
+        if (unavailable) return unavailable;
+        log.warn('Failed to route to session store', {
+          sessionId,
+          error: (error as Error).message,
+        });
+      }
     }
 
     // Before the SID namespace migration, code-flow associations were stored in
@@ -552,12 +613,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
 
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, hintedSessionId, tenantId);
-        await revokeGuestResumeForSession(
-          c,
-          (await sessionStore.getSessionRpc(hintedSessionId).catch(() => {
-            throw new Error('guest_resume_revocation_failed');
-          })) as Session | null
-        );
+        const hintedSession = (await sessionStore.getSessionRpc(hintedSessionId).catch(() => {
+          throw new Error('guest_resume_revocation_failed');
+        })) as Session | null;
+        await revokeGuestResumeForSession(c, hintedSession);
+        await revokeEndingSessionDeviceSecrets(hintedSessionId, hintedSession);
         const deleted = await sessionStore.invalidateSessionRpc(hintedSessionId);
 
         if (deleted) {
@@ -568,15 +628,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.debug('Session from id_token_hint not found or already deleted', { sid });
         }
       } catch (error) {
-        if (error instanceof Error && error.message === 'guest_resume_revocation_failed') {
-          return c.json(
-            {
-              error: 'temporarily_unavailable',
-              error_description: 'Guest sign-out could not be completed',
-            },
-            503
-          );
-        }
+        const unavailable = signOutUnavailableResponse(c, error);
+        if (unavailable) return unavailable;
         log.warn('Failed to route to session store for sid', {
           sid,
           error: (error as Error).message,
@@ -588,47 +641,6 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       deletedSessionsCount: deletedSessions.length,
       sessionsToNotifyCount: sessionsToNotify.length,
     });
-
-    // ========================================
-    // Step 2.4: Revoke Native SSO device_secrets for deleted sessions
-    // ========================================
-    // When a session is invalidated, all associated device_secrets should also be revoked
-    // to prevent continued Native SSO token exchange from other apps
-    if (deletedSessions.length > 0) {
-      const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
-      if (nativeSSOEnabled) {
-        try {
-          deviceSecretLogoutResult = await revokeDeviceSecretsForLogoutScope({
-            adapter: authCtx.coreAdapter,
-            tenantId,
-            sessionIds: deletedSessions,
-            userId,
-            clientId,
-            scope: logoutScope,
-            reason: 'logout',
-            callerAuthMode: 'session',
-          });
-
-          if (
-            deviceSecretLogoutResult.revokedDeviceSecrets > 0 ||
-            deviceSecretLogoutResult.revokedInstallations > 0
-          ) {
-            log.info('Revoked device secrets', {
-              revokedCount: deviceSecretLogoutResult.revokedDeviceSecrets,
-              revokedInstallations: deviceSecretLogoutResult.revokedInstallations,
-              logoutScope: deviceSecretLogoutResult.scope,
-              trustGroupId: deviceSecretLogoutResult.trustGroupId,
-              targetClientId: deviceSecretLogoutResult.clientId,
-              sessionCount: deletedSessions.length,
-              action: 'NativeSSO',
-            });
-          }
-        } catch (error) {
-          // Log but don't fail logout if device_secret revocation fails
-          log.error('Failed to revoke device secrets', {}, error as Error);
-        }
-      }
-    }
 
     // ========================================
     // Step 2.4.1: Publish user.logout and session.user.destroyed events
@@ -1395,6 +1407,41 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         })) as Session | null;
         await revokeGuestResumeForSession(c, session);
         userId = session?.userId;
+        // The session's Native SSO device secrets, revoked before it ends (see the RP-initiated
+        // logout above): a failure keeps the session for the RP's retry.
+        if (session && (await isNativeSSOEnabled(c.env))) {
+          deviceSecretLogoutResult = await revokeSessionDeviceSecrets(c, {
+            tenantId,
+            issuer,
+            sessionId,
+            userId,
+            clientId,
+            scope: DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE,
+            reason: 'logout',
+            callerAuthMode: 'backchannel',
+          }).catch((error: unknown) => {
+            log.error(
+              'Failed to revoke device secrets',
+              { action: 'BackchannelLogout' },
+              error as Error
+            );
+            throw new Error('device_secret_revocation_failed');
+          });
+          if (
+            deviceSecretLogoutResult.revokedDeviceSecrets > 0 ||
+            deviceSecretLogoutResult.revokedInstallations > 0
+          ) {
+            log.info('Revoked device secrets', {
+              revokedCount: deviceSecretLogoutResult.revokedDeviceSecrets,
+              revokedInstallations: deviceSecretLogoutResult.revokedInstallations,
+              logoutScope: deviceSecretLogoutResult.scope,
+              trustGroupId: deviceSecretLogoutResult.trustGroupId,
+              targetClientId: deviceSecretLogoutResult.clientId,
+              sessionId,
+              action: 'BackchannelLogout',
+            });
+          }
+        }
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {
@@ -1403,15 +1450,8 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.warn('Failed to delete session', { sessionId, action: 'BackchannelLogout' });
         }
       } catch (error) {
-        if (error instanceof Error && error.message === 'guest_resume_revocation_failed') {
-          return c.json(
-            {
-              error: 'temporarily_unavailable',
-              error_description: 'Guest sign-out could not be completed',
-            },
-            503
-          );
-        }
+        const unavailable = signOutUnavailableResponse(c, error);
+        if (unavailable) return unavailable;
         log.warn('Failed to route to session store for back-channel logout', {
           sessionId,
           error: (error as Error).message,
@@ -1435,46 +1475,6 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         userId,
         action: 'BackchannelLogout',
       });
-    }
-
-    // Revoke Native SSO device_secrets for the deleted session
-    if (sessionDeleted && sessionId) {
-      const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
-      if (nativeSSOEnabled) {
-        try {
-          deviceSecretLogoutResult = await revokeDeviceSecretsForLogoutScope({
-            adapter: authCtx.coreAdapter,
-            tenantId,
-            sessionIds: [sessionId],
-            userId,
-            clientId,
-            scope: DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE,
-            reason: 'logout',
-            callerAuthMode: 'backchannel',
-          });
-
-          if (
-            deviceSecretLogoutResult.revokedDeviceSecrets > 0 ||
-            deviceSecretLogoutResult.revokedInstallations > 0
-          ) {
-            log.info('Revoked device secrets', {
-              revokedCount: deviceSecretLogoutResult.revokedDeviceSecrets,
-              revokedInstallations: deviceSecretLogoutResult.revokedInstallations,
-              logoutScope: deviceSecretLogoutResult.scope,
-              trustGroupId: deviceSecretLogoutResult.trustGroupId,
-              targetClientId: deviceSecretLogoutResult.clientId,
-              sessionId,
-              action: 'BackchannelLogout',
-            });
-          }
-        } catch (error) {
-          log.error(
-            'Failed to revoke device secrets',
-            { action: 'BackchannelLogout' },
-            error as Error
-          );
-        }
-      }
     }
 
     // Publish events for backchannel logout (non-blocking)

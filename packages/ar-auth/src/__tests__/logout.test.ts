@@ -836,6 +836,14 @@ describe('Front-channel Logout', () => {
         },
       });
       vi.mocked(getCookie).mockReturnValue('0_session_123');
+      // The browser's session, of user-1.
+      mockShardedSessionStore.getSessionRpc.mockResolvedValueOnce({
+        id: '0_session_123',
+        userId: 'user-1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: Date.now(),
+        data: {},
+      });
       mockShardedSessionStore.invalidateSessionRpc.mockReset().mockResolvedValue(true);
       vi.mocked(isNativeSSOEnabled).mockResolvedValue(true);
       vi.mocked(validateIdTokenHint).mockResolvedValue({
@@ -855,19 +863,31 @@ describe('Front-channel Logout', () => {
           globalLogoutWithHint({ sub: 'user-2', aud: 'client-123', authrim_consent_generation: 0 })
         );
 
-        expect(revokeDeviceSecretsForLogoutScope).toHaveBeenCalledTimes(1);
-        const input = vi.mocked(revokeDeviceSecretsForLogoutScope).mock.calls[0][0];
-        expect(input.scope).toBe('global');
-        expect(input.sessionIds).toEqual(['0_session_123']);
-        // The session's own anchors name the user instead.
-        expect(input.userId).toBeUndefined();
+        const calls = vi.mocked(revokeDeviceSecretsForLogoutScope).mock.calls.map(([call]) => call);
+        const global = calls.filter((call) => call.scope === 'global');
+        expect(global).toHaveLength(1);
+        // Account-wide: it names the session's user and needs no session identifier.
+        expect(global[0].userId).toBe('user-1');
+        // The session's own user, not the account the hint's sub equals.
+        expect(calls.every((call) => call.userId === 'user-1')).toBe(true);
       }
     );
 
     it('revokes the devices of the user a marked hint names', async () => {
-      await frontChannelLogoutHandler(
-        globalLogoutWithHint({ sub: 'user-1', aud: 'client-123', authrim_subject_account: true })
-      );
+      const c = globalLogoutWithHint({
+        sub: 'user-1',
+        aud: 'client-123',
+        authrim_subject_account: true,
+      });
+      // A session whose user is not recorded: the hint names the user.
+      mockShardedSessionStore.getSessionRpc.mockReset().mockResolvedValue(null);
+      mockShardedSessionStore.getSessionRpc.mockResolvedValueOnce({
+        id: '0_session_123',
+        expiresAt: Date.now() + 60_000,
+        createdAt: Date.now(),
+        data: {},
+      });
+      await frontChannelLogoutHandler(c);
 
       const input = vi.mocked(revokeDeviceSecretsForLogoutScope).mock.calls[0][0];
       expect(input.userId).toBe('user-1');
