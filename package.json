@@ -79,7 +79,7 @@
     "workers-types:resolution:check": "node scripts/check-cloudflare-workers-types-resolution.mjs",
     "format": "prettier --write \"packages/**/*.ts\"",
     "format:check": "prettier --check \"packages/**/*.ts\" \"packages/ar-agent-access/scripts/*.mjs\" \"scripts/check-cloudflare-workers-types-resolution.mjs\" \"scripts/control-plane/**/*.{ts,json}\" \"scripts/oidf-conformance-gate/**/*.{ts,md,json}\" \"test/scale-out-correctness-phase1/*.{ts,json,md}\" \"scripts/tenant-backup/**/*.{ts,json}\" \"scripts/primary-key-integrity/**/*.{ts,mjs,json}\"",
-    "security:audit": "node scripts/check-extract-zip-patch.mjs && pnpm --package=pnpm@11.4.0 dlx pnpm --pm-on-fail=ignore audit --audit-level=moderate",
+    "security:audit": "node --test scripts/check-extract-zip-patch.test.mjs && node scripts/check-extract-zip-patch.mjs && pnpm --package=pnpm@11.4.0 dlx pnpm --pm-on-fail=ignore audit --audit-level=moderate",
     "security:mcp-registry": "node scripts/check-mcp-server-registry.mjs",
     "clean": "turbo run clean && rm -rf node_modules",
     "generate-keys": "tsx scripts/generate-keys.ts",
