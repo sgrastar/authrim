@@ -210,7 +210,7 @@ function setSummary(state: SetState) {
   };
 }
 
-function validSetId(c: AdminContext): string {
+export function validSetId(c: AdminContext): string {
   const setId = requiredParam(c, 'id');
   if (setId !== setId.trim() || setId.length > SET_ID_MAX_LENGTH) {
     throw badRequest('id must be a Mapping Set ID');
@@ -218,7 +218,7 @@ function validSetId(c: AdminContext): string {
   return setId;
 }
 
-async function readCurrentContent(
+export async function readCurrentContent(
   repository: IdentityMappingControlPlaneRepository,
   ownerTenantId: string,
   state: SetState
@@ -230,7 +230,7 @@ async function readCurrentContent(
   return version ? contentFromStoredVersion(version) : null;
 }
 
-function referenceCount(summary: MappingSetReferenceSummary) {
+export function referenceCount(summary: MappingSetReferenceSummary) {
   return {
     count: summary.count,
     count_is_lower_bound: summary.countIsLowerBound,
@@ -364,7 +364,7 @@ async function assertOidcDestination(
  * The checks a version goes through before it can be in use, run on the content before anything
  * is written: the version create's, the compile's and the activation's release safety.
  */
-async function validateContent(
+export async function validateContent(
   repository: IdentityMappingControlPlaneRepository,
   ownerTenantId: string,
   content: MappingSetContent,
@@ -447,7 +447,7 @@ function assertImpactConfirmed(
   );
 }
 
-function requestAuthorId(c: AdminContext): string | undefined {
+export function requestAuthorId(c: AdminContext): string | undefined {
   return (c as unknown as { get(key: string): { userId?: string } | undefined }).get('adminAuth')
     ?.userId;
 }
@@ -845,7 +845,7 @@ async function executeSave(
   }
 }
 
-async function readSaveBody(c: AdminContext): Promise<unknown> {
+export async function readSaveBody(c: AdminContext): Promise<unknown> {
   let text: string;
   try {
     const bytes = await readRequestBytesWithLimit(c.req.raw, REQUEST_BODY_LIMIT_BYTES);
