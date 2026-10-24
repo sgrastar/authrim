@@ -28,6 +28,59 @@ function app(control?: Env['CONTROL'], adminAuth?: AdminAuthContext) {
 
 describe('release rollout mutation fence', () => {
   it.each(['read_only', 'unavailable', 'missing'] as const)(
+    'exempts only the exact platform default inspection POST when rollout status is %s',
+    async (state) => {
+      const getReleaseMigrationRolloutStatus = vi.fn(async () => {
+        if (state === 'unavailable') throw new Error('unavailable');
+        return {
+          operationId: 'release-1',
+          targetVersion: '1.1.0',
+          phase: 'database_rollout',
+          adminMutationMode: 'read_only',
+        };
+      });
+      const { router, env } = app(
+        (state === 'missing'
+          ? undefined
+          : {
+              getReleaseMigrationRolloutStatus,
+            }) as Env['CONTROL']
+      );
+      const reached = vi.fn();
+      router.all('/api/admin/*', (c) => {
+        reached();
+        return c.json({ ok: true });
+      });
+      const path = '/api/admin/platform/identity-mapping/preview-default';
+      expect(
+        (
+          await router.request(
+            path,
+            { method: 'POST', body: JSON.stringify({ set_id: null }) },
+            env
+          )
+        ).status
+      ).toBe(200);
+      expect(reached).toHaveBeenCalledTimes(1);
+      expect(getReleaseMigrationRolloutStatus).not.toHaveBeenCalled();
+      reached.mockClear();
+      for (const [method, requestPath] of [
+        ['PATCH', '/api/admin/platform/settings/identity-mapping'],
+        ['POST', `${path}/save`],
+        ['POST', `${path}-save`],
+        ['POST', `${path}/`],
+        ['PUT', path],
+        ['PATCH', path],
+        ['DELETE', path],
+      ]) {
+        expect((await router.request(requestPath, { method }, env)).status).toBe(
+          state === 'read_only' ? 409 : 503
+        );
+      }
+      expect(reached).not.toHaveBeenCalled();
+    }
+  );
+  it.each(['read_only', 'unavailable', 'missing'] as const)(
     'allows only the exact history restore preview body when rollout status is %s',
     async (state) => {
       const getReleaseMigrationRolloutStatus = vi.fn(async () => {

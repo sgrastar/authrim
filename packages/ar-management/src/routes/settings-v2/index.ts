@@ -75,6 +75,8 @@ import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
 import { identityMappingReferenceProblem } from './identity-mapping-reference';
+import { readPlatformIdentityMappingRelations } from '../../identity-mapping-platform-followers';
+import { parsePlatformSettingsPatch } from './platform-patch-guards';
 import { applyTenantSettingsChange } from './tenant-settings-apply';
 import { bulkApplyHandler, requireBulkApplyAuthority } from './bulk-apply';
 import { bulkApplyIdempotency } from './bulk-apply-idempotency';
@@ -1068,8 +1070,17 @@ settingsV2.patch('/platform/settings/:category', (c) => {
         const scope: SettingScope = { type: 'platform' };
 
         try {
-          const rawBody = await c.req.json();
-          const body = parsePatchRequest(rawBody);
+          const rawBody: unknown = await c.req.json();
+          const parsed = parsePlatformSettingsPatch(rawBody, category);
+          if (!parsed.ok) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'platform_patch_guard_invalid',
+            });
+            return errorResponse(c, 'bad_request', parsed.message, 400);
+          }
+          const body = parsed.body;
 
           if (!body.ifMatch) {
             await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
@@ -1122,6 +1133,49 @@ settingsV2.patch('/platform/settings/:category', (c) => {
               return mappingProblem.status === 503
                 ? errorResponse(c, 'temporarily_unavailable', mappingProblem.message, 503)
                 : errorResponse(c, 'validation_failed', mappingProblem.message, 400);
+            }
+          }
+
+          // This is a fresh, complete relation read immediately before the existing version CAS.
+          // It must finish before patch() can bootstrap the canonical document or project to KV.
+          if (parsed.expectedFollowing !== undefined) {
+            let currentFollowing: number;
+            try {
+              const relations = await readPlatformIdentityMappingRelations(c.env);
+              currentFollowing = relations.filter((row) => row.relation === 'following').length;
+            } catch {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'identity_mapping_following_unavailable',
+              });
+              return errorResponse(
+                c,
+                'temporarily_unavailable',
+                'The complete tenant relation count is unavailable',
+                503
+              );
+            }
+            if (currentFollowing !== parsed.expectedFollowing) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'identity_mapping_following_conflict',
+                metadata: {
+                  expected_following: parsed.expectedFollowing,
+                  current_following: currentFollowing,
+                },
+              });
+              return errorResponse(
+                c,
+                'conflict',
+                'The number of following tenants has changed',
+                409,
+                {
+                  expected_following: parsed.expectedFollowing,
+                  current_following: currentFollowing,
+                }
+              );
             }
           }
 

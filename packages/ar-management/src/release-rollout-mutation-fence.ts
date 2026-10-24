@@ -221,6 +221,8 @@ export function releaseRolloutMutationFenceMiddleware(): MiddlewareHandler<{
       // This inspection only reads selectors, settings and set references; it never saves the
       // proposal. Keep its normal authorization and validation even if rollout state is unknown.
       (c.req.method === 'POST' && c.req.path === '/api/admin/identity-mapping/preview-effective') ||
+      (c.req.method === 'POST' &&
+        c.req.path === '/api/admin/platform/identity-mapping/preview-default') ||
       (await isMappingHistoryRestorePreview(c)) ||
       (c.req.method === 'POST' && isAuthorizedReleaseRecoveryPath(c.req.path))
     ) {

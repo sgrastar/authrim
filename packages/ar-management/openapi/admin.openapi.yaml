@@ -2472,7 +2472,13 @@ paths:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Category'
       requestBody:
-        $ref: '#/components/requestBodies/SettingsV2Patch'
+        required: true
+        content:
+          application/json:
+            schema:
+              anyOf:
+                - $ref: '#/components/schemas/SettingsV2PatchRequest'
+                - $ref: '#/components/schemas/PlatformIdentityMappingSettingsPatchRequest'
       responses:
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
@@ -2480,7 +2486,9 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           description: >-
-            The settings changed since ifMatch (conflict, with currentVersion).
+            The settings changed since ifMatch or expected_version, or the number of tenants
+            following the platform default differs from expected_following. Reload the settings
+            and repeat the preview before retrying.
           content:
             application/json:
               schema:
@@ -11360,6 +11368,67 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/identity-mapping/preview-default:
+    post:
+      tags:
+        - Field Mapping
+      operationId: postApiAdminPlatformIdentityMappingPreviewDefault
+      summary: Inspect a proposed platform default Mapping Set.
+      description: >-
+        Requires the settings read permission for every tenant, through a global assignment or a
+        machine token with global tenant scope. Agents and tenant-limited administrators are refused.
+        The proposal changes no settings, mappings or apps. A string selects a usable platform-owned
+        set; null previews clearing the saved platform value and applying its inherited fallback.
+        Tenants with an unset default are following, those explicitly naming a set are own_default
+        even when they name the current platform set, and those saving none are opted_out. Deleted
+        tenants are excluded and suspended tenants are included. Single-tenant mode restricts the
+        inventory to the configured tenant. Only apps with no choice of their own in following
+        tenants contribute to apps_affected; an unchanged effective default affects zero apps.
+        Claim changes describe the default's structure, using its active version, catalog and
+        namespace; they are not a per-app scope or value evaluation. An unavailable old mapping is
+        identified by before_unavailable and an unknown difference is null. An unavailable proposed
+        mapping is refused. Counts are a fresh, bounded observation, not an atomic fleet snapshot.
+        A complete inventory of at most 100 tenants is required; partial reads, exceeded budgets,
+        conflicting runtime activation scopes, or a lagging settings projection return 503.
+        The response's expected_version can be submitted to the platform settings PATCH, together
+        with an optional expected_following count. Rate limited with the strict profile. The exact
+        inspection POST remains available while release mutations are paused; actual saves remain
+        subject to the mutation fence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [set_id]
+              properties:
+                set_id:
+                  type: [string, 'null']
+                  minLength: 1
+                  maxLength: 200
+                  pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'
+                  description: A platform-owned Mapping Set ID, or null to clear. The reserved none choice is not a platform default.
+      responses:
+        '200':
+          description: A complete read-only preview of the default change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityMappingPlatformDefaultPreview'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
@@ -58069,6 +58138,102 @@ components:
           type: string
           enum:
             - draft_not_compiled
+    PlatformIdentityMappingSettingsPatchRequest:
+      type: object
+      additionalProperties: true
+      description: >-
+        Accepted only for the identity-mapping category at platform scope. expected_version is an
+        alias for ifMatch; when both are present they must be nonempty identical strings. Other
+        categories reject these new guards. expected_following requires a set or clear operation
+        for identity_mapping.oidc_default_set_id. The server re-reads the complete tenant relation
+        inventory immediately before applying the existing settings CAS. A count mismatch returns
+        409, an incomplete read or exceeded budget returns 503, and malformed guards return 400.
+        These failures do not change the settings document or its runtime projection. The count
+        check is point-in-time and does not establish an atomic snapshot across tenant databases.
+      anyOf:
+        - required: [ifMatch]
+        - required: [expected_version]
+      properties:
+        ifMatch:
+          type: string
+          minLength: 1
+        expected_version:
+          type: string
+          minLength: 1
+        expected_following:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        set:
+          type: object
+          additionalProperties: true
+        clear:
+          type: array
+          items:
+            type: string
+        disable:
+          type: array
+          items:
+            type: string
+    IdentityMappingPlatformDefaultPreview:
+      type: object
+      additionalProperties: false
+      required: [tenants, apps_affected, by_tenant, expected_version]
+      properties:
+        tenants:
+          type: object
+          additionalProperties: false
+          required: [following, own_default, opted_out]
+          properties:
+            following:
+              type: integer
+              minimum: 0
+            own_default:
+              type: integer
+              minimum: 0
+            opted_out:
+              type: integer
+              minimum: 0
+        apps_affected:
+          type: integer
+          minimum: 0
+        expected_version:
+          type: string
+        by_tenant:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [tenant_id, relation, apps_following_default, claim_changes]
+            properties:
+              tenant_id:
+                type: string
+              relation:
+                type: string
+                enum: [following, own_default, opted_out]
+              apps_following_default:
+                type: integer
+                minimum: 0
+              before_unavailable:
+                type: string
+                enum:
+                  [default_setting_invalid, set_missing, set_inactive, destination_profile_invalid]
+              claim_changes:
+                type: [object, 'null']
+                additionalProperties: false
+                required: [added, removed, renamed]
+                description: Structural default changes, or null when the old mapping is unavailable.
+                properties:
+                  added:
+                    type: integer
+                    minimum: 0
+                  removed:
+                    type: integer
+                    minimum: 0
+                  renamed:
+                    type: integer
+                    minimum: 0
     IdentityMappingFailure:
       type: object
       additionalProperties: false
