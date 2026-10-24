@@ -92,6 +92,7 @@ export const LOG_ROW_ARCHIVE_TABLES: readonly LogRowArchiveTable[] = (
     ['core', 'service_group_audit', 'audit'],
     ['core', 'directory_auth_migration_transaction_events', 'normal'],
     ['admin', 'admin_audit_log', 'admin_audit'],
+    ['admin', 'identity_mapping_level_history', 'admin_audit'],
     ['admin', 'federation_selected_entity_import_events', 'normal'],
     ['admin', 'key_access_events', 'audit'],
     ['admin', 'mapping_events', 'normal'],
@@ -133,6 +134,13 @@ function invalid(code = 'log_row_archive_invalid'): never {
 function quote(name: string): string {
   if (!/^[a-z][a-z0-9_]*$/.test(name)) invalid();
   return `"${name}"`;
+}
+
+/** Keep source-commit evidence until its receipt has also been acknowledged. */
+function committedRows(table: LogRowArchiveTable): string {
+  return table.table === 'identity_mapping_level_history'
+    ? " AND status = 'committed' AND (tier = 'tenant_default' OR receipt_acknowledged_at IS NOT NULL)"
+    : '';
 }
 
 /** Event-time column of an archived table; only integer milliseconds or seconds are archived. */
@@ -261,7 +269,7 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
     }>(
       `SELECT id, ${quote(time.column)} AS event_at, ${expiry ? quote(expiry.column) : 'NULL'} AS expires_at,
          length(${packed}) AS bytes
-       FROM ${quote(table.table)} AS r WHERE ${where}
+       FROM ${quote(table.table)} AS r WHERE ${where}${committedRows(table)}
        ORDER BY ${quote(time.column)}, id LIMIT ?`,
       [tenantId, bound, LOG_ROW_ARCHIVE_BATCH_ROWS]
     );
@@ -292,7 +300,7 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
         read += small[end].bytes;
       for (const { id, row_hex } of await store.adapter.query<{ id: string; row_hex: string }>(
         `SELECT id, hex(${packed}) AS row_hex FROM ${quote(table.table)} AS r
-         WHERE tenant_id = ? AND id IN (SELECT value FROM json_each(?))`,
+         WHERE tenant_id = ? AND id IN (SELECT value FROM json_each(?))${committedRows(table)}`,
         [tenantId, JSON.stringify(small.slice(start, end).map(({ id }) => id))]
       ))
         bodies.set(id, row_hex);
@@ -303,7 +311,7 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
       for (let offset = 0; offset < head.bytes; offset += LARGE_ROW_BYTES) {
         const part = await store.adapter.queryOne<{ part: string | null }>(
           `SELECT hex(substr(${packed}, ?, ?)) AS part FROM ${quote(table.table)} AS r
-           WHERE tenant_id = ? AND id = ?`,
+           WHERE tenant_id = ? AND id = ?${committedRows(table)}`,
           [offset + 1, LARGE_ROW_BYTES, tenantId, head.id]
         );
         const expected = Math.min(LARGE_ROW_BYTES, head.bytes - offset) * 2;
@@ -403,7 +411,7 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
     );
     if (committed?.status !== 'committed') invalid('log_row_archive_chunk_not_committed');
     await store.adapter.execute(
-      `DELETE FROM ${quote(table.table)} WHERE tenant_id = ? AND id IN (SELECT value FROM json_each(?))`,
+      `DELETE FROM ${quote(table.table)} WHERE tenant_id = ? AND id IN (SELECT value FROM json_each(?))${committedRows(table)}`,
       [batch.tenant_id, batch.row_ids_json]
     );
     await admin().execute(
@@ -681,7 +689,7 @@ export function createLogRowArchiver(input: { env: Env; log: Logger; now?: () =>
           try {
             const rows = await store.adapter.query<{ tenant_id: string }>(
               `SELECT DISTINCT tenant_id FROM ${quote(table.table)}
-               WHERE tenant_id IN (SELECT value FROM json_each(?)) AND ${quote(time.column)} < ?`,
+               WHERE tenant_id IN (SELECT value FROM json_each(?)) AND ${quote(time.column)} < ?${committedRows(table)}`,
               [
                 JSON.stringify([...storeTenants]),
                 time.unit === 's' ? Math.floor(cutoffMs / 1000) : cutoffMs,

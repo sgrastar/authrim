@@ -941,6 +941,17 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_READ,
     'identity mapping effective selection'
   ),
+  readOnly(
+    '/api/admin/identity-mapping/history',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping level history'
+  ),
+  rule({
+    pattern: '/api/admin/identity-mapping/history/:id/restore',
+    methods: ['POST'],
+    anyPermissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE, ADMIN_PERMISSIONS.CLIENTS_UPDATE],
+    description: 'identity mapping level restore (the handler checks the entry level)',
+  }),
   ...byMethod(
     '/api/admin/identity-mapping/test-users',
     ADMIN_PERMISSIONS.SETTINGS_READ,

@@ -44,7 +44,7 @@ import {
   sqliteAdapter,
   type Assignment,
 } from './helpers/admin-authority-fixture';
-import { insertOAuthClient, openCoreDatabase } from './helpers/core-database';
+import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
 import { adminOpenApiSchemas, shapeErrors } from './helpers/openapi-shape';
 
@@ -87,6 +87,7 @@ function setup(rollout: 'available' | 'read_only' | 'unknown' = 'available') {
   };
   const namespace = namespaceMock as unknown as KVNamespace;
   const core = openCoreDatabase();
+  insertTenant(core, TENANT);
   const coreAdapter = sqliteAdapter(core);
   const getReleaseMigrationRolloutStatus = vi.fn(async () => {
     if (rollout === 'unknown') throw new Error('rollout status unavailable');

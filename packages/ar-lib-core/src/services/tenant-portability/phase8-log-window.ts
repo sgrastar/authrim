@@ -22,6 +22,7 @@ const seconds = (column: string): Phase8LogTimestampColumn => ({ column, unit: '
  */
 export const PHASE8_LOG_TIMESTAMP_COLUMNS: Readonly<Record<string, Phase8LogTimestampColumn>> = {
   'admin.admin_audit_log': ms('created_at'),
+  'admin.identity_mapping_level_history': ms('created_at'),
   'admin.admin_destination_health_events': ms('checked_at'),
   'admin.admin_login_attempts': ms('created_at'),
   'admin.federation_metadata_validation_events': ms('created_at'),

@@ -16,6 +16,23 @@ import { parseTenantBackupSelection, tenantDatasetSelectionRule } from '../selec
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 
 describe('tenant backup dataset registry coverage', () => {
+  it('selects mapping level history as audit evidence with users and settings disabled', () => {
+    const policy = TENANT_DATASET_POLICIES.find(
+      ({ family, table }) => family === 'admin' && table === 'identity_mapping_level_history'
+    );
+    expect(policy?.kind).toBe('audit');
+    const selection = parseTenantBackupSelection({
+      settings: false,
+      users: false,
+      admin: false,
+      artifacts: false,
+      logs: { audit: true, other: false, sensitive: false, period: 7 },
+    });
+    expect(tenantDatasetSelectionRule('audit', selection)).toEqual({
+      action: 'selected',
+      timeFilter: 'log_window',
+    });
+  });
   it('retains published mapping dependencies in settings-only backups with logs and Admin users off', () => {
     const selection = parseTenantBackupSelection({
       settings: true,

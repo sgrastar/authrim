@@ -176,7 +176,7 @@ const TABLE_GROUPS: Partial<
       source_profile_versions source_profiles storage_destination_assignments tenant_settings_documents
     `,
     audit: `
-      admin_audit_log key_access_events
+      admin_audit_log identity_mapping_level_history key_access_events
     `,
     history: `
       admin_destination_health_events admin_login_attempts federation_metadata_validation_events federation_selected_entity_import_events

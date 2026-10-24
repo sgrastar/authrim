@@ -3824,7 +3824,11 @@ export class IdentityMappingControlPlaneRepository {
   async listFieldMappingVersions(
     tenantId: string,
     fieldMappingSetId: string,
-    options: { versionId?: string } = {}
+    options: {
+      versionId?: string;
+      /** Read-only claim previews use edges, transforms and validation, not release/conflict rules. */
+      claimsPreviewOnly?: boolean;
+    } = {}
   ) {
     // One version of the set, when asked: the facade reads the one in use, not the history.
     const versionFilter = options.versionId ? ' AND v.id = ?' : '';
@@ -3915,8 +3919,10 @@ export class IdentityMappingControlPlaneRepository {
         ORDER BY v.id, r.priority ASC, r.rowid ASC, vr.created_at ASC, vr.rowid ASC`,
       versionParams
     );
-    const releaseRows = await this.adapter.query<FieldMappingReleaseSummaryRow>(
-      `SELECT v.id AS field_mapping_version_id,
+    const releaseRows = options.claimsPreviewOnly
+      ? []
+      : await this.adapter.query<FieldMappingReleaseSummaryRow>(
+          `SELECT v.id AS field_mapping_version_id,
               rr.id AS release_id,
               rr.destination_type,
               rr.destination_id,
@@ -3932,10 +3938,12 @@ export class IdentityMappingControlPlaneRepository {
           AND rr.field_mapping_version_id = v.id
         WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
         ORDER BY v.id, rr.priority ASC, rr.created_at ASC, rr.rowid ASC`,
-      versionParams
-    );
-    const conflictRows = await this.adapter.query<FieldMappingConflictSummaryRow>(
-      `SELECT v.id AS field_mapping_version_id,
+          versionParams
+        );
+    const conflictRows = options.claimsPreviewOnly
+      ? []
+      : await this.adapter.query<FieldMappingConflictSummaryRow>(
+          `SELECT v.id AS field_mapping_version_id,
               cr.id AS conflict_id,
               cr.target_ref_json,
               cr.conflict_strategy,
@@ -3947,8 +3955,8 @@ export class IdentityMappingControlPlaneRepository {
           AND cr.field_mapping_version_id = v.id
         WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
         ORDER BY v.id, cr.created_at ASC, cr.rowid ASC`,
-      versionParams
-    );
+          versionParams
+        );
     const summariesByVersion = new Map<
       string,
       {

@@ -195,12 +195,14 @@ export function profileFieldChanges(
 }
 
 /** Splits the set's changes into what an app with these scopes sees and what they hold back. */
-function changesFor(
+export function changesFor(
   changes: readonly ClaimChange[],
   profiles: ProfileFields,
   scopes: ReadonlySet<string>,
   /** The namespace the app's claims are released from (the runtime releases only that one). */
-  releaseNamespace: string
+  releaseNamespace: string,
+  /** A choice restore may also change which namespace supplied the app's previous claims. */
+  beforeReleaseNamespace: string = releaseNamespace
 ): Pick<AppLine, 'changes' | 'held_back'> {
   const seen: ClaimChange[] = [];
   const heldBack: AppLine['held_back'] = [];
@@ -217,14 +219,14 @@ function changesFor(
     // A profile's own field is in play whatever the mapping writes (the standard claims pass the
     // profile too); a claim the mapping writes is released only from the app's namespace.
     const anyNamespace = change.kind.startsWith('profile_field_');
-    const fieldsAt = (point: ReleasePoint | null) =>
-      point?.profileId && (anyNamespace || point.namespace === releaseNamespace)
+    const fieldsAt = (point: ReleasePoint | null, namespace: string) =>
+      point?.profileId && (anyNamespace || point.namespace === namespace)
         ? (profiles.get(point.profileId)?.get(point.claim) ?? [])
         : [];
     const reaches = (fields: DestinationProfileConsentField[]) =>
       fields.some((field) => isOidcFieldApplicableToScopes(field, scopes));
-    const before = fieldsAt(points.before);
-    const after = fieldsAt(points.after);
+    const before = fieldsAt(points.before, beforeReleaseNamespace);
+    const after = fieldsAt(points.after, releaseNamespace);
     if (reaches(before) || reaches(after)) {
       seen.push(change);
       continue;

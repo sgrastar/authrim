@@ -33,6 +33,12 @@ export function openAdminDatabase(): SQLiteDatabase {
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
+  db.exec(
+    readFileSync(
+      resolve(REPO_ROOT, 'migrations/admin/d1/050_identity_mapping_level_history.sql'),
+      'utf8'
+    )
+  );
   return db;
 }
 
@@ -81,7 +87,8 @@ export function sqliteAdapter(db: SQLiteDatabase, hooks: AdapterHooks = {}): Dat
       try {
         const results = [];
         for (const item of statements) {
-          results.push(await adapter.execute(item.sql, item.params));
+          const result = db.prepare(item.sql).run(...bind(item.params));
+          results.push({ rowsAffected: Number(result.changes), success: true });
         }
         db.exec('COMMIT');
         return results;

@@ -157,6 +157,33 @@ describe('saving a tenant’s default Mapping Set', () => {
     const shared = await t.patch(cookie, TENANT_URL, { set: { [KEY]: 'set-plat' } });
     expect(shared.status).toBe(200);
     expect((await t.get(cookie, TENANT_URL)).values[KEY]).toBe('set-plat');
+    const history = t.db
+      .prepare(
+        'SELECT tier,before_json,after_json,via,status,source_version,actor_id FROM identity_mapping_level_history ORDER BY created_at,id'
+      )
+      .all() as Array<{ after_json: string; source_version: string }>;
+    expect(history).toMatchObject([
+      {
+        tier: 'tenant_default',
+        before_json: 'null',
+        after_json: '"set-own"',
+        via: 'settings',
+        status: 'committed',
+        actor_id: expect.any(String) as unknown,
+      },
+      {
+        tier: 'tenant_default',
+        before_json: '"set-own"',
+        after_json: '"set-plat"',
+        via: 'settings',
+        status: 'committed',
+      },
+    ]);
+    expect(history[1].source_version).toBe(await t.version(cookie, TENANT_URL));
+    expect((await t.patch(cookie, TENANT_URL, { set: { [KEY]: 'set-plat' } })).status).toBe(200);
+    expect(
+      t.db.prepare('SELECT COUNT(*) AS count FROM identity_mapping_level_history').get()
+    ).toEqual({ count: 2 });
   });
 
   it('saves none without asking the database, and clears back to the platform’s', async () => {
@@ -190,6 +217,15 @@ describe('saving a tenant’s default Mapping Set', () => {
     expect(overridden.values[KEY]).toBe('set-own');
     expect(overridden.sources[KEY]).toBe('kv');
     expect(overridden.inherited.values[KEY]).toBe('set-plat');
+    expect((await t.patch(cookie, TENANT_URL, { clear: [KEY] })).status).toBe(200);
+    expect((await t.get(cookie, TENANT_URL)).values[KEY]).toBe('set-plat');
+    expect(
+      t.db
+        .prepare(
+          'SELECT before_json,after_json FROM identity_mapping_level_history ORDER BY created_at DESC,id DESC LIMIT 1'
+        )
+        .get()
+    ).toEqual({ before_json: '"set-own"', after_json: 'null' });
     // Another tenant is not affected by this tenant’s choice.
     expect(await t.effective('tenant-b')).toMatchObject({ values: { [KEY]: 'set-plat' } });
   });

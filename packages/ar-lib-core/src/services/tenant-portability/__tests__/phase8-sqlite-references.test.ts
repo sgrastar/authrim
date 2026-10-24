@@ -368,6 +368,27 @@ describe('Phase 8 SQL references', () => {
     );
   });
 
+  it('preserves historical choices without requiring a current Mapping Set or client', () => {
+    const datasetId = 'admin.identity_mapping_level_history';
+    expect(
+      inspectPhase8SqliteReferences(
+        datasetId,
+        {
+          id: text('history-a'),
+          tenant_id: text('tenant-a'),
+          tier: text('client'),
+          client_id: text('deleted-client'),
+          actor_id: text('deleted-admin'),
+          before_json: text(JSON.stringify({ setId: 'deleted-set' })),
+          after_json: text(JSON.stringify({ setId: 'different-deleted-set' })),
+          status: text('committed'),
+        },
+        { ...identity, module: 'logs', collection: datasetId }
+      )
+    ).toEqual([]);
+    expect(phase8SqliteRestoreDependencies(datasetId)).toEqual([]);
+  });
+
   it('emits required references for simple and composite physical foreign keys', () => {
     expect(
       inspectPhase8SqliteReferences(

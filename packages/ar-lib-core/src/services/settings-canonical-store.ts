@@ -6,8 +6,15 @@ import type {
 } from '../utils/settings-manager';
 import { generateVersion, settingsStorageKey } from '../utils/settings-manager';
 import { sanitizeObject } from '../utils/security';
+import {
+  identityMappingLevelHistoryChoicesEqual,
+  identityMappingLevelHistoryInsertStatement,
+  type IdentityMappingLevelHistoryInput,
+  type IdentityMappingLevelHistoryRow,
+} from './identity-mapping-level-history';
 
-type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> &
+  Partial<Pick<DatabaseAdapter, 'batch'>>;
 
 export interface PendingSettingsProjection {
   /** Null for a platform document. */
@@ -228,11 +235,102 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
     category: string,
     scope: SettingScope,
     expectedVersion: string,
-    value: CanonicalSettingsDocument
+    value: CanonicalSettingsDocument,
+    history?: IdentityMappingLevelHistoryInput
   ): Promise<boolean> {
     if (!/^sha256:[0-9a-f]{16}$/.test(expectedVersion)) invalid();
     const key = identity(category, scope);
     const saved = document(value);
+    if (history) {
+      if (
+        !this.database.batch ||
+        category !== 'identity-mapping' ||
+        scope.type !== 'tenant' ||
+        history.tier !== 'tenant_default' ||
+        history.tenantId !== scope.id ||
+        history.sourceVersion !== saved.version ||
+        !identityMappingLevelHistoryChoicesEqual(
+          'tenant_default',
+          history.after,
+          value.data['identity_mapping.oidc_default_set_id']
+        )
+      )
+        invalid();
+      const now = this.timestamp();
+      const guardParams = [
+        ...key.params,
+        expectedVersion,
+        '$."identity_mapping.oidc_default_set_id"',
+        history.before,
+        ...(history.expectedLatestHistoryId === undefined
+          ? []
+          : [history.tenantId, history.expectedLatestHistoryId]),
+      ];
+      const insert = identityMappingLevelHistoryInsertStatement({ ...history, now }, 'committed', {
+        sql: `EXISTS (SELECT 1 FROM ${key.table} WHERE ${key.where} AND version=? AND json_extract(document_json,?) IS ?)${
+          history.expectedLatestHistoryId === undefined
+            ? ''
+            : ` AND (SELECT id FROM identity_mapping_level_history
+                 WHERE tenant_id=? AND tier='tenant_default' AND status='committed'
+                 ORDER BY created_at DESC,id DESC LIMIT 1)=?`
+        }`,
+        params: guardParams,
+      });
+      const confirmed = async () => {
+        const row = await this.database.queryOne<IdentityMappingLevelHistoryRow>(
+          'SELECT * FROM identity_mapping_level_history WHERE tenant_id=? AND id=?',
+          [history.tenantId, history.id],
+          { consistencyClass: 'primary_required' }
+        );
+        return (
+          row?.status === 'committed' &&
+          row.source_version === saved.version &&
+          row.tier === history.tier &&
+          row.client_id === null &&
+          row.actor_id === history.actorId &&
+          row.actor_type === history.actorType &&
+          row.via === history.via &&
+          row.bulk_id === (history.bulkId ?? null) &&
+          identityMappingLevelHistoryChoicesEqual(
+            'tenant_default',
+            JSON.parse(row.before_json) as unknown,
+            history.before
+          ) &&
+          identityMappingLevelHistoryChoicesEqual(
+            'tenant_default',
+            JSON.parse(row.after_json) as unknown,
+            history.after
+          )
+        );
+      };
+      try {
+        const results = await this.database.batch([
+          insert,
+          {
+            sql: `UPDATE ${key.table}
+              SET document_json=?,version=?,revision=revision+1,projection_state='pending',updated_at=?,projected_at=NULL
+              WHERE ${key.where} AND version=? AND EXISTS
+                (SELECT 1 FROM identity_mapping_level_history WHERE id=? AND tenant_id=? AND status='committed')`,
+            params: [
+              saved.json,
+              saved.version,
+              now,
+              ...key.params,
+              expectedVersion,
+              history.id,
+              history.tenantId,
+            ],
+          },
+        ]);
+        if (results[1]?.success && results[1].rowsAffected === 1) return true;
+      } catch (error) {
+        // An atomic batch may have committed before its response was lost. Confirm the same
+        // immutable history instead of repeating a later source mutation or claiming rollback.
+        if (await confirmed()) return true;
+        throw error;
+      }
+      return confirmed();
+    }
     const result = await this.database.execute(
       `UPDATE ${key.table}
       SET document_json=?,version=?,revision=revision+1,projection_state='pending',updated_at=?,projected_at=NULL

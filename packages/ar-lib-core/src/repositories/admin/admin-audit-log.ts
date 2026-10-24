@@ -431,8 +431,15 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
    * @returns Number of deleted logs
    */
   async deleteOldLogs(beforeTimestamp: number): Promise<number> {
-    const result = await this.adapter.execute('DELETE FROM admin_audit_log WHERE created_at < ?', [
-      beforeTimestamp,
+    // Mapping history follows this same explicit Admin-audit cutoff, never the unrelated
+    // Unified Audit profile. Keep intents and evidence still needed to acknowledge Core receipts.
+    const [result] = await this.adapter.batch([
+      { sql: 'DELETE FROM admin_audit_log WHERE created_at < ?', params: [beforeTimestamp] },
+      {
+        sql: `DELETE FROM identity_mapping_level_history WHERE status='committed' AND created_at < ?
+          AND (tier='tenant_default' OR receipt_acknowledged_at IS NOT NULL)`,
+        params: [beforeTimestamp],
+      },
     ]);
     return result.rowsAffected;
   }

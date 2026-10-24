@@ -22,8 +22,16 @@ const mocks = vi.hoisted(() => {
     restoreAssert: vi.fn(),
     restoreDatabaseForRole: vi.fn(),
     publishRuntimeState: vi.fn(),
+    historyBoundary: vi.fn(),
   };
 });
+
+vi.mock('../identity-mapping-history-maintenance', () => ({
+  assertIdentityMappingHistoryBoundaryReady: mocks.historyBoundary,
+}));
+vi.mock('@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets', () => ({
+  resolveInstalledSqliteDatasets: mocks.plan,
+}));
 
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/database-resources', () => ({
   resolveBackupTenantDatabaseResources: mocks.resources,
@@ -185,7 +193,7 @@ it('installs deployed export ports and keeps import targets fail closed', async 
     ports: {
       tenantKey: string;
       recordSnapshots: { userAvatars: { resourceId: string } };
-      export: { prepareSources(): Promise<{ cursor: string | null; done: boolean }> };
+      export: { prepareSources: () => Promise<{ cursor: string | null; done: boolean }> };
       import: { planRestoreTargets(): Promise<unknown> };
     };
   };
@@ -195,6 +203,26 @@ it('installs deployed export ports and keeps import targets fail closed', async 
   await expect(input.ports.import.planRestoreTargets()).rejects.toThrow(
     'backup_import_restore_target_unavailable'
   );
+});
+
+it('requires settled history at the snapshot boundary even when users are not selected', async () => {
+  const context = {
+    lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
+    signal: new AbortController().signal,
+    selection: { users: false, logs: { audit: true } },
+  } as never;
+  const database = { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn(), getType: () => 'd1' };
+  await createProductionTenantBackupExportAdapter({ DB_ADMIN: database } as never, context);
+  const input = mocks.phase8.mock.calls[0]?.[0] as {
+    ports: { export: { assertBoundaryReady(): Promise<void> } };
+  };
+  mocks.historyBoundary.mockRejectedValueOnce(
+    new Error('backup_identity_mapping_history_unsettled')
+  );
+  await expect(input.ports.export.assertBoundaryReady()).rejects.toThrow(
+    'backup_identity_mapping_history_unsettled'
+  );
+  expect(mocks.historyBoundary).toHaveBeenCalledWith(expect.any(Object), 'tenant-a');
 });
 
 it('resolves the tenant key only from the canonical default core database', async () => {

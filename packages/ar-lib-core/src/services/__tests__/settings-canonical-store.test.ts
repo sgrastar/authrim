@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { DatabaseSync, type SQLInputValue } from './sqlite-history-fixture';
+import type { PreparedStatement } from '../../db/adapter';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSettingsCanonicalStore } from '../settings-canonical-store';
+import { IDENTITY_MAPPING_CATEGORY_META } from '../../types/settings/identity-mapping';
+import type {
+  IdentityMappingLevelHistoryMetadata,
+  IdentityMappingLevelHistoryRow,
+} from '../identity-mapping-level-history';
 import {
   ConflictError,
   generateVersion,
@@ -20,6 +26,20 @@ function adapter(db: DatabaseSync) {
     async execute(sql: string, params: unknown[] = []) {
       const result = db.prepare(sql).run(...(params as SQLInputValue[]));
       return { success: true, rowsAffected: Number(result.changes) };
+    },
+    async batch(statements: PreparedStatement[]) {
+      db.exec('BEGIN');
+      try {
+        const results = statements.map(({ sql, params = [] }) => {
+          const result = db.prepare(sql).run(...(params as SQLInputValue[]));
+          return { success: true, rowsAffected: Number(result.changes) };
+        });
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
     },
   };
 }
@@ -46,7 +66,7 @@ describe('DatabaseSettingsCanonicalStore', () => {
   let db: DatabaseSync;
   let now: number;
   let values: Map<string, string>;
-  let put: ReturnType<typeof vi.fn>;
+  let put: ReturnType<typeof vi.fn<(key: string, value: string) => Promise<Map<string, string>>>>;
   let store: DatabaseSettingsCanonicalStore;
 
   beforeEach(() => {
@@ -79,6 +99,15 @@ describe('DatabaseSettingsCanonicalStore', () => {
       )
     );
     now = 100;
+    db.exec(
+      readFileSync(
+        new URL(
+          '../../../../../migrations/admin/d1/050_identity_mapping_level_history.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
     values = new Map([
       ['settings:tenant:tenant-a:security', JSON.stringify({ 'security.enabled': true })],
     ]);
@@ -557,5 +586,271 @@ describe('DatabaseSettingsCanonicalStore', () => {
     expect(() =>
       insert.run('tenant-a', 'tenant', 'tenant-a', 'security', '{}', 'sha256:GGGGGGGGGGGGGGGG')
     ).toThrow();
+  });
+  describe('atomic tenant Mapping Set choice history', () => {
+    const key = 'identity_mapping.oidc_default_set_id';
+    const scope = { type: 'tenant', id: 'tenant-a' } as const;
+    const history = () =>
+      db
+        .prepare('SELECT * FROM identity_mapping_level_history ORDER BY created_at,id')
+        .all() as unknown as IdentityMappingLevelHistoryRow[];
+    function mappingManager(metadata: Partial<IdentityMappingLevelHistoryMetadata> = {}) {
+      const m = new SettingsManager({
+        env: {},
+        kv: { get: async (k: string) => values.get(k) ?? null, put } as unknown as KVNamespace,
+        canonicalStore: store,
+        cacheTTL: 0,
+        identityMappingHistory: {
+          actorId: 'admin-1',
+          actorType: 'human',
+          via: 'settings',
+          ...metadata,
+        },
+      });
+      m.registerCategory(IDENTITY_MAPPING_CATEGORY_META);
+      return m;
+    }
+    it('commits one raw before/after row with the canonical CAS, and omits a no-op', async () => {
+      const m = mappingManager();
+      const initial = await m.getAll('identity-mapping', scope);
+      const saved = await m.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: initial.version, set: { [key]: 'set-a' } },
+        'admin-1'
+      );
+      expect(history()).toMatchObject([
+        {
+          tenant_id: 'tenant-a',
+          tier: 'tenant_default',
+          client_id: null,
+          before_json: 'null',
+          after_json: '"set-a"',
+          actor_id: 'admin-1',
+          actor_type: 'human',
+          via: 'settings',
+          source_version: saved.version,
+          status: 'committed',
+        },
+      ]);
+      expect(history()[0].committed_at).toBe(history()[0].created_at);
+      await m.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: saved.version, set: { [key]: 'set-a' } },
+        'admin-1'
+      );
+      expect(history()).toHaveLength(1);
+    });
+    it('records clear as null even when the platform default is inherited', async () => {
+      values.set('settings:platform:identity-mapping', JSON.stringify({ [key]: 'set-platform' }));
+      values.set('settings:tenant:tenant-a:identity-mapping', JSON.stringify({ [key]: 'set-a' }));
+      const m = mappingManager();
+      const initial = await m.getAll('identity-mapping', scope, {
+        parents: [{ type: 'platform' }],
+      });
+      await m.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: initial.version, clear: [key] },
+        'admin-1',
+        { parents: [{ type: 'platform' }] }
+      );
+      expect(history()).toMatchObject([{ before_json: '"set-a"', after_json: 'null' }]);
+      expect(
+        (await m.getAll('identity-mapping', scope, { parents: [{ type: 'platform' }] })).values[key]
+      ).toBe('set-platform');
+    });
+    it('does not leave history for a stale CAS', async () => {
+      const first = mappingManager();
+      const stale = await first.getAll('identity-mapping', scope);
+      await first.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: stale.version, set: { [key]: 'set-a' } },
+        'admin-1'
+      );
+      await expect(
+        mappingManager().patch(
+          'identity-mapping',
+          scope,
+          { ifMatch: stale.version, set: { [key]: 'set-b' } },
+          'admin-1'
+        )
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect(history()).toHaveLength(1);
+      expect((await store.load('identity-mapping', scope))?.data[key]).toBe('set-a');
+    });
+    it('refuses a restore after A to B to A even when the raw settings hash has returned', async () => {
+      const m = mappingManager();
+      const initial = await m.getAll('identity-mapping', scope);
+      const first = await m.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: initial.version, set: { [key]: 'set-a' } },
+        'admin-1'
+      );
+      const expectedLatestHistoryId = history()[0].id;
+      const second = await m.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: first.version, set: { [key]: 'set-b' } },
+        'admin-1'
+      );
+      const third = await m.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: second.version, set: { [key]: 'set-a' } },
+        'admin-1'
+      );
+      expect(third.version).toBe(first.version);
+      await expect(
+        mappingManager({ via: 'restore', expectedLatestHistoryId }).patch(
+          'identity-mapping',
+          scope,
+          { ifMatch: first.version, set: { [key]: 'set-restore' } },
+          'admin-1'
+        )
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect(history()).toHaveLength(3);
+      expect((await store.load('identity-mapping', scope))?.data[key]).toBe('set-a');
+      await mappingManager({ via: 'restore', expectedLatestHistoryId: history()[2].id }).patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: third.version, set: { [key]: 'set-restore' } },
+        'admin-1'
+      );
+      expect(history()).toHaveLength(4);
+      expect(history()[3]).toMatchObject({ via: 'restore', after_json: '"set-restore"' });
+    });
+    it('does not insert history if another writer wins between the read and the atomic CAS', async () => {
+      const original = store;
+      const sql = adapter(db);
+      store = new DatabaseSettingsCanonicalStore(
+        {
+          ...sql,
+          async batch(statements) {
+            const current = await original.load('identity-mapping', scope);
+            if (!current) throw new Error('fixture_missing_canonical_document');
+            const data = { [key]: 'set-winner' };
+            expect(
+              await original.compareAndSet('identity-mapping', scope, current.version, {
+                data,
+                version: generateVersion(data),
+              })
+            ).toBe(true);
+            return sql.batch(statements);
+          },
+        },
+        () => now++
+      );
+      const m = mappingManager();
+      const initial = await m.getAll('identity-mapping', scope);
+      await expect(
+        m.patch(
+          'identity-mapping',
+          scope,
+          { ifMatch: initial.version, set: { [key]: 'set-loser' } },
+          'admin-1'
+        )
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect(history()).toEqual([]);
+      expect((await original.load('identity-mapping', scope))?.data[key]).toBe('set-winner');
+    });
+    it('confirms its committed history when the successful atomic batch response is lost', async () => {
+      const sql = adapter(db);
+      store = new DatabaseSettingsCanonicalStore(
+        {
+          ...sql,
+          async batch(statements) {
+            await sql.batch(statements);
+            throw new Error('response_lost');
+          },
+        },
+        () => now++
+      );
+      const m = mappingManager();
+      const initial = await m.getAll('identity-mapping', scope);
+      const result = await m.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: initial.version, set: { [key]: 'set-a' } },
+        'admin-1'
+      );
+      expect(history()).toMatchObject([{ status: 'committed', source_version: result.version }]);
+      expect((await store.load('identity-mapping', scope))?.data[key]).toBe('set-a');
+    });
+    it('rolls history back when the source update fails, and keeps the original document', async () => {
+      const m = mappingManager();
+      const initial = await m.getAll('identity-mapping', scope);
+      db.exec(
+        `CREATE TRIGGER refuse_mapping_update BEFORE UPDATE ON tenant_settings_documents WHEN NEW.category='identity-mapping' BEGIN SELECT RAISE(ABORT,'source_write_failed'); END`
+      );
+      await expect(
+        m.patch(
+          'identity-mapping',
+          scope,
+          { ifMatch: initial.version, set: { [key]: 'set-a' } },
+          'admin-1'
+        )
+      ).rejects.toThrow('source_write_failed');
+      expect(history()).toEqual([]);
+      expect((await store.load('identity-mapping', scope))?.data).toEqual({});
+    });
+    it('keeps the source unchanged when the history insert fails', async () => {
+      const m = mappingManager();
+      const initial = await m.getAll('identity-mapping', scope);
+      db.exec(
+        `CREATE TRIGGER refuse_mapping_history BEFORE INSERT ON identity_mapping_level_history BEGIN SELECT RAISE(ABORT,'history_write_failed'); END`
+      );
+      await expect(
+        m.patch(
+          'identity-mapping',
+          scope,
+          { ifMatch: initial.version, set: { [key]: 'set-a' } },
+          'admin-1'
+        )
+      ).rejects.toThrow('history_write_failed');
+      expect(history()).toEqual([]);
+      expect((await store.load('identity-mapping', scope))?.data).toEqual({});
+    });
+    it.each(['bulk_apply', 'restore'] as const)(
+      'preserves %s provenance independently of the audit',
+      async (via) => {
+        const m = mappingManager({
+          via,
+          bulkId: via === 'bulk_apply' ? 'bulk-1' : undefined,
+          actorType: 'machine',
+        });
+        const initial = await m.getAll('identity-mapping', scope);
+        await m.patch(
+          'identity-mapping',
+          scope,
+          { ifMatch: initial.version, set: { [key]: 'none' } },
+          'admin-1'
+        );
+        expect(history()).toMatchObject([
+          {
+            via,
+            actor_type: 'machine',
+            bulk_id: via === 'bulk_apply' ? 'bulk-1' : null,
+            after_json: '"none"',
+          },
+        ]);
+      }
+    );
+    it('keeps history committed when only the KV projection fails', async () => {
+      const m = mappingManager();
+      const initial = await m.getAll('identity-mapping', scope);
+      put.mockRejectedValue(new Error('kv_unavailable'));
+      const result = await m.patch(
+        'identity-mapping',
+        scope,
+        { ifMatch: initial.version, set: { [key]: 'set-a' } },
+        'admin-1'
+      );
+      expect(result.projection).toBe('pending');
+      expect(history()).toMatchObject([{ status: 'committed', after_json: '"set-a"' }]);
+    });
   });
 });

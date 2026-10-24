@@ -9,6 +9,8 @@ import {
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const ALWAYS_ALLOWED_PATHS = new Set(['/api/admin/logout']);
+const MAPPING_HISTORY_RESTORE_PATH =
+  /^\/api\/admin\/identity-mapping\/history\/[A-Za-z0-9._:-]{1,200}\/restore$/u;
 const SAFE_RECOVERY_SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._:%-]{0,511}$/u;
 const SETUP_LOGIN_UI_IDEMPOTENCY_KEY = /^setup-login-ui-[a-f0-9]{32}$/u;
 const SETUP_DOWNSTREAM_IDEMPOTENCY_KEY = /^setup-downstream-client-[A-Za-z0-9_-]{24}$/u;
@@ -189,6 +191,26 @@ function isAuthorizedReleaseRecoveryPath(path: string): boolean {
   );
 }
 
+/** The restore endpoint's exact read-only request; the handler still checks authorization. */
+async function isMappingHistoryRestorePreview(
+  c: Parameters<MiddlewareHandler<{ Bindings: Env }>>[0]
+): Promise<boolean> {
+  if (c.req.method !== 'POST' || !MAPPING_HISTORY_RESTORE_PATH.test(c.req.path)) return false;
+  try {
+    const body: unknown = await c.req.raw.clone().json();
+    return (
+      body !== null &&
+      typeof body === 'object' &&
+      !Array.isArray(body) &&
+      Object.keys(body).length === 1 &&
+      'preview' in body &&
+      body.preview === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function releaseRolloutMutationFenceMiddleware(): MiddlewareHandler<{
   Bindings: Env;
 }> {
@@ -199,6 +221,7 @@ export function releaseRolloutMutationFenceMiddleware(): MiddlewareHandler<{
       // This inspection only reads selectors, settings and set references; it never saves the
       // proposal. Keep its normal authorization and validation even if rollout state is unknown.
       (c.req.method === 'POST' && c.req.path === '/api/admin/identity-mapping/preview-effective') ||
+      (await isMappingHistoryRestorePreview(c)) ||
       (c.req.method === 'POST' && isAuthorizedReleaseRecoveryPath(c.req.path))
     ) {
       return next();

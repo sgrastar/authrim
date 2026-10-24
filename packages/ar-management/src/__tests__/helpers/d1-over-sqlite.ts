@@ -43,7 +43,7 @@ class Statement {
     }));
   }
 
-  async run() {
+  runSync() {
     return this.wrap(() => {
       const result = this.db.prepare(this.sql).run(...this.values);
       return {
@@ -52,6 +52,9 @@ class Statement {
         meta: { changes: Number(result.changes), last_row_id: 0 },
       };
     });
+  }
+  async run() {
+    return this.runSync();
   }
 }
 
@@ -62,7 +65,7 @@ export function d1OverSqlite(db: SQLiteDatabase): D1Database {
       db.exec('BEGIN');
       try {
         const results = [];
-        for (const statement of statements) results.push(await statement.run());
+        for (const statement of statements) results.push(statement.runSync());
         db.exec('COMMIT');
         return results;
       } catch (error) {

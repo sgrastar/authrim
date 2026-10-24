@@ -37,6 +37,7 @@ import { createTenantBackupSamlPorts } from './tenant-backup-saml-port';
 import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupRestoreTargets } from './tenant-backup-production-restore-targets';
 import { createTenantBackupImportDiscard } from './tenant-backup-import-discard';
+import { assertIdentityMappingHistoryBoundaryReady } from './identity-mapping-history-maintenance';
 import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 import {
   activateProvisionedTenantLifecycle,
@@ -300,7 +301,10 @@ export async function createProductionTenantBackupExportAdapter(
           return { cursor: null, done: true };
         },
         assertSources: async () => assertSources(),
-        assertBoundaryReady: async () => assertSources(),
+        assertBoundaryReady: async () => {
+          await assertSources();
+          await assertIdentityMappingHistoryBoundaryReady(env, currentContext().lease.tenantId);
+        },
       },
       // The same scheduler handles both kinds. Each callback remains fail closed when invoked for
       // the wrong operation kind, so an export can never acquire a restore target.

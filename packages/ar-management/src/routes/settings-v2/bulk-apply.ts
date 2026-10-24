@@ -324,6 +324,7 @@ async function runSharedSave(
               },
             },
             auditOmitValues: true,
+            identityMappingHistory: { via: 'bulk_apply', bulkId: input.bulkId },
           }
         : {}),
       dryRun: input.dryRun,
