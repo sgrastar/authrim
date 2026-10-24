@@ -1034,6 +1034,7 @@ import {
 import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
 import { adminIdentityMappingFailuresHandler } from './identity-mapping-failures';
 import { adminPlatformIdentityMappingTenantsHandler } from './identity-mapping-tenants';
+import { adminPlatformIdentityMappingPreviewDefaultHandler } from './identity-mapping-platform-preview';
 import { adminIdentityMappingExplainHandler } from './identity-mapping-explain';
 import {
   adminIdentityMappingCompareSetsHandler,
@@ -3274,6 +3275,21 @@ app.get(
 // The Mapping Set facade. A save runs the validation of the content, the compile and the checks
 // of what names the set, and one of the references search per call, so every route is rate
 // limited with the strict profile. The writes need an Idempotency-Key (a preview does not).
+app.use(
+  '/api/admin/platform/identity-mapping/preview-default',
+  async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/admin/platform/identity-mapping/preview-default'],
+    })(c, next);
+  }
+);
+app.post(
+  '/api/admin/platform/identity-mapping/preview-default',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPlatformIdentityMappingPreviewDefaultHandler
+);
 app.use('/api/admin/identity-mapping/sets/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({

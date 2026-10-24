@@ -25,15 +25,45 @@ export interface ClientIdentityMappingChoiceCounts {
 
 export async function countClientIdentityMappingChoices(
   core: DatabaseAdapter,
-  tenantId: string
+  tenantId: string,
+  budget?: { maxGroups: number; maxSelectorBytes: number }
 ): Promise<ClientIdentityMappingChoiceCounts> {
-  const rows = await core.query<{ identity_mapping: string | null; apps: number }>(
-    `SELECT identity_mapping, COUNT(*) AS apps
+  if (
+    budget &&
+    (!Number.isSafeInteger(budget.maxGroups) ||
+      budget.maxGroups < 1 ||
+      !Number.isSafeInteger(budget.maxSelectorBytes) ||
+      budget.maxSelectorBytes < 1)
+  ) {
+    throw new Error('identity_mapping_choice_budget_invalid');
+  }
+  const bytes =
+    budget && (core.getType() === 'postgres' || core.getType() === 'mysql')
+      ? 'octet_length(identity_mapping)'
+      : 'length(CAST(identity_mapping AS BLOB))';
+  const rows = await core.query<{
+    identity_mapping: string | null;
+    apps: number;
+    selector_bytes?: number | null;
+  }>(
+    budget
+      ? `SELECT CASE WHEN ${bytes} > ? THEN NULL
+                     ELSE substr(identity_mapping, 1, ?) END AS identity_mapping,
+                MAX(${bytes}) AS selector_bytes,
+                COUNT(*) AS apps
+           FROM oauth_clients WHERE tenant_id = ?
+          GROUP BY oauth_clients.identity_mapping LIMIT ?`
+      : `SELECT identity_mapping, COUNT(*) AS apps
        FROM oauth_clients
       WHERE tenant_id = ?
       GROUP BY identity_mapping`,
-    [tenantId]
+    budget
+      ? [budget.maxSelectorBytes, budget.maxSelectorBytes, tenantId, budget.maxGroups + 1]
+      : [tenantId]
   );
+  if (budget && rows.length > budget.maxGroups) {
+    throw new Error('identity_mapping_choice_group_limit');
+  }
   const counts: ClientIdentityMappingChoiceCounts = {
     total: 0,
     followingDefault: 0,
@@ -44,6 +74,18 @@ export async function countClientIdentityMappingChoices(
   };
   for (const row of rows) {
     const apps = Number(row.apps ?? 0);
+    const selectorBytes = row.selector_bytes === null ? 0 : Number(row.selector_bytes);
+    if (
+      budget &&
+      (!Number.isSafeInteger(selectorBytes) ||
+        selectorBytes < 0 ||
+        selectorBytes > budget.maxSelectorBytes ||
+        !Number.isSafeInteger(apps) ||
+        apps < 1 ||
+        !Number.isSafeInteger(counts.total + apps))
+    ) {
+      throw new Error('identity_mapping_choice_budget_exceeded');
+    }
     const choice = readClientIdentityMappingChoice(row.identity_mapping);
     counts.total += apps;
     if (choice.kind === 'unset') counts.followingDefault += apps;

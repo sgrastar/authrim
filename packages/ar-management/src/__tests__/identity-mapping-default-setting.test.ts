@@ -6,6 +6,7 @@ import {
   DISABLED_MARKER,
   PLATFORM_MAPPING_TENANT_ID,
   resolveEffectiveSettingsWithSources,
+  type AdminAuthContext,
   type SettingsGetResult,
 } from '@authrim/ar-lib-core';
 
@@ -24,9 +25,12 @@ import {
   TENANT_SUPER_ADMIN,
   setupApp,
   signIn,
+  sqliteAdapter,
+  type AdapterHooks,
   type Assignment,
 } from './helpers/admin-authority-fixture';
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
+import { insertTenant, openCoreDatabase } from './helpers/core-database';
 
 /**
  * The default Mapping Set of the platform and of a tenant (`identity_mapping.oidc_default_set_id`),
@@ -48,13 +52,15 @@ const SETTINGS_MIGRATIONS = [
 
 function kv() {
   const store = new Map<string, string>();
+  const put = vi.fn(async (key: string, value: string) => {
+    store.set(key, value);
+  });
   return {
     store,
+    put,
     namespace: {
       get: vi.fn(async (key: string) => store.get(key) ?? null),
-      put: vi.fn(async (key: string, value: string) => {
-        store.set(key, value);
-      }),
+      put,
       delete: vi.fn(async (key: string) => {
         store.delete(key);
       }),
@@ -64,18 +70,40 @@ function kv() {
 }
 
 /** The settings routes behind the real admin authentication and the declared route access. */
-function setup() {
+function setup(options: { agent?: boolean } = {}) {
   const settings = kv();
+  const directory = openCoreDatabase();
+  insertTenant(directory, TENANT);
+  const directoryHooks: AdapterHooks = {};
   const context = setupApp(
     (app) => {
       app.use(
         '/api/admin/*',
         adminAuthMiddleware({ plane: 'tenant' }),
+        async (c, next) => {
+          if (options.agent) {
+            const authContext = c as unknown as {
+              get(key: 'adminAuth'): AdminAuthContext;
+              set(key: 'adminAuth', value: AdminAuthContext): void;
+            };
+            authContext.set('adminAuth', {
+              ...authContext.get('adminAuth'),
+              actorType: 'agent',
+              roles: [],
+              globalRoles: [],
+              globalPermissions: [],
+              tenantScope: [TENANT],
+              permissions: ['admin:settings:write'],
+            });
+          }
+          await next();
+        },
         enforceDeclaredAdminRouteAccess()
       );
       app.route('/api/admin', settingsV2);
     },
     {
+      DB: sqliteAdapter(directory, directoryHooks),
       SETTINGS: settings.namespace,
       AUTHRIM_CONFIG: settings.namespace,
       BASE_DOMAIN: 'example.com',
@@ -127,7 +155,7 @@ function setup() {
       'identity-mapping',
       { tenantId, fresh: true }
     );
-  return { ...context, settings, admin, version, patch, get, effective };
+  return { ...context, directory, directoryHooks, settings, admin, version, patch, get, effective };
 }
 
 beforeEach(() => {
@@ -515,6 +543,310 @@ describe('saving the platform’s default Mapping Set', () => {
     const refused = await t.patch(cookie, PLATFORM_URL, { set: { [KEY]: 'set-plat' } });
     expect(refused.status).toBe(503);
     expect((await t.get(cookie, PLATFORM_URL)).values[KEY]).toBeNull();
+  });
+});
+
+describe('platform preview guards', () => {
+  const snapshot = (t: ReturnType<typeof setup>) => ({
+    canonical: t.db.prepare('SELECT * FROM platform_settings_documents').all(),
+    kv: [...t.settings.store],
+    puts: t.settings.put.mock.calls.length,
+  });
+
+  it('accepts expected_version alone as the existing CAS version', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    const expectedVersion = await t.version(cookie, PLATFORM_URL);
+
+    const saved = await t.call(cookie, 'PATCH', PLATFORM_URL, {
+      expected_version: expectedVersion,
+      set: { [KEY]: 'set-plat' },
+    });
+
+    expect(saved.status).toBe(200);
+    expect((await t.get(cookie, PLATFORM_URL)).values[KEY]).toBe('set-plat');
+  });
+
+  it('rejects conflicting version aliases without changing the canonical document or KV', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    const ifMatch = await t.version(cookie, PLATFORM_URL);
+    const before = t.db.prepare('SELECT * FROM platform_settings_documents').all();
+    const beforeKV = [...t.settings.store];
+
+    const refused = await t.call(cookie, 'PATCH', PLATFORM_URL, {
+      ifMatch,
+      expected_version: 'different-version',
+      set: { [KEY]: 'set-plat' },
+    });
+
+    expect(refused.status).toBe(400);
+    expect(t.db.prepare('SELECT * FROM platform_settings_documents').all()).toEqual(before);
+    expect([...t.settings.store]).toEqual(beforeKV);
+  });
+
+  it('accepts matching aliases and still rejects a stale version with the existing CAS', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    const expectedVersion = await t.version(cookie, PLATFORM_URL);
+    const body = {
+      ifMatch: expectedVersion,
+      expected_version: expectedVersion,
+      expected_following: 1,
+      set: { [KEY]: 'set-plat' },
+    };
+    expect((await t.call(cookie, 'PATCH', PLATFORM_URL, body)).status).toBe(200);
+    const before = snapshot(t);
+
+    const refused = await t.call(cookie, 'PATCH', PLATFORM_URL, body);
+
+    expect(refused.status).toBe(409);
+    expect(refused.json.currentVersion).toBe(await t.version(cookie, PLATFORM_URL));
+    expect(snapshot(t)).toEqual(before);
+  });
+
+  it.each([
+    ['negative', -1],
+    ['fraction', 0.5],
+    ['unsafe integer', Number.MAX_SAFE_INTEGER + 1],
+    ['string', '1'],
+    ['null', null],
+    ['array', []],
+    ['object', {}],
+    ['boolean', false],
+  ])('refuses a %s expected_following before any settings write', async (_name, value) => {
+    const t = setup();
+    const cookie = t.admin();
+    const version = await t.version(cookie, PLATFORM_URL);
+    const before = snapshot(t);
+
+    const refused = await t.call(cookie, 'PATCH', PLATFORM_URL, {
+      expected_version: version,
+      expected_following: value,
+      clear: [KEY],
+    });
+
+    expect(refused.status).toBe(400);
+    expect(refused.json.message).toMatch(/expected_following/);
+    expect(snapshot(t)).toEqual(before);
+    expect(auditFailures()).toEqual([
+      expect.objectContaining({ reason: 'platform_patch_guard_invalid' }),
+    ]);
+  });
+
+  it.each([null, [], 'body', 42, false])(
+    'rejects a non-object body %j without bootstrapping',
+    async (body) => {
+      const t = setup();
+      const before = snapshot(t);
+
+      const refused = await t.call(t.admin(), 'PATCH', PLATFORM_URL, body);
+
+      expect(refused.status).toBe(400);
+      expect(refused.json.message).toMatch(/body must be an object/);
+      expect(snapshot(t)).toEqual(before);
+    }
+  );
+
+  it('requires a default set/clear when a following-count guard is supplied', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    const version = await t.version(cookie, PLATFORM_URL);
+    const before = snapshot(t);
+    for (const body of [
+      { expected_version: version, expected_following: 1 },
+      { ifMatch: version, expected_following: 1 },
+      {
+        expected_version: version,
+        expected_following: 1,
+        set: { 'identity_mapping.reference_display_limit': 50 },
+      },
+      { expected_version: version, expected_following: 1, disable: [KEY] },
+    ]) {
+      expect((await t.call(cookie, 'PATCH', PLATFORM_URL, body)).status).toBe(400);
+      expect(snapshot(t)).toEqual(before);
+    }
+  });
+
+  it('uses expected_version as an ordinary CAS alias for another setting in the same category', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    const version = await t.version(cookie, PLATFORM_URL);
+    const scanKey = 'identity_mapping.reference_display_limit';
+
+    const saved = await t.call(cookie, 'PATCH', PLATFORM_URL, {
+      expected_version: version,
+      set: { [scanKey]: 50 },
+    });
+
+    expect(saved.status).toBe(200);
+    expect(saved.json.applied).toEqual([scanKey]);
+    expect((await t.get(cookie, PLATFORM_URL)).values).toMatchObject({
+      [KEY]: null,
+      [scanKey]: 50,
+    });
+  });
+
+  it('keeps the existing disable validation when only the version alias is used', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    const version = await t.version(cookie, PLATFORM_URL);
+    const before = snapshot(t);
+
+    const refused = await t.call(cookie, 'PATCH', PLATFORM_URL, {
+      expected_version: version,
+      disable: [KEY],
+    });
+
+    expect(refused.status).toBe(400);
+    expect(refused.json.message).toMatch(/cannot be disabled/);
+    expect(snapshot(t)).toEqual(before);
+  });
+
+  it('rejects reserved preview guards on other categories and keeps their existing ifMatch path', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    const url = '/api/admin/platform/settings/log-storage';
+    const ifMatch = await t.version(cookie, url);
+    const before = snapshot(t);
+    for (const guard of [{ expected_version: ifMatch }, { expected_following: 0 }]) {
+      const refused = await t.call(cookie, 'PATCH', url, { ifMatch, ...guard });
+      expect(refused.status).toBe(400);
+      expect(refused.json.message).toMatch(/only supported for identity-mapping/);
+      expect(snapshot(t)).toEqual(before);
+    }
+    expect((await t.call(cookie, 'PATCH', url, { ifMatch })).status).toBe(200);
+  });
+
+  it('accepts expected_following zero when every tenant has its own choice, including the same ID', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    t.settings.store.set(
+      `settings:tenant:${TENANT}:identity-mapping`,
+      JSON.stringify({ [KEY]: 'set-plat' })
+    );
+    const version = await t.version(cookie, PLATFORM_URL);
+
+    const saved = await t.call(cookie, 'PATCH', PLATFORM_URL, {
+      expected_version: version,
+      expected_following: 0,
+      set: { [KEY]: 'set-plat' },
+    });
+
+    expect(saved.status).toBe(200);
+    expect((await t.get(cookie, PLATFORM_URL)).values[KEY]).toBe('set-plat');
+  });
+
+  it('recounts fresh tenant relations after preview, without reading the tenant app database', async () => {
+    const t = setup();
+    const cookie = t.admin();
+    const version = await t.version(cookie, PLATFORM_URL);
+    t.directoryHooks.beforeQuery = {
+      match: /oauth_clients/,
+      run: async () => Promise.reject(new Error('the save guard must not read apps')),
+    };
+    // The preview saw one following tenant; its later opt-out does not change the platform version.
+    t.settings.store.set(
+      `settings:tenant:${TENANT}:identity-mapping`,
+      JSON.stringify({ [KEY]: 'none' })
+    );
+    const before = snapshot(t);
+
+    const refused = await t.call(cookie, 'PATCH', PLATFORM_URL, {
+      expected_version: version,
+      expected_following: 1,
+      set: { [KEY]: 'set-plat' },
+    });
+
+    expect(refused.status).toBe(409);
+    expect(refused.json).toMatchObject({ expected_following: 1, current_following: 0 });
+    expect(snapshot(t)).toEqual(before);
+    expect(auditFailures()).toEqual([
+      expect.objectContaining({
+        reason: 'identity_mapping_following_conflict',
+        expected_following: 1,
+        current_following: 0,
+      }),
+    ]);
+  });
+
+  it('does not bootstrap a missing canonical document on a following-count conflict', async () => {
+    const t = setup();
+    const before = snapshot(t);
+
+    const refused = await t.call(t.admin(), 'PATCH', PLATFORM_URL, {
+      ifMatch: 'not-read-yet',
+      expected_following: 0,
+      clear: [KEY],
+    });
+
+    expect(refused.status).toBe(409);
+    expect(snapshot(t)).toEqual(before);
+  });
+
+  it.each(['unreadable', 'invalid', 'directory failure', 'over budget'] as const)(
+    'fails closed for %s tenant relations',
+    async (mode) => {
+      const t = setup();
+      const cookie = t.admin();
+      const version = await t.version(cookie, PLATFORM_URL);
+      if (mode === 'over budget') {
+        for (let index = 0; index < 100; index += 1) insertTenant(t.directory, `extra-${index}`);
+      } else if (mode === 'directory failure') {
+        t.directoryHooks.beforeQuery = {
+          match: /FROM tenants/,
+          run: async () => Promise.reject(new Error('directory unavailable')),
+        };
+      } else {
+        t.settings.store.set(
+          `settings:tenant:${TENANT}:identity-mapping`,
+          mode === 'unreadable' ? '[' : JSON.stringify({ [KEY]: 42 })
+        );
+      }
+      const before = snapshot(t);
+
+      const refused = await t.call(cookie, 'PATCH', PLATFORM_URL, {
+        expected_version: version,
+        expected_following: 1,
+        set: { [KEY]: 'set-plat' },
+      });
+
+      expect(refused.status).toBe(503);
+      expect(refused.json.error).toBe('temporarily_unavailable');
+      expect(snapshot(t)).toEqual(before);
+      expect(auditFailures()).toEqual([
+        expect.objectContaining({ reason: 'identity_mapping_following_unavailable' }),
+      ]);
+    }
+  );
+
+  it('keeps the platform role policy when preview guards are present', async () => {
+    const t = setup();
+    const version = await t.version(t.admin(), PLATFORM_URL);
+    const before = snapshot(t);
+
+    const refused = await t.call(t.admin(TENANT_SUPER_ADMIN), 'PATCH', PLATFORM_URL, {
+      expected_version: version,
+      expected_following: 1,
+      set: { [KEY]: 'set-plat' },
+    });
+
+    expect(refused.status).toBe(403);
+    expect(snapshot(t)).toEqual(before);
+  });
+
+  it('does not let an Agent use a preview guard to enter the platform save route', async () => {
+    const t = setup({ agent: true });
+    const before = snapshot(t);
+
+    const refused = await t.call(t.admin(), 'PATCH', PLATFORM_URL, {
+      expected_version: 'not-authorized',
+      expected_following: 1,
+      set: { [KEY]: 'set-plat' },
+    });
+
+    expect(refused.status).toBe(403);
+    expect(snapshot(t)).toEqual(before);
   });
 });
 
