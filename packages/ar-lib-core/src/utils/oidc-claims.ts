@@ -547,6 +547,23 @@ const NEUTRAL_USER_ATTRIBUTE_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * A user's attributes under the standard claim names: an attribute held only under a neutral
+ * alias (`display_name`, `picture_url`) gives the standard claim it stands for. For attributes
+ * named as a field catalog names them (a test user's), before `buildStandardUserClaims`.
+ */
+export function withStandardUserAttributeNames(
+  attributes: Readonly<Record<string, unknown>>
+): Record<string, unknown> {
+  const named: Record<string, unknown> = { ...attributes };
+  for (const [alias, claim] of Object.entries(NEUTRAL_USER_ATTRIBUTE_ALIASES)) {
+    if (!Object.hasOwn(named, claim) && Object.hasOwn(attributes, alias)) {
+      named[claim] = attributes[alias];
+    }
+  }
+  return named;
+}
+
+/**
  * Of the attribute names an identity mapping reads, the standard user claims they stand for (a
  * neutral alias resolves to its claim). Custom attributes are not among them: they are not the
  * user's standard attributes and are read by the custom claim resolver, so a mapping that reads
