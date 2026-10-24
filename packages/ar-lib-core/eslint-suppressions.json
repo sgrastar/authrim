@@ -3141,6 +3141,31 @@
       "count": 1
     }
   },
+  "src/utils/__tests__/audit-log-event-log-anonymized-user.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 19
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 19
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    }
+  },
+  "src/utils/__tests__/audit-log-event-log-mirror.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 2
+    }
+  },
   "src/utils/__tests__/audit-log.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 9
@@ -3149,7 +3174,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 11
+      "count": 12
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2

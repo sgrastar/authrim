@@ -93,10 +93,10 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 35
+      "count": 37
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 36
+      "count": 38
     }
   },
   "src/__tests__/account-directory-removal-producer.test.ts": {
@@ -930,6 +930,14 @@
       "count": 1
     }
   },
+  "src/__tests__/admin-user-activity-log-unified.integration.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 2
+    }
+  },
   "src/__tests__/admin-user-assurance.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -1017,25 +1025,25 @@
   },
   "src/__tests__/admin.test.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 74
+      "count": 78
     },
     "@typescript-eslint/no-redundant-type-constituents": {
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 11
+      "count": 12
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 193
+      "count": 195
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 378
+      "count": 383
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 72
+      "count": 76
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 317
+      "count": 324
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 10
@@ -1445,7 +1453,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 7
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
@@ -1978,6 +1986,26 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 37
+    }
+  },
+  "src/__tests__/identity-mapping-tenants.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 14
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
     }
   },
   "src/__tests__/identity-provisioning-assignment.test.ts": {
@@ -2904,9 +2932,20 @@
       "count": 4
     }
   },
+  "src/__tests__/support-ops-routed-storage.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 13
+    }
+  },
   "src/__tests__/support-ops.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 22
+      "count": 30
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -2937,14 +2976,17 @@
     }
   },
   "src/__tests__/tenant-backup-import-discard.test.ts": {
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 35
+      "count": 36
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 107
+      "count": 109
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 108
+      "count": 113
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 3
@@ -3997,7 +4039,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 49
+      "count": 50
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
@@ -4740,6 +4782,16 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
+    }
+  },
+  "src/support-ops-stores.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 4
+    }
+  },
+  "src/support-ops.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 5
     }
   },
   "src/tenant-backup-import-discard.ts": {
