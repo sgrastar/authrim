@@ -14,6 +14,7 @@ const securityRegressionIt =
 class MockDurableObjectState implements Partial<DurableObjectState> {
   private _storage = new Map<string, unknown>();
   private failPutKey: string | null = null;
+  private failNextBatchDelete = false;
   private blockedInitialization: Promise<unknown> = Promise.resolve();
   id!: DurableObjectId;
   storage: DurableObjectStorage;
@@ -36,6 +37,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         return Promise.resolve();
       },
       delete: (keyOrKeys: string | string[]): Promise<boolean | number> => {
+        if (Array.isArray(keyOrKeys) && this.failNextBatchDelete) {
+          this.failNextBatchDelete = false;
+          return Promise.reject(new Error('Durable Storage unavailable'));
+        }
         if (typeof keyOrKeys === 'string') {
           const existed = this._storage.has(keyOrKeys);
           this._storage.delete(keyOrKeys);
@@ -93,6 +98,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 
   failNextPut(key: string): void {
     this.failPutKey = key;
+  }
+
+  failNextDeleteMany(): void {
+    this.failNextBatchDelete = true;
   }
 
   async waitForBlockedInitialization(): Promise<void> {
@@ -932,6 +941,42 @@ describe('AuthorizationCodeStore', () => {
         }
       }
     );
+
+    it('logs a failed periodic cleanup instead of leaving an unhandled rejection', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      vi.useFakeTimers();
+      try {
+        const cleanupState = new MockDurableObjectState();
+        const cleanupStore = new AuthorizationCodeStore(
+          cleanupState as unknown as DurableObjectState,
+          { AUTH_CODE_CLEANUP_INTERVAL: '1' } as Env
+        );
+        await cleanupState.waitForBlockedInitialization();
+        await cleanupStore.storeCodeRpc({
+          code: 'cleanup-failure-code',
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'cleanup-failure-user',
+          scope: 'openid',
+          ttlSeconds: 1,
+        });
+
+        cleanupState.failNextDeleteMany();
+        await vi.advanceTimersByTimeAsync(2_000);
+        vi.useRealTimers();
+        // Node reports an unhandled rejection once the microtask queue drains.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
 
     it('decrements the per-user counter on explicit deletion as a negative control', async () => {
       const limitedState = new MockDurableObjectState();

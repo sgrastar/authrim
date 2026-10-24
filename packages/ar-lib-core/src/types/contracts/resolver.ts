@@ -219,18 +219,6 @@ export interface PolicyResolver {
   ): Promise<ContractValidationResult>;
 
   /**
-   * Validate a flow against resolved policy.
-   *
-   * @param policy - Resolved policy
-   * @param flowId - Flow ID to validate
-   * @returns Flow validation result
-   */
-  validateFlowAgainstPolicy(
-    policy: ResolvedPolicy,
-    flowId: string
-  ): Promise<FlowPolicyValidationResult>;
-
-  /**
    * Get available options for flow designer based on policy.
    *
    * @param policy - Resolved policy

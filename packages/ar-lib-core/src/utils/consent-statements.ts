@@ -277,45 +277,6 @@ async function getCurrentVersion(
   };
 }
 
-async function getVersionById(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  statementId: string,
-  versionId: string
-): Promise<ConsentStatementVersion | null> {
-  const rows = await adapter.query<{
-    id: string;
-    tenant_id: string;
-    statement_id: string;
-    version: string;
-    content_type: string;
-    effective_at: number;
-    effective_until: number | null;
-    content_hash: string | null;
-    is_current: number;
-    status: string;
-    created_at: number;
-    updated_at: number;
-  }>(
-    `SELECT id, tenant_id, statement_id, version, content_type, effective_at, effective_until,
-            content_hash, is_current, status, created_at, updated_at
-     FROM consent_statement_versions
-     WHERE tenant_id = ? AND statement_id = ? AND id = ?`,
-    [tenantId, statementId, versionId]
-  );
-
-  if (rows.length === 0) return null;
-  const r = rows[0];
-  return {
-    ...r,
-    content_hash: r.content_hash ?? undefined,
-    effective_until: r.effective_until ?? null,
-    is_current: r.is_current === 1,
-    content_type: r.content_type as ConsentStatementVersion['content_type'],
-    status: r.status as ConsentStatementVersion['status'],
-  };
-}
-
 // =============================================================================
 // Localization with Fallback (D8)
 // =============================================================================

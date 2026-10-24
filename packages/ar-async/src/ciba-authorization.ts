@@ -272,7 +272,6 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // Resolve and validate user identity from login hints
     // Priority: id_token_hint > login_hint_token > login_hint
     let resolvedSubjectId: string | undefined;
-    let resolvedLoginHint = login_hint;
 
     // Validate id_token_hint if provided (JWT signed by this server)
     if (id_token_hint) {
