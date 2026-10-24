@@ -49,6 +49,7 @@ import {
   type Assignment,
 } from './helpers/admin-authority-fixture';
 import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
+import { d1OverSqlite } from './helpers/d1-over-sqlite';
 import { adminOpenApiSchemas, shapeErrors } from './helpers/openapi-shape';
 
 /**
@@ -418,7 +419,7 @@ describe('a change of a tenant’s set', () => {
     t.app(TENANT, 'app', { fieldMappingSetId: setId }, 'openid');
     const input = {
       adapter: sqliteAdapter(t.cores[TENANT]),
-      env: { DB_ADMIN: t.adapter, SETTINGS: t.settings.namespace },
+      env: { DB_ADMIN: d1OverSqlite(t.db), SETTINGS: t.settings.namespace },
       tenantId: TENANT,
       clientId: 'app',
       selector: { fieldMappingSetId: setId },
