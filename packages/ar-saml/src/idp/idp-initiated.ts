@@ -26,7 +26,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { base64Encode, generateSAMLId } from '../common/xml-utils';
-import { NAMEID_FORMATS, DEFAULTS, STATUS_CODES } from '../common/constants';
+import { NAMEID_FORMATS, DEFAULTS } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
 import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
@@ -473,11 +473,11 @@ async function checkUserAuthentication(
       return null;
     }
 
-    const session = (await response.json()) as {
+    const session = await response.json<{
       userId?: string;
       createdAt?: number;
       data?: Record<string, unknown>;
-    };
+    }>();
     const data =
       session.data && typeof session.data === 'object' && !Array.isArray(session.data)
         ? session.data

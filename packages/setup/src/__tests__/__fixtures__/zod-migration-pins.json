@@ -1,0 +1,1569 @@
+{
+  "config": {
+    "badUrls": {
+      "issues": [
+        {
+          "code": "invalid_string",
+          "message": "Invalid url",
+          "path": ["urls", "api", "custom"],
+          "validation": "url"
+        },
+        {
+          "code": "invalid_string",
+          "message": "Invalid url",
+          "path": ["urls", "api", "auto"],
+          "validation": "url"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "object",
+          "message": "Required",
+          "path": ["urls", "loginUi"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "object",
+          "message": "Required",
+          "path": ["urls", "adminUi"],
+          "received": "undefined"
+        }
+      ]
+    },
+    "default": {
+      "ok": {
+        "cloudflare": {},
+        "components": {
+          "adminUi": true,
+          "adminUiVariant": "legacy",
+          "api": true,
+          "async": true,
+          "bridge": true,
+          "loginUi": true,
+          "policy": true,
+          "saml": true,
+          "vc": true
+        },
+        "controlPlane": {
+          "automaticProvisioning": true
+        },
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "database": {
+          "core": {
+            "jurisdiction": "none",
+            "location": "auto"
+          },
+          "pii": {
+            "jurisdiction": "none",
+            "location": "auto"
+          }
+        },
+        "environment": {
+          "prefix": "prod"
+        },
+        "features": {
+          "email": {
+            "configured": false,
+            "provider": "none"
+          },
+          "pluginDynamicWorkers": {
+            "enabled": false
+          },
+          "queue": {
+            "enabled": false
+          },
+          "r2": {
+            "enabled": true
+          }
+        },
+        "keys": {
+          "includeSecrets": false,
+          "secretsPath": "./keys/",
+          "storageType": "external"
+        },
+        "oidc": {
+          "accessTokenTtl": 3600,
+          "authCodeTtl": 600,
+          "grantTypes": ["authorization_code", "refresh_token"],
+          "pkceRequired": true,
+          "refreshTokenTtl": 604800,
+          "responseTypes": ["code"]
+        },
+        "profile": "basic-op",
+        "profiles": {
+          "defaults": {
+            "audit": "builtin:audit:standard",
+            "residency": "builtin:residency:default"
+          },
+          "references": {
+            "hyperdrive": {}
+          },
+          "registry": {
+            "backend": "kv"
+          },
+          "seed": {
+            "audit": [],
+            "residency": []
+          }
+        },
+        "security": {
+          "domainHashEnabled": true,
+          "piiEncryptionEnabled": true
+        },
+        "sharding": {
+          "authCodeShards": 4,
+          "challengeShards": 4,
+          "refreshTokenShards": 4,
+          "sessionShards": 4
+        },
+        "tenant": {
+          "displayName": "Initial Tenant",
+          "multiTenant": false,
+          "name": "default",
+          "placementPolicy": "tenant_exclusive",
+          "userIdFormat": "nanoid"
+        },
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0"
+      }
+    },
+    "empty": {
+      "issues": [
+        {
+          "code": "invalid_type",
+          "expected": "object",
+          "message": "Required",
+          "path": ["environment"],
+          "received": "undefined"
+        }
+      ]
+    },
+    "minimal": {
+      "ok": {
+        "cloudflare": {},
+        "components": {
+          "adminUi": true,
+          "adminUiVariant": "legacy",
+          "api": true,
+          "async": true,
+          "bridge": true,
+          "loginUi": true,
+          "policy": true,
+          "saml": true,
+          "vc": true
+        },
+        "controlPlane": {
+          "automaticProvisioning": true
+        },
+        "database": {
+          "core": {
+            "jurisdiction": "none",
+            "location": "auto"
+          },
+          "pii": {
+            "jurisdiction": "none",
+            "location": "auto"
+          }
+        },
+        "environment": {
+          "prefix": "prod"
+        },
+        "features": {
+          "email": {
+            "configured": false,
+            "provider": "none"
+          },
+          "pluginDynamicWorkers": {
+            "enabled": false
+          },
+          "queue": {
+            "enabled": false
+          },
+          "r2": {
+            "enabled": true
+          }
+        },
+        "keys": {
+          "includeSecrets": false,
+          "secretsPath": "./keys/",
+          "storageType": "external"
+        },
+        "oidc": {
+          "accessTokenTtl": 3600,
+          "authCodeTtl": 600,
+          "grantTypes": ["authorization_code", "refresh_token"],
+          "pkceRequired": true,
+          "refreshTokenTtl": 604800,
+          "responseTypes": ["code"]
+        },
+        "profile": "basic-op",
+        "profiles": {
+          "defaults": {
+            "audit": "builtin:audit:standard",
+            "residency": "builtin:residency:default"
+          },
+          "references": {
+            "hyperdrive": {}
+          },
+          "registry": {
+            "backend": "kv"
+          },
+          "seed": {
+            "audit": [],
+            "residency": []
+          }
+        },
+        "security": {
+          "domainHashEnabled": true,
+          "piiEncryptionEnabled": true
+        },
+        "sharding": {
+          "authCodeShards": 4,
+          "challengeShards": 4,
+          "refreshTokenShards": 4,
+          "sessionShards": 4
+        },
+        "tenant": {
+          "displayName": "Initial Tenant",
+          "multiTenant": false,
+          "name": "default",
+          "placementPolicy": "tenant_exclusive",
+          "userIdFormat": "nanoid"
+        },
+        "version": "1.0.0"
+      }
+    },
+    "null": {
+      "issues": [
+        {
+          "code": "invalid_type",
+          "expected": "object",
+          "message": "Expected object, received null",
+          "path": [],
+          "received": "null"
+        }
+      ]
+    },
+    "reservedTenant": {
+      "issues": [
+        {
+          "code": "custom",
+          "message": "Tenant ID \"platform\" is reserved",
+          "path": ["tenant", "name"]
+        }
+      ]
+    },
+    "unknownKeys": {
+      "issues": [
+        {
+          "code": "unrecognized_keys",
+          "keys": ["unexpected"],
+          "message": "Unrecognized key(s) in object: 'unexpected'",
+          "path": []
+        }
+      ]
+    },
+    "wrongTypes": {
+      "issues": [
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Expected string, received number",
+          "path": ["version"],
+          "received": "number"
+        },
+        {
+          "code": "invalid_string",
+          "message": "Prefix must start with a letter and contain only lowercase letters, numbers, and hyphens",
+          "path": ["environment", "prefix"],
+          "validation": "regex"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Expected string, received number",
+          "path": ["tenant", "name"],
+          "received": "number"
+        },
+        {
+          "code": "invalid_enum_value",
+          "message": "Invalid enum value. Expected 'nanoid' | 'uuid', received 'cuid'",
+          "options": ["nanoid", "uuid"],
+          "path": ["tenant", "userIdFormat"],
+          "received": "cuid"
+        },
+        {
+          "code": "too_small",
+          "exact": false,
+          "inclusive": false,
+          "message": "Number must be greater than 0",
+          "minimum": 0,
+          "path": ["oidc", "accessTokenTtl"],
+          "type": "number"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "integer",
+          "message": "Expected integer, received float",
+          "path": ["oidc", "refreshTokenTtl"],
+          "received": "float"
+        }
+      ]
+    }
+  },
+  "http": {
+    "default:badEnv": {
+      "body": {
+        "errors": [
+          {
+            "code": "invalid_string",
+            "message": "Prefix must start with a letter and contain only lowercase letters, numbers, and hyphens",
+            "path": ["environment", "prefix"],
+            "validation": "regex"
+          }
+        ],
+        "success": false
+      },
+      "status": 400
+    },
+    "default:badTypes": {
+      "body": {
+        "error": "domain.startsWith is not a function",
+        "success": false
+      },
+      "status": 500
+    },
+    "default:empty": {
+      "body": {
+        "config": {
+          "cloudflare": {},
+          "components": {
+            "adminUi": true,
+            "adminUiVariant": "legacy",
+            "api": true,
+            "async": true,
+            "bridge": true,
+            "loginUi": true,
+            "policy": true,
+            "saml": true,
+            "vc": true
+          },
+          "controlPlane": {
+            "automaticProvisioning": true
+          },
+          "createdAt": "2026-07-21T00:00:00.000Z",
+          "database": {
+            "core": {
+              "jurisdiction": "none",
+              "location": "auto"
+            },
+            "pii": {
+              "jurisdiction": "none",
+              "location": "auto"
+            }
+          },
+          "environment": {
+            "prefix": "prod"
+          },
+          "features": {
+            "email": {
+              "configured": false,
+              "provider": "none"
+            },
+            "pluginDynamicWorkers": {
+              "enabled": false
+            },
+            "queue": {
+              "enabled": false
+            },
+            "r2": {
+              "enabled": true
+            }
+          },
+          "keys": {
+            "includeSecrets": false,
+            "secretsPath": "./keys/",
+            "storageType": "external"
+          },
+          "oidc": {
+            "accessTokenTtl": 3600,
+            "authCodeTtl": 600,
+            "grantTypes": ["authorization_code", "refresh_token"],
+            "pkceRequired": true,
+            "refreshTokenTtl": 604800,
+            "responseTypes": ["code"]
+          },
+          "profile": "basic-op",
+          "profiles": {
+            "defaults": {
+              "audit": "builtin:audit:standard",
+              "residency": "builtin:residency:default"
+            },
+            "references": {
+              "hyperdrive": {}
+            },
+            "registry": {
+              "backend": "kv"
+            },
+            "seed": {
+              "audit": [],
+              "residency": []
+            }
+          },
+          "security": {
+            "domainHashEnabled": true,
+            "piiEncryptionEnabled": true
+          },
+          "sharding": {
+            "authCodeShards": 4,
+            "challengeShards": 4,
+            "refreshTokenShards": 4,
+            "sessionShards": 4
+          },
+          "tenant": {
+            "displayName": "Initial Tenant",
+            "multiTenant": false,
+            "name": "default",
+            "placementPolicy": "tenant_exclusive",
+            "userIdFormat": "nanoid"
+          },
+          "updatedAt": "2026-07-21T00:00:00.000Z",
+          "urls": {
+            "adminUi": {
+              "auto": "https://prod-ar-admin-ui.workers.dev",
+              "custom": null,
+              "sameAsApi": false
+            },
+            "api": {
+              "auto": "https://prod-ar-router.workers.dev",
+              "custom": null,
+              "customDomainBinding": false,
+              "zoneId": null
+            },
+            "loginUi": {
+              "auto": "https://prod-ar-login-ui.workers.dev",
+              "custom": null,
+              "sameAsApi": false
+            }
+          },
+          "version": "1.0.0"
+        },
+        "success": true
+      },
+      "status": 200
+    },
+    "lockFile:badDns": {
+      "error": "Invalid lock file schema: Invalid uuid, String must contain at least 1 character(s), Invalid literal value, expected \"CNAME\", Invalid datetime, Unrecognized key(s) in object: 'bogus'"
+    },
+    "lockFile:badShapes": {
+      "error": "Invalid lock file schema: String must contain at least 1 character(s), Invalid enum value. Expected 'planned' | 'control_handoff' | 'awaiting_setup' | 'schema_applied' | 'workers_deployed' | 'verified' | 'database_only_verified', received 'done', Invalid, Invalid datetime, Required, Expected string, received number, Invalid discriminator value. Expected 'provisional' | 'pending_tag', String must contain at least 1 character(s), Required"
+    },
+    "lockFile:base": {
+      "ok": {
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "d1": {
+          "DB": {
+            "id": "core-id",
+            "name": "prod-authrim-core-db"
+          }
+        },
+        "env": "prod",
+        "kv": {
+          "SETTINGS": {
+            "id": "kv-id",
+            "name": "prod-settings",
+            "previewId": "kv-preview"
+          }
+        },
+        "productVersion": "0.4.0",
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0",
+        "workers": {
+          "ar-router": {
+            "name": "prod-ar-router"
+          }
+        }
+      }
+    },
+    "lockFile:empty": {
+      "error": "Invalid lock file schema: Required, Required"
+    },
+    "lockFile:minimal": {
+      "ok": {
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "d1": {},
+        "env": "prod",
+        "kv": {},
+        "version": "1.0.0"
+      }
+    },
+    "lockFile:nonRfcUuid": {
+      "ok": {
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "d1": {
+          "DB": {
+            "id": "core-id",
+            "name": "prod-authrim-core-db"
+          }
+        },
+        "env": "prod",
+        "kv": {
+          "SETTINGS": {
+            "id": "kv-id",
+            "name": "prod-settings",
+            "previewId": "kv-preview"
+          }
+        },
+        "productVersion": "0.4.0",
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0",
+        "workers": {
+          "ar-router": {
+            "cloudflareVersionId": "00000000-0000-0000-0000-00000000000a",
+            "deployedAt": "2026-07-21T00:00:00.000Z",
+            "name": "prod-ar-router"
+          }
+        }
+      }
+    },
+    "lockFile:partialDns": {
+      "ok": {
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "d1": {
+          "DB": {
+            "id": "core-id",
+            "name": "prod-authrim-core-db"
+          }
+        },
+        "dns": {
+          "api_base": {
+            "action": "adopted",
+            "name": "api.example.com",
+            "operationId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "recordId": "rec",
+            "role": "api_base",
+            "state": "managed",
+            "target": "example.workers.dev",
+            "updatedAt": "2026-07-21T00:00:00.000Z",
+            "zoneId": "zone"
+          }
+        },
+        "env": "prod",
+        "kv": {
+          "SETTINGS": {
+            "id": "kv-id",
+            "name": "prod-settings",
+            "previewId": "kv-preview"
+          }
+        },
+        "productVersion": "0.4.0",
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0",
+        "workers": {
+          "ar-router": {
+            "name": "prod-ar-router"
+          }
+        }
+      }
+    },
+    "lockFile:withOffset": {
+      "error": "Invalid lock file schema: Invalid datetime"
+    },
+    "lockFile:withSecondsless": {
+      "ok": {
+        "createdAt": "2026-07-21T10:00Z",
+        "d1": {
+          "DB": {
+            "id": "core-id",
+            "name": "prod-authrim-core-db"
+          }
+        },
+        "env": "prod",
+        "kv": {
+          "SETTINGS": {
+            "id": "kv-id",
+            "name": "prod-settings",
+            "previewId": "kv-preview"
+          }
+        },
+        "productVersion": "0.4.0",
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0",
+        "workers": {
+          "ar-router": {
+            "name": "prod-ar-router"
+          }
+        }
+      }
+    },
+    "save:badUrls": {
+      "body": {
+        "errors": [
+          {
+            "code": "invalid_string",
+            "message": "Invalid url",
+            "path": ["urls", "api", "custom"],
+            "validation": "url"
+          },
+          {
+            "code": "invalid_string",
+            "message": "Invalid url",
+            "path": ["urls", "api", "auto"],
+            "validation": "url"
+          },
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "message": "Required",
+            "path": ["urls", "loginUi"],
+            "received": "undefined"
+          },
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "message": "Required",
+            "path": ["urls", "adminUi"],
+            "received": "undefined"
+          }
+        ],
+        "success": false
+      },
+      "status": 400
+    },
+    "save:empty": {
+      "body": {
+        "errors": [
+          {
+            "code": "invalid_type",
+            "expected": "object",
+            "message": "Required",
+            "path": ["environment"],
+            "received": "undefined"
+          }
+        ],
+        "success": false
+      },
+      "status": 400
+    },
+    "save:reservedTenant": {
+      "body": {
+        "errors": [
+          {
+            "code": "custom",
+            "message": "Tenant ID \"platform\" is reserved",
+            "path": ["tenant", "name"]
+          }
+        ],
+        "success": false
+      },
+      "status": 400
+    },
+    "save:unknownKeys": {
+      "body": {
+        "errors": [
+          {
+            "code": "unrecognized_keys",
+            "keys": ["unexpected"],
+            "message": "Unrecognized key(s) in object: 'unexpected'",
+            "path": []
+          }
+        ],
+        "success": false
+      },
+      "status": 400
+    },
+    "save:wrongTypes": {
+      "body": {
+        "errors": [
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "message": "Expected string, received number",
+            "path": ["version"],
+            "received": "number"
+          },
+          {
+            "code": "invalid_string",
+            "message": "Prefix must start with a letter and contain only lowercase letters, numbers, and hyphens",
+            "path": ["environment", "prefix"],
+            "validation": "regex"
+          },
+          {
+            "code": "invalid_type",
+            "expected": "string",
+            "message": "Expected string, received number",
+            "path": ["tenant", "name"],
+            "received": "number"
+          },
+          {
+            "code": "invalid_enum_value",
+            "message": "Invalid enum value. Expected 'nanoid' | 'uuid', received 'cuid'",
+            "options": ["nanoid", "uuid"],
+            "path": ["tenant", "userIdFormat"],
+            "received": "cuid"
+          },
+          {
+            "code": "too_small",
+            "exact": false,
+            "inclusive": false,
+            "message": "Number must be greater than 0",
+            "minimum": 0,
+            "path": ["oidc", "accessTokenTtl"],
+            "type": "number"
+          },
+          {
+            "code": "invalid_type",
+            "expected": "integer",
+            "message": "Expected integer, received float",
+            "path": ["oidc", "refreshTokenTtl"],
+            "received": "float"
+          }
+        ],
+        "success": false
+      },
+      "status": 400
+    },
+    "validate:badUrls": {
+      "body": {
+        "errors": [
+          {
+            "message": "Invalid url",
+            "path": "urls.api.custom"
+          },
+          {
+            "message": "Invalid url",
+            "path": "urls.api.auto"
+          },
+          {
+            "message": "Required",
+            "path": "urls.loginUi"
+          },
+          {
+            "message": "Required",
+            "path": "urls.adminUi"
+          }
+        ],
+        "valid": false
+      },
+      "status": 200
+    },
+    "validate:empty": {
+      "body": {
+        "errors": [
+          {
+            "message": "Required",
+            "path": "environment"
+          }
+        ],
+        "valid": false
+      },
+      "status": 200
+    },
+    "validate:reservedTenant": {
+      "body": {
+        "errors": [
+          {
+            "message": "Tenant ID \"platform\" is reserved",
+            "path": "tenant.name"
+          }
+        ],
+        "valid": false
+      },
+      "status": 200
+    },
+    "validate:unknownKeys": {
+      "body": {
+        "errors": [
+          {
+            "message": "Unrecognized key(s) in object: 'unexpected'",
+            "path": ""
+          }
+        ],
+        "valid": false
+      },
+      "status": 200
+    },
+    "validate:wrongTypes": {
+      "body": {
+        "errors": [
+          {
+            "message": "Expected string, received number",
+            "path": "version"
+          },
+          {
+            "message": "Prefix must start with a letter and contain only lowercase letters, numbers, and hyphens",
+            "path": "environment.prefix"
+          },
+          {
+            "message": "Expected string, received number",
+            "path": "tenant.name"
+          },
+          {
+            "message": "Invalid enum value. Expected 'nanoid' | 'uuid', received 'cuid'",
+            "path": "tenant.userIdFormat"
+          },
+          {
+            "message": "Number must be greater than 0",
+            "path": "oidc.accessTokenTtl"
+          },
+          {
+            "message": "Expected integer, received float",
+            "path": "oidc.refreshTokenTtl"
+          }
+        ],
+        "valid": false
+      },
+      "status": 200
+    }
+  },
+  "lock": {
+    "badDns": {
+      "issues": [
+        {
+          "code": "invalid_string",
+          "message": "Invalid uuid",
+          "path": ["dns", "tenant_wildcard", "operationId"],
+          "validation": "uuid"
+        },
+        {
+          "code": "too_small",
+          "exact": false,
+          "inclusive": true,
+          "message": "String must contain at least 1 character(s)",
+          "minimum": 1,
+          "path": ["dns", "tenant_wildcard", "zoneId"],
+          "type": "string"
+        },
+        {
+          "code": "invalid_literal",
+          "expected": "CNAME",
+          "message": "Invalid literal value, expected \"CNAME\"",
+          "path": ["dns", "tenant_wildcard", "previous", "type"],
+          "received": "A"
+        },
+        {
+          "code": "invalid_string",
+          "message": "Invalid datetime",
+          "path": ["dns", "tenant_wildcard", "updatedAt"],
+          "validation": "datetime"
+        },
+        {
+          "code": "unrecognized_keys",
+          "keys": ["bogus"],
+          "message": "Unrecognized key(s) in object: 'bogus'",
+          "path": ["dns"]
+        }
+      ]
+    },
+    "badShapes": {
+      "issues": [
+        {
+          "code": "too_small",
+          "exact": false,
+          "inclusive": true,
+          "message": "String must contain at least 1 character(s)",
+          "minimum": 1,
+          "path": ["releaseUpdate", "targetVersion"],
+          "type": "string"
+        },
+        {
+          "code": "invalid_enum_value",
+          "message": "Invalid enum value. Expected 'planned' | 'control_handoff' | 'awaiting_setup' | 'schema_applied' | 'workers_deployed' | 'verified' | 'database_only_verified', received 'done'",
+          "options": [
+            "planned",
+            "control_handoff",
+            "awaiting_setup",
+            "schema_applied",
+            "workers_deployed",
+            "verified",
+            "database_only_verified"
+          ],
+          "path": ["releaseUpdate", "phase"],
+          "received": "done"
+        },
+        {
+          "code": "invalid_string",
+          "message": "Invalid",
+          "path": ["releaseUpdate", "manifestChecksum"],
+          "validation": "regex"
+        },
+        {
+          "code": "invalid_string",
+          "message": "Invalid datetime",
+          "path": ["releaseUpdate", "startedAt"],
+          "validation": "datetime"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Required",
+          "path": ["d1", "DB", "name"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Expected string, received number",
+          "path": ["d1", "DB", "id"],
+          "received": "number"
+        },
+        {
+          "code": "invalid_union_discriminator",
+          "message": "Invalid discriminator value. Expected 'provisional' | 'pending_tag'",
+          "options": ["provisional", "pending_tag"],
+          "path": ["workerScriptOwnership", "ar-router", "state"]
+        },
+        {
+          "code": "too_small",
+          "exact": false,
+          "inclusive": true,
+          "message": "String must contain at least 1 character(s)",
+          "minimum": 1,
+          "path": ["workerScriptOwnership", "ar-auth", "name"],
+          "type": "string"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Required",
+          "path": ["workerScriptOwnership", "ar-auth", "pendingCloudflareVersionId"],
+          "received": "undefined"
+        }
+      ]
+    },
+    "base": {
+      "ok": {
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "d1": {
+          "DB": {
+            "id": "core-id",
+            "name": "prod-authrim-core-db"
+          }
+        },
+        "env": "prod",
+        "kv": {
+          "SETTINGS": {
+            "id": "kv-id",
+            "name": "prod-settings",
+            "previewId": "kv-preview"
+          }
+        },
+        "productVersion": "0.4.0",
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0",
+        "workers": {
+          "ar-router": {
+            "name": "prod-ar-router"
+          }
+        }
+      }
+    },
+    "empty": {
+      "issues": [
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Required",
+          "path": ["createdAt"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Required",
+          "path": ["env"],
+          "received": "undefined"
+        }
+      ]
+    },
+    "minimal": {
+      "ok": {
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "d1": {},
+        "env": "prod",
+        "kv": {},
+        "version": "1.0.0"
+      }
+    },
+    "nonRfcUuid": {
+      "ok": {
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "d1": {
+          "DB": {
+            "id": "core-id",
+            "name": "prod-authrim-core-db"
+          }
+        },
+        "env": "prod",
+        "kv": {
+          "SETTINGS": {
+            "id": "kv-id",
+            "name": "prod-settings",
+            "previewId": "kv-preview"
+          }
+        },
+        "productVersion": "0.4.0",
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0",
+        "workers": {
+          "ar-router": {
+            "cloudflareVersionId": "00000000-0000-0000-0000-00000000000a",
+            "deployedAt": "2026-07-21T00:00:00.000Z",
+            "name": "prod-ar-router"
+          }
+        }
+      }
+    },
+    "partialDns": {
+      "ok": {
+        "createdAt": "2026-07-21T00:00:00.000Z",
+        "d1": {
+          "DB": {
+            "id": "core-id",
+            "name": "prod-authrim-core-db"
+          }
+        },
+        "dns": {
+          "api_base": {
+            "action": "adopted",
+            "name": "api.example.com",
+            "operationId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "recordId": "rec",
+            "role": "api_base",
+            "state": "managed",
+            "target": "example.workers.dev",
+            "updatedAt": "2026-07-21T00:00:00.000Z",
+            "zoneId": "zone"
+          }
+        },
+        "env": "prod",
+        "kv": {
+          "SETTINGS": {
+            "id": "kv-id",
+            "name": "prod-settings",
+            "previewId": "kv-preview"
+          }
+        },
+        "productVersion": "0.4.0",
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0",
+        "workers": {
+          "ar-router": {
+            "name": "prod-ar-router"
+          }
+        }
+      }
+    },
+    "withOffset": {
+      "issues": [
+        {
+          "code": "invalid_string",
+          "message": "Invalid datetime",
+          "path": ["updatedAt"],
+          "validation": "datetime"
+        }
+      ]
+    },
+    "withSecondsless": {
+      "ok": {
+        "createdAt": "2026-07-21T10:00Z",
+        "d1": {
+          "DB": {
+            "id": "core-id",
+            "name": "prod-authrim-core-db"
+          }
+        },
+        "env": "prod",
+        "kv": {
+          "SETTINGS": {
+            "id": "kv-id",
+            "name": "prod-settings",
+            "previewId": "kv-preview"
+          }
+        },
+        "productVersion": "0.4.0",
+        "updatedAt": "2026-07-21T00:00:00.000Z",
+        "version": "1.0.0",
+        "workers": {
+          "ar-router": {
+            "name": "prod-ar-router"
+          }
+        }
+      }
+    }
+  },
+  "manifests": {
+    "extensionEmpty": {
+      "error": "invalid_extension_capability_manifest:schemaVersion:Invalid literal value, expected 1,extensionId:Required,owner:Required,source:Required,scope:Required,reason:Required,workers:Required"
+    },
+    "extensionWrong": {
+      "error": "invalid_extension_capability_manifest:schemaVersion:Invalid literal value, expected 1,extensionId:Invalid,owner:Required,source:Required,scope:Required,reason:Required,workers:Required,<root>:Unrecognized key(s) in object: 'requests', 'unknown'"
+    },
+    "pluginEmpty": {
+      "error": "invalid_plugin_worker_capability_manifest:schemaVersion:Invalid literal value, expected 1,pluginId:Required,backend:Required,resourceScope:Invalid literal value, expected \"tenant\",visibility:Required,bindings:Required,resources:Required,capabilities:Required,credentials:Required,egressAllowedHosts:Required"
+    },
+    "pluginWrong": {
+      "error": "invalid_plugin_worker_capability_manifest:pluginId:Invalid,backend:Required,resourceScope:Invalid literal value, expected \"tenant\",visibility:Required,bindings:Expected array, received object,resources:Required,capabilities.0:Expected object, received number,credentials:Required,egressAllowedHosts:Required"
+    },
+    "workerEmpty": {
+      "error": "invalid_worker_capability_manifest:schemaVersion:Invalid literal value, expected 1,packageName:Required,worker:Required,requiredDataRoles:Required,bindings:Required,secrets:Required"
+    },
+    "workerNull": {
+      "error": "invalid_worker_capability_manifest:<root>:Expected object, received null"
+    },
+    "workerUnknownKey": {
+      "error": "invalid_worker_capability_manifest:<root>:Unrecognized key(s) in object: 'extra'"
+    },
+    "workerValid": {
+      "ok": {
+        "bindings": [
+          {
+            "capability": "platform_metadata",
+            "kind": "d1",
+            "name": "DB",
+            "required": true
+          },
+          {
+            "capability": "notification_intent.platform",
+            "kind": "d1",
+            "name": "PLATFORM_NOTIFICATION_DB",
+            "required": true
+          },
+          {
+            "capability": "audit.pii",
+            "kind": "d1",
+            "name": "DB_PII",
+            "required": true
+          },
+          {
+            "capability": "admin_data",
+            "kind": "d1",
+            "name": "DB_ADMIN",
+            "required": true
+          },
+          {
+            "dataRole": "lookup",
+            "kind": "d1",
+            "name": "LOOKUP_DB",
+            "required": true
+          },
+          {
+            "kind": "kv_namespace",
+            "name": "CLIENTS_CACHE",
+            "required": true
+          },
+          {
+            "kind": "kv_namespace",
+            "name": "SETTINGS",
+            "required": true
+          },
+          {
+            "kind": "kv_namespace",
+            "name": "USER_CACHE",
+            "required": true
+          },
+          {
+            "kind": "kv_namespace",
+            "name": "REBAC_CACHE",
+            "required": true
+          },
+          {
+            "kind": "kv_namespace",
+            "name": "INITIAL_ACCESS_TOKENS",
+            "required": true
+          },
+          {
+            "kind": "kv_namespace",
+            "name": "AUTHRIM_CONFIG",
+            "required": true
+          },
+          {
+            "kind": "kv_namespace",
+            "name": "TENANT_RUNTIME_REGISTRY",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "KEY_MANAGER",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "REFRESH_TOKEN_ROTATOR",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "RATE_LIMITER",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "SESSION_STORE",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "SESSION_REVOCATION_STORE",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "SESSION_CLIENT_STORE",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "TOKEN_REVOCATION_STORE",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "VERSION_MANAGER",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "CHALLENGE_STORE",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "DPOP_JTI_STORE",
+            "required": true
+          },
+          {
+            "kind": "durable_object_namespace",
+            "name": "DIRECTORY_CONNECTOR_RELAY",
+            "required": true
+          },
+          {
+            "kind": "r2_bucket",
+            "name": "PUBLIC_ASSETS",
+            "required": false
+          },
+          {
+            "kind": "r2_bucket",
+            "name": "DIAGNOSTIC_LOGS",
+            "required": false
+          },
+          {
+            "kind": "r2_bucket",
+            "name": "AUDIT_ARCHIVE",
+            "required": false
+          },
+          {
+            "kind": "r2_bucket",
+            "name": "IMPORT_ARTIFACTS",
+            "required": false
+          },
+          {
+            "kind": "r2_bucket",
+            "name": "EXPORT_ARTIFACTS",
+            "required": false
+          },
+          {
+            "kind": "r2_bucket",
+            "name": "SENSITIVE_DETAILS",
+            "required": false
+          },
+          {
+            "kind": "queue",
+            "name": "LOGGING_DELIVERY_CRITICAL_QUEUE",
+            "required": false
+          },
+          {
+            "kind": "queue",
+            "name": "LOGGING_DELIVERY_QUEUE",
+            "required": false
+          },
+          {
+            "kind": "queue",
+            "name": "LOGGING_DELIVERY_BULK_QUEUE",
+            "required": false
+          },
+          {
+            "kind": "service",
+            "name": "EXTERNAL_IDP",
+            "required": true
+          },
+          {
+            "capability": "control_plane.provisioning",
+            "kind": "service",
+            "name": "CONTROL",
+            "required": true
+          },
+          {
+            "capability": "plugin_hooks.invoke",
+            "kind": "service",
+            "name": "PLUGIN_RUNNER",
+            "required": true
+          },
+          {
+            "kind": "service",
+            "name": "VC_ISSUER",
+            "required": false
+          },
+          {
+            "capability": "tenant_database_profiles",
+            "kind": "hyperdrive",
+            "name": "TENANT_DATABASE_HYPERDRIVE",
+            "required": false
+          },
+          {
+            "kind": "version_metadata",
+            "name": "CONTROL_SMOKE_VERSION",
+            "required": true
+          }
+        ],
+        "dynamicBindings": [],
+        "lookupBlindIndex": true,
+        "packageName": "@authrim/ar-management",
+        "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
+        "schemaVersion": 1,
+        "secrets": [
+          {
+            "capability": "legacy_signing.public",
+            "name": "PUBLIC_JWK_JSON",
+            "required": true
+          },
+          {
+            "capability": "external_idp_tokens.encrypt",
+            "name": "RP_TOKEN_ENCRYPTION_KEY",
+            "required": true
+          },
+          {
+            "capability": "tenant_pii.encrypt_decrypt",
+            "name": "PII_ENCRYPTION_KEY",
+            "required": true
+          },
+          {
+            "capability": "object_encryption.encrypt_decrypt",
+            "name": "OBJECT_ENCRYPTION_ROOT_KEY",
+            "required": true
+          },
+          {
+            "capability": "tenant_backup.key_handoff",
+            "name": "TENANT_BACKUP_WRAPPING_KEY",
+            "required": true
+          },
+          {
+            "capability": "otp.issue_verify",
+            "name": "OTP_HMAC_SECRET",
+            "required": true
+          },
+          {
+            "capability": "logging_cursor.sign",
+            "name": "LOGGING_CURSOR_HMAC_SECRET",
+            "required": true
+          },
+          {
+            "capability": "plugin_config.encrypt_decrypt",
+            "name": "PLUGIN_ENCRYPTION_KEY",
+            "required": true
+          },
+          {
+            "capability": "notification_payload.encrypt",
+            "name": "NOTIFICATION_PAYLOAD_ENCRYPTION_PUBLIC_JWKS",
+            "required": true
+          },
+          {
+            "capability": "notification_intent.idempotency",
+            "name": "NOTIFICATION_INTENT_HMAC_KEY",
+            "required": true
+          },
+          {
+            "capability": "runtime_registry.verify",
+            "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+            "required": true
+          },
+          {
+            "capability": "vc_profile_contract.sign",
+            "name": "VC_PROFILE_CONTRACT_HMAC_SECRET",
+            "required": true
+          },
+          {
+            "capability": "agent_elevation.encrypt_decrypt",
+            "name": "AGENT_ELEVATION_ENCRYPTION_KEY",
+            "required": true
+          },
+          {
+            "capability": "lookup_blind_index",
+            "name": "LOOKUP_HMAC_KEY_SLOT_A",
+            "required": true
+          },
+          {
+            "capability": "lookup_blind_index",
+            "name": "LOOKUP_HMAC_KEY_SLOT_B",
+            "required": false
+          },
+          {
+            "capability": "account_tombstone.email_index",
+            "name": "TOMBSTONE_HMAC_KEYRING",
+            "required": true
+          },
+          {
+            "capability": "sign_in_attempt.subject_hash",
+            "name": "INVESTIGATION_SUBJECT_HMAC_KEYRING",
+            "required": false
+          },
+          {
+            "capability": "control_smoke.verify",
+            "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
+            "required": true
+          }
+        ],
+        "worker": "ar-management"
+      }
+    },
+    "workerWrongTypes": {
+      "error": "invalid_worker_capability_manifest:packageName:Invalid,worker:Expected string, received number,bindings:Expected array, received string"
+    }
+  },
+  "releaseManifest": {
+    "empty": {
+      "issues": [
+        {
+          "code": "invalid_literal",
+          "expected": 2,
+          "message": "Invalid literal value, expected 2",
+          "path": ["formatVersion"]
+        },
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Required",
+          "path": ["productVersion"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "array",
+          "message": "Required",
+          "path": ["streams"],
+          "received": "undefined"
+        }
+      ]
+    },
+    "wrong": {
+      "issues": [
+        {
+          "code": "invalid_literal",
+          "expected": 2,
+          "message": "Invalid literal value, expected 2",
+          "path": ["formatVersion"],
+          "received": 3
+        },
+        {
+          "code": "invalid_type",
+          "expected": "string",
+          "message": "Expected string, received number",
+          "path": ["productVersion"],
+          "received": "number"
+        },
+        {
+          "code": "invalid_enum_value",
+          "message": "Invalid enum value. Expected 'core-d1' | 'pii-d1' | 'admin-d1' | 'control-d1' | 'lookup-d1' | 'plugin-runner-d1' | 'core-postgresql' | 'pii-postgresql', received ''",
+          "options": [
+            "core-d1",
+            "pii-d1",
+            "admin-d1",
+            "control-d1",
+            "lookup-d1",
+            "plugin-runner-d1",
+            "core-postgresql",
+            "pii-postgresql"
+          ],
+          "path": ["streams", 0, "id"],
+          "received": ""
+        },
+        {
+          "code": "invalid_type",
+          "expected": "'core' | 'pii' | 'admin' | 'control' | 'lookup' | 'plugin_runner'",
+          "message": "Required",
+          "path": ["streams", 0, "schemaFamily"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "'sqlite' | 'postgresql'",
+          "message": "Required",
+          "path": ["streams", 0, "dialect"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "'cloudflare-d1' | 'postgresql-connection'",
+          "message": "Required",
+          "path": ["streams", 0, "targetKind"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "array",
+          "message": "Required",
+          "path": ["streams", 0, "logicalRoles"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "array",
+          "message": "Required",
+          "path": ["streams", 0, "files"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_enum_value",
+          "message": "Invalid enum value. Expected 'core-d1' | 'pii-d1' | 'admin-d1' | 'control-d1' | 'lookup-d1' | 'plugin-runner-d1' | 'core-postgresql' | 'pii-postgresql', received ''",
+          "options": [
+            "core-d1",
+            "pii-d1",
+            "admin-d1",
+            "control-d1",
+            "lookup-d1",
+            "plugin-runner-d1",
+            "core-postgresql",
+            "pii-postgresql"
+          ],
+          "path": ["streams", 1, "id"],
+          "received": ""
+        },
+        {
+          "code": "invalid_type",
+          "expected": "'core' | 'pii' | 'admin' | 'control' | 'lookup' | 'plugin_runner'",
+          "message": "Required",
+          "path": ["streams", 1, "schemaFamily"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "'sqlite' | 'postgresql'",
+          "message": "Required",
+          "path": ["streams", 1, "dialect"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "'cloudflare-d1' | 'postgresql-connection'",
+          "message": "Required",
+          "path": ["streams", 1, "targetKind"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "array",
+          "message": "Required",
+          "path": ["streams", 1, "logicalRoles"],
+          "received": "undefined"
+        },
+        {
+          "code": "invalid_type",
+          "expected": "array",
+          "message": "Required",
+          "path": ["streams", 1, "files"],
+          "received": "undefined"
+        }
+      ]
+    }
+  }
+}

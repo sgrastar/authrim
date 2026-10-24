@@ -196,6 +196,9 @@ export function releaseRolloutMutationFenceMiddleware(): MiddlewareHandler<{
     if (
       SAFE_METHODS.has(c.req.method) ||
       ALWAYS_ALLOWED_PATHS.has(c.req.path) ||
+      // This inspection only reads selectors, settings and set references; it never saves the
+      // proposal. Keep its normal authorization and validation even if rollout state is unknown.
+      (c.req.method === 'POST' && c.req.path === '/api/admin/identity-mapping/preview-effective') ||
       (c.req.method === 'POST' && isAuthorizedReleaseRecoveryPath(c.req.path))
     ) {
       return next();

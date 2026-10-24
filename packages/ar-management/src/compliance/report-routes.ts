@@ -9,7 +9,7 @@
  * catalogued in the admin database, and its SHA-256 recorded and checked on download.
  */
 import type { Context } from 'hono';
-import { z } from 'zod';
+import { legacyDatetimeString, z } from '../zod';
 import {
   AR_ERROR_CODES,
   createAuditLogFromContext,
@@ -82,8 +82,8 @@ const CreateSchema = z
     parameters: z
       .object({
         review_id: z.string().trim().min(1).max(128).optional(),
-        from: z.string().datetime({ offset: true }).optional(),
-        to: z.string().datetime({ offset: true }).optional(),
+        from: legacyDatetimeString({ offset: true }).optional(),
+        to: legacyDatetimeString({ offset: true }).optional(),
       })
       .strict()
       .optional(),
@@ -93,7 +93,7 @@ const CreateSchema = z
     const parameters = value.parameters ?? {};
     if (value.type === 'access_review' && !parameters.review_id) {
       context.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['parameters', 'review_id'],
         message: 'Required for an access review report',
       });
@@ -103,13 +103,13 @@ const CreateSchema = z
       const to = Date.parse(parameters.to ?? '');
       if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
         context.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['parameters'],
           message: 'from and to (after from) are required for an audit log report',
         });
       } else if (to - from > MAX_AUDIT_REPORT_DAYS * DAY_MS) {
         context.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['parameters'],
           message: `An audit log report covers at most ${MAX_AUDIT_REPORT_DAYS} days`,
         });

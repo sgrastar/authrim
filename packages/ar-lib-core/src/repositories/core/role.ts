@@ -478,7 +478,6 @@ export class RoleRepository {
       return 0;
     }
 
-    const now = getCurrentTimestamp();
     let assignedCount = 0;
 
     for (const roleId of roleIds) {

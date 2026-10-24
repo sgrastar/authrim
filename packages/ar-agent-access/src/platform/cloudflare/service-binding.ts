@@ -163,7 +163,7 @@ async function invokeManagement(
   const body = route.response ? route.response(ownerBody) : ownerBody;
   return {
     status: response.status,
-    body: body as ManagementOperationResult['body'],
+    body: body,
     requestId: response.headers.get('x-request-id') ?? undefined,
     executionStatus:
       response.headers.get('x-authrim-execution-indeterminate') === 'true'
@@ -320,7 +320,7 @@ function decodeHexKey(value: string): ArrayBuffer {
   for (let index = 0; index < bytes.length; index += 1) {
     bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
   }
-  return bytes.buffer as ArrayBuffer;
+  return bytes.buffer;
 }
 
 /** Imports versioned Worker secret text without exposing key material outside the adapter. */

@@ -315,7 +315,7 @@ export async function checkAndStoreDPoPJTI(
     throw new Error(`DPoP JTI check failed: ${response.status}`);
   }
 
-  const result = (await response.json()) as { exists: boolean };
+  const result = await response.json<{ exists: boolean }>();
 
   return {
     isReplay: result.exists,

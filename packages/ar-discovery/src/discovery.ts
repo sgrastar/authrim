@@ -187,16 +187,6 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // HTTPS request_uri support status
-  // Check SETTINGS KV first, then fall back to environment variable
-  const savedHttpsRequestUriEnabled = oidcConfig.httpsRequestUri?.enabled;
-  const httpsRequestUriEnabled =
-    typeof savedHttpsRequestUriEnabled === 'boolean'
-      ? savedHttpsRequestUriEnabled
-      : c.env.ENABLE_HTTPS_REQUEST_URI === 'true';
-  // request_uri is always supported (PAR), but HTTPS variant depends on config
-  const requestUriSupported = true; // PAR always supported
-
   // RFC 6749 Section 4.4 Client Credentials feature flag
   // Check SETTINGS KV first, then fall back to environment variable
   const clientCredentialsEnabled =
@@ -449,6 +439,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     dpop_signing_alg_values_supported: [...ALLOWED_DPOP_ALGS],
     // RFC 9101 (JAR): Request Object support
     request_parameter_supported: true,
+    // Always true: a PAR request_uri is always accepted. HTTPS request_uri (fetched request objects)
+    // is separately gated by oidc.httpsRequestUri and is not advertised.
     request_uri_parameter_supported: true,
     request_object_signing_alg_values_supported: requestObjectSigningAlgorithms,
     // Encrypted to the tenant's request object encryption key (use enc in its JWKS, RSA).

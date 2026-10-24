@@ -11525,7 +11525,11 @@ paths:
         changes by claim: `added`, `removed`, `renamed` (another claim from the same attributes
         through the same Destination Profile), `profile_changed`, `source_changed`,
         `transform_changed` (the steps or their order), `type_changed` (what the claim reads has
-        another catalog type); references are read as the runtime reads them. `apps` are the apps that use
+        another catalog type), and `validation_changed` (a validation definition was added,
+        removed or changed). A changed critical validation is `may_reject`: it may reject the
+        whole app's issuance, regardless of the validated field's namespace or release scopes.
+        Noncritical-only changes are `validation_only`, listed at the set level and omitted from
+        app changes and scope restrictions. References are read as the runtime reads them. `apps` are the apps that use
         the set, with why (`tier`: the app's own choice, the tenant default, the platform default),
         decided by the runtime's selection; each has the changes it would see with the scopes it
         is registered for (a change counts when the claim reached the app before or reaches it
@@ -11606,7 +11610,8 @@ paths:
         not active, not one release path, a platform set for an app) gives `after.selection` of
         kind `failed` with code `proposal_refused` and the tier, and `refusals` with the save's
         reason codes. An app of another tenant, and one that does not exist, are 404. Needs the
-        settings read permission. Rate limited with the moderate profile.
+        settings read permission. This read-only inspection remains available while release
+        mutations are paused or rollout status is unavailable. Rate limited with the moderate profile.
       requestBody:
         required: true
         content:
@@ -11633,7 +11638,7 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/identity-mapping/compare-sets:
+  /api/admin/identity-mapping/sets/compare:
     get:
       tags:
         - Field Mapping
@@ -11643,7 +11648,9 @@ paths:
         How the claims of set `b` differ from those of set `a` (each the calling tenant's or the
         platform's; another tenant's, and one that does not exist, are 404): the changes a change
         preview gives (`added`, `removed`, `renamed`, `profile_changed`, `source_changed`,
-        `transform_changed`, `type_changed`), read as the runtime reads the sets. Needs the settings
+        `transform_changed`, `type_changed`, `validation_changed`, and `profile_field_*`), read as
+        the runtime reads the sets. Validation changes name the field and effect without returning
+        rule parameters or attribute values. Type changes preserve each source's type. Needs the settings
         read permission. Rate limited with the moderate profile.
       parameters:
         - name: a
@@ -11651,11 +11658,15 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
         - name: b
           in: query
           required: true
           schema:
             type: string
+            minLength: 1
+            maxLength: 200
       responses:
         '200':
           $ref: '#/components/responses/IdentityMappingCompareSets'
@@ -24743,6 +24754,78 @@ paths:
           required: true
           schema:
             type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/tombstones/email-check:
+    post:
+      tags:
+        - Tombstones
+      operationId: postApiAdminTombstonesEmailCheck
+      summary: Check whether an email address has an active deletion record
+      description: >-
+        Requires admin:users:read. Searches the current tenant's deletion records within their
+        retention period and audits the check. The email address is supplied only in the body.
+        The response contains no email address, account ID, or other account attributes. A failed
+        search or failed audit returns a server error without a deletion result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  minLength: 1
+                  maxLength: 320
+                  pattern: '\S'
+                  description: Email address to check; a whitespace-only string is invalid.
+      responses:
+        '200':
+          description: Whether an unexpired deletion record exists for the supplied address.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    additionalProperties: false
+                    required:
+                      - deleted
+                    properties:
+                      deleted:
+                        type: boolean
+                        enum:
+                          - false
+                  - type: object
+                    additionalProperties: false
+                    required:
+                      - deleted
+                      - deleted_at
+                      - retention_until
+                    properties:
+                      deleted:
+                        type: boolean
+                        enum:
+                          - true
+                      deleted_at:
+                        type: string
+                        format: date-time
+                        description: ISO 8601 timestamp when the account was deleted.
+                      retention_until:
+                        type: string
+                        format: date-time
+                        description: ISO 8601 timestamp when the deletion record's retention ends.
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -57528,6 +57611,7 @@ components:
             - source_changed
             - transform_changed
             - type_changed
+            - validation_changed
             - profile_field_added
             - profile_field_removed
             - profile_field_changed
@@ -57535,7 +57619,9 @@ components:
             `profile_field_*`: the set's one Destination Profile is switched for another, and the
             new one lists a claim the old did not (or no longer lists it, or with other scopes,
             surfaces or requirement), even one no edge writes (the standard claims pass the profile
-            too).
+            too). `validation_changed` names the validated field, not necessarily a released claim;
+            its `validation_change` and `validation_effect` describe the definition change and
+            whether it may reject an app's whole issuance.
         claim:
           type: string
         namespace:
@@ -57551,8 +57637,41 @@ components:
           description: "`renamed`: the claim's name before."
         type_before:
           type: string
+          description: Catalog type summary; multiple source types are separated by ` | `.
         type_after:
           type: string
+          description: Catalog type summary; multiple source types are separated by ` | `.
+        source_types_before:
+          type: array
+          description: >-
+            For a type change involving multiple sources, each source's catalog type before.
+            Unknown types are null. Source names are namespace and path separated by a colon.
+          items:
+            $ref: '#/components/schemas/IdentityMappingSourceType'
+        source_types_after:
+          type: array
+          description: Each source's catalog type after, when source_types_before is present.
+          items:
+            $ref: '#/components/schemas/IdentityMappingSourceType'
+        validation_change:
+          type: string
+          enum:
+            - added
+            - removed
+            - changed
+          description: >-
+            For validation_changed, whether the validated field gained, lost, or changed its
+            validation definitions. Rule parameters and attribute values are never returned.
+        validation_effect:
+          type: string
+          enum:
+            - may_reject
+            - validation_only
+          description: >-
+            may_reject means a critical validation definition changed, so issuance can fail or
+            recover independently of release scopes and namespace. It appears in every app's
+            changes. validation_only means only noncritical definitions changed, so it is listed
+            only in the set's changes and never in held_back. Omitted severity is stored as error.
         profile_id:
           type:
             - string
@@ -57562,6 +57681,19 @@ components:
             - string
             - 'null'
           description: '`profile_changed`: the profile before.'
+    IdentityMappingSourceType:
+      type: object
+      additionalProperties: false
+      required:
+        - source
+        - type
+      properties:
+        source:
+          type: string
+        type:
+          type:
+            - string
+            - 'null'
     IdentityMappingSetChangePreviewResponse:
       type: object
       additionalProperties: false
@@ -57714,9 +57846,9 @@ components:
               description: >-
                 The app's own choice: `{ "fieldMappingSetId": "…" }` (with the optional pinned
                 version and destination namespace), `{ "mode": "none" }`, or null.
-              type:
-                - object
-                - 'null'
+              oneOf:
+                - $ref: '#/components/schemas/OIDCIdentityMappingSelector'
+                - type: 'null'
             tenant_default:
               description: A Mapping Set ID, `none`, or null (no default of the tenant's own).
               type:

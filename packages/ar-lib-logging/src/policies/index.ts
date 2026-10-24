@@ -644,7 +644,7 @@ export class RuntimeLoggingPolicySnapshotMemoryCache<TPolicy = unknown> {
       expiresAt,
     });
     if (this.entries.size > this.maxEntries) {
-      const oldestKey = this.entries.keys().next().value as string | undefined;
+      const oldestKey = this.entries.keys().next().value;
       if (oldestKey) {
         this.entries.delete(oldestKey);
       }

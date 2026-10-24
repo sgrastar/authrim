@@ -319,9 +319,7 @@ function parseStoredProfileUpdateFields(value: string | null | undefined): strin
   if (value === null || value === undefined) return null;
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')
-      ? (parsed as string[])
-      : [];
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string') ? parsed : [];
   } catch {
     return [];
   }

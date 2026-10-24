@@ -13,10 +13,16 @@
     },
     "test": {
       "dependsOn": ["build"],
+      "env": ["AUTHRIM_SECURITY_REGRESSION_SUITE"],
       "outputs": ["coverage/**"]
     },
     "lint": {
+      "dependsOn": ["^build"],
       "outputs": []
+    },
+    "lint:prune-suppressions": {
+      "dependsOn": ["^build"],
+      "cache": false
     },
     "typecheck": {
       "dependsOn": ["^build"],

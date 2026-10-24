@@ -72,13 +72,14 @@
     "control-plane:test": "pnpm --filter @authrim/ar-lib-core build && vitest run --config scripts/control-plane/vitest.config.ts",
     "control-plane:typecheck": "tsc --noEmit -p scripts/control-plane/tsconfig.json",
     "lint": "turbo run lint && pnpm lint:scale-out-phase1 && pnpm lint:repo-scripts && pnpm backup:lint && pnpm primary-key:lint",
+    "lint:prune-suppressions": "turbo run lint:prune-suppressions",
     "lint:repo-scripts": "eslint scripts/check-cloudflare-workers-types-resolution.mjs",
     "lint:scale-out-phase1": "eslint test/scale-out-correctness-phase1/*.ts",
     "typecheck": "pnpm workers-types:resolution:check && turbo run typecheck && pnpm conformance:typecheck && pnpm control-plane:typecheck && pnpm release:migrations:typecheck && pnpm test:security-matrices:typecheck && pnpm scale-out:phase1:typecheck && pnpm migrate:manifest:check && pnpm backup:typecheck && pnpm primary-key:typecheck",
     "workers-types:resolution:check": "node scripts/check-cloudflare-workers-types-resolution.mjs",
     "format": "prettier --write \"packages/**/*.ts\"",
     "format:check": "prettier --check \"packages/**/*.ts\" \"packages/ar-agent-access/scripts/*.mjs\" \"scripts/check-cloudflare-workers-types-resolution.mjs\" \"scripts/control-plane/**/*.{ts,json}\" \"scripts/oidf-conformance-gate/**/*.{ts,md,json}\" \"test/scale-out-correctness-phase1/*.{ts,json,md}\" \"scripts/tenant-backup/**/*.{ts,json}\" \"scripts/primary-key-integrity/**/*.{ts,mjs,json}\"",
-    "security:audit": "node scripts/check-extract-zip-patch.mjs && pnpm --package=pnpm@11.4.0 dlx pnpm --pm-on-fail=ignore audit --audit-level=moderate",
+    "security:audit": "node --test scripts/check-extract-zip-patch.test.mjs && node scripts/check-extract-zip-patch.mjs && pnpm --package=pnpm@11.4.0 dlx pnpm --pm-on-fail=ignore audit --audit-level=moderate",
     "security:mcp-registry": "node scripts/check-mcp-server-registry.mjs",
     "clean": "turbo run clean && rm -rf node_modules",
     "generate-keys": "tsx scripts/generate-keys.ts",
@@ -215,6 +216,7 @@
       "@xmldom/xmldom": "^0.8.15",
       "dompurify": "3.4.17",
       "zod@>=4.0.0 <4.6.6": "4.6.7",
+      "lighthouse@12.6.1>puppeteer-core": "25.16.0",
       "nanoid@<3.3.18": "3.3.18",
       "nanoid@>=4.0.0 <5.1.16": "5.1.16",
       "esbuild": "0.28.1",
@@ -227,8 +229,12 @@
       "@modelcontextprotocol/client@>=2.0.0 <2.3.0": "2.3.1",
       "@modelcontextprotocol/server@>=2.0.0 <2.3.0": "2.3.1"
     },
-    "patchedDependencies": {
-      "extract-zip@2.0.1": "patches/extract-zip@2.0.1.patch"
+    "packageExtensions": {
+      "@puppeteer/browsers@3.2.6": {
+        "optionalDependencies": {
+          "proxy-agent": "8.0.1"
+        }
+      }
     }
   }
 }

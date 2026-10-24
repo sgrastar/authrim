@@ -1167,7 +1167,7 @@ export function parseRateLimitProfileOverride(
   if (expiresAt !== null && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt))) {
     return null;
   }
-  let until = expiresAt as number | null;
+  let until = expiresAt;
   if (profile === 'loadTest') {
     const latest = now + LOAD_TEST_OVERRIDE_MAX_SECONDS * 1000;
     until = until === null ? latest : Math.min(until, latest);

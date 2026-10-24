@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { z } from 'zod';
+import { z } from '../zod';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   ApprovalRequestApprovalRepository,

@@ -107,13 +107,6 @@ export function isCanonicalAccountIdForUser(accountId: unknown, userId: unknown)
   );
 }
 
-/**
- * KV namespace interface for user ID format retrieval
- */
-interface KVNamespace {
-  get(key: string): Promise<string | null>;
-}
-
 interface UserIdFormatEnv {
   USER_ID_FORMAT?: string;
 }

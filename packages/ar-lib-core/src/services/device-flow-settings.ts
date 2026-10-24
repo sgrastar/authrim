@@ -93,7 +93,7 @@ function numberOrDefault(values: Record<string, unknown>, key: NumericKey): numb
   const value = values[key];
   return isWithinSettingRange(value, DEVICE_FLOW_SETTINGS_META[key])
     ? value
-    : (DEVICE_FLOW_DEFAULTS[key] as number);
+    : DEVICE_FLOW_DEFAULTS[key];
 }
 
 function clamp(value: number, min: number, max: number): number {

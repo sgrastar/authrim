@@ -43,9 +43,8 @@ export const SECRET_FIELD_MARKER = Symbol('secretField');
  * @param schema - Zod schema to mark as secret
  * @returns Schema with secret metadata
  */
-export function secretField<T extends z.ZodTypeAny>(schema: T): T {
-  // Clone the schema and add secret metadata
-  // Using _def manipulation as Zod doesn't have a native metadata API
+export function secretField<T extends z.ZodType>(schema: T): T {
+  // Marks the schema instance itself; wrappers (optional/default/nullable) are unwrapped on read
   const cloned = schema as T & { _secret?: boolean };
   cloned._secret = true;
   return cloned;
@@ -54,8 +53,8 @@ export function secretField<T extends z.ZodTypeAny>(schema: T): T {
 /**
  * Check if a Zod field is marked as secret
  */
-export function isSecretField(schema: z.ZodTypeAny): boolean {
-  return (schema as z.ZodTypeAny & { _secret?: boolean })._secret === true;
+export function isSecretField(schema: z.ZodType): boolean {
+  return (schema as z.ZodType & { _secret?: boolean })._secret === true;
 }
 
 /**
@@ -64,12 +63,12 @@ export function isSecretField(schema: z.ZodTypeAny): boolean {
  * @param schema - Zod object schema
  * @returns List of field names that are marked as secret
  */
-export function extractSecretFields(schema: z.ZodTypeAny): string[] {
+export function extractSecretFields(schema: z.ZodType): string[] {
   const secretFields: string[] = [];
 
   // Handle ZodObject
   if (schema instanceof z.ZodObject) {
-    const shape = schema.shape as Record<string, z.ZodTypeAny>;
+    const shape = schema.shape as Record<string, z.ZodType>;
     for (const [key, fieldSchema] of Object.entries(shape)) {
       if (isSecretField(fieldSchema)) {
         secretFields.push(key);
@@ -81,7 +80,7 @@ export function extractSecretFields(schema: z.ZodTypeAny): string[] {
         unwrapped instanceof z.ZodDefault ||
         unwrapped instanceof z.ZodNullable
       ) {
-        unwrapped = unwrapped._def.innerType as z.ZodTypeAny;
+        unwrapped = unwrapped.unwrap() as z.ZodType;
       }
       if (isSecretField(unwrapped)) {
         secretFields.push(key);

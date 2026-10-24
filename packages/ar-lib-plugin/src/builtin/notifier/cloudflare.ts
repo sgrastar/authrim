@@ -17,16 +17,19 @@ import { CapabilityRegistry } from '../../core/registry';
 import { NOTIFIER_SECURITY_DEFAULTS, renderTemplate } from './types';
 
 export const CloudflareNotifierConfigSchema = z.object({
+  // The message is for a malformed address only; a missing value still reads "Required".
   defaultFrom: z
-    .string()
-    .email('Invalid sender email address')
+    .email({
+      error: (issue) =>
+        issue.code === 'invalid_format' ? 'Invalid sender email address' : undefined,
+    })
     .describe(
       'Default sender email address. The domain must be onboarded to Cloudflare Email Service'
     ),
 
   fromName: z.string().optional().describe('Sender display name (optional)'),
 
-  replyTo: z.string().email().optional().describe('Reply-to email address (optional)'),
+  replyTo: z.email().optional().describe('Reply-to email address (optional)'),
 
   maxRecipientsPerRequest: z
     .number()

@@ -8,7 +8,8 @@
     "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-token --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'op-token: lint skipped'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "pnpm exec vitest run --config vitest.config.ts",
     "clean": "rm -rf dist"
   },

@@ -1,5 +1,5 @@
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
-import { z } from 'zod';
+import { legacyUrlString, z } from './zod';
 import type { Context } from 'hono';
 import type {
   AdminAuthContext,
@@ -72,11 +72,9 @@ const AuditTargetSchema = z
     }),
     z.object({
       type: z.literal('http'),
-      url: z
-        .string()
-        .url()
+      url: legacyUrlString()
         .refine((value) => value.startsWith('https://'), {
-          message: 'HTTP audit targets must use https URLs',
+          error: 'HTTP audit targets must use https URLs',
         })
         .optional(),
       urlRef: z.string().min(1).optional(),
@@ -93,13 +91,13 @@ const AuditTargetSchema = z
       !value.connectionRef
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Database audit targets require bindingRef or connectionRef',
       });
     }
     if (value.type === 'http' && !value.url && !value.urlRef) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'HTTP audit targets require url or urlRef',
       });
     }
@@ -159,11 +157,9 @@ const AuditProfileBodySchema = z
           z
             .object({
               type: z.literal('http'),
-              url: z
-                .string()
-                .url()
+              url: legacyUrlString()
                 .refine((value) => value.startsWith('https://'), {
-                  message: 'HTTP audit targets must use https URLs',
+                  error: 'HTTP audit targets must use https URLs',
                 })
                 .optional(),
               urlRef: z.string().min(1).optional(),
@@ -175,7 +171,7 @@ const AuditProfileBodySchema = z
             .superRefine((value, ctx) => {
               if (!value.url && !value.urlRef) {
                 ctx.addIssue({
-                  code: z.ZodIssueCode.custom,
+                  code: 'custom',
                   message: 'HTTP audit targets require url or urlRef',
                 });
               }
@@ -209,7 +205,7 @@ const RuntimeProfileDefaultsBodySchema = z
   })
   .strict()
   .refine((value) => value.auditProfileId !== undefined || value.residencyProfileId !== undefined, {
-    message: 'At least one default profile ID must be provided',
+    error: 'At least one default profile ID must be provided',
   });
 
 const RuntimeRegistryEmergencyPurgeBodySchema = z

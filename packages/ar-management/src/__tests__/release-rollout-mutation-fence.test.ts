@@ -27,6 +27,59 @@ function app(control?: Env['CONTROL'], adminAuth?: AdminAuthContext) {
 }
 
 describe('release rollout mutation fence', () => {
+  it.each(['read_only', 'unavailable', 'missing'] as const)(
+    'exempts only the exact choice inspection POST when rollout status is %s',
+    async (state) => {
+      const getReleaseMigrationRolloutStatus = vi.fn(async () => {
+        if (state === 'unavailable') throw new Error('unavailable');
+        return {
+          operationId: 'release-1',
+          targetVersion: '1.1.0',
+          phase: 'database_rollout',
+          adminMutationMode: 'read_only',
+        };
+      });
+      const control = state === 'missing' ? undefined : { getReleaseMigrationRolloutStatus };
+      const { router, env } = app(control as Env['CONTROL']);
+      const reached = vi.fn();
+      router.all('/api/admin/*', (c) => {
+        reached();
+        return c.json({ ok: true });
+      });
+      const path = '/api/admin/identity-mapping/preview-effective';
+
+      expect((await router.request(path, { method: 'POST' }, env)).status).toBe(200);
+      expect(reached).toHaveBeenCalledTimes(1);
+      expect(getReleaseMigrationRolloutStatus).not.toHaveBeenCalled();
+      reached.mockClear();
+
+      const refused = [
+        ['PUT', '/api/admin/clients/app-1'],
+        ['PATCH', '/api/admin/tenants/tenant-a/settings/identity-mapping'],
+        ['PUT', '/api/admin/identity-mapping/sets/set-a'],
+        ['POST', '/api/admin/field-mapping/field-mapping-sets/set-a/rollback'],
+        ['POST', '/api/admin/tenants/tenant-a/lifecycle/restore-validate'],
+        ['POST', `${path}/restore`],
+        ['POST', `${path}/extra`],
+        ['POST', `${path}-restore`],
+        ['POST', `${path}/`],
+        ['PUT', path],
+        ['PATCH', path],
+        ['DELETE', path],
+        ['POST', '/api/admin/identity-mapping/explain'],
+        ['POST', '/api/admin/identity-mapping/sets/set-a/preview-change'],
+      ];
+      for (const [method, requestPath] of refused) {
+        const response = await router.request(requestPath, { method }, env);
+        expect(response.status, `${method} ${requestPath}`).toBe(state === 'read_only' ? 409 : 503);
+      }
+      expect(reached).not.toHaveBeenCalled();
+      expect(getReleaseMigrationRolloutStatus).toHaveBeenCalledTimes(
+        state === 'missing' ? 0 : refused.length
+      );
+    }
+  );
+
   it('keeps reads and logout available during a restricted rollout', async () => {
     const getReleaseMigrationRolloutStatus = vi.fn(async () => ({
       operationId: 'release-1',

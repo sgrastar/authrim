@@ -20,7 +20,7 @@ import {
   getLogger,
   produceNotificationDelivery,
 } from '@authrim/ar-lib-core';
-import { z } from 'zod';
+import { z } from './zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { requireTenantResourceAccess } from './admin-tenant-access';
@@ -63,7 +63,7 @@ interface TenantInvitationRow {
 // =============================================================================
 
 const CreateInvitationSchema = z.object({
-  invited_email: z.string().email().optional().nullable(),
+  invited_email: z.email().optional().nullable(),
   role_id: z.string().min(1).max(63).optional().nullable(),
   org_id: z.string().min(1).max(63).optional().nullable(),
   max_uses: z.number().int().min(-1).max(1000).optional().default(1),
@@ -131,7 +131,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     const body = await c.req.json();
     const parsed = CreateInvitationSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: 'invalid_request', details: parsed.error.flatten() }, 400);
+      return c.json({ error: 'invalid_request', details: z.flattenError(parsed.error) }, 400);
     }
 
     const { invited_email, role_id, org_id, max_uses, expires_in_hours } = parsed.data;

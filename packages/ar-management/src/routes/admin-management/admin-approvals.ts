@@ -8,7 +8,7 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { z } from 'zod';
+import { legacyUrlString, z } from '../../zod';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   adminAuthMiddleware,
@@ -98,7 +98,7 @@ interface ApprovalNotificationResult {
 const StructuredReferenceSchema = z.object({
   system: z.string().min(1),
   id: z.string().min(1),
-  url: z.string().url().optional(),
+  url: legacyUrlString().optional(),
 });
 
 const ApprovalTransportSummarySchema = z.object({

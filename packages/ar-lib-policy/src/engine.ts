@@ -14,7 +14,6 @@ import type {
   ConditionType,
   VerifiedAttribute,
   PolicySubjectWithAttributes,
-  RequestCountData,
 } from './types';
 import { createLogger } from '@authrim/ar-lib-core';
 

@@ -44,7 +44,6 @@ import {
   authenticateCheckApiRequest,
   isOperationAllowed,
   resolveAuthorizedCheckTenantId,
-  type CheckAuthResult,
 } from '../middleware/check-auth';
 import {
   checkRateLimit,

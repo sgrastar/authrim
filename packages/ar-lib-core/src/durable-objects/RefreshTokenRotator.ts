@@ -284,7 +284,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for token theft detection and version validation
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }
@@ -486,7 +486,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     this.families.delete(userId);
     this.families.set(userId, family);
     while (this.families.size > MAX_FAMILY_CACHE_ENTRIES) {
-      const oldestUserId = this.families.keys().next().value as string | undefined;
+      const oldestUserId = this.families.keys().next().value;
       if (!oldestUserId) break;
       this.families.delete(oldestUserId);
     }

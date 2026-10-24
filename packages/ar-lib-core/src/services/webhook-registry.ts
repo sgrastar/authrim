@@ -26,7 +26,6 @@ import type {
   WebhookRegistry as IWebhookRegistry,
   CreateWebhookInput,
   UpdateWebhookInput,
-  DEFAULT_WEBHOOK_RETRY_POLICY,
   WebhookRetryPolicy,
 } from '../types/events/webhook';
 import { validateWebhookUrl } from '../utils/ssrf-protection';

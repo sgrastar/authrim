@@ -43,8 +43,7 @@
   },
   "dependencies": {
     "hono": "4.13.2",
-    "zod": "^3.24.4",
-    "zod-to-json-schema": "^3.24.5"
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@authrim/ar-lib-core": "workspace:*"

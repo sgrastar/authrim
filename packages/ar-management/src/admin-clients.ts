@@ -720,13 +720,13 @@ function parseIdentityMappingSelectorField(
 }
 
 /** Why an app's Mapping Set choice cannot be saved, as the response that says so. */
-export interface IdentityMappingSelectorProblem {
+interface IdentityMappingSelectorProblem {
   status: 400 | 404 | 503;
   error: 'invalid_request' | 'not_found' | 'temporarily_unavailable';
   description: string;
 }
 
-export async function validateOIDCIdentityMappingSelector(
+async function validateOIDCIdentityMappingSelector(
   env: Env,
   tenantId: string,
   selector: AdminOIDCIdentityMappingSelector | null | undefined

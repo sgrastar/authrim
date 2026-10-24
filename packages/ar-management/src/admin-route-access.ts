@@ -919,6 +919,11 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.CLIENTS_READ],
     description: 'identity mapping set change preview',
   }),
+  readOnly(
+    '/api/admin/identity-mapping/sets/compare',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping set comparison'
+  ),
   ...byMethod(
     '/api/admin/identity-mapping/sets/:id',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -950,11 +955,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
     description: 'identity mapping choice preview',
   }),
-  readOnly(
-    '/api/admin/identity-mapping/compare-sets',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    'identity mapping set comparison'
-  ),
   // Reads the app and the settings, writes nothing: both read permissions.
   rule({
     pattern: '/api/admin/identity-mapping/explain',

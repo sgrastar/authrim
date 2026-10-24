@@ -121,26 +121,27 @@ function tokenRequestDiagnosticStartMiddleware() {
       await next();
     } finally {
       const state = getMiddlewareDiagnosticState(c);
-      if (!state) return;
-      recordMiddlewareDiagnosticSpan(c, 'token_handler_downstream');
-      state.spans.push({
-        name: 'token_total',
-        durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
-      });
-      const timing = state.spans
-        .map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`)
-        .join(', ');
-      c.res.headers.set('Server-Timing', timing);
-      c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
-      getLogger(c)
-        .module('TOKEN-REQUEST-TIMING')
-        .info('Token request middleware diagnostics', {
-          diagnosticSessionId: state.sessionId,
-          method: c.req.method,
-          path: c.req.path,
-          status: c.res.status,
-          timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+      if (state) {
+        recordMiddlewareDiagnosticSpan(c, 'token_handler_downstream');
+        state.spans.push({
+          name: 'token_total',
+          durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
         });
+        const timing = state.spans
+          .map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`)
+          .join(', ');
+        c.res.headers.set('Server-Timing', timing);
+        c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
+        getLogger(c)
+          .module('TOKEN-REQUEST-TIMING')
+          .info('Token request middleware diagnostics', {
+            diagnosticSessionId: state.sessionId,
+            method: c.req.method,
+            path: c.req.path,
+            status: c.res.status,
+            timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+          });
+      }
     }
   };
 }

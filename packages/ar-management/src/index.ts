@@ -273,23 +273,24 @@ function managementRequestDiagnosticStartMiddleware() {
       await next();
     } finally {
       const state = getMiddlewareDiagnosticState(c);
-      if (!state) return;
-      recordMiddlewareDiagnosticSpan(c, 'mg_handler_downstream');
-      state.spans.push({
-        name: 'mg_total',
-        durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
-      });
-      appendMiddlewareDiagnosticServerTiming(c, state.spans);
-      c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
-      getLogger(c)
-        .module('MANAGEMENT-REQUEST-TIMING')
-        .info('Management request middleware diagnostics', {
-          diagnosticSessionId: state.sessionId,
-          method: c.req.method,
-          path: c.req.path,
-          status: c.res.status,
-          timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+      if (state) {
+        recordMiddlewareDiagnosticSpan(c, 'mg_handler_downstream');
+        state.spans.push({
+          name: 'mg_total',
+          durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
         });
+        appendMiddlewareDiagnosticServerTiming(c, state.spans);
+        c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
+        getLogger(c)
+          .module('MANAGEMENT-REQUEST-TIMING')
+          .info('Management request middleware diagnostics', {
+            diagnosticSessionId: state.sessionId,
+            method: c.req.method,
+            path: c.req.path,
+            status: c.res.status,
+            timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+          });
+      }
     }
   };
 }
@@ -3181,9 +3182,9 @@ app.put(
 // A trial of a choice and a comparison of two sets: the settings, an app row and the sets' rows.
 for (const path of [
   '/api/admin/identity-mapping/preview-effective',
-  '/api/admin/identity-mapping/compare-sets',
+  '/api/admin/identity-mapping/sets/compare',
 ]) {
-  app.use(path, async (c, next) => {
+  app.use(path, async (c: Context<{ Bindings: Env }>, next: Next) => {
     const profile = await getRateLimitProfileAsync(c.env, 'moderate');
     return rateLimitMiddleware({ ...profile, endpoints: [path] })(c, next);
   });
@@ -3194,7 +3195,7 @@ app.post(
   adminIdentityMappingPreviewEffectiveHandler
 );
 app.get(
-  '/api/admin/identity-mapping/compare-sets',
+  '/api/admin/identity-mapping/sets/compare',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingCompareSetsHandler
 );

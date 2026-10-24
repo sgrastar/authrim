@@ -33,7 +33,7 @@ import {
   getLogger,
   getClient,
 } from '@authrim/ar-lib-core';
-import { z } from 'zod';
+import { legacyDatetimeString, z } from './zod';
 import {
   createAuditHotQueryUnsupportedResponse,
   getAuditHotQuerySupport,
@@ -69,11 +69,11 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  */
 const StatsQuerySchema = z
   .object({
-    from: z.string().datetime({ message: 'from must be ISO 8601 datetime' }),
-    to: z.string().datetime({ message: 'to must be ISO 8601 datetime' }),
+    from: legacyDatetimeString({ error: 'from must be ISO 8601 datetime' }),
+    to: legacyDatetimeString({ error: 'to must be ISO 8601 datetime' }),
     interval: z.enum(['hour', 'day', 'week']).default('day'),
     tz: z.string().default('UTC'),
-    client_id: z.string().uuid().optional(),
+    client_id: z.guid().optional(),
   })
   .refine(
     (data) => {
@@ -81,7 +81,7 @@ const StatsQuerySchema = z
       const toDate = new Date(data.to);
       return toDate >= fromDate;
     },
-    { message: 'to must be greater than or equal to from' }
+    { error: 'to must be greater than or equal to from' }
   )
   .refine(
     (data) => {
@@ -95,7 +95,7 @@ const StatsQuerySchema = z
       return diffDays <= STATS_LIMITS.MAX_RANGE_DAYS;
     },
     {
-      message: `Date range exceeds limit. hour: max ${STATS_LIMITS.MAX_HOURLY_RANGE_DAYS} days, day/week: max ${STATS_LIMITS.MAX_RANGE_DAYS} days`,
+      error: `Date range exceeds limit. hour: max ${STATS_LIMITS.MAX_HOURLY_RANGE_DAYS} days, day/week: max ${STATS_LIMITS.MAX_RANGE_DAYS} days`,
     }
   );
 

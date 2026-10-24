@@ -193,7 +193,7 @@ export async function validateJWTBearerAssertion(
         if (jwks.keys && jwks.keys.length > 0) {
           publicKey = jwks.keys[0];
         }
-      } catch (fetchError) {
+      } catch {
         return {
           valid: false,
           error: 'server_error',

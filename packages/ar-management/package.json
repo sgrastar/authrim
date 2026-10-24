@@ -8,7 +8,8 @@
     "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-management --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'op-management: lint skipped'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
@@ -25,7 +26,7 @@
     "@simplewebauthn/server": "^14.0.2",
     "hono": "4.13.2",
     "jose": "^6.2.9",
-    "zod": "^3.24.4"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",

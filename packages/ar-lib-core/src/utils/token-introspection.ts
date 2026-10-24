@@ -192,7 +192,7 @@ async function getKeysFromKeyManager(
     }
 
     return null;
-  } catch (error) {
+  } catch {
     // PII Protection: Don't log full error object
     log.warn('Failed to fetch keys from KeyManager DO');
     return null;
@@ -372,7 +372,7 @@ export async function introspectToken(
       const headerJson = JSON.parse(atob(headerBase64)) as { kid?: string; alg?: string };
       kid = headerJson.kid;
     }
-  } catch (error) {
+  } catch {
     // PII Protection: Don't log full error object
     log.warn('Failed to extract kid from JWT header');
   }
@@ -399,7 +399,7 @@ export async function introspectToken(
     if (jwk) {
       try {
         publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
-      } catch (importError) {
+      } catch {
         // PII Protection: Don't log full error object
         log.warn('Failed to import JWK from KeyManager');
       }
@@ -425,7 +425,7 @@ export async function introspectToken(
 
     try {
       publicKey = await getPublicKey(publicJWKJson, keyId, tenantId);
-    } catch (error) {
+    } catch {
       // PII Protection: Don't log full error object
       log.error('Failed to load verification key');
       return {
@@ -671,7 +671,7 @@ export async function introspectTokenFromContext(
             body.append(key, value);
           }
         }
-      } catch (error) {
+      } catch {
         // PII Protection: Don't log full error object (may contain request body data)
         log.warn('Failed to parse request body');
       }

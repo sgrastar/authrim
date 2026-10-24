@@ -1075,7 +1075,8 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           throw new RFCError('invalid_authorization_details', 400, errorMessage);
         }
 
-        // Use sanitized version
+        // The validated entries, re-serialised. sanitize is off, so the fields a known type does not
+        // define stay; allowedTypes is what keeps unknown types out.
         params.authorization_details = JSON.stringify(rarValidation.sanitized);
       } catch (e) {
         if (e instanceof RFCError) throw e;

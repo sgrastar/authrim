@@ -15,7 +15,7 @@
  * User names and emails are not copied into the review; items are shown with them as they are now.
  */
 import type { Context } from 'hono';
-import { z } from 'zod';
+import { z } from '../zod';
 import {
   AR_ERROR_CODES,
   CanonicalRuntimeUserStore,
@@ -468,14 +468,14 @@ const CreateSchema = z
     // A date (end of that day, UTC) or a date-time.
     due_date: z
       .string()
-      .refine(isDateOrDateTime, { message: 'Must be a date or a date-time' })
+      .refine(isDateOrDateTime, { error: 'Must be a date or a date-time' })
       .optional(),
     inactive_days: z.number().int().min(1).max(3650).optional(),
   })
   .superRefine((value, context) => {
     if ((value.scope === 'role' || value.scope === 'organization') && !value.scope_value) {
       context.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['scope_value'],
         message: 'Required for this scope',
       });

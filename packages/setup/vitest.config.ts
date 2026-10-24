@@ -16,6 +16,13 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: '@authrim/ar-lib-core/utils/zod-legacy-errors',
+        replacement: path.resolve(
+          import.meta.dirname,
+          '../ar-lib-core/src/utils/zod-legacy-errors.ts'
+        ),
+      },
+      {
         find: '@authrim/ar-lib-core/services/control-plane/migration-stream-contract',
         replacement: path.resolve(
           import.meta.dirname,

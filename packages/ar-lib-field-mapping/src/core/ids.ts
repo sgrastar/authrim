@@ -22,7 +22,7 @@ function normalizeIdPart(value: RedactionSafeIdPart): string {
   let previousWasSeparator = true;
 
   for (let index = 0; index < input.length; index += 1) {
-    const char = input[index]!;
+    const char = input[index];
     const isAsciiLetter = char >= 'a' && char <= 'z';
     const isDigit = char >= '0' && char <= '9';
 

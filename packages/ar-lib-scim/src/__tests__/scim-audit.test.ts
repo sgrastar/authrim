@@ -432,7 +432,7 @@ describe('logScimAudit (non-blocking wrapper)', () => {
 
     // Registered while the write is still pending, not only once a later step starts.
     expect(mockWaitUntil).toHaveBeenCalledTimes(1);
-    const registered = mockWaitUntil.mock.calls[0]![0] as Promise<unknown>;
+    const registered = mockWaitUntil.mock.calls[0][0] as Promise<unknown>;
     let settled = false;
     void registered.then(() => (settled = true));
     await Promise.resolve();

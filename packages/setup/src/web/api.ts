@@ -10,7 +10,8 @@
  */
 
 import { Hono } from 'hono';
-import { z } from 'zod';
+import { z } from '../core/zod.js';
+import { toLegacyZodIssues } from '@authrim/ar-lib-core/utils/zod-legacy-errors';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -2295,7 +2296,7 @@ export function createApiRoutes(): Hono {
           structure: structureType,
           configPath,
           environments: listEnvironments(baseDir),
-          errors: parseResult.error.errors.map((e) => ({
+          errors: parseResult.error.issues.map((e) => ({
             path: e.path.join('.'),
             message: e.message,
           })),
@@ -2328,7 +2329,7 @@ export function createApiRoutes(): Hono {
       if (!parseResult.success) {
         return c.json({
           valid: false,
-          errors: parseResult.error.errors.map((e) => ({
+          errors: parseResult.error.issues.map((e) => ({
             path: e.path.join('.'),
             message: e.message,
           })),
@@ -2361,7 +2362,7 @@ export function createApiRoutes(): Hono {
         | undefined;
       try {
         const body = await c.req.json();
-        const config = AuthrimConfigSchema.parse(body);
+        const config = AuthrimConfigSchema.parse(body, { reportInput: true });
         const conflicts = buildDomainRoutingValidationResult(config);
         if (conflicts.length > 0) {
           return c.json({ success: false, errors: conflicts }, 400);
@@ -2397,7 +2398,8 @@ export function createApiRoutes(): Hono {
         }
         if (lock?.productVersion && existsSync(configPath)) {
           const currentConfig = AuthrimConfigSchema.parse(
-            JSON.parse(await readFile(configPath, 'utf-8'))
+            JSON.parse(await readFile(configPath, 'utf-8')),
+            { reportInput: true }
           );
           if (hasDatabaseTopologyChange(currentConfig, config)) {
             return c.json(
@@ -2429,7 +2431,8 @@ export function createApiRoutes(): Hono {
         });
       } catch (error) {
         if (error instanceof z.ZodError) {
-          return c.json({ success: false, errors: error.errors }, 400);
+          // zod 3 issue objects: the response shape predates the zod 4 migration.
+          return c.json({ success: false, errors: toLegacyZodIssues(error.issues) }, 400);
         }
         return c.json({ success: false, error: sanitizeError(error) }, 500);
       } finally {
@@ -2491,16 +2494,20 @@ export function createApiRoutes(): Hono {
         }
 
         if (profiles) {
-          config.profiles = AuthrimConfigSchema.parse({ ...config, profiles }).profiles;
+          config.profiles = AuthrimConfigSchema.parse(
+            { ...config, profiles },
+            { reportInput: true }
+          ).profiles;
         }
 
-        const parsedConfig = AuthrimConfigSchema.parse(config);
+        const parsedConfig = AuthrimConfigSchema.parse(config, { reportInput: true });
         state.config = parsedConfig;
 
         return c.json({ success: true, config: parsedConfig });
       } catch (error) {
         if (error instanceof z.ZodError) {
-          return c.json({ success: false, errors: error.errors }, 400);
+          // zod 3 issue objects: the response shape predates the zod 4 migration.
+          return c.json({ success: false, errors: toLegacyZodIssues(error.issues) }, 400);
         }
         return c.json({ success: false, error: sanitizeError(error) }, 500);
       }
@@ -2709,7 +2716,7 @@ export function createApiRoutes(): Hono {
     env: EnvNameSchema,
     provider: z.enum(['cloudflare', 'resend', 'sendgrid', 'ses']),
     apiKey: z.string().optional(),
-    fromAddress: z.string().email(),
+    fromAddress: z.email(),
     fromName: z.string().optional(),
   });
 
@@ -3270,7 +3277,7 @@ export function createApiRoutes(): Hono {
 
   const EnableCloudflareEmailSchema = z.object({
     env: EnvNameSchema,
-    fromAddress: z.string().email(),
+    fromAddress: z.email(),
     fromName: z.string().optional(),
   });
 

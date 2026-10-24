@@ -12,7 +12,7 @@
  *   (`validateOidcMappingSetReference`). A set a save would refuse gives
  *   `after.selection = { kind: "failed", code: "proposal_refused", tier, reason }`.
  *
- * GET /api/admin/identity-mapping/compare-sets?a=&b=
+ * GET /api/admin/identity-mapping/sets/compare?a=&b=
  *   How the claims of set `b` differ from those of set `a` (each the caller's tenant's or the
  *   platform's): the same changes a change preview gives (identity-mapping-content-diff.ts).
  */
@@ -32,7 +32,14 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { validateOptionalIdentityMappingSelectorField } from './admin-clients';
-import { claimShapes, diffClaimShapes, readCatalogTypes } from './identity-mapping-content-diff';
+import {
+  claimShapes,
+  contentProfile,
+  diffClaimShapes,
+  diffValidationRules,
+  readCatalogTypes,
+} from './identity-mapping-content-diff';
+import { readProfileFields, profileFieldChanges } from './identity-mapping-set-change-preview';
 import {
   badRequest,
   controlPlaneErrorResponse,
@@ -132,6 +139,10 @@ export async function adminIdentityMappingPreviewEffectiveHandler(c: PreviewCont
     const read = validateOptionalIdentityMappingSelectorField(proposed.client, 'proposal.client');
     if (!read.ok) return invalid(c, read.error);
     clientChoice = (read.value ?? null) as Record<string, unknown> | null;
+    // The client save refuses a nonempty selector without a set (for example a pin alone).
+    if (clientChoice && clientChoice.mode !== 'none' && !clientChoice.fieldMappingSetId) {
+      return invalid(c, 'proposal.client.fieldMappingSetId is required');
+    }
   }
   const tenantValue = proposed.tenant_default;
   if (proposesTenant && tenantValue !== null) {
@@ -262,11 +273,26 @@ export async function adminIdentityMappingCompareSetsHandler(c: AdminContext) {
       const catalog = await readCatalogTypes(admin, owner, content?.catalogVersionId ?? null);
       return {
         summary: { setId, owner: owner === PLATFORM_MAPPING_TENANT_ID ? 'platform' : 'tenant' },
+        owner,
+        content,
         shapes: content ? claimShapes(content, catalog) : new Map(),
       };
     };
     const [a, b] = [await read(ids.a), await read(ids.b)];
-    return c.json({ a: a.summary, b: b.summary, changes: diffClaimShapes(a.shapes, b.shapes) });
+    const profileBefore = contentProfile(a.shapes);
+    const profileAfter = contentProfile(b.shapes);
+    const [profilesBefore, profilesAfter] = await Promise.all([
+      readProfileFields(admin, a.owner, [profileBefore]),
+      readProfileFields(admin, b.owner, [profileAfter]),
+    ]);
+    const changes = [
+      ...diffClaimShapes(a.shapes, b.shapes),
+      ...diffValidationRules(a.content, b.content ?? { rules: [] }, profileBefore, profileAfter),
+      ...profileFieldChanges(profilesBefore, profileBefore, profileAfter, profilesAfter),
+    ].sort(
+      (left, right) => left.claim.localeCompare(right.claim) || left.kind.localeCompare(right.kind)
+    );
+    return c.json({ a: a.summary, b: b.summary, changes });
   } catch (error) {
     return controlPlaneErrorResponse(c, error);
   }

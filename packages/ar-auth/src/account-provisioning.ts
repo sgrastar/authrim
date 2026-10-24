@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import {
+  directoryIdentityLookupSubject,
   guestResumeCredentialLookupSubject,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
@@ -269,6 +270,78 @@ export async function publishPasskeyRoute(
     (result.status !== 201 && result.status !== 202)
   ) {
     throw new Error('passkey_route_publication_result_invalid');
+  }
+  return result.status;
+}
+
+export interface PublishDirectoryRouteInput {
+  tenantId: string;
+  userId: string;
+  connectorId: string;
+  directorySubject: string;
+}
+
+/**
+ * The account a directory identity's Lookup route (external_subject) names, attached to the
+ * request; null where the identity has no route.
+ */
+export async function resolveDirectoryAccountRoute(
+  c: Context<{ Bindings: Env }>,
+  input: { connectorId: string; directorySubject: string }
+): Promise<AccountDataContext | null> {
+  try {
+    return await resolveAccountDataContextByIdentifierFromHono(c, {
+      indexKind: 'external_subject',
+      identifier: directoryIdentityLookupSubject(input),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return null;
+    throw error;
+  }
+}
+
+/**
+ * Publish the Lookup route of a directory identity linked to the user's account, so that the
+ * directory sign-in finds the account by the identity. The link must already be in the account's
+ * Core database: the Control Plane publishes only a route whose link it finds there. A retry of
+ * the same link is the same operation.
+ */
+export async function publishDirectoryRoute(
+  c: Context<{ Bindings: Env }>,
+  input: PublishDirectoryRouteInput
+): Promise<201 | 202> {
+  if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
+  const account = await resolveAccountDataContextFromHono(c, input.userId);
+  if (account.legacyUserId !== input.userId) {
+    throw new Error('directory_route_account_mismatch');
+  }
+  const digest = await sha256Hex(
+    canonicalJson({
+      schemaVersion: 1,
+      tenantId: input.tenantId,
+      accountId: account.accountId,
+      userId: input.userId,
+      connectorId: input.connectorId,
+      directorySubject: input.directorySubject,
+    })
+  );
+  const operationId = `directory-route-${digest.slice(0, 32)}`;
+  const result = await c.env.ACCOUNT_PROVISIONER.publishAuthDirectoryRoute({
+    schemaVersion: 1,
+    operationId,
+    idempotencyKey: `auth-directory-route:${digest}`,
+    tenantId: input.tenantId,
+    accountId: account.accountId,
+    userId: input.userId,
+    connectorId: input.connectorId,
+    directorySubject: input.directorySubject,
+  });
+  if (
+    result.operationId !== operationId ||
+    result.accountId !== account.accountId ||
+    (result.status !== 201 && result.status !== 202)
+  ) {
+    throw new Error('directory_route_publication_result_invalid');
   }
   return result.status;
 }

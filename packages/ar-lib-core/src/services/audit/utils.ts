@@ -508,7 +508,7 @@ export function sanitizeErrorMessage(message: string): string {
   // 1. Remove secrets
   let sanitized = message
     // Bearer tokens
-    .replace(/Bearer\s+[A-Za-z0-9\-_\.]+/gi, 'Bearer [REDACTED]')
+    .replace(/Bearer\s+[A-Za-z0-9\-_.]+/gi, 'Bearer [REDACTED]')
     // JWTs (3-part base64url)
     .replace(/eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*/g, '[JWT_REDACTED]')
     // password=value or password: value
