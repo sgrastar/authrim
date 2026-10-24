@@ -25,6 +25,7 @@ import {
   resolveAuditPersistenceSourcesFromEnv,
   resolveLegacyAuditLogAdapterFromEnv,
   type EventCategory,
+  type EventResult,
   type EventSeverity,
   type IAuditService,
   type IAuditStorageAdapter,
@@ -38,6 +39,15 @@ import {
   type TenantPIIConfig,
 } from '../services/audit';
 import { resolveTenantRuntimeProfilesFromEnv } from '../services/runtime-profile-resolver';
+import { getCachedAnonymizedUserId } from '../services/audit/anonymized-user-id-cache';
+import {
+  backfillEventLogAnonymizedUserId,
+  mirrorableResourceId,
+  resolveAnonymizedUserIdFromEnv,
+  resolveAuditClientId,
+  resolveAuditSessionRef,
+  resolveAuditSubjectUserId,
+} from './audit-log-subject';
 import type { AuditProfile, AuditTarget } from '../types/runtime-profile';
 import {
   RuntimeLoggingPolicySnapshotMemoryCache,
@@ -90,6 +100,11 @@ function requireAuditTenantId(tenantId: string | undefined, action: string): str
 
 function isFailClosedAuditAction(action: string): boolean {
   return resolveAuditEventFailureBehavior(action).behavior === 'fail_closed_or_strong_retry';
+}
+
+export interface CreateAuditLogOptions {
+  /** The request's ExecutionContext.waitUntil, which keeps after-response work alive. */
+  waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 export interface LegacyAuditLogWriteInput {
@@ -240,6 +255,34 @@ function parseLegacyMetadata(metadata: string): Record<string, unknown> {
   return { raw_metadata: metadata };
 }
 
+const EVENT_RESULTS: ReadonlySet<string> = new Set<EventResult>(['success', 'failure', 'partial']);
+// error_code is a column outside the details sanitizer, so only a code-shaped value goes there.
+const AUDIT_ERROR_CODE_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u;
+
+/**
+ * The outcome of a legacy audit entry: a `result` its data states, else a failure for a failed
+ * action (`auth.passkey.failed`, `auth.email_code.send_failed`), else a success.
+ */
+function mapLegacyAuditResult(action: string, metadata: Record<string, unknown>): EventResult {
+  if (typeof metadata.result === 'string' && EVENT_RESULTS.has(metadata.result)) {
+    return metadata.result as EventResult;
+  }
+  // Mapping Set saves state their outcome as 'saved' / 'failed'.
+  if (metadata.result === 'failed') return 'failure';
+  const outcome = action.split('.').pop() ?? '';
+  return outcome === 'failed' || outcome.endsWith('_failed') ? 'failure' : 'success';
+}
+
+/** The error code an unsuccessful entry carries (`errorCode`, or `error_code` in snake_case data). */
+function mapLegacyAuditErrorCode(
+  result: EventResult,
+  metadata: Record<string, unknown>
+): string | undefined {
+  if (result === 'success') return undefined;
+  const code = metadata.errorCode ?? metadata.error_code;
+  return typeof code === 'string' && AUDIT_ERROR_CODE_PATTERN.test(code) ? code : undefined;
+}
+
 async function resolveLegacyAuditLogPolicy(
   env: Env,
   tenantId: string,
@@ -271,6 +314,22 @@ async function resolveLegacyAuditLogPolicy(
     log.error('Audit profile resolution failed', {}, error as Error);
     return { writeLegacyD1: true, backpressureMode: 'event_class' };
   }
+}
+
+/**
+ * The request's waitUntil, or undefined where the context has none (Hono throws on reading
+ * executionCtx outside a Workers request: tests, local tools).
+ */
+export function getWaitUntilFromContext(
+  c: Context<{ Bindings: Env }>
+): CreateAuditLogOptions['waitUntil'] {
+  let executionCtx: { waitUntil(promise: Promise<unknown>): void } | undefined;
+  try {
+    executionCtx = c.executionCtx;
+  } catch {
+    return undefined;
+  }
+  return executionCtx ? (promise) => executionCtx.waitUntil(promise) : undefined;
 }
 
 function getRequestIdFromContext(c: Context<{ Bindings: Env }>): string | undefined {
@@ -1059,40 +1118,67 @@ export async function resolveTenantAuditRetentionFromEnv(
   return { event, pii };
 }
 
+type MirroredAuditLogEntry = Omit<AuditLogEntry, 'createdAt'> & {
+  tenantId: string;
+  createdAt: number;
+  requireDurableFanout?: boolean;
+};
+
 async function mirrorLegacyAuditLogToUnifiedService(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & {
-    tenantId: string;
-    id?: string;
-    createdAt?: number;
-    requireDurableFanout?: boolean;
-  }
+  entry: MirroredAuditLogEntry,
+  metadata: Record<string, unknown>,
+  subjectUserId: string | undefined,
+  anonymizedUserId: string | undefined
 ): Promise<void> {
-  const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
-  if (!tenantId) {
-    if (isFailClosedAuditAction(entry.action)) {
-      throw new AuditLogDeliveryError('audit_log_tenant_id_required', entry.action, 'unknown');
-    }
-    return;
-  }
-  const metadata = parseLegacyMetadata(entry.metadata);
+  const result = mapLegacyAuditResult(entry.action, metadata);
+  const errorCode = mapLegacyAuditErrorCode(result, metadata);
+  const clientId = resolveAuditClientId(metadata);
+  const sessionId = await resolveAuditSessionRef(entry, metadata);
+  // The data's own resource ID keys go through the same rule as the entry's resourceId.
+  const {
+    resourceId: dataResourceId,
+    resource_id: dataResourceIdSnake,
+    ...detailsMetadata
+  } = metadata;
+  const resourceId = await mirrorableResourceId(
+    entry,
+    entry.resourceId ?? dataResourceId ?? dataResourceIdSnake,
+    subjectUserId
+  );
   const auditService = getUnifiedAuditService(env);
 
-  await auditService.logEvent(tenantId, {
+  await auditService.logEvent(entry.tenantId, {
     id: entry.id,
     createdAt: entry.createdAt,
     eventType: entry.action,
     eventCategory: mapLegacyAuditCategory(entry.action, entry.resource),
-    result: 'success',
+    result,
+    ...(errorCode ? { errorCode } : {}),
     severity: mapLegacySeverity(entry.severity),
+    ...(anonymizedUserId ? { anonymizedUserId } : {}),
+    ...(clientId ? { clientId } : {}),
+    ...(sessionId ? { sessionId } : {}),
     ...(entry.requireDurableFanout ? { requireDurableFanout: true } : {}),
+    // The user is named by anonymized_user_id only; the details sanitizer drops user ID keys.
     details: {
       source: 'legacy_audit_log',
       resourceType: entry.resource,
-      resourceId: entry.resourceId,
-      ...metadata,
+      ...detailsMetadata,
+      resourceId,
     },
   });
+}
+
+/**
+ * Keep `promise` (which handles its own errors) alive after the response when the caller gave a
+ * waitUntil; it is never awaited here, and without a waitUntil it runs detached.
+ */
+function runAfterResponse(
+  waitUntil: CreateAuditLogOptions['waitUntil'],
+  promise: Promise<unknown>
+): void {
+  waitUntil?.(promise);
 }
 
 export async function writeLegacyAuditLog(
@@ -1128,8 +1214,15 @@ export async function writeLegacyAuditLog(
  * This function is non-blocking - if the audit log creation fails,
  * it will log the error but not throw, allowing the main operation to continue.
  *
+ * The event_log mirror records the entry's user as anonymized_user_id. That mapping is in the
+ * user's PII store, which the request never waits on: a cached ID is written with the event;
+ * otherwise the event is written without it, and the mapping is read or created after the
+ * response (options.waitUntil) and the ID added to the event's Core row. Archive and sink copies
+ * sent with the event carry the ID only when it was cached.
+ *
  * @param env - Cloudflare Workers environment bindings
  * @param entry - Audit log entry data (createdAt and an omitted id will be generated)
+ * @param options - The request's waitUntil, for the work done after the response
  */
 export async function createAuditLog(
   env: Env,
@@ -1138,7 +1231,8 @@ export async function createAuditLog(
     id?: string;
     createdAt?: number;
     requireDurableFanout?: boolean;
-  }
+  },
+  options: CreateAuditLogOptions = {}
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
@@ -1210,13 +1304,22 @@ export async function createAuditLog(
     }
   }
 
+  const mirrored: MirroredAuditLogEntry = { ...entry, id, tenantId, createdAt: createdAtMs };
+  const metadata = parseLegacyMetadata(entry.metadata);
+  const subjectUserId = resolveAuditSubjectUserId(entry, metadata);
+  const cachedAnonymizedUserId = subjectUserId
+    ? getCachedAnonymizedUserId(tenantId, subjectUserId)
+    : undefined;
+  let mirrorWritten = false;
   try {
-    await mirrorLegacyAuditLogToUnifiedService(env, {
-      ...entry,
-      id,
-      tenantId,
-      createdAt: createdAtMs,
-    });
+    await mirrorLegacyAuditLogToUnifiedService(
+      env,
+      mirrored,
+      metadata,
+      subjectUserId,
+      cachedAnonymizedUserId
+    );
+    mirrorWritten = true;
   } catch (error) {
     log.warn('Failed to mirror audit log to unified audit service', {
       action: entry.action,
@@ -1230,6 +1333,24 @@ export async function createAuditLog(
       throw new AuditLogDeliveryError('audit_log_unified_mirror_failed', entry.action, tenantId);
     }
   }
+  if (mirrorWritten && subjectUserId && !cachedAnonymizedUserId) {
+    runAfterResponse(
+      options.waitUntil,
+      resolveAnonymizedUserIdFromEnv(env, tenantId, subjectUserId)
+        .then((anonymizedUserId) =>
+          anonymizedUserId
+            ? backfillEventLogAnonymizedUserId(env, tenantId, id, anonymizedUserId)
+            : undefined
+        )
+        .catch((error: unknown) => {
+          log.warn('Failed to add the anonymized user id to the event_log row', {
+            action: entry.action,
+            tenantId,
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+        })
+    );
+  }
 
   // Log critical operations to console for immediate visibility
   // PII Protection: Only log safe fields (no metadata which may contain PII)
@@ -1238,8 +1359,7 @@ export async function createAuditLog(
       tenantId,
       action: entry.action,
       resource: entry.resource,
-      resourceId: entry.resourceId,
-      // Note: userId and metadata intentionally omitted (may contain PII)
+      // Note: userId, resourceId (a user's ID for a user resource) and metadata are omitted
     });
   }
 }
@@ -1273,7 +1393,8 @@ export async function createAuditLogFromContext(
   requireDurableFanout = false
 ): Promise<void> {
   // Debug: Log that we're attempting to create audit log
-  log.info('Creating audit log from context', { action, resource, resourceId });
+  // resourceId is left out: for a user resource it is the user's ID.
+  log.info('Creating audit log from context', { action, resource });
 
   // Get admin auth context (set by adminAuthMiddleware)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1282,7 +1403,6 @@ export async function createAuditLogFromContext(
     log.error('Cannot create audit log: adminAuth context not found', {
       action,
       resource,
-      resourceId,
     });
     if (isFailClosedAuditAction(action)) {
       throw new AuditLogDeliveryError('audit_log_admin_auth_required', action, 'unknown');
@@ -1316,20 +1436,24 @@ export async function createAuditLogFromContext(
     ...getAdminProxyMetadataFromContext(c),
   };
 
-  await createAuditLog(c.env, {
-    id: auditId,
-    createdAt,
-    tenantId,
-    userId: adminAuth.userId,
-    action,
-    resource,
-    resourceId,
-    ipAddress,
-    userAgent,
-    metadata: JSON.stringify(auditMetadata),
-    severity,
-    ...(requireDurableFanout ? { requireDurableFanout: true } : {}),
-  });
+  await createAuditLog(
+    c.env,
+    {
+      id: auditId,
+      createdAt,
+      tenantId,
+      userId: adminAuth.userId,
+      action,
+      resource,
+      resourceId,
+      ipAddress,
+      userAgent,
+      metadata: JSON.stringify(auditMetadata),
+      severity,
+      ...(requireDurableFanout ? { requireDurableFanout: true } : {}),
+    },
+    { waitUntil: getWaitUntilFromContext(c) }
+  );
 }
 
 /**

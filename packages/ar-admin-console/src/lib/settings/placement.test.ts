@@ -310,7 +310,7 @@ describe('where settings live', () => {
 		});
 	});
 
-	it('places the institution scopes and names once, on the Enterprise SSO page, as applied tenant-only settings', () => {
+	it('places the institution scopes and names once, on the SAML page, as applied tenant-only settings', () => {
 		const page = SETTINGS_PAGES.find((candidate) => candidate.id === 'enterprise');
 		for (const key of ['institution.scopes', 'institution.display_names']) {
 			const meta = ALL_CATEGORY_META.institution.settings[key];

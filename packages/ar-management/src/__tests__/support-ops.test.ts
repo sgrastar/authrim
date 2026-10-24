@@ -159,7 +159,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ensureDatabaseAdapter: vi.fn(() => mockAdapter),
     listEnvironmentTenantDefaultStores: mockListTenantStores,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdminAdapter),
-    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mockAdapter),
+    resolveTenantMetadataContext: vi.fn(async () => ({
+      tenantId: 'tenant-a',
+      coreDb: mockAdapter,
+    })),
     transitionAccountAuthenticationStateEndingSessions: mockTransitionAuthentication,
   };
 });
@@ -785,6 +788,10 @@ describe('support operations admin router', () => {
     mockAdapter.execute
       .mockResolvedValueOnce({ rowsAffected: 1 })
       .mockResolvedValueOnce({ rowsAffected: 1 });
+    mockAdapter.query.mockResolvedValueOnce(
+      Array.from({ length: 12 }, (_, index) => ({ target_id: `user-${index}` }))
+    );
+    mockTransitionAuthentication.mockResolvedValue({ state: {}, endedSessionIds: [] });
     // The accounts and their subjects, together and only as the newest transition.
     mockAdapter.batch.mockResolvedValueOnce([{ rowsAffected: 12 }, { rowsAffected: 12 }]);
 
@@ -807,6 +814,14 @@ describe('support operations admin router', () => {
     expect(statements[1]!.sql).toContain(
       `json_extract(${SUPPORT_OPS_ACCOUNT_METADATA_SQL}, '$.lifecycle_operation_id') = ?`
     );
+    // The cohort's accounts, named to the account database rather than read from it.
+    const accounts = JSON.stringify(Array.from({ length: 12 }, (_, index) => `user-${index}`));
+    expect(statements[0]!.sql).toContain('legacy_user_id IN (SELECT value FROM json_each(?))');
+    expect(statements[0]!.sql).not.toContain('support_operation_cohort_targets');
+    expect(statements[0]!.params).toContain(accounts);
+    expect(statements[1]!.sql).not.toContain('support_operation_cohort_targets');
+    expect(statements[1]!.params).toContain(accounts);
+    expect(payload.succeeded_count).toBe(12);
   });
 
   it('uses a conditional approved-to-running transition before execution', async () => {
@@ -891,6 +906,7 @@ describe('support operations admin router', () => {
     mockAdapter.execute
       .mockResolvedValueOnce({ rowsAffected: 1 })
       .mockResolvedValueOnce({ rowsAffected: 1 });
+    mockAdapter.query.mockResolvedValueOnce([{ target_id: 'user-1' }]);
     mockAdapter.batch.mockRejectedValueOnce(new Error('database unavailable'));
 
     const response = await createApp().request(
@@ -1068,6 +1084,7 @@ describe('support operations admin router', () => {
       .mockResolvedValueOnce([]);
     mockAdapter.queryOne.mockResolvedValueOnce({ count: 12 }).mockResolvedValueOnce({ count: 0 });
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockAdapter.batch.mockResolvedValueOnce([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
 
     await processPendingSupportOpsSnapshotJobs({} as Env);
 
@@ -1085,9 +1102,11 @@ describe('support operations admin router', () => {
       expect.arrayContaining([config.snapshot_cutoff, config.snapshot_cutoff])
     );
     expect(jobSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
-    expect(
-      executedSql.some((sql) => sql.includes('INSERT INTO support_operation_cohort_targets'))
-    ).toBe(true);
+    // The page's targets, in one batch, each once.
+    const [inserts] = mockAdapter.batch.mock.calls[0]! as [Array<{ sql: string }>];
+    expect(inserts).toHaveLength(2);
+    expect(inserts[0]!.sql).toContain('INSERT INTO support_operation_cohort_targets');
+    expect(inserts[0]!.sql).toContain('ON CONFLICT (cohort_id, target_id) DO NOTHING');
     expect(
       executedSql.some(
         (sql) => sql.includes('UPDATE support_operation_cohorts') && sql.includes('completed')

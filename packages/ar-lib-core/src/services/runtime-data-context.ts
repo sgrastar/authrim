@@ -485,6 +485,29 @@ export async function resolveTenantMetadataContext(
   };
 }
 
+/** The account's routed PII destination, revalidated there (the PII store holds no lifecycle). */
+function resolvePiiAccountDestination(
+  base: AccountRouteResolutionBase
+): Promise<ResolvedLookupTarget> {
+  return base.resolver.resolveTargetAndRevalidate({
+    membership: base.membership,
+    dataRole: 'tenant_pii',
+    residencyPartition: base.piiResidency,
+    observedBindingRouteGenerations: base.observedBindingRouteGenerations,
+    verifyAtDestination: (target) => {
+      if (
+        target.source !== base.piiRoute.source ||
+        target.bindingRef !== base.piiRoute.bindingRef ||
+        target.shardId !== base.piiRoute.shardId ||
+        target.requiredBindingRouteGeneration !== base.piiRoute.bindingRouteGeneration
+      ) {
+        return Promise.resolve(false);
+      }
+      return verifyShardMetadata(target, 'tenant_pii');
+    },
+  });
+}
+
 export async function resolveAccountDataContextByIdentifier(
   env: Env,
   input: {
@@ -500,23 +523,7 @@ export async function resolveAccountDataContextByIdentifier(
   // inactive account is reported only where both destinations are the ones routed to.
   const [coreSettled, piiSettled] = await Promise.allSettled([
     resolveCoreAccountDestination(base, input.tenantId),
-    base.resolver.resolveTargetAndRevalidate({
-      membership: base.membership,
-      dataRole: 'tenant_pii',
-      residencyPartition: base.piiResidency,
-      observedBindingRouteGenerations: base.observedBindingRouteGenerations,
-      verifyAtDestination: (target) => {
-        if (
-          target.source !== base.piiRoute.source ||
-          target.bindingRef !== base.piiRoute.bindingRef ||
-          target.shardId !== base.piiRoute.shardId ||
-          target.requiredBindingRouteGeneration !== base.piiRoute.bindingRouteGeneration
-        ) {
-          return Promise.resolve(false);
-        }
-        return verifyShardMetadata(target, 'tenant_pii');
-      },
-    }),
+    resolvePiiAccountDestination(base),
   ]);
   if (piiSettled.status === 'rejected') throw piiSettled.reason;
   if (coreSettled.status === 'rejected') throw coreSettled.reason;
@@ -644,6 +651,27 @@ export async function resolveAccountDataContext(
   });
 }
 
+/**
+ * The account's PII store, for its audit pseudonym (user_anonymization_map) only. Unlike an
+ * account context it also resolves while the account is not active (suspended, locked, being
+ * deleted), since the audits of those changes still name the user. The route and the PII
+ * destination are verified as for an account context; the Core account is not read.
+ */
+export async function resolveAccountPiiSourceForAudit(
+  env: Env,
+  input: { tenantId: string; accountId: string; nowMs?: number }
+): Promise<DatabaseSource> {
+  const accountId = normalizeAccountId(input.accountId);
+  const base = await resolveAccountRouteBaseByIdentifier(env, {
+    tenantId: input.tenantId,
+    indexKind: 'account_id',
+    identifier: accountId,
+    expectedAccountId: accountId,
+    nowMs: input.nowMs,
+  });
+  return (await resolvePiiAccountDestination(base)).source;
+}
+
 export async function resolveAccountDataContextByIdentifierFromHono(
   c: HonoContext<{ Bindings: Env }>,
   input: {
@@ -691,6 +719,37 @@ export function getTenantMetadataContextFromHono(
   return (c as unknown as { get(key: string): unknown }).get('tenantMetadataContext') as
     | TenantMetadataContext
     | undefined;
+}
+
+/**
+ * Whether the tenant's accounts are routed through Lookup to their own databases (the
+ * `tenant_core/users` and `tenant_pii` shards) instead of being kept in the tenant metadata
+ * database. Both allocation scopes route accounts. The registry resolves every tenant metadata
+ * context with a route in one of them (resolveTenantMetadataContext returns one or throws), so in
+ * a deployed Worker this is true exactly when the request resolved a tenant metadata context.
+ * A context without an allocation scope (only a single-database setup builds one) keeps its
+ * accounts in the metadata database. A scope this code does not know is refused rather than read
+ * as unrouted, which would send account reads and writes to the metadata database.
+ *
+ * This is the one definition: every Worker that chooses between the metadata database and the
+ * account databases decides with it (ar-auth and ar-management call it through their
+ * `usesRoutedAccountStorage` wrappers). It used to be three: ar-auth's tenant-exclusive-only
+ * check sent shared-pool tenants' passkey, email-code and TOTP requests to the metadata database.
+ */
+export function usesRoutedAccountStorage(metadata: TenantMetadataContext | undefined): boolean {
+  const allocationScope = (metadata?.route as Partial<ResolvedTenantDatabaseSource> | undefined)
+    ?.allocationScope;
+  if (allocationScope === undefined || allocationScope === null) return false;
+  switch (allocationScope) {
+    case 'shared_pool':
+    case 'tenant_exclusive':
+      return true;
+    default: {
+      // A new allocation scope must be classified here before it compiles.
+      const unknownScope: never = allocationScope;
+      throw new Error('tenant_metadata_allocation_scope_invalid', { cause: unknownScope });
+    }
+  }
 }
 
 export function getAccountDataContextFromHono(

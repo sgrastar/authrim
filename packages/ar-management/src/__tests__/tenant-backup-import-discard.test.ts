@@ -248,7 +248,10 @@ async function environment(
     written?: boolean;
     legalHold?: boolean;
     bundleHolds?: number;
+    /** Client settings documents in the Admin database. */
     clients?: number;
+    /** Their KV keys; one per document unless given. */
+    clientKeys?: number;
     /** The import's restore step; by default the operation is only ever cleaned up. */
     run?: () => Promise<never>;
   } = {}
@@ -457,7 +460,7 @@ async function environment(
     onPage?: (sql: string, when: 'before' | 'after') => void;
   } = {};
   settings.values.set('settings:tenant:tenant-a:security', '{}');
-  for (let index = 0; index < (options.clients ?? 0); index++)
+  for (let index = 0; index < (options.clientKeys ?? options.clients ?? 0); index++)
     settings.values.set(
       `settings:client:tenant-a:client-${String(index).padStart(4, '0')}-${'x'.repeat(30)}:oauth`,
       '{}'
@@ -910,10 +913,41 @@ describe('tenant restore discard after a partially written import', () => {
   }, 120_000);
 
   it('records and sweeps every client settings key of a large tenant', async () => {
-    const env = await environment({ clients: 1200 });
+    // One cleanup call deletes at most 8 statements of 50 rows (runTenantDiscardPage) and 100 KV
+    // keys (KV_KEYS_PER_PAGE), recording where the KV pass continues. 402 settings documents (401
+    // clients and the tenant's) need a second discard call; 201 keys make the middle sweep call
+    // resume a recorded pass and record it again. Every working tick re-plans the discard, so
+    // larger counts only add ticks.
+    const env = await environment({ clients: 401, clientKeys: 201 });
+    const prefix = 'settings:client:tenant-a:';
+    const clientKeys = () =>
+      [...env.settings.values.keys()].filter((key) => key.startsWith(prefix)).length;
+    const documents = () =>
+      count(
+        env.databases.admin,
+        "SELECT count(*) AS n FROM tenant_settings_documents WHERE tenant_id='tenant-a'"
+      );
     try {
       await env.store.requestCancel('tenant-a', OPERATION, env.now.value);
-      const { operation } = await env.drive(60);
+      const documentsLeft: number[] = [];
+      const deletedPerCall: number[] = [];
+      const recordedMidPass: number[] = [];
+      let operation: Awaited<ReturnType<typeof env.drive>>['operation'] = null;
+      for (let i = 0; i < 60 && !['cancelled', 'failed'].includes(operation?.state ?? ''); i++) {
+        const [keys, rows] = [clientKeys(), documents()];
+        ({ operation } = await env.drive(1));
+        if (documents() < rows) documentsLeft.push(documents());
+        if (clientKeys() < keys) deletedPerCall.push(keys - clientKeys());
+        const row = env.databases.admin
+          .prepare('SELECT kv_sweep_json FROM tenant_backup_import_discards')
+          .get() as { kv_sweep_json: string | null } | undefined;
+        const sweep = JSON.parse(row?.kv_sweep_json ?? '{}')[prefix];
+        if (sweep?.cursor) recordedMidPass.push(sweep.deleted);
+      }
+      // Which rows a page deletes is unordered, so only the counts are fixed.
+      expect(documentsLeft).toEqual([2, 0]);
+      expect(deletedPerCall).toEqual([100, 100, 1]);
+      expect(recordedMidPass).toEqual([100, 200]);
       expect(operation?.state).toBe('cancelled');
       expect([...env.settings.values.keys()].filter((key) => key.includes('tenant-a'))).toEqual([]);
     } finally {
