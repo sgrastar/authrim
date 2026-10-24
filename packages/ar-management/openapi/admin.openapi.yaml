@@ -11513,6 +11513,83 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/identity-mapping/sets/{id}/preview-change:
+    post:
+      tags:
+        - Field Mapping
+      operationId: postApiAdminIdentityMappingSetPreviewChange
+      summary: Preview what a change of a Mapping Set's content would do, app by app.
+      description: >-
+        Nothing is written. The draft (`content`, as a PUT sends it) is checked as a save checks it
+        and refused with the save's 400 when a save would refuse it. `changes` are the set's
+        changes by claim: `added`, `removed`, `renamed` (another claim from the same attributes
+        through the same Destination Profile), `profile_changed`, `source_changed`,
+        `transform_changed` (the steps or their order), `type_changed` (what the claim reads has
+        another catalog type); references are read as the runtime reads them. `apps` are the apps that use
+        the set, with why (`tier`: the app's own choice, the tenant default, the platform default),
+        decided by the runtime's selection; each has the changes it would see with the scopes it
+        is registered for (a change counts when the claim reached the app before or reaches it
+        after), and `held_back` those its scopes hold back (by the scope that would
+        release them; null for a claim the profile does not list). `references` is counted as the
+        PUT counts it: send that count back as `confirm_impact`. A set the platform owns needs the
+        settings read and the clients read permissions for every tenant: without `tenant_id` the answer counts, tenant by tenant (at most 100),
+        the apps that use it and those that would see a change, and lists no apps; with
+        `tenant_id` it lists that tenant's apps. `sample` is always null for now; when `sample` is
+        asked for, `sample_unavailable` is `draft_not_compiled`. Needs the settings read and the
+        clients read permissions. Rate limited with the strict profile.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenant_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: For a set the platform owns, the tenant whose apps to list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - content
+              properties:
+                content:
+                  type: object
+                  description: The draft content, as a PUT of the set sends it.
+                sample:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - test_user_id
+                  properties:
+                    test_user_id:
+                      type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingSetChangePreview'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/identity-mapping/sets:
     get:
       tags:
@@ -37966,6 +38043,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/IdentityMappingEffectiveResponse'
+    IdentityMappingSetChangePreview:
+      description: What a change of the set's content would do.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentityMappingSetChangePreviewResponse'
     IdentityMappingTestUsers:
       description: The tenant's test users.
       content:
@@ -57330,6 +57413,168 @@ components:
             Whether deleting, deactivating, rolling back or replacing the set would be refused
             now (it is named, or could not be checked everywhere). Null when it is not known: the
             other tenants of a platform set were not looked at and nothing else is in the way.
+    IdentityMappingClaimChange:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - claim
+        - profile_id
+      properties:
+        kind:
+          type: string
+          enum:
+            - added
+            - removed
+            - renamed
+            - profile_changed
+            - source_changed
+            - transform_changed
+            - type_changed
+        claim:
+          type: string
+        previous_claim:
+          type: string
+          description: "`renamed`: the claim's name before."
+        type_before:
+          type: string
+        type_after:
+          type: string
+        profile_id:
+          type:
+            - string
+            - 'null'
+        previous_profile_id:
+          type:
+            - string
+            - 'null'
+          description: '`profile_changed`: the profile before.'
+    IdentityMappingSetChangePreviewResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - setId
+        - owner
+        - changes
+        - references
+        - usage_complete
+        - apps
+        - apps_truncated
+        - sample
+      properties:
+        setId:
+          type: string
+        owner:
+          type: string
+          enum:
+            - tenant
+            - platform
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/IdentityMappingClaimChange'
+        references:
+          type: object
+          additionalProperties: false
+          required:
+            - count
+            - count_is_lower_bound
+            - scan_complete
+          properties:
+            count:
+              type: integer
+            count_is_lower_bound:
+              type: boolean
+            scan_complete:
+              type: boolean
+        usage_complete:
+          type: boolean
+        apps:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - tenant_id
+              - client_id
+              - name
+              - tier
+              - changes
+              - held_back
+            properties:
+              tenant_id:
+                type: string
+              client_id:
+                type: string
+              name:
+                type: string
+              tier:
+                type: string
+                enum:
+                  - client
+                  - tenant_default
+                  - platform_default
+              changes:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IdentityMappingClaimChange'
+              held_back:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - claim
+                    - scope
+                  properties:
+                    claim:
+                      type: string
+                    scope:
+                      type:
+                        - string
+                        - 'null'
+        apps_truncated:
+          type: boolean
+        tenants:
+          type: array
+          description: >-
+            For a set the platform owns, asked without `tenant_id`: the tenants with apps that use
+            it (or that could not be read).
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - tenant_id
+              - apps_using
+              - apps_changed
+            properties:
+              tenant_id:
+                type: string
+              apps_using:
+                type:
+                  - integer
+                  - 'null'
+              apps_changed:
+                type:
+                  - integer
+                  - 'null'
+              apps_count_is_lower_bound:
+                type: boolean
+              unavailable:
+                type: string
+                enum:
+                  - core_database_unavailable
+                  - query_failed
+                  - settings_unreadable
+        tenants_truncated:
+          type: boolean
+        sample:
+          type: 'null'
+          description: A test user's values before and after; not given yet.
+        sample_unavailable:
+          type: string
+          enum:
+            - draft_not_compiled
     IdentityMappingTestUserAttributes:
       type: object
       description: Attribute key → a made-up value.

@@ -1,0 +1,384 @@
+import { describe, expect, it } from 'vitest';
+import {
+  claimShapes,
+  diffClaimShapes,
+  NO_CATALOG,
+  releasePoints,
+  type CatalogTypes,
+} from '../identity-mapping-content-diff';
+
+/** The claims a content fills, and how one content's claims change into another's. */
+
+type Step = { edgeIndex?: number; operation: string; parameters?: Record<string, unknown> };
+type Rule = {
+  priority?: number;
+  ruleKey: string;
+  ruleKind: string;
+  action: string;
+  edges: Array<{ sourceRef: Record<string, unknown>; targetRef: Record<string, unknown> }>;
+  transforms?: Step[];
+};
+
+function rule(
+  claim: string,
+  sources: string[],
+  options: {
+    profile?: string;
+    profileField?: 'profileId' | 'profile_id';
+    namespace?: string;
+    catalogEntryId?: string;
+    transforms?: Step[];
+  } = {}
+): Rule {
+  return {
+    ruleKey: claim,
+    ruleKind: 'direct',
+    action: 'allow',
+    edges: sources.map((path) => ({
+      sourceRef: {
+        side: 'source',
+        namespace: options.namespace ?? 'authrim.profile',
+        path,
+        ...(options.catalogEntryId ? { catalogEntryId: options.catalogEntryId } : {}),
+      },
+      targetRef: {
+        side: 'destination',
+        namespace: 'oidc.claim',
+        path: claim,
+        [options.profileField ?? 'profileId']: options.profile ?? 'profile-1',
+      },
+    })),
+    ...(options.transforms ? { transforms: options.transforms } : {}),
+  };
+}
+
+const content = (...rules: Rule[]) => ({ rules }) as never;
+const diff = (
+  before: Rule[],
+  after: Rule[],
+  catalogs: { before?: CatalogTypes; after?: CatalogTypes } = {}
+) =>
+  diffClaimShapes(
+    claimShapes(content(...before), catalogs.before ?? NO_CATALOG),
+    claimShapes(content(...after), catalogs.after ?? NO_CATALOG)
+  );
+
+/** A catalog version with one entry, as the runtime reads it. */
+function catalog(entry: {
+  rowId: string;
+  stableId: string;
+  namespace: string;
+  path: string;
+  cardinality: 'single' | 'multi';
+  aliases?: Array<{ namespace: string; path: string }>;
+}): CatalogTypes {
+  return {
+    bundle: {
+      entries: [
+        {
+          id: entry.stableId,
+          namespace: entry.namespace,
+          path: entry.path,
+          aliases: entry.aliases ?? [],
+          valueType: 'string',
+          cardinality: entry.cardinality,
+        },
+      ],
+    } as never,
+    stableIds: new Map([[entry.rowId, entry.stableId]]),
+  };
+}
+
+describe('the changes of a content', () => {
+  it('are none when nothing a claim depends on changes', () => {
+    expect(diff([rule('email', ['email'])], [rule('email', ['email'])])).toEqual([]);
+  });
+
+  it('add and remove claims, in claim order', () => {
+    expect(diff([rule('email', ['email'])], [rule('nickname', ['nickname'])])).toEqual([
+      { kind: 'removed', claim: 'email', profile_id: 'profile-1' },
+      { kind: 'added', claim: 'nickname', profile_id: 'profile-1' },
+    ]);
+  });
+
+  it('rename a claim filled from the same attributes through the same profile, once', () => {
+    expect(diff([rule('organization', ['org'])], [rule('org', ['org'])])).toEqual([
+      { kind: 'renamed', claim: 'org', previous_claim: 'organization', profile_id: 'profile-1' },
+    ]);
+    expect(
+      diff([rule('organization', ['org'])], [rule('org', ['org'], { profile: 'profile-2' })]).map(
+        (change) => change.kind
+      )
+    ).toEqual(['added', 'removed']);
+    const changes = diff([rule('a', ['x'])], [rule('b', ['x']), rule('c', ['x'])]);
+    expect(changes.map((change) => `${change.kind}:${change.claim}`)).toEqual([
+      'renamed:b',
+      'added:c',
+    ]);
+  });
+
+  it('tell a claim read from other attributes, the namespace included', () => {
+    expect(diff([rule('name', ['name'])], [rule('name', ['display_name'])])).toEqual([
+      { kind: 'source_changed', claim: 'name', profile_id: 'profile-1' },
+    ]);
+    expect(
+      diff(
+        [rule('role', ['role'], { namespace: 'authrim.custom_claims' })],
+        [rule('role', ['role'], { namespace: 'authrim.attributes' })]
+      )
+    ).toEqual([{ kind: 'source_changed', claim: 'role', profile_id: 'profile-1' }]);
+    // Another namespace is another attribute: no rename across it.
+    expect(
+      diff(
+        [rule('a', ['role'], { namespace: 'authrim.custom_claims' })],
+        [rule('b', ['role'], { namespace: 'authrim.attributes' })]
+      ).map((change) => change.kind)
+    ).toEqual(['removed', 'added']);
+  });
+
+  it('tell the same attributes written in another order, by priority or by edge', () => {
+    const changed = [{ kind: 'source_changed', claim: 'nickname', profile_id: 'profile-1' }];
+    expect(
+      diff([rule('nickname', ['name', 'nickname'])], [rule('nickname', ['nickname', 'name'])])
+    ).toEqual(changed);
+    const first = { ...rule('nickname', ['name']), priority: 1 };
+    const second = { ...rule('nickname', ['nickname']), priority: 2 };
+    expect(diff([first, second], [{ ...first, priority: 3 }, second])).toEqual(changed);
+    // The same order written another way is no change.
+    expect(diff([first, second], [second, first])).toEqual([]);
+  });
+
+  it('tell a claim released through another profile', () => {
+    expect(
+      diff([rule('email', ['email'])], [rule('email', ['email'], { profile: 'profile-2' })])
+    ).toEqual([
+      {
+        kind: 'profile_changed',
+        claim: 'email',
+        profile_id: 'profile-2',
+        previous_profile_id: 'profile-1',
+      },
+    ]);
+  });
+
+  it('read the profile as the runtime does: either spelling, without the prefix', () => {
+    expect(
+      diff(
+        [rule('email', ['email'], { profile: 'destination-profile-profile-1' })],
+        [rule('email', ['email'], { profileField: 'profile_id' })]
+      )
+    ).toEqual([]);
+    expect(diff([], [rule('email', ['email'], { profileField: 'profile_id' })])).toEqual([
+      { kind: 'added', claim: 'email', profile_id: 'profile-1' },
+    ]);
+  });
+
+  it('tell a claim whose steps change, their order and the rule’s own steps included', () => {
+    const lower = { operation: 'case', parameters: { mode: 'lower' } };
+    const upper = { operation: 'case', parameters: { mode: 'upper' } };
+    const changed = [{ kind: 'transform_changed', claim: 'email', profile_id: 'profile-1' }];
+    expect(
+      diff(
+        [rule('email', ['email'], { transforms: [{ edgeIndex: 0, ...lower }] })],
+        [rule('email', ['email'], { transforms: [{ edgeIndex: 0, ...upper }] })]
+      )
+    ).toEqual(changed);
+    expect(
+      diff(
+        [rule('email', ['email'], { transforms: [lower, upper] })],
+        [rule('email', ['email'], { transforms: [upper, lower] })]
+      )
+    ).toEqual(changed);
+    expect(
+      diff([rule('email', ['email'])], [rule('email', ['email'], { transforms: [lower] })])
+    ).toEqual(changed);
+    // The same steps with their parameters written in another order are the same.
+    expect(
+      diff(
+        [rule('a', ['a'], { transforms: [{ operation: 'x', parameters: { p: 1, q: 2 } }] })],
+        [rule('a', ['a'], { transforms: [{ operation: 'x', parameters: { q: 2, p: 1 } }] })]
+      )
+    ).toEqual([]);
+  });
+
+  it('tell what is read taking another type, the entry found as the runtime finds it', () => {
+    const entry = {
+      rowId: 'row-groups',
+      stableId: 'field.canonical.groups',
+      namespace: 'authrim.canonical',
+      path: 'groups',
+    };
+    const change = {
+      kind: 'type_changed',
+      claim: 'groups',
+      type_before: 'string',
+      type_after: 'string[]',
+      profile_id: 'profile-1',
+    };
+    // By the entry's row ID.
+    const byId = rule('groups', ['groups'], { catalogEntryId: 'row-groups' });
+    expect(
+      diff([byId], [byId], {
+        before: catalog({ ...entry, cardinality: 'single' }),
+        after: catalog({ ...entry, cardinality: 'multi' }),
+      })
+    ).toEqual([change]);
+    // By an alias of the entry.
+    const byAlias = rule('groups', ['groups']);
+    const aliases = [{ namespace: 'authrim.profile', path: 'groups' }];
+    expect(
+      diff([byAlias], [byAlias], {
+        before: catalog({ ...entry, cardinality: 'single', aliases }),
+        after: catalog({ ...entry, cardinality: 'multi', aliases }),
+      })
+    ).toEqual([change]);
+    // A type the catalog does not give is not a change.
+    expect(
+      diff([byAlias], [byAlias], { after: catalog({ ...entry, cardinality: 'multi', aliases }) })
+    ).toEqual([]);
+  });
+
+  it('tell a step that moves to another input, or runs in another order across inputs', () => {
+    const two = (transforms: Step[]) => rule('name', ['given', 'family'], { transforms });
+    const lower = { operation: 'case', parameters: { mode: 'lower' } };
+    const trim = { operation: 'trim' };
+    const changed = [{ kind: 'transform_changed', claim: 'name', profile_id: 'profile-1' }];
+    expect(diff([two([{ edgeIndex: 0, ...lower }])], [two([{ edgeIndex: 1, ...lower }])])).toEqual(
+      changed
+    );
+    expect(
+      diff(
+        [
+          two([
+            { edgeIndex: 0, ...lower },
+            { edgeIndex: 1, ...trim },
+          ]),
+        ],
+        [
+          two([
+            { edgeIndex: 1, ...trim },
+            { edgeIndex: 0, ...lower },
+          ]),
+        ]
+      )
+    ).toEqual(changed);
+  });
+
+  it('order the edges of several rules as the runtime loads them, interleaved by priority', () => {
+    const a = rule('name', ['given', 'family']);
+    const b = rule('name', ['display_name']);
+    // Same priority: given, display_name, family (family last). B later: display_name last.
+    expect(diff([a, b], [a, { ...b, priority: 1 }])).toEqual([
+      { kind: 'source_changed', claim: 'name', profile_id: 'profile-1' },
+    ]);
+  });
+
+  it('order the steps of several rules as the runtime loads them, interleaved by priority', () => {
+    const upper = { operation: 'case', parameters: { mode: 'upper' } };
+    const lower = { operation: 'case', parameters: { mode: 'lower' } };
+    const trim = { operation: 'trim' };
+    const a = rule('name', ['name'], { transforms: [upper, lower] });
+    const b = rule('name', ['name'], { transforms: [trim] });
+    // Same priority: upper, trim, lower. B later: upper, lower, trim.
+    expect(diff([a, b], [a, { ...b, priority: 1 }])).toEqual([
+      { kind: 'transform_changed', claim: 'name', profile_id: 'profile-1' },
+    ]);
+  });
+
+  it('read a source that names only its catalog entry as the place the entry describes', () => {
+    const canonical: CatalogTypes = {
+      bundle: {
+        entries: ['email', 'name'].map((path) => ({
+          id: `field.canonical.${path}`,
+          namespace: 'authrim.canonical',
+          path,
+          aliases: [],
+          valueType: 'string',
+          cardinality: 'single',
+        })),
+      } as never,
+      stableIds: new Map(),
+    };
+    const byEntry = (id: string) => ({
+      ruleKey: 'r',
+      ruleKind: 'direct',
+      action: 'allow',
+      edges: [
+        {
+          sourceRef: { side: 'source', catalogEntryId: id },
+          targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'who', profileId: 'p' },
+        },
+      ],
+    });
+    expect(
+      diff([byEntry('field.canonical.email')], [byEntry('field.canonical.name')], {
+        before: canonical,
+        after: canonical,
+      })
+    ).toEqual([{ kind: 'source_changed', claim: 'who', profile_id: 'p' }]);
+    expect(
+      claimShapes(content(byEntry('field.canonical.email')), canonical).get('who')?.sourceKeys
+    ).toEqual(['authrim.canonical:email']);
+  });
+
+  it('release a claim whose edge names no profile through the set’s one profile', () => {
+    const unnamed = rule('nickname', ['nickname']);
+    delete (unnamed.edges[0].targetRef as Record<string, unknown>).profileId;
+    expect(diff([rule('email', ['email'])], [rule('email', ['email']), unnamed])).toEqual([
+      { kind: 'added', claim: 'nickname', profile_id: 'profile-1' },
+    ]);
+  });
+
+  it('say the profile before on every change of a claim whose profile changes', () => {
+    expect(
+      diff([rule('email', ['email'])], [rule('email', ['mail'], { profile: 'profile-2' })])
+    ).toEqual([
+      {
+        kind: 'profile_changed',
+        claim: 'email',
+        profile_id: 'profile-2',
+        previous_profile_id: 'profile-1',
+      },
+      {
+        kind: 'source_changed',
+        claim: 'email',
+        profile_id: 'profile-2',
+        previous_profile_id: 'profile-1',
+      },
+    ]);
+  });
+
+  it('take every attribute a claim reads, across rules', () => {
+    const shapes = claimShapes(
+      content(rule('name', ['given']), rule('name', ['family'])),
+      NO_CATALOG
+    );
+    expect(shapes.get('name')).toMatchObject({
+      sourceKeys: ['authrim.profile:family', 'authrim.profile:given'],
+    });
+  });
+});
+
+describe('where a change is released', () => {
+  it('is before and after, by claim and profile', () => {
+    expect(releasePoints({ kind: 'added', claim: 'a', profile_id: 'p' })).toEqual({
+      before: null,
+      after: { claim: 'a', profileId: 'p' },
+    });
+    expect(releasePoints({ kind: 'removed', claim: 'a', profile_id: 'p' })).toEqual({
+      before: { claim: 'a', profileId: 'p' },
+      after: null,
+    });
+    expect(
+      releasePoints({ kind: 'renamed', claim: 'b', previous_claim: 'a', profile_id: 'p' })
+    ).toEqual({ before: { claim: 'a', profileId: 'p' }, after: { claim: 'b', profileId: 'p' } });
+    expect(
+      releasePoints({
+        kind: 'profile_changed',
+        claim: 'a',
+        profile_id: 'q',
+        previous_profile_id: 'p',
+      })
+    ).toEqual({ before: { claim: 'a', profileId: 'p' }, after: { claim: 'a', profileId: 'q' } });
+  });
+});
