@@ -56,6 +56,8 @@ import {
   RoleRepository,
   SubjectIdentifierRepository,
   getTenantMetadataContextFromHono,
+  resolveTenantAssignedDatabaseSourcesFromRegistry,
+  getAccountDataContextFromHono,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   createDataTemporarilyUnavailableResponse,
   transitionAccountAuthenticationState,
@@ -319,6 +321,15 @@ async function resolveAuditUserAnonymizedId(
   return row?.anonymized_user_id ?? null;
 }
 
+/** Anonymized IDs looked up per statement (D1 binds at most 100 parameters). */
+const AUDIT_USER_ID_MAP_CHUNK = 50;
+
+/**
+ * The users the anonymized IDs of audit entries stand for, from user_anonymization_map. Each
+ * account's mapping is in its own PII store, so the lookup goes to every PII store of the tenant.
+ * An ID whose mapping is gone (the user was deleted or anonymized) or cannot be read stays
+ * unresolved, and the entry is listed without a user.
+ */
 async function resolveAuditUserIdMap(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -328,19 +339,57 @@ async function resolveAuditUserIdMap(
     return new Map();
   }
 
-  const piiCtx = createPIIContextFromHono(c, tenantId);
-  const placeholders = anonymizedUserIds.map(() => '?').join(', ');
-  const rows = await piiCtx.defaultPiiAdapter.query<{
-    anonymized_user_id: string;
-    user_id: string;
-  }>(
-    `SELECT anonymized_user_id, user_id
-       FROM user_anonymization_map
-      WHERE tenant_id = ? AND anonymized_user_id IN (${placeholders})`,
-    [tenantId, ...anonymizedUserIds]
-  );
+  // The request's own account store (a list filtered by user), then all of the tenant's.
+  const stores: DatabaseAdapter[] = getAccountDataContextFromHono(c)
+    ? [createPIIContextFromHono(c, tenantId).defaultPiiAdapter]
+    : [];
+  try {
+    stores.push(
+      ...(
+        await resolveTenantAssignedDatabaseSourcesFromRegistry(c.env, {
+          tenantId,
+          role: 'tenant_pii',
+          dataRole: 'tenant_pii',
+        })
+      ).map((store) => ensureDatabaseAdapter(store.source, 'audit-user-map'))
+    );
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN')
+      .warn('Audit entries listed without some users: the PII stores could not be resolved', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+  }
 
-  return new Map(rows.map((row) => [row.anonymized_user_id, row.user_id]));
+  const chunks: string[][] = [];
+  for (let index = 0; index < anonymizedUserIds.length; index += AUDIT_USER_ID_MAP_CHUNK) {
+    chunks.push(anonymizedUserIds.slice(index, index + AUDIT_USER_ID_MAP_CHUNK));
+  }
+  const results = await Promise.allSettled(
+    stores.flatMap((store) =>
+      chunks.map((chunk) =>
+        store.query<{ anonymized_user_id: string; user_id: string }>(
+          `SELECT anonymized_user_id, user_id
+             FROM user_anonymization_map
+            WHERE tenant_id = ? AND anonymized_user_id IN (${chunk.map(() => '?').join(', ')})`,
+          [tenantId, ...chunk]
+        )
+      )
+    )
+  );
+  const userIds = new Map<string, string>();
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      getLogger(c)
+        .module('ADMIN')
+        .warn('Audit entries listed without users: a PII store could not be read', {
+          errorType: result.reason instanceof Error ? result.reason.name : 'Unknown',
+        });
+      continue;
+    }
+    for (const row of result.value) userIds.set(row.anonymized_user_id, row.user_id);
+  }
+  return userIds;
 }
 
 function buildAuditResourceFilter(
@@ -1924,7 +1973,13 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     if (resolvedUserId) {
-      const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, resolvedUserId);
+      // The entry still answers when its user can no longer be read (suspended, locked).
+      const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, resolvedUserId).catch(
+        (error: unknown) => {
+          if (isInactiveAccountRouteError(error)) return null;
+          throw error;
+        }
+      );
       if (runtimeUser) {
         user = {
           id: runtimeUser.id,

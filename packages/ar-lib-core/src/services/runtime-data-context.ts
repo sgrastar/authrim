@@ -485,6 +485,29 @@ export async function resolveTenantMetadataContext(
   };
 }
 
+/** The account's routed PII destination, revalidated there (the PII store holds no lifecycle). */
+function resolvePiiAccountDestination(
+  base: AccountRouteResolutionBase
+): Promise<ResolvedLookupTarget> {
+  return base.resolver.resolveTargetAndRevalidate({
+    membership: base.membership,
+    dataRole: 'tenant_pii',
+    residencyPartition: base.piiResidency,
+    observedBindingRouteGenerations: base.observedBindingRouteGenerations,
+    verifyAtDestination: (target) => {
+      if (
+        target.source !== base.piiRoute.source ||
+        target.bindingRef !== base.piiRoute.bindingRef ||
+        target.shardId !== base.piiRoute.shardId ||
+        target.requiredBindingRouteGeneration !== base.piiRoute.bindingRouteGeneration
+      ) {
+        return Promise.resolve(false);
+      }
+      return verifyShardMetadata(target, 'tenant_pii');
+    },
+  });
+}
+
 export async function resolveAccountDataContextByIdentifier(
   env: Env,
   input: {
@@ -500,23 +523,7 @@ export async function resolveAccountDataContextByIdentifier(
   // inactive account is reported only where both destinations are the ones routed to.
   const [coreSettled, piiSettled] = await Promise.allSettled([
     resolveCoreAccountDestination(base, input.tenantId),
-    base.resolver.resolveTargetAndRevalidate({
-      membership: base.membership,
-      dataRole: 'tenant_pii',
-      residencyPartition: base.piiResidency,
-      observedBindingRouteGenerations: base.observedBindingRouteGenerations,
-      verifyAtDestination: (target) => {
-        if (
-          target.source !== base.piiRoute.source ||
-          target.bindingRef !== base.piiRoute.bindingRef ||
-          target.shardId !== base.piiRoute.shardId ||
-          target.requiredBindingRouteGeneration !== base.piiRoute.bindingRouteGeneration
-        ) {
-          return Promise.resolve(false);
-        }
-        return verifyShardMetadata(target, 'tenant_pii');
-      },
-    }),
+    resolvePiiAccountDestination(base),
   ]);
   if (piiSettled.status === 'rejected') throw piiSettled.reason;
   if (coreSettled.status === 'rejected') throw coreSettled.reason;
@@ -642,6 +649,27 @@ export async function resolveAccountDataContext(
     expectedAccountId: accountId,
     nowMs: input.nowMs,
   });
+}
+
+/**
+ * The account's PII store, for its audit pseudonym (user_anonymization_map) only. Unlike an
+ * account context it also resolves while the account is not active (suspended, locked, being
+ * deleted), since the audits of those changes still name the user. The route and the PII
+ * destination are verified as for an account context; the Core account is not read.
+ */
+export async function resolveAccountPiiSourceForAudit(
+  env: Env,
+  input: { tenantId: string; accountId: string; nowMs?: number }
+): Promise<DatabaseSource> {
+  const accountId = normalizeAccountId(input.accountId);
+  const base = await resolveAccountRouteBaseByIdentifier(env, {
+    tenantId: input.tenantId,
+    indexKind: 'account_id',
+    identifier: accountId,
+    expectedAccountId: accountId,
+    nowMs: input.nowMs,
+  });
+  return (await resolvePiiAccountDestination(base)).source;
 }
 
 export async function resolveAccountDataContextByIdentifierFromHono(

@@ -65,7 +65,13 @@ export {
   createAnonymizationService,
   batchGetAnonymizedUserIds,
   listAnonymizationMappings,
+  deleteAnonymizationMappingStatement,
 } from './anonymization';
+export {
+  ANONYMIZED_USER_ID_CACHE_MAX_ENTRIES,
+  ANONYMIZED_USER_ID_CACHE_TTL_MS,
+  forgetCachedAnonymizedUserId,
+} from './anonymized-user-id-cache';
 
 export type { IAnonymizationService } from './anonymization';
 
