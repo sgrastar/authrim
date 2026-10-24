@@ -237,6 +237,18 @@ function defaultEntry(
   return { tier, state: 'invalid', source };
 }
 
+/**
+ * The platform level of the order, as the selection reads it for a tenant that sets nothing: one
+ * read of the platform's settings, for a view of every tenant that shows the platform's default
+ * once. Throws when the settings cannot be read.
+ */
+export async function readPlatformIdentityMappingDefault(
+  env: EffectiveSettingsEnv,
+  options: { fresh?: boolean } = {}
+): Promise<IdentityMappingChainEntry> {
+  return readPlatformEntry(env, options.fresh);
+}
+
 async function readPlatformEntry(
   env: EffectiveSettingsEnv,
   fresh: boolean | undefined

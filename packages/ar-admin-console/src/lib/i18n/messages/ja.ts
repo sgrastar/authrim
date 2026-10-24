@@ -1,5 +1,6 @@
 import { jaSettings } from './settings/ja';
 import { jaCompliance } from './compliance/ja';
+import { jaMappingConsole } from './mapping-console/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -8,6 +9,7 @@ import { jaCompliance } from './compliance/ja';
 export const ja = {
 	...jaSettings,
 	...jaCompliance,
+	...jaMappingConsole,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
@@ -47,7 +49,7 @@ export const ja = {
 	'nav.apps.webhooks': 'Webhook',
 	'nav.auth.methods': 'ログイン方法',
 	'nav.auth.social': 'ソーシャル接続',
-	'nav.auth.enterprise': '企業 SSO (SAML)',
+	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'ディレクトリ認証',
 	'nav.auth.protection': '攻撃対策',
 	'nav.custom.branding': 'テーマ',

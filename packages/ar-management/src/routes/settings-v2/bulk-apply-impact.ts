@@ -13,6 +13,7 @@ import {
   type Env,
   type TenantDatabaseRequestCache,
 } from '@authrim/ar-lib-core';
+import { countClientIdentityMappingChoices } from '../../identity-mapping-app-choices';
 
 export interface BulkApplyImpactInput {
   c: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>;
@@ -60,10 +61,10 @@ async function implicitActivationWarnings(
 
 /**
  * Identity mapping: the apps of the tenant that have no Mapping Set of their own, which follow the
- * default (an app that names a set, or opts out, or whose choice is unreadable, does not). One
- * query on the tenant's Core database, counting with the same reading of `identity_mapping` as the
- * Mapping Set selection (`readClientIdentityMappingChoice`: unset is null, empty, `null`, or an
- * object with neither a set nor a mode).
+ * default, and those a change of the default leaves alone (an app that names a set, or opts out);
+ * an app whose choice is unreadable follows nothing. One query on the tenant's Core database,
+ * each stored `identity_mapping` read the way the Mapping Set selection reads it
+ * (`countClientIdentityMappingChoices`).
  */
 export const identityMappingImpact: BulkApplyImpactProvider = async ({
   c,
@@ -86,47 +87,17 @@ export const identityMappingImpact: BulkApplyImpactProvider = async ({
     return { available: false, reason: 'core_database_unavailable' };
   }
   try {
-    const row = await core.queryOne<{
-      total: number | null;
-      following: number | null;
-      legacy_profile_only: number | null;
-    }>(
-      `SELECT COUNT(*) AS total,
-              SUM(CASE
-                    WHEN identity_mapping IS NULL OR trim(identity_mapping) = '' THEN 1
-                    WHEN json_valid(identity_mapping)
-                         AND (json_type(identity_mapping) = 'null'
-                              OR (json_type(identity_mapping) = 'object'
-                                  AND json_extract(identity_mapping, '$.mode') IS NULL
-                                  AND json_extract(identity_mapping, '$.fieldMappingSetId') IS NULL
-                                  AND json_extract(identity_mapping, '$.policySetId') IS NULL
-                                  AND json_extract(identity_mapping, '$.destinationProfileId') IS NULL
-                                  AND json_extract(identity_mapping, '$.destination_profile_id') IS NULL))
-                      THEN 1
-                    ELSE 0
-                  END) AS following,
-              SUM(CASE
-                    WHEN json_valid(identity_mapping)
-                         AND json_type(identity_mapping) = 'object'
-                         AND json_extract(identity_mapping, '$.mode') IS NULL
-                         AND json_extract(identity_mapping, '$.fieldMappingSetId') IS NULL
-                         AND json_extract(identity_mapping, '$.policySetId') IS NULL
-                         AND (json_extract(identity_mapping, '$.destinationProfileId') IS NOT NULL
-                              OR json_extract(identity_mapping, '$.destination_profile_id') IS NOT NULL)
-                      THEN 1
-                    ELSE 0
-                  END) AS legacy_profile_only
-         FROM oauth_clients
-        WHERE tenant_id = ?`,
-      [tenantId]
-    );
+    const counts = await countClientIdentityMappingChoices(core, tenantId);
     return {
       available: true,
       applies: true,
-      apps_total: Number(row?.total ?? 0),
-      apps_following_default: Number(row?.following ?? 0),
+      apps_total: counts.total,
+      apps_following_default: counts.followingDefault,
       // Apps whose selector names only a Destination Profile: they fail rather than follow it.
-      apps_with_unusable_choice: Number(row?.legacy_profile_only ?? 0),
+      apps_with_unusable_choice: counts.legacyProfileOnly,
+      // Not changed by the default: the app names its own set, or opts out.
+      apps_with_own_set: counts.ownSet,
+      apps_opted_out: counts.optedOut,
       ...(await implicitActivationWarnings(c, tenantId)),
     };
   } catch {
