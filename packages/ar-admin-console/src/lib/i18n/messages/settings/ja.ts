@@ -170,7 +170,7 @@ export const jaSettings = {
 	'set.k.assurance.scim_max_ial': 'SCIM が申告できる本人確認レベル（IAL）の上限',
 	'set.k.assurance.scim_max_ial.desc':
 		'外部システムが SCIM でユーザーについて申告できる本人確認レベルの上限です。1 が IAL1（本人確認なし）、2 が IAL2、3 が IAL3 です。これを超える申告のリクエストは拒否され、何も変更されません。初期値は 1 で、上げるまで SCIM は IAL2 / IAL3 を申告できません。下げても、すでに記録されたレベルは取り消されません。管理者が記録するレベル、組織が作るアカウントに付くレベル、CSV 取り込みは、この上限の対象外です。',
-	'set.page.enterprise': '企業 SSO（SAML）',
+	'set.page.enterprise': 'SAML',
 	'set.page.enterprise.desc':
 		'このテナントが SAML に応じるかどうかと、SAML の有効期間、新しい SAML プロバイダーの既定を決めます。プロバイダー（IdP・SP）の登録は、当面は従来の管理画面の SAML ページで行います。',
 	'set.section.samlService': 'SAML の利用',
@@ -287,7 +287,7 @@ export const jaSettings = {
 	'settings.defaultFrom.platform': 'プラットフォーム既定値: {value}',
 	'settings.defaultFrom.tenant': 'テナント既定値: {value}',
 	'settings.locked.platform': 'プラットフォーム設定による固定値',
-	'settings.inDevelopment': '開発中：変更してもまだ効きません',
+	'settings.inDevelopment': '開発中：変更してもまだ有効になりません',
 	'settings.locked.tenant': 'テナント設定による固定値',
 	'settings.badge.locked': '上書き不可',
 	'settings.badge.here': '上書き中',

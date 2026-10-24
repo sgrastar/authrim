@@ -98,6 +98,9 @@ describe('SAML scheduled logout observation', () => {
       expect.anything(),
       expect.objectContaining({ tenantId: 'tenant-a', severity: 'warning' })
     );
+    // A timed-out fanout is a failed logout: the unified event_log takes it from the result.
+    const [, entry] = mocks.audit.mock.calls[0] as unknown as [unknown, { metadata: string }];
+    expect(JSON.parse(entry.metadata)).toMatchObject({ result: 'failure' });
   });
 
   it('starts metadata polling without waiting for logout observation to finish', async () => {

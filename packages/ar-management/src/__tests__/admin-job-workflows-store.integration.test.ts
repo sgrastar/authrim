@@ -33,6 +33,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         return mocks.core;
       }
     ),
+    // A job's tenant metadata database (a Support Ops snapshot's), of a tenant whose accounts
+    // are in it.
+    resolveTenantMetadataContext: vi.fn(async (_env: Env, tenantId: string) => {
+      mocks.beforeTenantResolve?.('support-ops-snapshot-tenant');
+      return { tenantId, coreDb: mocks.core };
+    }),
     listEnvironmentTenantDefaultStores: vi.fn(async () => [
       { tenantId: 'platform', store: { source: mocks.coreSource, bindingRef: 'DB' } },
     ]),

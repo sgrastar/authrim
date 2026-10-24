@@ -1261,7 +1261,7 @@ Request:
 {
   "resource": "User",
   "selector": { "field": "status", "op": "eq", "value": "active" },
-  "group_by": ["status"]
+  "group_by": ["lifecycle_state"]
 }
 ```
 
@@ -1270,7 +1270,7 @@ Response:
 ```json
 {
   "resource": "User",
-  "groups": [{ "key": { "status": "active" }, "count": 120 }],
+  "groups": [{ "key": { "lifecycle_state": "active" }, "count": 120 }],
   "suppressed_groups": 1,
   "privacy": {
     "min_count": 10,
@@ -1284,7 +1284,7 @@ Response:
 
 Aggregate privacy rules:
 
-- `group_by` must include 1-3 aggregatable fields.
+- `group_by` must include 1-3 aggregatable fields (for `User`: `lifecycle_state`, `user_type`; `status` can be filtered on but not grouped by).
 - Counts are bucketed down to `count_precision`.
 - Counts between 1 and `minCount - 1` are suppressed.
 - If low-count suppression occurs, adjacent visible groups may also be suppressed to reduce differencing risk.

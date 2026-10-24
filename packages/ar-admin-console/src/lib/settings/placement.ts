@@ -287,7 +287,7 @@ export const PROTECTION: SettingsPageDef = {
 };
 
 /**
- * Authentication → Enterprise SSO (SAML): the institution the tenant stands for (its scopes and
+ * Authentication → SAML: the institution the tenant stands for (its scopes and
  * names, which only the platform can change), whether the tenant answers SAML at all, how long what
  * it issues and accepts stays valid, and the defaults a new SAML provider starts from. The
  * Artifact binding settings (`federation.saml_artifact_*`) stay in the draft until that binding

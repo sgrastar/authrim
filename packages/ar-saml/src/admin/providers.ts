@@ -3724,6 +3724,7 @@ async function createSAMLAdminAudit(
     metadata: JSON.stringify({
       protocol: 'saml',
       ...(input.metadata ?? {}),
+      ...(input.result ? { result: input.result } : {}),
     }),
     severity: input.severity ?? (input.result === 'failure' ? 'warning' : 'info'),
   });

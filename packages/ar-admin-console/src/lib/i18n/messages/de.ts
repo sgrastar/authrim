@@ -1,10 +1,12 @@
 import type { Messages } from './ja';
 import { deSettings } from './settings/de';
 import { deCompliance } from './compliance/de';
+import { deMappingConsole } from './mapping-console/de';
 
 export const de = {
 	...deSettings,
 	...deCompliance,
+	...deMappingConsole,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
@@ -44,7 +46,7 @@ export const de = {
 	'nav.apps.webhooks': 'Webhooks',
 	'nav.auth.methods': 'Anmeldeverfahren',
 	'nav.auth.social': 'Soziale Verbindungen',
-	'nav.auth.enterprise': 'Unternehmens-SSO',
+	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'Verzeichnisauthentifizierung',
 	'nav.auth.protection': 'Angriffsschutz',
 	'nav.custom.branding': 'Designs',

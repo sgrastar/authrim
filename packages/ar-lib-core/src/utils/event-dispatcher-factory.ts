@@ -26,7 +26,7 @@ import { createWebhookRegistry } from '../services/webhook-registry';
 import { resolveAuthCorePersistenceAdapterFromEnv } from '../services/auth-core-persistence-context';
 import { createTenantRegistryKeyResolver } from '../services/audit/tenant-key';
 import { resolveOptionalCoreAdapterFromHono } from '../context';
-import { createAuditLog } from './audit-log';
+import { createAuditLog, getWaitUntilFromContext, type CreateAuditLogOptions } from './audit-log';
 import { decryptValue } from './pii-encryption';
 
 // =============================================================================
@@ -73,7 +73,7 @@ function extractAuditResourceType(eventType: string): string {
   return parts[0] || 'unknown';
 }
 
-function buildRuntimeAuditLogWriter(env: Env) {
+function buildRuntimeAuditLogWriter(env: Env, waitUntil?: CreateAuditLogOptions['waitUntil']) {
   return async (event: {
     type: string;
     tenantId: string;
@@ -85,17 +85,21 @@ function buildRuntimeAuditLogWriter(env: Env) {
       (typeof event.data.userId === 'string' && event.data.userId) ||
       'event';
 
-    await createAuditLog(env, {
-      tenantId: event.tenantId,
-      userId: event.metadata?.actor?.id ?? 'system',
-      action: event.type,
-      resource: extractAuditResourceType(event.type),
-      resourceId,
-      ipAddress: 'system',
-      userAgent: 'event-dispatcher',
-      metadata: JSON.stringify(event.data),
-      severity: 'info',
-    });
+    await createAuditLog(
+      env,
+      {
+        tenantId: event.tenantId,
+        userId: event.metadata?.actor?.id ?? 'system',
+        action: event.type,
+        resource: extractAuditResourceType(event.type),
+        resourceId,
+        ipAddress: 'system',
+        userAgent: 'event-dispatcher',
+        metadata: JSON.stringify(event.data),
+        severity: 'info',
+      },
+      { waitUntil }
+    );
   };
 }
 
@@ -217,7 +221,7 @@ export async function createEventDispatcherFromContext(
     handlerRegistry: getGlobalHandlerRegistry(),
     hookRegistry: getGlobalHookRegistry(),
     decryptSecret,
-    auditLogWriter: buildRuntimeAuditLogWriter(c.env),
+    auditLogWriter: buildRuntimeAuditLogWriter(c.env, getWaitUntilFromContext(c)),
     runtimeLogging: {
       env: {
         ...c.env,
