@@ -30,7 +30,7 @@
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
-import type { PermissionChangeEvent, AuditLogConfig } from '../types/check-api';
+import type { PermissionChangeEvent } from '../types/check-api';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('PERMISSION-CHANGE-NOTIFIER');
@@ -49,8 +49,6 @@ export interface PermissionChangeNotifierConfig {
   cache?: KVNamespace;
   /** PermissionChangeHub Durable Object namespace */
   permissionChangeHub?: DurableObjectNamespace;
-  /** Audit log configuration */
-  auditConfig?: AuditLogConfig;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -119,7 +117,7 @@ function requireTenantId(tenantId: string | undefined, context: string): string 
 export function createPermissionChangeNotifier(
   config: PermissionChangeNotifierConfig
 ): PermissionChangeNotifier {
-  const { db, cache, permissionChangeHub, auditConfig, debug = false } = config;
+  const { db, cache, permissionChangeHub, debug = false } = config;
 
   const debugLog = debug
     ? (message: string, context?: Record<string, unknown>) => log.debug(message, context)
