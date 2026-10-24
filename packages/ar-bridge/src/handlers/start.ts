@@ -33,6 +33,7 @@ import {
   readAuthorizationChallengeKind,
   readExternalProviderReauthPolicy,
   verifyHumanVerificationWithRunner,
+  resolveSignInAttemptInteraction,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { assertExternalProviderUsageAllowed } from '../services/external-usage-gate';
@@ -459,6 +460,18 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // This is separate from the client ↔ Authrim PKCE flow
     const externalIdpPKCE = await generatePKCE();
 
+    // 7b. The Flow interaction this sign-in belongs to, once checked a live interaction of the
+    // tenant: the callback records the sign-in's failures with it. A link is not a sign-in.
+    // Best effort: a check that cannot be made leaves the sign-in unrecorded, never refused.
+    const requestedInteractionId = link ? undefined : c.req.query('runtime_interaction_id');
+    const attemptInteractionId = requestedInteractionId
+      ? await (async () =>
+          resolveSignInAttemptInteraction(
+            createAuthContextFromHono(c, tenantIdResolved).coreAdapter,
+            { tenantId: tenantIdResolved, interactionId: requestedInteractionId }
+          ))().catch(() => null)
+      : null;
+
     // 8. Store state in D1 (including code_challenge for client-side PKCE)
     await storeAuthState(c.env, {
       tenantId: tenantIdResolved,
@@ -480,6 +493,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         ? { reauthChallengeId: reauth.challengeId, reauthRequestedAt: reauth.requestedAt }
         : {}),
       ...(signupInvitation ?? {}),
+      ...(attemptInteractionId ? { attemptInteractionId } : {}),
       expiresAt: getStateExpiresAt(),
     });
 

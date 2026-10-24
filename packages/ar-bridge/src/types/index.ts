@@ -169,6 +169,11 @@ export interface ExternalIdpAuthState {
   inviteId?: string;
   /** The use of it the start reserved (applied only to an account the callback creates) */
   inviteReservationId?: string;
+  /**
+   * The Flow interaction the sign-in belongs to, once the start step checked it is a live
+   * interaction of the tenant: the callback records the sign-in's failures with it.
+   */
+  attemptInteractionId?: string;
   expiresAt: number;
   createdAt: number;
 }

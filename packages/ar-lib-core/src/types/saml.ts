@@ -885,6 +885,11 @@ export interface SAMLRequestContext {
    * only to an account the ACS creates, given back otherwise.
    */
   invitation?: { inviteId: string; inviteReservationId: string };
+  /**
+   * The Flow interaction this SP-initiated sign-in belongs to, once its start checked it is a live
+   * interaction of the tenant: the ACS records the sign-in's failures with it.
+   */
+  attemptInteractionId?: string;
   spReauthentication?: {
     authorizationChallengeId: string;
     requestedAt: number;

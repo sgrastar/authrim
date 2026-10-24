@@ -13,6 +13,8 @@ import {
   type DatabaseAdapter,
   ensureDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
+  scheduleSignInAttemptFailureRecord,
+  type SignInAttemptReasonCode,
   requireAdminDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -103,6 +105,35 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
   // The invitation use this sign-in's start reserved, until it goes to an account the ACS
   // creates. Every other ending (an existing account, any refusal or failure) gives it back.
   let unsettledInvitation: { inviteId: string; inviteReservationId: string } | null = null;
+  // The Flow interaction the sign-in's start checked (known once the request is consumed), and the
+  // account once found: a failed sign-in is recorded with them after the response.
+  let attemptInteractionId: string | null = null;
+  let attemptRequestId: string | null = null;
+  let attemptUserId: string | null = null;
+  const recordFailure = <T>(response: T, reasonCode: SignInAttemptReasonCode): T => {
+    scheduleSignInAttemptFailureRecord(
+      {
+        waitUntil: (promise) => c.executionCtx.waitUntil(promise),
+        core: () =>
+          resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', { tenantId }),
+        env,
+        // The error's type only: a database error can quote what it was given.
+        onError: (recordError) =>
+          log.warn('Failed to record a failed sign-in attempt', {
+            errorType: recordError instanceof Error ? recordError.name : 'unknown',
+          }),
+      },
+      {
+        tenantId,
+        interactionId: attemptInteractionId,
+        method: 'saml',
+        reasonCode,
+        userId: attemptUserId,
+        ...(attemptRequestId ? { dedupeKey: attemptRequestId } : {}),
+      }
+    );
+    return response;
+  };
 
   try {
     // Parse POST data
@@ -167,6 +198,8 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
       unsettledInvitation = validatedRequest.context?.invitation ?? null;
+      attemptInteractionId = validatedRequest.context?.attemptInteractionId ?? null;
+      attemptRequestId = validatedRequest.requestId;
     } else if (await getStrictInResponseToSetting(env)) {
       log.error('SAML Response missing InResponseTo while strict mode is enabled', {});
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -190,22 +223,29 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         {},
         error as Error
       );
-      return samlUsageUnavailableResponse(c);
+      return recordFailure(samlUsageUnavailableResponse(c), 'service_unavailable');
     }
     if (!reauthentication && !usagePolicy.loginEnabled) {
       log.warn('SAML sign-in refused: the tenant turned sign-in off for this IdP', { issuer });
-      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
+      return recordFailure(
+        createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED),
+        'method_disabled'
+      );
     }
 
-    const isFirstUse = await checkAndRecordBearerAssertionUse(
+    const assertionUse = await checkAndRecordBearerAssertionUse(
       env,
       tenantId,
       issuer,
       assertion.id,
       assertion.subjectConfirmationData.notOnOrAfter
     );
-    if (!isFirstUse) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    if (assertionUse !== 'first_use') {
+      // The same refusal either way; the record tells a replay from a check that could not be made.
+      return recordFailure(
+        createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE),
+        assertionUse === 'replayed' ? 'replay_detected' : 'service_unavailable'
+      );
     }
 
     const authnContextClassRef = assertion.authnStatement?.authnContext?.authnContextClassRef;
@@ -215,7 +255,10 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         issuer,
         authnContextClassRef: authnContextClassRef || 'missing',
       });
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      return recordFailure(
+        createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE),
+        'assurance_not_met'
+      );
     }
 
     // Extract user information from assertion through the configured Field Mapping Set.
@@ -242,6 +285,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       invitationRequirement
     );
     const userId = identityResolution.userId;
+    attemptUserId = userId;
     // The reserved use goes to the account created here, before its session is made.
     if (
       unsettledInvitation &&
@@ -273,7 +317,10 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
           issuer,
           authnInstantPresent: Boolean(assertion.authnStatement?.authnInstant),
         });
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+        return recordFailure(
+          createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE),
+          'assurance_not_met'
+        );
       }
       reauthProvenAt = proven;
     }
@@ -384,6 +431,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     });
   } catch (error) {
     log.error('ACS Error', {}, error as Error);
+    recordFailure(undefined, samlSignInAttemptReason(error));
 
     if (error instanceof SamlProvisioningError) {
       scheduleSAMLIdentityResolutionFailureAudit(c, tenantId, auditProviderId, error);
@@ -459,6 +507,17 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       });
     }
   }
+}
+
+/** Why a failed SAML sign-in failed, in the attempt records' closed vocabulary. */
+function samlSignInAttemptReason(error: unknown): SignInAttemptReasonCode {
+  if (error instanceof SamlRegistrationBlockedError || error instanceof SamlSignupDisabledError) {
+    return 'signup_disabled';
+  }
+  if (error instanceof SamlProvisioningError || error instanceof SamlAttributeMappingError) {
+    return 'provisioning_failed';
+  }
+  return 'service_unavailable';
 }
 
 /** Where invitations and their reservations are kept: the tenant metadata database. */
@@ -1111,8 +1170,9 @@ function validateSubjectConfirmation(
 }
 
 /**
- * Check and record a bearer assertion ID to prevent replay.
- * Returns true if this is the first use, false if already used
+ * Check and record a bearer assertion ID to prevent replay: `first_use` when it is recorded now,
+ * `replayed` when it was used before, `unavailable` when the check could not be made (both of
+ * the latter refuse the assertion).
  */
 async function checkAndRecordBearerAssertionUse(
   env: Env,
@@ -1120,7 +1180,7 @@ async function checkAndRecordBearerAssertionUse(
   idpEntityId: string,
   assertionId: string,
   notOnOrAfter?: string
-): Promise<boolean> {
+): Promise<'first_use' | 'replayed' | 'unavailable'> {
   try {
     const assertionExpiresAt = notOnOrAfter
       ? parseSAMLDateTimeMs(notOnOrAfter, 'SubjectConfirmationData NotOnOrAfter') +
@@ -1138,14 +1198,14 @@ async function checkAndRecordBearerAssertionUse(
 
     if (response.status === 409) {
       createLogger().module('SAML-SP-ACS').warn('Bearer assertion already used', { assertionId });
-      return false;
+      return 'replayed';
     }
-    return response.ok;
+    return response.ok ? 'first_use' : 'unavailable';
   } catch (error) {
     createLogger()
       .module('SAML-SP-ACS')
       .error('Bearer assertion replay validation unavailable', { assertionId }, error as Error);
-    return false;
+    return 'unavailable';
   }
 }
 

@@ -1705,7 +1705,8 @@
 				inviteToken: inviteToken || undefined,
 				authorizationChallengeId: authorizationChallengeId || undefined,
 				deferAuthorizationContinuation: shouldDeferAuthorizationContinuation(),
-				human_verification_response: cfTurnstileResponse
+				human_verification_response: cfTurnstileResponse,
+				runtimeInteractionId: runtimeFlow?.interaction.id
 			});
 			if (apiError) {
 				if (apiError.error === 'invalid_credentials') {
@@ -1938,7 +1939,9 @@
 				provider.startUrl,
 				provider.startMode,
 				turnstileRequired ? { token: cfTurnstileResponse } : undefined,
-				authorizationChallengeId || undefined
+				authorizationChallengeId || undefined,
+				undefined,
+				runtimeFlow?.interaction.id
 			);
 
 			if (!isValidRedirectUrl(url)) {

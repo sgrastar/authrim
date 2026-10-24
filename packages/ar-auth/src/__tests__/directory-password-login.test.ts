@@ -9,6 +9,8 @@ import {
 import { hashEmailCode } from '../utils/email-code-utils';
 
 const mocks = vi.hoisted(() => ({
+  resolveAttemptInteraction: vi.fn(async (..._args: unknown[]) => null as string | null),
+  recordAttemptFailure: vi.fn(async (..._args: unknown[]) => null as string | null),
   generateRegistrationOptions: vi.fn(),
   verifyRegistrationResponse: vi.fn(),
   findByEmail: vi.fn(),
@@ -69,6 +71,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    resolveSignInAttemptInteraction: mocks.resolveAttemptInteraction,
+    recordSignInAttemptFailure: mocks.recordAttemptFailure,
     CanonicalRuntimeUserStore: class {
       findByEmail = mocks.findByEmail;
       findById = mocks.findById;
@@ -3225,6 +3229,88 @@ describe('directory password login handler', () => {
 
     expect(response.status).toBe(404);
     expect(body.error).toBe('directory_password_not_configured');
+  });
+});
+
+describe('directory password failures recorded with their Flow interaction', () => {
+  const rejectingFetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    return Response.json({
+      request_id: body.request_id,
+      tenant_id: 'tenant-a',
+      connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+      result: 'failure',
+      reason: 'invalid_credentials',
+      directory_status: 'ok',
+    });
+  });
+
+  /** A login request naming `interactionId` in the interaction header. */
+  const withInteraction = (interactionId?: string) => {
+    const context = createContext({ username: 'alice', password: 'wrong' });
+    const header = context.req.header;
+    return {
+      ...context,
+      req: {
+        ...context.req,
+        header: vi.fn((name: string) =>
+          name.toLowerCase() === 'x-authrim-interaction-id' ? interactionId : header(name)
+        ),
+      },
+    };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.rateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
+    mocks.resolveAttemptInteraction.mockResolvedValue(null);
+  });
+
+  it('records rejected credentials against the interaction it checked in the same request', async () => {
+    mocks.resolveAttemptInteraction.mockResolvedValueOnce('int-1');
+    const response = await createDirectoryPasswordLoginHandler(rejectingFetcher)(
+      withInteraction('int-1') as never
+    );
+    expect(response.status).toBe(401);
+    expect(mocks.resolveAttemptInteraction).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      interactionId: 'int-1',
+    });
+    await vi.waitFor(() => expect(mocks.recordAttemptFailure).toHaveBeenCalledTimes(1));
+    // The account is not known from a username: no subject is recorded, and nothing typed in.
+    expect(mocks.recordAttemptFailure.mock.calls[0]?.[2]).toEqual({
+      tenantId: 'tenant-a',
+      interactionId: 'int-1',
+      method: 'directory_password',
+      reasonCode: 'verification_failed',
+      userId: null,
+    });
+    expect(JSON.stringify(mocks.recordAttemptFailure.mock.calls)).not.toContain('alice');
+  });
+
+  it('records a refusal for too many tries before the directory is asked', async () => {
+    mocks.resolveAttemptInteraction.mockResolvedValueOnce('int-1');
+    mocks.rateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 300 });
+    const response = await createDirectoryPasswordLoginHandler(rejectingFetcher)(
+      withInteraction('int-1') as never
+    );
+    expect(response.status).toBe(429);
+    await vi.waitFor(() => expect(mocks.recordAttemptFailure).toHaveBeenCalledTimes(1));
+    expect(mocks.recordAttemptFailure.mock.calls[0]?.[2]).toMatchObject({
+      reasonCode: 'rate_limited',
+    });
+  });
+
+  it.each([
+    ['names no interaction', undefined],
+    ['names one that is not a live interaction of the tenant', 'int-forged'],
+  ])('records nothing when the request %s', async (_label, interactionId) => {
+    const response = await createDirectoryPasswordLoginHandler(rejectingFetcher)(
+      withInteraction(interactionId) as never
+    );
+    expect(response.status).toBe(401);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.recordAttemptFailure).not.toHaveBeenCalled();
   });
 });
 

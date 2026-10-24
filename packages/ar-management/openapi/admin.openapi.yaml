@@ -56762,7 +56762,12 @@ components:
                 additionalProperties: false
                 required: [method, reason_code, count, first_at, last_at]
                 properties:
-                  method: { type: string, enum: [passkey, totp, email_code, other] }
+                  method:
+                    {
+                      type: string,
+                      enum:
+                        [passkey, totp, email_code, directory_password, external_idp, saml, other],
+                    }
                   reason_code:
                     type: string
                     enum:
@@ -56779,6 +56784,14 @@ components:
                         account_unavailable,
                         guest_denied,
                         service_unavailable,
+                        account_not_linked,
+                        migration_blocked,
+                        upstream_error,
+                        email_not_verified,
+                        signup_disabled,
+                        assurance_not_met,
+                        policy_denied,
+                        provisioning_failed,
                         other,
                       ]
                   count: { type: integer, minimum: 1 }
@@ -56793,7 +56806,12 @@ components:
                 required: [created_at, method, result, reason_code]
                 properties:
                   created_at: { type: [integer, 'null'] }
-                  method: { type: string, enum: [passkey, totp, email_code, other] }
+                  method:
+                    {
+                      type: string,
+                      enum:
+                        [passkey, totp, email_code, directory_password, external_idp, saml, other],
+                    }
                   result: { type: string, enum: [failure] }
                   reason_code:
                     type: string
@@ -56811,6 +56829,14 @@ components:
                         account_unavailable,
                         guest_denied,
                         service_unavailable,
+                        account_not_linked,
+                        migration_blocked,
+                        upstream_error,
+                        email_not_verified,
+                        signup_disabled,
+                        assurance_not_met,
+                        policy_denied,
+                        provisioning_failed,
                         other,
                       ]
         - type: object

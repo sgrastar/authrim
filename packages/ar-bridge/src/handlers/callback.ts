@@ -14,8 +14,11 @@ import {
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import * as jose from 'jose';
-import type { Env } from '@authrim/ar-lib-core';
+import type { ChallengeStore, Env } from '@authrim/ar-lib-core';
 import {
+  resolveAuthCorePersistenceAdapterFromEnv,
+  scheduleSignInAttemptFailureRecord,
+  type SignInAttemptReasonCode,
   getSessionStoreForNewSession,
   readAccountSession,
   getUIConfig,
@@ -175,6 +178,24 @@ export function createHybridFragmentRelayResponse(): Response {
   });
 }
 
+type ProvisioningChallengeStore = Pick<
+  ChallengeStore,
+  'storeChallengeRpc' | 'getChallengeRpc' | 'consumeChallengeRpc'
+>;
+
+/** Keep the concrete RPC contract when crossing the legacy sharding helper's untyped stub. */
+async function getProvisioningChallengeStore(
+  env: Env,
+  challengeId: string,
+  tenantId: string
+): Promise<ProvisioningChallengeStore> {
+  return (await getChallengeStoreByChallengeId(
+    env,
+    challengeId,
+    tenantId
+  )) as ProvisioningChallengeStore;
+}
+
 /**
  * Generate authorization code for Direct Auth token exchange
  * TTL: 60 seconds, single-use
@@ -321,7 +342,10 @@ async function completeExternalAuthentication(
       tenantId,
     });
     const runtimeUser = await runtimeUsers.findById(result.userId);
-    if (!runtimeUser) return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
+    if (!runtimeUser) {
+      scheduleExternalSignInFailure(c, authState, result.userId, 'account_unavailable');
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
+    }
 
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     // session.default_ttl: external IdP sign-in has no lifetime setting of its own.
@@ -494,7 +518,7 @@ async function beginExternalIdpProvisioningContinuation(
   if (new TextEncoder().encode(payload).byteLength > 48 * 1024) {
     throw new Error('external_idp_provisioning_continuation_too_large');
   }
-  const store = await getChallengeStoreByChallengeId(c.env, id, continuation.authState.tenantId);
+  const store = await getProvisioningChallengeStore(c.env, id, continuation.authState.tenantId);
   await store.storeChallengeRpc({
     id,
     tenantId: continuation.authState.tenantId,
@@ -588,7 +612,7 @@ async function loadExternalIdpContinuation(
 ): Promise<{
   digest: string;
   id: string;
-  store: Awaited<ReturnType<typeof getChallengeStoreByChallengeId>>;
+  store: ProvisioningChallengeStore;
   continuation: ExternalIdpProvisioningContinuation;
 }> {
   if (!EXTERNAL_PROVISIONING_TOKEN.test(token) || !SAFE_CONTINUATION_TENANT.test(tenantId)) {
@@ -599,7 +623,7 @@ async function loadExternalIdpContinuation(
     throw new Error('external_idp_provisioning_browser_binding_failed');
   }
   const id = `external_idp_provisioning:${digest}`;
-  const store = await getChallengeStoreByChallengeId(c.env, id, tenantId);
+  const store = await getProvisioningChallengeStore(c.env, id, tenantId);
   const challenge = await store.getChallengeRpc(id);
   const encryptedPayload = challenge?.metadata?.encrypted_payload;
   if (
@@ -669,12 +693,22 @@ export async function handleExternalProvisioningStatus(
       throw new Error('external_idp_provisioning_status_mismatch');
     }
     if (status.status === 'failed') {
-      await loaded.store.consumeChallengeRpc({
+      const consumed = await loaded.store.consumeChallengeRpc({
         id: loaded.id,
         tenantId: loaded.continuation.authState.tenantId,
         type: 'external_idp_provisioning_resume',
         challenge: loaded.digest,
       });
+      // Only the successful durable challenge consumer may schedule this terminal failure.
+      // A crash after consumption can still lose a best-effort record; this is dedupe, not delivery.
+      if (consumed.userId === expected.userId) {
+        scheduleExternalSignInFailure(
+          c,
+          loaded.continuation.authState,
+          expected.userId,
+          'provisioning_failed'
+        );
+      }
       deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
     }
     return c.json(
@@ -699,6 +733,7 @@ export async function handleExternalProvisioningStatus(
 export async function handleExternalProvisioningResume(
   c: Context<{ Bindings: Env }>
 ): Promise<Response> {
+  let attempt: { state: ExternalIdpAuthState; userId: string } | null = null;
   try {
     const token = c.req.query('token');
     const tenantId = c.req.query('tenant');
@@ -714,6 +749,19 @@ export async function handleExternalProvisioningResume(
       flow: 'external_idp',
     });
     if (
+      status.status === 'failed' &&
+      status.operationId === expected.operationId &&
+      status.accountId === expected.accountId &&
+      status.userId === expected.userId
+    ) {
+      scheduleExternalSignInFailure(
+        c,
+        loaded.continuation.authState,
+        expected.userId,
+        'provisioning_failed'
+      );
+    }
+    if (
       status.status !== 'ready' ||
       status.operationId !== expected.operationId ||
       status.accountId !== expected.accountId ||
@@ -721,6 +769,8 @@ export async function handleExternalProvisioningResume(
     ) {
       throw new Error('external_idp_provisioning_not_ready');
     }
+    // Pending/not-ready, bad bindings and replayed continuations never reach this boundary.
+    attempt = { state: loaded.continuation.authState, userId: expected.userId };
     const provider = await getProviderByIdOrSlug(c.env, loaded.continuation.providerId, tenantId);
     if (!provider || provider.id !== expected.providerId) {
       throw new Error('external_idp_provisioning_provider_mismatch');
@@ -737,13 +787,21 @@ export async function handleExternalProvisioningResume(
       providerId: expected.providerId,
       providerUserId: expected.providerUserId,
     });
-    const consumed = await loaded.store.consumeChallengeRpc({
-      id: loaded.id,
-      tenantId,
-      type: 'external_idp_provisioning_resume',
-      challenge: loaded.digest,
-    });
+    const consumed = await loaded.store
+      .consumeChallengeRpc({
+        id: loaded.id,
+        tenantId,
+        type: 'external_idp_provisioning_resume',
+        challenge: loaded.digest,
+      })
+      .catch((error: unknown) => {
+        // A concurrent resume may have consumed it after this request loaded the challenge.
+        // That losing request is a replay, not another failed sign-in.
+        attempt = null;
+        throw error;
+      });
     if (consumed.userId !== expected.userId) {
+      attempt = null;
       throw new Error('external_idp_provisioning_consume_mismatch');
     }
     deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
@@ -767,6 +825,16 @@ export async function handleExternalProvisioningResume(
       },
     });
   } catch (error) {
+    if (attempt) {
+      scheduleExternalSignInFailure(
+        c,
+        attempt.state,
+        attempt.userId,
+        error instanceof ExternalIdPError
+          ? externalSignInAttemptReason(error)
+          : 'service_unavailable'
+      );
+    }
     if (isUsageGateError(error)) {
       return redirectWithError(c, error.code, 'Authentication failed. Please try again.');
     }
@@ -775,6 +843,80 @@ export async function handleExternalProvisioningResume(
       ExternalIdPErrorCode.CALLBACK_FAILED,
       'Authentication could not be resumed. Please try again.'
     );
+  }
+}
+
+/** Best-effort dedupe across callback and verified provisioning continuation retries. */
+function scheduleExternalSignInFailure(
+  c: Context<{ Bindings: Env }>,
+  state: ExternalIdpAuthState,
+  userId: string | null,
+  reasonCode: SignInAttemptReasonCode
+): void {
+  // A link is not a sign-in; an interaction from query/body is never accepted here.
+  if (state.userId || !state.attemptInteractionId) return;
+  scheduleSignInAttemptFailureRecord(
+    {
+      waitUntil: (promise) => c.executionCtx.waitUntil(promise),
+      core: () =>
+        resolveAuthCorePersistenceAdapterFromEnv(c.env, 'bridge-sign-in-attempt', {
+          tenantId: state.tenantId,
+        }),
+      env: c.env,
+      onError: (error) =>
+        getLogger(c)
+          .module('CALLBACK')
+          .warn('Failed to record a failed sign-in attempt', {
+            errorType: error instanceof Error ? error.name : 'unknown',
+          }),
+    },
+    {
+      tenantId: state.tenantId,
+      interactionId: state.attemptInteractionId,
+      method: 'external_idp',
+      reasonCode,
+      userId,
+      dedupeKey: state.id,
+    }
+  );
+}
+
+/** Why a failed external provider sign-in failed, in the attempt records' closed vocabulary. */
+function externalSignInAttemptReason(error: unknown): SignInAttemptReasonCode {
+  const code = error instanceof ExternalIdPError ? error.code : null;
+  switch (code) {
+    case ExternalIdPErrorCode.ACCOUNT_EXISTS_LINK_REQUIRED:
+    case ExternalIdPErrorCode.NO_ACCOUNT_FOUND:
+      return 'account_not_linked';
+    case ExternalIdPErrorCode.EMAIL_NOT_VERIFIED:
+    case ExternalIdPErrorCode.LOCAL_EMAIL_NOT_VERIFIED:
+      return 'email_not_verified';
+    case ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED:
+    case ExternalIdPErrorCode.SIGNUP_DISABLED:
+      return 'signup_disabled';
+    case ExternalIdPErrorCode.LOGIN_DISABLED:
+      return 'method_disabled';
+    case ExternalIdPErrorCode.PROVIDER_ERROR:
+      return 'upstream_error';
+    case ExternalIdPErrorCode.ACR_VALUES_NOT_SATISFIED:
+    case ExternalIdPErrorCode.REAUTH_NOT_PROVEN:
+      return 'assurance_not_met';
+    case ExternalIdPErrorCode.POLICY_ACCESS_DENIED:
+    case ExternalIdPErrorCode.POLICY_INTERACTION_REQUIRED:
+    case ExternalIdPErrorCode.POLICY_LOGIN_REQUIRED:
+    case ExternalIdPErrorCode.REQUIRED_CUSTOM_CLAIMS_MISSING:
+      return 'policy_denied';
+    case ExternalIdPErrorCode.ACCOUNT_CREATION_FAILED:
+    case ExternalIdPErrorCode.INVITATION_EMAIL_MISMATCH:
+      return 'provisioning_failed';
+    case ExternalIdPErrorCode.SETTINGS_UNAVAILABLE:
+    case ExternalIdPErrorCode.TOKEN_REVOCATION_FAILED:
+      return 'service_unavailable';
+    default:
+      // The same test the response below makes: an unmet acr is an assurance failure.
+      return error instanceof Error && error.message.includes('acr')
+        ? 'assurance_not_met'
+        : 'verification_failed';
   }
 }
 
@@ -817,6 +959,15 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     inviteReservationId: string;
     tenantId: string;
   } | null = null;
+  // The Flow interaction the sign-in's start checked, once the state is consumed: a failed
+  // sign-in (not a link) is recorded with it after the response.
+  let attempt: ExternalIdpAuthState | null = null;
+  // The account, once the identity resolved to one: a later failure carries its subject hash.
+  let attemptUserId: string | null = null;
+  const recordFailure = <T>(response: T, reasonCode: SignInAttemptReasonCode): T => {
+    if (attempt && !link) scheduleExternalSignInFailure(c, attempt, attemptUserId, reasonCode);
+    return response;
+  };
 
   if (c.req.method === 'GET' && !code && !state && !error && !responseJwt) {
     return createHybridFragmentRelayResponse();
@@ -886,6 +1037,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       });
       return redirectWithError(c, 'invalid_state', 'State validation failed or expired');
     }
+    if (authState.attemptInteractionId) {
+      attempt = authState;
+    }
 
     // Verify the provider ID matches (authState always stores the actual ID)
     if (authState.providerId !== provider.id) {
@@ -894,7 +1048,10 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         validationError: 'provider_mismatch',
         fapi2: fapi2Flow,
       });
-      return redirectWithError(c, 'invalid_state', 'Provider mismatch');
+      return recordFailure(
+        redirectWithError(c, 'invalid_state', 'Provider mismatch'),
+        'challenge_mismatch'
+      );
     }
     if (authState.userId) {
       link = {
@@ -1037,11 +1194,14 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           reason: error === 'access_denied' ? 'cancelled' : 'failed',
         });
       }
-      return redirectWithError(c, error, errorDescription);
+      return recordFailure(redirectWithError(c, error, errorDescription), 'upstream_error');
     }
     if (!code) {
       if (link) return redirectToLinkResult(c, link.tenantId, { linked: false, reason: 'failed' });
-      return redirectWithError(c, 'invalid_request', 'Missing code');
+      return recordFailure(
+        redirectWithError(c, 'invalid_request', 'Missing code'),
+        'upstream_error'
+      );
     }
 
     // 4b. Log authorization response (OIDF conformance)
@@ -1437,10 +1597,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     // Ensure sub is present (required for identity linking)
     if (!userInfo.sub) {
       if (link) return redirectToLinkResult(c, link.tenantId, { linked: false, reason: 'failed' });
-      return redirectWithError(
-        c,
-        ExternalIdPErrorCode.CALLBACK_FAILED,
-        'Provider did not return a user identifier. Check attributeMapping configuration.'
+      return recordFailure(
+        redirectWithError(
+          c,
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Provider did not return a user identifier. Check attributeMapping configuration.'
+        ),
+        'upstream_error'
       );
     }
 
@@ -1508,6 +1671,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     });
     // Created here (now or once provisioning finishes): the use goes to that account.
     if (result.isNewUser) unsettledInvitation = null;
+    if (typeof result.userId === 'string' && result.userId) attemptUserId = result.userId;
 
     if (result.status === 'pending') {
       return await beginExternalIdpProvisioningContinuation(c, {
@@ -1590,6 +1754,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         })
       );
     }
+
+    recordFailure(undefined, externalSignInAttemptReason(error));
 
     // Determine error code for event
     let errorCode: string = ExternalIdPErrorCode.CALLBACK_FAILED;
