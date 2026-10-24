@@ -441,24 +441,43 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       ]);
     });
 
-    it('removes a new link whose route was refused, and links it on the retry', async () => {
-      world.failDirectoryRoutePublication = 'auth_directory_route_authority_not_found';
+    it.each([
+      'auth_directory_route_authority_not_found',
+      'directory_identifier_reservation_conflict',
+    ])(
+      'removes a new link whose route was refused (%s), and links it on the retry',
+      async (error) => {
+        world.failDirectoryRoutePublication = error;
 
-      const failed = await signInWithDirectoryPassword(EMAIL);
+        const failed = await signInWithDirectoryPassword(EMAIL);
 
-      expect(failed.status).toBe(503);
+        expect(failed.status).toBe(503);
+        expect(world.createdSessions).toEqual([]);
+        // Not left linked without its route: a later sign-in with another address, routed to
+        // another account's database, would not see this link.
+        expect(
+          count(databases.accountCore.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
+        ).toBe(0);
+
+        world.failDirectoryRoutePublication = undefined;
+        const retried = await signInWithDirectoryPassword(EMAIL);
+
+        expect(retried.status).toBe(200);
+        expect(world.publishedDirectoryRoutes).toHaveLength(1);
+        expect(
+          count(databases.accountCore.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
+        ).toBe(1);
+      }
+    );
+
+    it('keeps an existing link when its route reservation conflicts', async () => {
+      insertDirectoryLink(databases.accountCore, USER);
+      world.failDirectoryRoutePublication = 'directory_identifier_reservation_conflict';
+
+      const response = await signInWithDirectoryPassword(EMAIL);
+
+      expect(response.status).toBe(503);
       expect(world.createdSessions).toEqual([]);
-      // Not left linked without its route: a later sign-in with another address, routed to
-      // another account's database, would not see this link.
-      expect(
-        count(databases.accountCore.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
-      ).toBe(0);
-
-      world.failDirectoryRoutePublication = undefined;
-      const retried = await signInWithDirectoryPassword(EMAIL);
-
-      expect(retried.status).toBe(200);
-      expect(world.publishedDirectoryRoutes).toHaveLength(1);
       expect(
         count(databases.accountCore.raw, 'SELECT COUNT(*) AS n FROM directory_identity_links')
       ).toBe(1);

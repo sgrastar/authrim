@@ -2424,6 +2424,7 @@ const DIRECTORY_ROUTE_REFUSED_ERRORS = new Set([
   'auth_directory_route_input_invalid',
   'auth_directory_route_account_mismatch',
   'auth_directory_route_authority_not_found',
+  'directory_identifier_reservation_conflict',
 ]);
 
 async function deleteDirectoryIdentityLink(

@@ -18,6 +18,7 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createAuditLog,
   deriveOidcSid,
   DeviceInstallationRepository,
   DeviceSecretRepository,
@@ -254,6 +255,7 @@ describe.each(scopes)('Native SSO device secrets at logout, %s tenant (real SQL)
     world.logoutClaims = undefined;
     world.failInvalidation = false;
     world.idTokenHint = undefined;
+    vi.mocked(createAuditLog).mockClear();
     seedUser(deviceSecretDb, USER);
     seedUser(deviceSecretDb, OTHER_USER);
     secrets = {
@@ -305,14 +307,17 @@ describe.each(scopes)('Native SSO device secrets at logout, %s tenant (real SQL)
     );
   }
 
-  async function rpInitiatedLogout(form: Record<string, string> = {}): Promise<Response> {
+  async function rpInitiatedLogout(
+    form: Record<string, string> = {},
+    browserSessionId: string | null = SESSION
+  ): Promise<Response> {
     return app(scope, databases).request(
       '/logout',
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          Cookie: `authrim_session=${SESSION}; authrim_logout_confirmation=confirm-1`,
+          Cookie: `${browserSessionId ? `authrim_session=${browserSessionId}; ` : ''}authrim_logout_confirmation=confirm-1`,
         },
         body: new URLSearchParams({ confirmation_token: 'confirm-1', ...form }).toString(),
       },
@@ -368,6 +373,88 @@ describe.each(scopes)('Native SSO device secrets at logout, %s tenant (real SQL)
     expect(response.status).toBe(200);
     expect(world.sessions.has(SESSION)).toBe(false);
     await expectOnlyTheEndedSessionsSecretsRevoked();
+  });
+
+  it.each([
+    ['RP-initiated', () => rpInitiatedLogout()],
+    ['back-channel', () => backChannelLogout()],
+    ['Direct Auth', () => directLogout()],
+    [
+      'RP-initiated with only an ID token hint',
+      () => {
+        world.idTokenHint = { userId: USER, clientId: 'client-a', sid: SESSION };
+        return rpInitiatedLogout({ id_token_hint: 'hint' }, null);
+      },
+    ],
+  ] as const)(
+    '%s logout remains retryable when session invalidation fails',
+    async (_label, logout) => {
+      world.failInvalidation = true;
+
+      const failed = await logout();
+
+      expect(failed.status).toBe(503);
+      expect(world.sessions.get(SESSION)).toBe(USER);
+      expect(failed.headers.get('set-cookie')).toBeNull();
+      await expectOnlyTheEndedSessionsSecretsRevoked();
+
+      const retried = await logout();
+
+      expect(retried.status).toBe(200);
+      expect(world.sessions.has(SESSION)).toBe(false);
+      await expectOnlyTheEndedSessionsSecretsRevoked();
+    }
+  );
+
+  it.each(['local', 'group', 'global'] as const)(
+    'records the %s device secret revocation scope in the logout audit',
+    async (logoutScope) => {
+      const sameAppOtherDevice = await issueDeviceSecret(deviceSecretDb, {
+        userId: USER,
+        sessionId: OTHER_DEVICE_SESSION,
+        clientId: 'client-a',
+      });
+
+      const response = await rpInitiatedLogout({ logout_scope: logoutScope });
+
+      expect(response.status).toBe(200);
+      const audit = vi
+        .mocked(createAuditLog)
+        .mock.calls.find(
+          ([, entry]) => entry.action === 'user.logout' && entry.resourceId === SESSION
+        )?.[1];
+      expect(audit).toBeDefined();
+      expect(JSON.parse(audit?.metadata ?? '{}')).toMatchObject({
+        logout_scope: logoutScope,
+        device_secret_revocation: {
+          scope: logoutScope,
+          revoked_device_secrets: logoutScope === 'local' ? 2 : logoutScope === 'group' ? 3 : 4,
+        },
+      });
+      expect(await exchangeOutcome(deviceSecretDb, sameAppOtherDevice)).toBe(
+        logoutScope === 'local' ? 'accepted' : 'revoked'
+      );
+      expect(await exchangeOutcome(deviceSecretDb, secrets.otherDevice)).toBe(
+        logoutScope === 'global' ? 'revoked' : 'accepted'
+      );
+      expect(await exchangeOutcome(deviceSecretDb, secrets.otherUser)).toBe('accepted');
+    }
+  );
+
+  it('records the default group scope in the back-channel logout audit', async () => {
+    const response = await backChannelLogout();
+
+    expect(response.status).toBe(200);
+    const audit = vi
+      .mocked(createAuditLog)
+      .mock.calls.find(
+        ([, entry]) => entry.action === 'user.logout' && entry.resourceId === SESSION
+      )?.[1];
+    expect(audit).toBeDefined();
+    expect(JSON.parse(audit?.metadata ?? '{}')).toMatchObject({
+      logout_scope: 'group',
+      device_secret_revocation: { scope: 'group', revoked_device_secrets: 2 },
+    });
   });
 
   it('narrows to the id_token_hint’s client only the session the hint is for', async () => {

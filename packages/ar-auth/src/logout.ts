@@ -101,9 +101,8 @@ const LOGOUT_CONFIRMATION_COOKIE_NAME = 'authrim_logout_confirmation';
 const LOGOUT_CONFIRMATION_TTL_SECONDS = 300;
 
 /**
- * The answer to a logout that could not revoke what a session leaves behind (its guest resume
- * credential, its Native SSO device secrets) before ending it: the session is kept, so a retry
- * can still find what to revoke. Null for any other error.
+ * The answer to a logout that could not revoke a session's credentials or confirm session
+ * invalidation: cookies are kept so the caller can retry. Null for any other error.
  */
 function signOutUnavailableResponse(
   c: Context<{ Bindings: Env }>,
@@ -119,7 +118,10 @@ function signOutUnavailableResponse(
       503
     );
   }
-  if (error.message === 'device_secret_revocation_failed') {
+  if (
+    error.message === 'device_secret_revocation_failed' ||
+    error.message === 'session_invalidation_failed'
+  ) {
     return c.json(
       { error: 'temporarily_unavailable', error_description: 'Sign-out could not be completed' },
       503
@@ -541,7 +543,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         })) as Session | null;
         await revokeGuestResumeForSession(c, cookieSession);
         await revokeEndingSessionDeviceSecrets(sessionId, cookieSession);
-        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
+        const deleted = await sessionStore
+          .invalidateSessionRpc(sessionId)
+          .catch((error: unknown) => {
+            throw new Error('session_invalidation_failed', { cause: error });
+          });
 
         if (deleted) {
           deletedSessions.push(sessionId);
@@ -618,7 +624,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         })) as Session | null;
         await revokeGuestResumeForSession(c, hintedSession);
         await revokeEndingSessionDeviceSecrets(hintedSessionId, hintedSession);
-        const deleted = await sessionStore.invalidateSessionRpc(hintedSessionId);
+        const deleted = await sessionStore
+          .invalidateSessionRpc(hintedSessionId)
+          .catch((error: unknown) => {
+            throw new Error('session_invalidation_failed', { cause: error });
+          });
 
         if (deleted) {
           deletedSessions.push(hintedSessionId);
@@ -1442,7 +1452,11 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             });
           }
         }
-        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
+        const deleted = await sessionStore
+          .invalidateSessionRpc(sessionId)
+          .catch((error: unknown) => {
+            throw new Error('session_invalidation_failed', { cause: error });
+          });
 
         if (deleted) {
           sessionDeleted = true;

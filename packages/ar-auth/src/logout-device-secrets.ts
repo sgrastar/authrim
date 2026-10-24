@@ -204,7 +204,7 @@ export async function revokeSessionDeviceSecrets(
   }
   // An account-wide revocation names the user, and needs none of the session's identifiers.
   if (logoutScope === 'global') await revoke({ scope: 'global' });
-  return merged ?? noRevocation(input);
+  return { ...(merged ?? noRevocation(input)), scope: logoutScope };
 }
 
 /** The revocations of several ended sessions as one, for the logout's audit record. */
