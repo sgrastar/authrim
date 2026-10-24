@@ -34,6 +34,24 @@ export interface DestinationProfileConsentDescriptor {
   fields: DestinationProfileConsentField[];
 }
 
+/**
+ * What the release filter decided for each field of the Destination Profile, for an explanation of
+ * the release (never a value). `excludedBy`: the field is not in play for this call, because it is
+ * not listed for the surface or the scopes do not release it. `consent`: whether the user's
+ * selection lets an optional field through.
+ */
+export interface OidcDestinationReleaseTrace {
+  profileId: string;
+  fields: Array<{
+    claim: string;
+    required: boolean;
+    /** The scopes of which one releases the field (see `resolveOidcFieldRequiredScopes`). */
+    requiredScopes: string[];
+    excludedBy?: 'surface' | 'scope';
+    consent: 'not_required' | 'granted' | 'missing';
+  }>;
+}
+
 interface DestinationProfileRow {
   profile_id: string;
   destination_type: string;
@@ -306,6 +324,19 @@ export async function filterOidcClaimsByDestinationConsent(input: {
    */
   authorizedClaims?: ReadonlySet<string>;
   claims: Record<string, unknown>;
+  /**
+   * For a made-up subject (an explanation for a test user): the user's selection is taken to be
+   * every optional field (`all`) or none, and no consent record is read for its ID.
+   */
+  assumedConsent?: 'all' | 'none';
+  /** Filled with what was decided for each field (an explanation; never a value). */
+  trace?: { release?: OidcDestinationReleaseTrace };
+  /**
+   * For an explanation: claims whose value is a placeholder for one the explanation did not
+   * derive (a test user's persistent identifier). Their values are not checked against the
+   * profile, which judges the real value.
+   */
+  unevaluatedClaims?: ReadonlySet<string>;
 }): Promise<Record<string, unknown>> {
   const descriptor = await loadDestinationProfileConsentDescriptor(
     input.adminAdapter,
@@ -326,10 +357,10 @@ export async function filterOidcClaimsByDestinationConsent(input: {
   }
 
   const grantedScopes = input.grantedScopes ? new Set(input.grantedScopes) : null;
-  const applicableFields = descriptor.fields.filter((field) => {
+  const exclusion = (field: DestinationProfileConsentField): 'surface' | 'scope' | null => {
     // `sub` is an OIDC protocol invariant. Legacy profiles may still carry narrower
     // surface or scope metadata, but runtime release must never make it conditional.
-    if (field.key === 'sub') return true;
+    if (field.key === 'sub') return null;
     if (
       input.surface &&
       field.surfaces.length > 0 &&
@@ -337,7 +368,7 @@ export async function filterOidcClaimsByDestinationConsent(input: {
         field.surfaces.includes(surface)
       )
     ) {
-      return false;
+      return 'surface';
     }
     const authorizedScope = input.authorizedClaims?.has(field.key)
       ? OIDC_STANDARD_CLAIM_SCOPE[field.key]
@@ -347,8 +378,42 @@ export async function filterOidcClaimsByDestinationConsent(input: {
       authorizedScope && grantedScopes
         ? new Set([...grantedScopes, authorizedScope])
         : grantedScopes
-    );
-  });
+    )
+      ? null
+      : 'scope';
+  };
+  // Judged per entry of the profile, as before (a profile may list a claim more than once).
+  const exclusions = descriptor.fields.map(exclusion);
+  const applicableFields = descriptor.fields.filter((_, index) => exclusions[index] === null);
+  const recordTrace = (selected: ReadonlySet<string> | null) => {
+    if (!input.trace) return;
+    input.trace.release = {
+      profileId: descriptor.profileId,
+      fields: descriptor.fields.map((field, index) => {
+        const excluded = exclusions[index];
+        return {
+          claim: field.key,
+          required: field.required,
+          requiredScopes: resolveOidcFieldRequiredScopes(field),
+          ...(excluded ? { excludedBy: excluded } : {}),
+          consent: field.required
+            ? ('not_required' as const)
+            : selected?.has(field.key)
+              ? ('granted' as const)
+              : ('missing' as const),
+        };
+      }),
+    };
+  };
+  // An assumed selection is recorded before the checks of the values, so an explanation shows
+  // the fields even when one of them fails the release.
+  const assumedSelection =
+    input.assumedConsent === undefined
+      ? undefined
+      : input.assumedConsent === 'all'
+        ? new Set(descriptor.fields.map((field) => field.key))
+        : null;
+  if (assumedSelection !== undefined) recordTrace(assumedSelection);
   const profileFields = new Map(applicableFields.map((field) => [field.key, field]));
   const filtered = Object.fromEntries(
     Object.entries(input.claims).filter(
@@ -364,19 +429,29 @@ export async function filterOidcClaimsByDestinationConsent(input: {
       'sub'
     );
   }
-  validateReleasedDestinationFields(applicableFields, filtered, 'OIDC');
+  validateReleasedDestinationFields(
+    input.unevaluatedClaims
+      ? applicableFields.filter((field) => !input.unevaluatedClaims?.has(field.key))
+      : applicableFields,
+    filtered,
+    'OIDC'
+  );
 
-  const selected = await loadSelectedDestinationFields({
-    coreAdapter: input.coreAdapter,
-    tenantId: input.tenantId,
-    subjectId: input.subjectId,
-    protocol: 'oidc',
-    recipientType: 'oidc_client',
-    recipientId: input.clientId,
-    profileId: descriptor.profileId,
-    profileVersionId: descriptor.profileVersionId,
-    jsonColumn: 'released_claims_json',
-  });
+  const selected =
+    assumedSelection !== undefined
+      ? assumedSelection && { fields: assumedSelection }
+      : await loadSelectedDestinationFields({
+          coreAdapter: input.coreAdapter,
+          tenantId: input.tenantId,
+          subjectId: input.subjectId,
+          protocol: 'oidc',
+          recipientType: 'oidc_client',
+          recipientId: input.clientId,
+          profileId: descriptor.profileId,
+          profileVersionId: descriptor.profileVersionId,
+          jsonColumn: 'released_claims_json',
+        });
+  if (assumedSelection === undefined) recordTrace(selected?.fields ?? null);
   if (!selected) {
     for (const field of applicableFields) {
       if (!field.required) delete filtered[field.key];
