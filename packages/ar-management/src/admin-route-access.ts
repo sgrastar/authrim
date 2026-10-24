@@ -912,6 +912,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'identity mapping sets'
   ),
+  // Writes nothing: what a change of the content would do, app by app (so the apps' read too).
+  rule({
+    pattern: '/api/admin/identity-mapping/sets/:id/preview-change',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.CLIENTS_READ],
+    description: 'identity mapping set change preview',
+  }),
   ...byMethod(
     '/api/admin/identity-mapping/sets/:id',
     ADMIN_PERMISSIONS.SETTINGS_READ,
