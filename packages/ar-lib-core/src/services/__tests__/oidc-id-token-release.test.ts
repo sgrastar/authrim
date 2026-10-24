@@ -17,9 +17,13 @@ vi.mock('../oidc-attribute-release-consent', async () => ({
   enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent,
 }));
 
-import { OIDCIdentityMappingRuntimeError } from '../oidc-identity-mapping';
+import {
+  OIDCIdentityMappingRuntimeError,
+  type ApplyOIDCIdentityMappingInput,
+} from '../oidc-identity-mapping';
 import { OIDCAttributeReleaseConsentRequiredError } from '../oidc-attribute-release-consent';
 import { openSubjectReference } from '../subject-reference';
+import * as failureRecording from '../identity-mapping-failures';
 import {
   enforceIDTokenAttributeRelease,
   IDTokenSubjectReferenceUnavailableError,
@@ -70,6 +74,85 @@ describe('ID token release', () => {
   });
 
   describe('mapIDTokenClaims', () => {
+    it('schedules once with scalar coordinates and preserves failures if the scheduler throws', async () => {
+      const scheduled = vi
+        .spyOn(failureRecording, 'scheduleIdentityMappingFailure')
+        .mockImplementation(() => {
+          throw new Error('scheduler unavailable');
+        });
+      try {
+        const { ctx } = context();
+        mockApplyOIDCIdentityMapping.mockImplementation(
+          async (input: ApplyOIDCIdentityMappingInput) => {
+            if (input.failureContext)
+              Object.assign(input.failureContext, {
+                code: 'set_inactive',
+                tier: 'tenant_default',
+                setId: 'set-a',
+              });
+            throw new OIDCIdentityMappingRuntimeError('private-error-canary', {
+              code: 'policy.missing_identity_mapping_binding',
+            });
+          }
+        );
+        const result = await mapIDTokenClaims(ctx, {
+          ...baseClaims,
+          email: 'private-value-canary',
+        });
+        expect(result).toMatchObject({
+          ok: false,
+          failure: { status: 400, error: 'invalid_client' },
+        });
+        expect(scheduled).toHaveBeenCalledExactlyOnceWith({
+          env: ctx.env,
+          tenantId: 'tenant-a',
+          clientId: 'client-a',
+          failure: { code: 'set_inactive', tier: 'tenant_default', setId: 'set-a' },
+          waitUntil: undefined,
+        });
+        expect(JSON.stringify(scheduled.mock.calls.map(([input]) => input.failure))).not.toMatch(
+          /private|claims|user|selector|trace/
+        );
+      } finally {
+        scheduled.mockRestore();
+      }
+    });
+
+    it('never schedules mapping failure accounting for success, consent refusal or a subject-reference failure', async () => {
+      const scheduled = vi.spyOn(failureRecording, 'scheduleIdentityMappingFailure');
+      try {
+        const { ctx } = context({});
+        mockApplyOIDCIdentityMapping.mockResolvedValue({
+          claims: { ...baseClaims, sub: 'pairwise' },
+          binding: null,
+        });
+        mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue({ action: 'release' });
+        expect(await mapIDTokenClaims(ctx, baseClaims)).toMatchObject({ ok: true });
+        expect(
+          await releaseIDTokenClaims(ctx, {
+            claims: baseClaims,
+            grant: { userId: 'user-1', consentGeneration: 1 },
+          })
+        ).toMatchObject({ ok: false, failure: { kind: 'subject_reference_unavailable' } });
+        mockEnforceOIDCAttributeReleaseConsent.mockRejectedValue(
+          new OIDCAttributeReleaseConsentRequiredError({
+            claimSetHash: 'hash',
+            reasonCodes: ['release.attribute_consent.missing'],
+            consentMode: 'once',
+            claimNames: ['sub'],
+          })
+        );
+        expect(
+          await releaseIDTokenClaims(ctx, {
+            claims: baseClaims,
+            grant: { userId: 'user-1', consentGeneration: 1 },
+          })
+        ).toMatchObject({ ok: false, failure: { kind: 'consent_required' } });
+        expect(scheduled).not.toHaveBeenCalled();
+      } finally {
+        scheduled.mockRestore();
+      }
+    });
     it("applies the app's identity mapping for the ID token surface", async () => {
       const { ctx, loadUserAttributes } = context();
       mockApplyOIDCIdentityMapping.mockResolvedValue({
@@ -85,6 +168,7 @@ describe('ID token release', () => {
         env: ctx.env,
         tenantId: 'tenant-a',
         clientId: 'client-a',
+        failureContext: {},
         sectorIdentifier: 'https://sector.example.com/uris.json',
         selector: { fieldMappingSetId: 'set-1' },
         destinationSurface: 'id_token',

@@ -36,6 +36,7 @@ function createHarness(permissions: string[], roles: string[] = []) {
 
   app.get('/api/admin/users', (c) => c.json({ ok: true }));
   app.get('/api/admin/identity-mapping/history', (c) => c.json({ ok: true }));
+  app.get('/api/admin/identity-mapping/failures', (c) => c.json({ ok: true }));
   app.post('/api/admin/identity-mapping/history/history-1/restore', (c) => c.json({ ok: true }));
   app.get('/api/admin/investigations/subjects/subject-1/status', (c) => c.json({ ok: true }));
   app.get('/api/admin/email-deliveries', (c) => c.json({ ok: true }));
@@ -122,6 +123,8 @@ describe('declared admin route access', () => {
     const clientWriter = createHarness([ADMIN_PERMISSIONS.CLIENTS_UPDATE]);
     const path = '/api/admin/identity-mapping/history/history-1/restore';
     expect((await reader.request('/api/admin/identity-mapping/history')).status).toBe(200);
+    expect((await reader.request('/api/admin/identity-mapping/failures')).status).toBe(200);
+    expect((await clientWriter.request('/api/admin/identity-mapping/failures')).status).toBe(403);
     expect((await reader.request(path, { method: 'POST' })).status).toBe(403);
     expect((await settingsWriter.request(path, { method: 'POST' })).status).toBe(200);
     expect((await clientWriter.request(path, { method: 'POST' })).status).toBe(200);

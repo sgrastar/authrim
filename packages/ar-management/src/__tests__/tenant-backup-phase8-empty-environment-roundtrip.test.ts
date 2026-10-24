@@ -1,5 +1,4 @@
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
@@ -13,6 +12,7 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/bundle-codec';
 import type { TenantBundleManifestExpectation } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
 import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
+import { selectInstalledSqliteDatasets } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
 import { createPhase8SqliteInspectionPolicies } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-references';
 import { portableLinkedIdentityTokens } from '@authrim/ar-lib-core/services/tenant-portability/portable-linked-identity-tokens';
@@ -87,23 +87,27 @@ function freshDatabase(family: Family) {
   return database;
 }
 
-function schemaAdapter(database: DatabaseSync) {
+function schemaAdapter(database: SQLiteDatabase) {
+  const values = (params: unknown[]) => params.map((value) => value as SQLInputValue);
   return {
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
-      return database.prepare(sql).all(...params) as T[];
+      return database.prepare(sql).all(...values(params)) as T[];
     },
     async queryOne<T>(sql: string, params: unknown[] = []): Promise<T | null> {
-      return (database.prepare(sql).get(...params) as T | undefined) ?? null;
+      return (database.prepare(sql).get(...values(params)) as T | undefined) ?? null;
     },
     async execute(sql: string, params: unknown[] = []) {
-      return { success: true, rowsAffected: Number(database.prepare(sql).run(...params).changes) };
+      return {
+        success: true,
+        rowsAffected: Number(database.prepare(sql).run(...values(params)).changes),
+      };
     },
   };
 }
 
 /** An import request for tenant-a, stored where the restore reads it, with `authority`. */
 async function importRequest(
-  database: DatabaseSync,
+  database: SQLiteDatabase,
   id: string,
   authority: {
     actorId: string;
@@ -152,7 +156,10 @@ async function phase8Plan() {
   }
 }
 
-function applySnapshot(database: DatabaseSync, planned: readonly PlannedInstalledSqliteDataset[]) {
+function applySnapshot(
+  database: SQLiteDatabase,
+  planned: readonly PlannedInstalledSqliteDataset[]
+) {
   database.exec(SQLITE_SNAPSHOT_SCHEMA);
   const captures = [
     ...new Map(planned.map((entry) => [entry.capture.table, entry.capture])).values(),
@@ -173,6 +180,107 @@ async function* values<T>(items: readonly T[]) {
 }
 
 describe('Phase 8 empty-environment SQL roundtrip', () => {
+  // Six migrated databases and installed-schema inspection need the same local CI coverage
+  // budget as the other real-SQL cases; assertions and the global timeout stay unchanged.
+  it('roundtrips failure aggregates selected by last_at with their complete cumulative count', async () => {
+    const planned = await phase8Plan();
+    const entry = planned.find(({ dataset }) => dataset.id === 'admin.identity_mapping_failures');
+    if (!entry) throw new Error('mapping_failure_dataset_missing');
+    const source = freshDatabase('admin');
+    const target = freshDatabase('admin');
+    const boundaryUnixMs = 100 * 86_400_000;
+    const lower = boundaryUnixMs - 7 * 86_400_000;
+    const chosen = {
+      settings: false,
+      users: false,
+      admin: false,
+      artifacts: false,
+      logs: { audit: false, other: true, sensitive: false, period: 7 as const },
+    };
+    try {
+      const insert = source.prepare(`INSERT INTO identity_mapping_failures
+        (id,tenant_id,client_id,code,tier,set_id,first_at,last_at,count)
+        VALUES (?,?,?,'set_missing',NULL,NULL,1,?,?)`);
+      for (const [id, lastAt, count] of [
+        ['a', lower - 1, 99],
+        ['b', lower, 12345],
+        ['c', boundaryUnixMs, 54321],
+        ['d', boundaryUnixMs + 1, 12],
+      ] as const)
+        insert.run(id.repeat(64), 'tenant-a', `client-${id}`, lastAt, count);
+      insert.run('e'.repeat(64), 'tenant-b', 'other-tenant-client', boundaryUnixMs, 999);
+      applySnapshot(source, [entry]);
+      // The export uses T0 even when this mutable tuple is incremented after capture.
+      source
+        .prepare('UPDATE identity_mapping_failures SET count=count+1,last_at=? WHERE id=?')
+        .run(boundaryUnixMs + 2, 'b'.repeat(64));
+      const filter = createPhase8TenantBackupRowFilter();
+      const selectedRows: string[] = [];
+      for (const other of [false, true]) {
+        const datasets = selectInstalledSqliteDatasets(
+          PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
+          { ...chosen, logs: { ...chosen.logs, audit: !other, other } }
+        );
+        expect(datasets.some(({ id }) => id === entry.dataset.id)).toBe(other);
+        if (!other) continue;
+        const rows = source
+          .prepare(sqliteSnapshotPageQuery(entry.capture, 'json'))
+          .all('phase8-snapshot', 'tenant-a', '', 100) as Array<{ row_json: string | null }>;
+        for (const { row_json: rowJson } of rows) {
+          if (
+            rowJson !== null &&
+            (await filter({
+              datasetId: entry.dataset.id,
+              rowJson,
+              boundaryUnixMs,
+              selection: chosen,
+            } as never))
+          )
+            selectedRows.push(rowJson);
+        }
+      }
+      expect(selectedRows).toHaveLength(2);
+      const policy = createPhase8SqliteInspectionPolicies(planned, {
+        tenantKey: targetTenantKey,
+        validateAdminEnvelope: async () => {},
+        validatePhase8Envelope: async () => {},
+        resolveAdminReference: async (_context, sourceAdminId) => sourceAdminId,
+        resolvePluginReference: async (_context, sourceInstallationId) => sourceInstallationId,
+        restoreHold: { write: async () => {}, verify: async () => {} },
+      }).find(({ dataset }) => dataset.id === entry.dataset.id);
+      if (!policy) throw new Error('mapping_failure_policy_missing');
+      expect(policy.restoreHold).toBeUndefined();
+      expect(PHASE8_TRANSFORMED_SQLITE_DATASETS).not.toContain(entry.dataset.id);
+      for (const rowJson of selectedRows) {
+        const row = JSON.parse(rowJson) as Record<string, readonly [string, string | null]>;
+        expect(
+          await policy.inspectRow(row, {
+            module: 'logs',
+            collection: entry.dataset.id,
+            tenantId: 'tenant-a',
+            id: String(row.id[1]),
+          })
+        ).toEqual([]);
+        const restored = sqliteSnapshotRowInsert(entry.table, entry.capture.columns, rowJson);
+        target.prepare(restored.sql).run(...restored.params);
+      }
+      expect(
+        target
+          .prepare('SELECT id,first_at,last_at,count FROM identity_mapping_failures ORDER BY id')
+          .all()
+      ).toEqual([
+        { id: 'b'.repeat(64), first_at: 1, last_at: lower, count: 12345 },
+        { id: 'c'.repeat(64), first_at: 1, last_at: boundaryUnixMs, count: 54321 },
+      ]);
+      expect(
+        source.prepare('SELECT count FROM identity_mapping_failures WHERE id=?').get('b'.repeat(64))
+      ).toEqual({ count: 12346 });
+    } finally {
+      source.close();
+      target.close();
+    }
+  }, 20_000);
+
   it('rejects a shard whose installed schema cannot carry every family dataset', async () => {
     const coreA = freshDatabase('core');
     const coreB = freshDatabase('core');
@@ -280,6 +388,10 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
           '{"institution.scopes":["other-university.example"]}',
           'sha256:${'a'.repeat(16)}',1,'applied',1,1
         );
+        INSERT INTO identity_mapping_failures
+          (id,tenant_id,client_id,code,tier,set_id,first_at,last_at,count)
+        VALUES('${'f'.repeat(64)}','tenant-a','deleted-client','set_missing',
+          'platform_default','deleted-set',1,1000,777);
       `);
       target.admin.exec(`
         INSERT INTO admin_users(
@@ -313,9 +425,11 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       ).toEqual([...PORTABLE_TENANT_KEY_SQLITE_DATASETS].sort());
       const boundaryUnixMs = 10_000_000;
       for (const entry of planned) {
-        const rows = source[entry.family as Family]
-          .prepare(sqliteSnapshotPageQuery(entry.capture, 'json', entry.partitions))
-          .all('phase8-snapshot', 'tenant-a', '', 10_000)
+        const rows = (
+          source[entry.family as Family]
+            .prepare(sqliteSnapshotPageQuery(entry.capture, 'json', entry.partitions))
+            .all('phase8-snapshot', 'tenant-a', '', 10_000) as Array<Record<string, unknown>>
+        )
           // A progress row (row_json NULL) only moves past other tenants' rows.
           .filter((row: Record<string, unknown>) => row.row_json !== null)
           .map((row: Record<string, unknown>) => String(row.row_json));
@@ -550,6 +664,21 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         1
       );
       expect(restored.size).toBe(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length);
+      expect(
+        target.admin
+          .prepare(
+            'SELECT client_id,code,tier,set_id,first_at,last_at,count FROM identity_mapping_failures'
+          )
+          .get()
+      ).toEqual({
+        client_id: 'deleted-client',
+        code: 'set_missing',
+        tier: 'platform_default',
+        set_id: 'deleted-set',
+        first_at: 1,
+        last_at: 1000,
+        count: 777,
+      });
       expect(JSON.parse(restored.get('core.tenants')![0]).tenant_key).toEqual([
         'text',
         PORTABLE_TENANT_KEY,

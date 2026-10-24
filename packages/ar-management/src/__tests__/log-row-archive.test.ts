@@ -162,6 +162,7 @@ function adminDb(): SQLiteDatabase {
   db.exec(migration('admin/d1/013_tenant_backup_snapshot_storage.sql'));
   db.exec(migration('admin/d1/033_tenant_backup_r2_generation_retention.sql'));
   db.exec(migration('admin/d1/047_log_row_archive.sql'));
+  db.exec(migration('admin/d1/051_identity_mapping_failures.sql'));
   return db;
 }
 
@@ -243,6 +244,37 @@ describe('log row archive', () => {
   it('archives only tables whose event time is an integer in milliseconds or seconds', () => {
     for (const table of LOG_ROW_ARCHIVE_TABLES)
       expect(['ms', 's']).toContain(PHASE8_LOG_TIMESTAMP_COLUMNS[table.datasetId]?.unit);
+  });
+
+  it.each([0, 7])('keeps mutable failure aggregates in D1 with move period %i', async (days) => {
+    settings.days = days;
+    admin
+      .prepare(
+        `INSERT INTO identity_mapping_failures
+      (id,tenant_id,client_id,code,tier,set_id,first_at,last_at,count)
+      VALUES (?,?,?,'set_missing',NULL,NULL,?,?,12345)`
+      )
+      .run('a'.repeat(64), 'tenant-a', 'client-a', 1, NOW - 30 * DAY);
+    core
+      .prepare('INSERT INTO event_log VALUES (?,?,?,?,?)')
+      .run('old-event', 'tenant-a', 'normal', NOW - 30 * DAY, null);
+
+    expect(LOG_ROW_ARCHIVE_TABLES.map(({ datasetId }) => datasetId)).not.toContain(
+      'admin.identity_mapping_failures'
+    );
+    expect(await run()).toMatchObject(days > 0 ? { enabled: true, moved: 1 } : { enabled: false });
+    expect(
+      admin.prepare('SELECT first_at,last_at,count FROM identity_mapping_failures').get()
+    ).toEqual({ first_at: 1, last_at: NOW - 30 * DAY, count: 12345 });
+    admin.prepare('UPDATE identity_mapping_failures SET count=count+1,last_at=?').run(NOW);
+    expect(await run()).toMatchObject(days > 0 ? { enabled: true, moved: 0 } : { enabled: false });
+    expect(
+      admin.prepare('SELECT first_at,last_at,count FROM identity_mapping_failures').get()
+    ).toEqual({ first_at: 1, last_at: NOW, count: 12346 });
+    expect(catalog().map(({ source_table }) => source_table)).not.toContain(
+      'admin.identity_mapping_failures'
+    );
+    expect(archive.objects.size).toBe(days > 0 ? 1 : 0);
   });
 
   it('archives and deletes only committed mapping history, preserving pending intents', async () => {

@@ -3,6 +3,7 @@ import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mappin
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
+import type { IdentityMappingFailureContext } from './identity-mapping-failures';
 import {
   createCustomClaimSchemaResolverFromSources,
   loadFeatureConfig,
@@ -105,6 +106,8 @@ export interface ApplyOIDCIdentityMappingInput {
     | ((names: string[]) => Promise<Record<string, unknown> | null>);
   /** For an explanation: filled with what each step decided (see `OIDCReleaseTrace`). */
   trace?: OIDCReleaseTrace;
+  /** Scalar failure coordinates for issuance; never a trace, claim value or account identifier. */
+  failureContext?: IdentityMappingFailureContext;
   /**
    * Read the settings that decide the Mapping Set past the cache (a view that must show a value
    * just saved). An issuance leaves it unset.
@@ -198,6 +201,15 @@ export async function applyOIDCIdentityMapping(
     });
   } catch (error) {
     if (
+      input.failureContext &&
+      (error instanceof IdentityMappingSelectionError ||
+        error instanceof IdentityMappingResolutionError)
+    ) {
+      input.failureContext.code = error.code;
+      if (error.tier) input.failureContext.tier = error.tier;
+      if (error instanceof IdentityMappingResolutionError) input.failureContext.setId = error.setId;
+    }
+    if (
       input.trace &&
       (error instanceof IdentityMappingSelectionError ||
         error instanceof IdentityMappingResolutionError)
@@ -211,6 +223,10 @@ export async function applyOIDCIdentityMapping(
     throw toOidcIdentityMappingRuntimeError(error, { clientId: input.clientId });
   }
   const { selection, binding } = resolution;
+  if (input.failureContext && selection.kind === 'bound') {
+    input.failureContext.tier = selection.tier;
+    input.failureContext.setId = selection.setId;
+  }
   if (input.trace) {
     input.trace.selection = selection;
     input.trace.binding = binding

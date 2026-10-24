@@ -18,6 +18,8 @@ import {
 } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
+import type { IdentityMappingFailureRow } from '@authrim/ar-lib-core/services/identity-mapping-failures';
+import { adapterOver, migrate, type SqliteDatabase } from './helpers/real-sql';
 
 /** Save an older `system_settings` document's values as the platform's Settings API values. */
 async function putSystemSettings(
@@ -2842,6 +2844,18 @@ describe('Authorization Handler', () => {
       const ROOT_KEY = 'ab'.repeat(32);
       const PAIRWISE_SUB = 'pairwise-for-test-client';
 
+      function failureRecordingStore() {
+        const db = migrate('admin') as SqliteDatabase & { close(): void };
+        return {
+          db,
+          adapter: adapterOver(db),
+          rows: () =>
+            db
+              .prepare('SELECT * FROM identity_mapping_failures')
+              .all() as IdentityMappingFailureRow[],
+        };
+      }
+
       /** The left half of the SHA-256 of a value, as at_hash and c_hash carry it. */
       const halfHash = (value: string) =>
         Buffer.from(createHash('sha256').update(value).digest().subarray(0, 16)).toString(
@@ -2856,6 +2870,7 @@ describe('Authorization Handler', () => {
           claims?: Record<string, unknown>;
           client?: Record<string, unknown>;
           mapping?: (input: { claims: Record<string, unknown> }) => unknown;
+          waitUntil?: (work: Promise<unknown>) => void;
         } = {}
       ) {
         mockGetClient.mockResolvedValue({
@@ -2896,7 +2911,10 @@ describe('Authorization Handler', () => {
             method: 'GET',
             headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
           },
-          env
+          env,
+          options.waitUntil
+            ? { waitUntil: options.waitUntil, passThroughOnException() {}, props: {} }
+            : undefined
         );
         expect(response.status).toBe(302);
         return new URLSearchParams(new URL(response.headers.get('Location')!).hash.slice(1));
@@ -2941,6 +2959,71 @@ describe('Authorization Handler', () => {
         sub: PAIRWISE_SUB,
         department: 'research',
       });
+
+      it.each(['id_token', 'code id_token'])(
+        'records one real resolution failure for %s without changing the redirect error',
+        async (responseType) => {
+          const store = failureRecordingStore();
+          const pending: Promise<unknown>[] = [];
+          Object.assign(env, { DB_ADMIN: store.adapter });
+          try {
+            const fragment = await authorizeFor(responseType, {
+              client: { identity_mapping: { fieldMappingSetId: 'set-gone' } },
+              waitUntil: (work) => pending.push(work),
+            });
+            expect(fragment.get('error')).toBe('server_error');
+            expect(fragment.get('id_token')).toBeNull();
+            expect(fragment.get('code')).toBeNull();
+            await Promise.all(pending);
+            expect(store.rows()).toHaveLength(1);
+            expect(store.rows()[0]).toMatchObject({
+              tenant_id: 'default',
+              client_id: 'test-client',
+              code: 'set_missing',
+              tier: 'client',
+              set_id: 'set-gone',
+              count: 1,
+            });
+            expect(JSON.stringify(store.rows())).not.toMatch(
+              /mapped-user|alice@example.com|claims|stack/
+            );
+          } finally {
+            await Promise.all(pending);
+            store.db.close();
+          }
+        }
+      );
+
+      it.each(['id_token', 'code id_token'])(
+        'preserves the %s redirect error when recording the failure cannot write',
+        async (responseType) => {
+          const store = failureRecordingStore();
+          const pending: Promise<unknown>[] = [];
+          Object.assign(env, { DB_ADMIN: store.adapter });
+          const client = { identity_mapping: { fieldMappingSetId: 'set-gone' } };
+          try {
+            const baseline = await authorizeFor(responseType, { client });
+            expect(baseline.get('error')).toBe('server_error');
+            expect(store.rows()).toEqual([]);
+            store.db.exec(
+              "CREATE TRIGGER refuse_mapping_failure BEFORE INSERT ON identity_mapping_failures BEGIN SELECT RAISE(ABORT,'failure_record_refused'); END"
+            );
+            const fragment = await authorizeFor(responseType, {
+              client,
+              waitUntil: (work) => pending.push(work),
+            });
+            expect(pending.length).toBeGreaterThan(0);
+            await expect(Promise.all(pending)).resolves.toBeDefined();
+            expect([...fragment]).toEqual([...baseline]);
+            expect(fragment.get('id_token')).toBeNull();
+            expect(fragment.get('code')).toBeNull();
+            expect(store.rows()).toEqual([]);
+          } finally {
+            await Promise.all(pending);
+            store.db.close();
+          }
+        }
+      );
 
       it('issues the sub the mapping derives, and the sealed account reference, in an ID token', async () => {
         const fragment = await authorizeFor('id_token token', { mapping: pairwise });

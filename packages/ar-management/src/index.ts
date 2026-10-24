@@ -1032,6 +1032,7 @@ import {
   sweepExpiredMappingSetSaveRecords,
 } from './identity-mapping-set-facade';
 import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
+import { adminIdentityMappingFailuresHandler } from './identity-mapping-failures';
 import { adminPlatformIdentityMappingTenantsHandler } from './identity-mapping-tenants';
 import { adminIdentityMappingExplainHandler } from './identity-mapping-explain';
 import {
@@ -3233,6 +3234,17 @@ app.post(
   '/api/admin/identity-mapping/history/:id/restore',
   adminIdentityMappingHistoryRestoreHandler
 );
+app.use(
+  '/api/admin/identity-mapping/failures',
+  async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+    return rateLimitMiddleware({ ...profile, endpoints: ['/api/admin/identity-mapping/failures'] })(
+      c,
+      next
+    );
+  }
+);
+app.get('/api/admin/identity-mapping/failures', adminIdentityMappingFailuresHandler);
 app.use('/api/admin/identity-mapping/explain', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({

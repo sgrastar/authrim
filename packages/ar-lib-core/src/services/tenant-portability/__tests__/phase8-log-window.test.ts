@@ -13,6 +13,31 @@ const row = (column: string, value: string, type = 'integer') =>
   ({ [column]: [type, value] }) as never;
 
 describe('Phase 8 log window', () => {
+  it('selects cumulative failure aggregates by last_at rather than first_at', () => {
+    const boundaryUnixMs = 100 * 86_400_000;
+    for (const [lastAt, selected] of [
+      [93 * 86_400_000 - 1, false],
+      [93 * 86_400_000, true],
+      [boundaryUnixMs, true],
+      [boundaryUnixMs + 1, false],
+    ] as const) {
+      const aggregate = {
+        first_at: ['integer', '1'],
+        last_at: ['integer', String(lastAt)],
+        count: ['integer', '12345'],
+      } as const;
+      expect(
+        phase8LogRowInWindow({
+          datasetId: 'admin.identity_mapping_failures',
+          period: 7,
+          boundaryUnixMs,
+          row: aggregate,
+        })
+      ).toBe(selected);
+      expect(aggregate.count).toEqual(['integer', '12345']);
+    }
+  });
+
   it('pins one timestamp column for every selected log table', () => {
     const ids = TENANT_DATASET_POLICIES.filter(({ kind }) =>
       ['audit', 'history', 'sensitive_logs'].includes(kind)
