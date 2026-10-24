@@ -464,3 +464,68 @@ describe('selectIdentityMapping: the chain', () => {
     ]);
   });
 });
+
+describe('selectIdentityMapping: a trial of the tenant’s default', () => {
+  const proposal = (value: unknown, docs: Record<string, unknown>, client: unknown = null) =>
+    selectIdentityMapping({
+      env: { SETTINGS: kv(docs) },
+      tenantId: 'acme',
+      protocol: 'oidc',
+      clientSelector: client,
+      inspectDefaults: true,
+      tenantDefaultProposal: { value },
+    });
+
+  it('takes the proposed value for the tenant’s level, as a saved one is read, and not the saved one', async () => {
+    const docs = documents('set', 'set');
+
+    const set = await proposal('set-X', docs);
+    expect(set).toMatchObject({ kind: 'bound', tier: 'tenant_default', setId: 'set-X' });
+    expect(set.chain[1]).toEqual({
+      tier: 'tenant_default',
+      state: 'set',
+      setId: 'set-X',
+      source: 'kv',
+    });
+
+    expect(await proposal('none', docs)).toMatchObject({ kind: 'none', reason: 'tenant_opt_out' });
+    // No default of the tenant's own: the platform's, as when nothing is saved.
+    const cleared = await proposal(null, docs);
+    expect(cleared).toMatchObject({ kind: 'bound', tier: 'platform_default', setId: 'set-P' });
+    expect(cleared.chain[1]).toEqual({ tier: 'tenant_default', state: 'unset' });
+    // The platform's level is still read, whatever the proposal.
+    expect(set.chain[2]).toMatchObject({ tier: 'platform_default', state: 'set', setId: 'set-P' });
+  });
+
+  it('fails for a value that is not a choice, as a saved one does', async () => {
+    await expect(proposal('', documents('unset', 'set'))).rejects.toMatchObject({
+      code: 'default_setting_invalid',
+      tier: 'tenant_default',
+    });
+  });
+
+  it('leaves the app’s own choice deciding', async () => {
+    const selection = await proposal('set-X', documents('unset', 'unset'), CLIENTS.set);
+    expect(selection).toMatchObject({ kind: 'bound', tier: 'client', setId: 'set-A' });
+    expect(selection.chain[1]).toMatchObject({ state: 'set', setId: 'set-X' });
+  });
+
+  it('does not read the tenant’s settings for its level', async () => {
+    // A tenant document that cannot be read does not matter to a trial of its level.
+    const unreadable = {
+      get: async (key: string) => {
+        if (key.startsWith('settings:tenant:')) throw new Error('KV is down');
+        return null;
+      },
+    } as unknown as KVNamespace;
+    await expect(
+      selectIdentityMapping({
+        env: { SETTINGS: unreadable },
+        tenantId: 'acme',
+        protocol: 'oidc',
+        clientSelector: null,
+        tenantDefaultProposal: { value: 'set-X' },
+      })
+    ).resolves.toMatchObject({ kind: 'bound', setId: 'set-X' });
+  });
+});

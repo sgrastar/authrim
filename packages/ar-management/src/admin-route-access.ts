@@ -943,6 +943,18 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'identity mapping test users'
   ).filter((accessRule) => !accessRule.methods.includes('DELETE')),
+  // Trials and comparisons write nothing; a trial for an app also asks for the clients read.
+  rule({
+    pattern: '/api/admin/identity-mapping/preview-effective',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'identity mapping choice preview',
+  }),
+  readOnly(
+    '/api/admin/identity-mapping/compare-sets',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping set comparison'
+  ),
   // Reads the app and the settings, writes nothing: both read permissions.
   rule({
     pattern: '/api/admin/identity-mapping/explain',

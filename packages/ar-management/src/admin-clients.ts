@@ -554,7 +554,7 @@ function validateOptionalClaimsParameterPolicyField(
   return { ok: true, value: policy };
 }
 
-function validateOptionalIdentityMappingSelectorField(
+export function validateOptionalIdentityMappingSelectorField(
   value: unknown,
   field: string
 ):
@@ -720,13 +720,13 @@ function parseIdentityMappingSelectorField(
 }
 
 /** Why an app's Mapping Set choice cannot be saved, as the response that says so. */
-interface IdentityMappingSelectorProblem {
+export interface IdentityMappingSelectorProblem {
   status: 400 | 404 | 503;
   error: 'invalid_request' | 'not_found' | 'temporarily_unavailable';
   description: string;
 }
 
-async function validateOIDCIdentityMappingSelector(
+export async function validateOIDCIdentityMappingSelector(
   env: Env,
   tenantId: string,
   selector: AdminOIDCIdentityMappingSelector | null | undefined

@@ -211,6 +211,13 @@ export interface SelectIdentityMappingInput {
   inspectDefaults?: boolean;
   /** Read the settings documents past the cache, for a view that must show a value just saved. */
   fresh?: boolean;
+  /**
+   * For a trial of a choice that is not saved (the admin view): the tenant's level as if this
+   * value were saved at the tenant (`none`, a set ID, or another value, judged as a saved one is),
+   * or, for null, as if the tenant had none of its own. The settings are not read for the tenant's
+   * level then; the platform's is read as usual. Never set at runtime.
+   */
+  tenantDefaultProposal?: { value: unknown };
 }
 
 const NOT_CONSULTED = (tier: IdentityMappingTier): IdentityMappingChainEntry => ({
@@ -300,26 +307,38 @@ export async function selectIdentityMapping(
   let tenant: IdentityMappingChainEntry;
   let platform: IdentityMappingChainEntry;
   try {
-    const { values, sources } = await resolveEffectiveSettingsWithSources(
-      input.env,
-      'identity-mapping',
-      { tenantId: input.tenantId, fresh: input.fresh }
-    );
-    const value = values[DEFAULT_SET_KEY];
-    const source = sources[DEFAULT_SET_KEY];
-    // `kv`: saved at the tenant itself. Anything else is the platform's value (or the code default,
-    // which is unset): inherited.
-    const savedAtTenant = source === 'kv' || source === 'tenant';
-    if (savedAtTenant) {
-      tenant = defaultEntry('tenant_default', value, source);
-      // A tenant document that holds an unset value does not hide the platform's.
+    if (input.tenantDefaultProposal) {
+      const proposed = input.tenantDefaultProposal.value;
+      tenant =
+        proposed === null || proposed === undefined
+          ? { tier: 'tenant_default', state: 'unset' }
+          : defaultEntry('tenant_default', proposed, 'kv');
       platform =
         tenant.state === 'unset' || input.inspectDefaults
           ? await readPlatformEntry(input.env, input.fresh)
           : NOT_CONSULTED('platform_default');
     } else {
-      tenant = { tier: 'tenant_default', state: 'unset' };
-      platform = defaultEntry('platform_default', value, source);
+      const { values, sources } = await resolveEffectiveSettingsWithSources(
+        input.env,
+        'identity-mapping',
+        { tenantId: input.tenantId, fresh: input.fresh }
+      );
+      const value = values[DEFAULT_SET_KEY];
+      const source = sources[DEFAULT_SET_KEY];
+      // `kv`: saved at the tenant itself. Anything else is the platform's value (or the code default,
+      // which is unset): inherited.
+      const savedAtTenant = source === 'kv' || source === 'tenant';
+      if (savedAtTenant) {
+        tenant = defaultEntry('tenant_default', value, source);
+        // A tenant document that holds an unset value does not hide the platform's.
+        platform =
+          tenant.state === 'unset' || input.inspectDefaults
+            ? await readPlatformEntry(input.env, input.fresh)
+            : NOT_CONSULTED('platform_default');
+      } else {
+        tenant = { tier: 'tenant_default', state: 'unset' };
+        platform = defaultEntry('platform_default', value, source);
+      }
     }
   } catch (error) {
     if (decidedByClient) {

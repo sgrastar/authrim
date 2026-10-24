@@ -1033,6 +1033,10 @@ import {
 import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
 import { adminPlatformIdentityMappingTenantsHandler } from './identity-mapping-tenants';
 import { adminIdentityMappingExplainHandler } from './identity-mapping-explain';
+import {
+  adminIdentityMappingCompareSetsHandler,
+  adminIdentityMappingPreviewEffectiveHandler,
+} from './identity-mapping-preview-effective';
 import { adminIdentityMappingSetChangePreviewHandler } from './identity-mapping-set-change-preview';
 import {
   adminIdentityMappingTestUsersListHandler,
@@ -3173,6 +3177,26 @@ app.put(
   '/api/admin/identity-mapping/test-users',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingTestUsersReplaceHandler
+);
+// A trial of a choice and a comparison of two sets: the settings, an app row and the sets' rows.
+for (const path of [
+  '/api/admin/identity-mapping/preview-effective',
+  '/api/admin/identity-mapping/compare-sets',
+]) {
+  app.use(path, async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+    return rateLimitMiddleware({ ...profile, endpoints: [path] })(c, next);
+  });
+}
+app.post(
+  '/api/admin/identity-mapping/preview-effective',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingPreviewEffectiveHandler
+);
+app.get(
+  '/api/admin/identity-mapping/compare-sets',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingCompareSetsHandler
 );
 app.use('/api/admin/identity-mapping/explain', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
