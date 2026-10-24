@@ -11,6 +11,7 @@
 		type SupportOpsSelectorOperator
 	} from '$lib/api/admin-support-ops';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { aggregatableGroupBy, initialSelectorValue } from '$lib/admin/support-ops-defaults';
 	import { LL } from '$i18n/i18n-svelte';
 	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
@@ -51,7 +52,8 @@
 
 	let resources = $state<SupportOpsResourceDescriptor[]>([]);
 	let selectedResourceName = $state('User');
-	let groupBy = $state('status');
+	// Chosen from the registry once it is read: a field the API aggregates for the resource.
+	let groupBy = $state('');
 	let actionName = $state('suspend');
 	let supportCaseId = $state('');
 	let actionReason = $state('');
@@ -120,9 +122,16 @@
 				selectedResourceName = resources[0].resource;
 				const firstField = firstFilterableField();
 				if (firstField) {
-					selectorRows = [{ id: crypto.randomUUID(), field: firstField, op: 'eq', value: '' }];
+					selectorRows = [
+						{
+							id: crypto.randomUUID(),
+							field: firstField,
+							op: 'eq',
+							value: initialSelectorValue(fieldDescriptor(firstField))
+						}
+					];
 				}
-				groupBy = firstAggregatableField() ?? '';
+				groupBy = aggregatableGroupBy(selectedResource, groupBy);
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_support_ops_load_failed();
@@ -133,10 +142,6 @@
 
 	function firstFilterableField(): string | null {
 		return filterableFields[0]?.[0] ?? null;
-	}
-
-	function firstAggregatableField(): string | null {
-		return aggregatableFields[0]?.[0] ?? null;
 	}
 
 	function fieldDescriptor(fieldName: string): SupportOpsFieldDescriptor | null {
@@ -183,7 +188,7 @@
 						...row,
 						field,
 						op: descriptor?.operators[0] ?? 'eq',
-						value: ''
+						value: initialSelectorValue(descriptor)
 					}
 				: row
 		);
@@ -196,7 +201,15 @@
 	function addSelectorRow() {
 		const field = firstFilterableField();
 		if (!field) return;
-		selectorRows = [...selectorRows, { id: crypto.randomUUID(), field, op: 'eq', value: '' }];
+		selectorRows = [
+			...selectorRows,
+			{
+				id: crypto.randomUUID(),
+				field,
+				op: 'eq',
+				value: initialSelectorValue(fieldDescriptor(field))
+			}
+		];
 	}
 
 	function removeSelectorRow(rowId: string) {
@@ -249,15 +262,22 @@
 		return { all: conditions };
 	}
 
+	// Another resource may not aggregate the field chosen for the last one.
+	$effect(() => {
+		const field = aggregatableGroupBy(selectedResource, groupBy);
+		if (field !== groupBy) groupBy = field;
+	});
+
 	async function runAggregate() {
-		if (!selectedResource || !groupBy) return;
+		const field = aggregatableGroupBy(selectedResource, groupBy);
+		if (!selectedResource || !field) return;
 		resetMessages();
 		loading = true;
 		try {
 			aggregateResult = await adminSupportOpsAPI.aggregate({
 				resource: selectedResource.resource,
 				selector: buildSelector(),
-				group_by: [groupBy]
+				group_by: [field]
 			});
 			success = $LL.admin_support_ops_aggregate_completed();
 		} catch (err) {

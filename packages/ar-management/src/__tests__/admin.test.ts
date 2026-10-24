@@ -1155,7 +1155,7 @@ describe('Admin API Handlers', () => {
   describe('adminTestEmailCodeHandler tenant D1 routing', () => {
     const tenantMetadataContext = {
       tenantId: 'default',
-      storageProfileId: 'builtin:storage:tenant-d1',
+      route: { allocationScope: 'tenant_exclusive' },
     };
 
     it('uses the route-bound Core projection without reading tenant-D1 PII data', async () => {
@@ -1953,7 +1953,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -2016,7 +2016,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -2542,7 +2542,7 @@ describe('Admin API Handlers', () => {
         params: { id: userId },
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
         },
       });
       resolveAccountDataContext.mockImplementationOnce(async (context, accountId) => {
@@ -3034,7 +3034,7 @@ describe('Admin API Handlers', () => {
         },
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: mockDB,
         },
       });
@@ -4504,7 +4504,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -4576,7 +4576,7 @@ describe('Admin API Handlers', () => {
         envOverrides: { SETTINGS: settings as unknown as KVNamespace },
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -4615,7 +4615,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -4657,7 +4657,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -4694,6 +4694,34 @@ describe('Admin API Handlers', () => {
           success: true,
         })
       );
+    });
+
+    it("deletes the user's audit pseudonym after writing the tombstone", async () => {
+      const userId = 'user-to-delete';
+      const mockDB = createMockDB({
+        firstResult: { id: userId, email: 'delete@example.com' },
+        runResult: { success: true },
+      });
+      const piiDb = createSqlAwareMockDB(async (_sql, _params, op) =>
+        op === 'run' ? { success: true } : undefined
+      );
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+        dbPII: piiDb,
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+      const piiSqls: string[] = (piiDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
+      const tombstone = piiSqls.findIndex((sql) => sql.includes('INSERT INTO users_pii_tombstone'));
+      const pseudonym = piiSqls.findIndex((sql) =>
+        sql.includes('DELETE FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?')
+      );
+      expect(tombstone).toBeGreaterThanOrEqual(0);
+      expect(pseudonym).toBeGreaterThan(tombstone);
     });
 
     it('should mark the canonical runtime user deleted when runtime cutover is enabled', async () => {
@@ -4813,6 +4841,57 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserAnonymizeHandler', () => {
+    it('stops at a legal hold before any PII, its pseudonym included, is erased', async () => {
+      const userId = 'user-anon-held';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'held-anon@example.com',
+      });
+      const coreDb = createSqlAwareMockDB(async (sql, _params, op) => {
+        if (op === 'first' && sql.includes('FROM legal_holds hold')) {
+          return { hold_id: 'legal-hold:anon', reason_code: 'litigation' };
+        }
+        if (op === 'first' && sql.includes('FROM identity_accounts WHERE legacy_user_id = ?')) {
+          return {
+            id: `account:${userId}`,
+            tenant_id: 'default',
+            legacy_user_id: userId,
+            primary_subject_id: `subject:${userId}`,
+            lifecycle_state: 'active',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          };
+        }
+        return op === 'run' ? { success: true } : undefined;
+      });
+      const piiDb = createSqlAwareMockDB(async (_sql, _params, op) =>
+        op === 'run' ? { success: true } : undefined
+      );
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: userId },
+        body: { reason_code: 'user_request', confirm: true },
+        db: coreDb,
+        dbPII: piiDb,
+      });
+
+      const res = await adminUserAnonymizeHandler(c);
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        error: 'legal_hold_active',
+        hold_id: 'legal-hold:anon',
+      });
+      expect(eraseAccountPii).not.toHaveBeenCalled();
+      const piiSqls = (piiDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
+      expect(
+        piiSqls.filter((sql: string) => /users_pii_tombstone|user_anonymization_map/u.test(sql))
+      ).toEqual([]);
+    });
+
     it('should anonymize using current schema tables and avoid legacy SQL', async () => {
       const userId = 'user-anon-1';
       const coreDb = createSqlAwareMockDB(async (sql, _params, op) => {
@@ -4904,6 +4983,14 @@ describe('Admin API Handlers', () => {
 
       expect(piiSqls).toContainEqual(expect.stringContaining('INSERT INTO users_pii_tombstone'));
       expect(piiSqls).toContainEqual(expect.stringContaining('identity_sensitive_values'));
+      // The tombstone is written before the PII erasure (which deletes the audit pseudonym), so a
+      // late audit write cannot create the pseudonym again.
+      const tombstoneCall = (piiDb.prepare as any).mock.calls.findIndex(([sql]: [string]) =>
+        sql.includes('INSERT INTO users_pii_tombstone')
+      );
+      expect((piiDb.prepare as any).mock.invocationCallOrder[tombstoneCall]).toBeLessThan(
+        eraseAccountPii.mock.invocationCallOrder[0]!
+      );
       expect(coreSqls).toContainEqual(
         expect.stringContaining('DELETE FROM subject_org_membership')
       );

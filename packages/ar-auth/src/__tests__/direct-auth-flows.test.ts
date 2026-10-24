@@ -1920,7 +1920,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     context.get = vi.fn((key: string) => {
       if (key === 'tenantId') return 'tenant_test';
       if (key === 'tenantMetadataContext') {
-        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
       }
       return undefined;
     }) as never;
@@ -2053,7 +2053,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       context.get = vi.fn((key: string) => {
         if (key === 'tenantId') return 'tenant_test';
         if (key === 'tenantMetadataContext') {
-          return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+          return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
         }
         return undefined;
       }) as never;
@@ -2295,7 +2295,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     context.get = vi.fn((key: string) => {
       if (key === 'tenantId') return 'tenant_test';
       if (key === 'tenantMetadataContext') {
-        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
       }
       return undefined;
     }) as never;
@@ -2693,7 +2693,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         context.get = vi.fn((key: string) => {
           if (key === 'tenantId') return 'tenant_test';
           if (key === 'tenantMetadataContext') {
-            return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+            return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
           }
           return undefined;
         }) as never;
@@ -3459,7 +3459,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     context.get = vi.fn((key: string) => {
       if (key === 'tenantId') return 'tenant_test';
       if (key === 'tenantMetadataContext') {
-        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
       }
       return undefined;
     }) as never;
@@ -3598,7 +3598,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     context.get = vi.fn((key: string) => {
       if (key === 'tenantId') return 'tenant_test';
       if (key === 'tenantMetadataContext') {
-        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
       }
       return undefined;
     }) as never;
@@ -5845,7 +5845,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       context.get = vi.fn((key: string) => {
         if (key === 'tenantId') return 'tenant_test';
         if (key === 'tenantMetadataContext') {
-          return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+          return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
         }
         return undefined;
       }) as never;
@@ -5895,7 +5895,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     context.get = vi.fn((key: string) => {
       if (key === 'tenantId') return 'tenant_test';
       if (key === 'tenantMetadataContext') {
-        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
       }
       return undefined;
     }) as never;

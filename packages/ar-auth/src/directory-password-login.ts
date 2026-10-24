@@ -98,6 +98,40 @@ const RP_NAME = 'Authrim';
 const MIGRATION_PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60;
 const DIRECTORY_UNAVAILABLE_RECOVERY_REQUEST_PREFIX = 'directory_unavailable_recovery:';
 const DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS = 15 * 60;
+// Codes Authrim raises for a directory sign-in. A connector may report any string, which is only a
+// connectorReason: the event's errorCode reaches the unified event_log error_code column.
+const DIRECTORY_PASSWORD_ERROR_CODES: ReadonlySet<string> = new Set([
+  'auth_context_mismatch',
+  'auth_timeout',
+  'connector_error_response_mismatch',
+  'connector_response_mismatch',
+  'fetch_error',
+  'incompatible_relay_protocol',
+  'invalid_connector_endpoint',
+  'invalid_connector_response',
+  'invalid_relay_request',
+  'relay_auth_failed',
+  'relay_auth_rate_limited',
+  'relay_connection_closed',
+  'relay_connector_not_configured',
+  'relay_connector_offline',
+  'relay_fetch_error',
+  'relay_instance_rejected',
+  'relay_overloaded',
+  'relay_request_too_large',
+  'relay_response_mismatch',
+  'relay_send_failed',
+  'relay_timeout',
+  'relay_unavailable',
+  'relay_verify_error',
+  'relay_verify_timeout',
+  'replayed_auth_challenge',
+  'stale_auth_challenge',
+  'timeout',
+  'unexpected_connector_result',
+  'unexpected_directory_status',
+  'wordwarden_error',
+]);
 
 async function getDirectoryPasswordAccountLimiter(env: Env, tenantId: string, username: string) {
   const normalizedUsername = username.normalize('NFKC').toLocaleLowerCase('en-US');
@@ -372,12 +406,14 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       passwordVerifiedAtMs = Date.now();
     } catch (error) {
       if (error instanceof DirectoryPasswordError) {
+        const ownCode = DIRECTORY_PASSWORD_ERROR_CODES.has(error.details.code);
         await publishDirectoryPasswordFailureEvent(
           c,
           connector.connectorId,
-          error.details.code,
+          ownCode ? error.details.code : 'directory_connector_error',
           error.details.requestId,
-          username
+          username,
+          ownCode ? undefined : error.details.code
         );
         log.warn('Directory connector verification failed', {
           action: 'directory_password_connector',
@@ -421,9 +457,10 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       await publishDirectoryPasswordFailureEvent(
         c,
         connector.connectorId,
-        verdict.reason || verdict.result,
+        `directory_${verdict.result}`,
         verdict.request_id,
-        username
+        username,
+        verdict.reason
       );
       return c.json({ error: 'invalid_credentials' }, 401);
     }
@@ -1910,7 +1947,8 @@ async function publishDirectoryPasswordFailureEvent(
   connectorId: string,
   errorCode: string,
   requestId?: string,
-  username?: string
+  username?: string,
+  connectorReason?: string
 ): Promise<void> {
   const tenantId = getTenantIdFromContext(c);
   const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
@@ -1925,6 +1963,7 @@ async function publishDirectoryPasswordFailureEvent(
         connectorId,
         requestId,
         errorCode,
+        ...(connectorReason ? { connectorReason } : {}),
         ...(usernameHash ? { usernameHash } : {}),
       } satisfies AuthEventData,
     });

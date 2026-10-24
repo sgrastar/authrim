@@ -1771,7 +1771,8 @@ describe('directory password login handler', () => {
           method: 'directory_password',
           connectorId: 'campus',
           requestId: expect.any(String),
-          errorCode: 'invalid_credentials',
+          errorCode: 'directory_failure',
+          connectorReason: 'invalid_credentials',
           usernameHash: expect.any(String),
         }),
       })
@@ -1870,7 +1871,8 @@ describe('directory password login handler', () => {
         data: expect.objectContaining({
           method: 'directory_password',
           connectorId: 'campus',
-          errorCode: 'must_change_password',
+          errorCode: 'directory_policy_required',
+          connectorReason: 'must_change_password',
           usernameHash: expect.any(String),
         }),
       })
@@ -1917,13 +1919,57 @@ describe('directory password login handler', () => {
           method: 'directory_password',
           connectorId: 'campus',
           requestId: expect.any(String),
-          errorCode: 'directory_unavailable',
+          errorCode: 'directory_connector_error',
+          connectorReason: 'directory_unavailable',
           usernameHash: expect.any(String),
         }),
       })
     );
     expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
   });
+
+  it('keeps a code Authrim raised for the connector as the failure event error code', async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json(
+        {
+          request_id: 'another-request',
+          error: { code: 'user_not_found:alice', retryable: false },
+        },
+        { status: 500 }
+      )
+    );
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    await handler(createContext({ username: 'alice', password: 'correct' }) as never);
+
+    const event = mocks.publishEvent.mock.calls.find(
+      ([, payload]) => (payload as { type: string }).type === 'auth.directory_password.failed'
+    )?.[1] as { data: Record<string, unknown> } | undefined;
+    expect(event?.data.errorCode).toBe('connector_error_response_mismatch');
+    expect(event?.data).not.toHaveProperty('connectorReason');
+  });
+
+  it.each(['relay_connector_offline', 'relay_verify_timeout', 'relay_connection_closed'])(
+    'keeps the relay code %s as the failure event error code',
+    async (code) => {
+      const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+        return Response.json(
+          { request_id: body.request_id, error: { code, retryable: true } },
+          { status: 503 }
+        );
+      });
+      const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+      await handler(createContext({ username: 'alice', password: 'correct' }) as never);
+
+      const event = mocks.publishEvent.mock.calls.find(
+        ([, payload]) => (payload as { type: string }).type === 'auth.directory_password.failed'
+      )?.[1] as { data: Record<string, unknown> } | undefined;
+      expect(event?.data.errorCode).toBe(code);
+      expect(event?.data).not.toHaveProperty('connectorReason');
+    }
+  );
 
   it('starts directory unavailable recovery only for an existing linked email user', async () => {
     mocks.findByEmail.mockResolvedValue({
