@@ -2962,7 +2962,7 @@
   },
   "src/__tests__/support-ops.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 30
+      "count": 33
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2

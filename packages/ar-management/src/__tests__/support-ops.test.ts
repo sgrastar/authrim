@@ -356,9 +356,117 @@ describe('support operations admin router', () => {
     const payload = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
-    expect(payload.matched_count).toBe(12);
-    expect(payload.actionable_count).toBe(12);
+    expect(payload.matched_count).toBe(10);
+    expect(payload.actionable_count).toBe(10);
     expect(payload.blocked_count).toBe(0);
+  });
+
+  it.each([
+    [0, 0],
+    [1, null],
+    [9, null],
+    [10, 10],
+    [11, 10],
+    [1000, 1000],
+    [1001, 1000],
+  ] as const)(
+    'keeps preview, risk, audit and aggregate counts consistent for %i',
+    async (count, shown) => {
+      mockAdapter.queryOne.mockResolvedValueOnce({ count }).mockResolvedValueOnce({ count });
+      const response = await createApp().request(
+        '/api/admin/support-ops/cohorts/preview',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resource: 'User', intent: { action: 'suspend' } }),
+        },
+        {} as Env
+      );
+      const payload = (await response.json()) as Record<string, unknown>;
+      const counts = {
+        matched_count: shown,
+        actionable_count: shown,
+        blocked_count: 0,
+        privacy: { min_count: 10, count_exact: false, count_precision: 10 },
+      };
+      expect(response.status).toBe(200);
+      expect(payload).toMatchObject(counts);
+      expect(payload.risk).toMatchObject({
+        matched_count: shown,
+        risk_level: count >= 1000 ? 'medium' : 'low',
+        low_count_suppressed: shown === null,
+      });
+      expect(payload).not.toHaveProperty('targets');
+      const records = mockWriteAdminAuditLog.mock.calls as unknown as Array<
+        [unknown, { action: string; metadata?: Record<string, unknown> }]
+      >;
+      const audit = records.find(([, event]) => event.action === 'support_ops.cohort.preview')?.[1];
+      expect(audit?.metadata).toMatchObject({ counts });
+      expect(audit?.metadata).not.toHaveProperty('selector');
+
+      mockAdapter.query.mockResolvedValueOnce(count === 0 ? [] : [{ status: 'active', count }]);
+      const aggregate = await createApp().request(
+        '/api/admin/support-ops/aggregate',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resource: 'User', group_by: ['status'] }),
+        },
+        {} as Env
+      );
+      const aggregateBody = (await aggregate.json()) as { groups: Array<{ count: number }> };
+      expect(aggregate.status).toBe(200);
+      expect(aggregateBody.groups.map((group) => group.count)).toEqual(
+        count === 0 || shown === null ? [] : [shown]
+      );
+    }
+  );
+
+  it('retains complementary suppression before bucketing a preview or its audit', async () => {
+    mockAdapter.queryOne.mockResolvedValueOnce({ count: 30 }).mockResolvedValueOnce({ count: 29 });
+    mockAdapter.query.mockResolvedValueOnce([{ block_reason: 'not_active' }]);
+    const response = await createApp().request(
+      '/api/admin/support-ops/cohorts/preview',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource: 'User', intent: { action: 'suspend' } }),
+      },
+      {} as Env
+    );
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(response.status).toBe(200);
+    const counts = {
+      matched_count: null,
+      actionable_count: 20,
+      blocked_count: null,
+      blocked_reasons_suppressed: true,
+      privacy: { low_count_suppressed: true, count_exact: false, count_precision: 10 },
+    };
+    expect(payload).toMatchObject({ ...counts, blocked_reasons: [] });
+    expect(payload.risk).toMatchObject({ matched_count: null, low_count_suppressed: true });
+    const records = mockWriteAdminAuditLog.mock.calls as unknown as Array<
+      [unknown, { action: string; metadata?: Record<string, unknown> }]
+    >;
+    expect(
+      records.find(([, event]) => event.action === 'support_ops.cohort.preview')?.[1].metadata
+    ).toMatchObject({ counts });
+  });
+
+  it('does not read counts or write preview audit without the preview permission', async () => {
+    const response = await createApp([ADMIN_PERMISSIONS.SUPPORT_OPS_AGGREGATE_READ]).request(
+      '/api/admin/support-ops/cohorts/preview',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource: 'User' }),
+      },
+      {} as Env
+    );
+    expect(response.status).toBe(403);
+    expect(mockAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mockAdapter.query).not.toHaveBeenCalled();
+    expect(mockWriteAdminAuditLog).not.toHaveBeenCalled();
   });
 
   it('returns bucketed aggregate counts with complementary suppression', async () => {

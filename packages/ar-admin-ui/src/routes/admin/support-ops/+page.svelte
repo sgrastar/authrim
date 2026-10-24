@@ -661,7 +661,11 @@
 					</div>
 				</div>
 				<div class="privacy-line">
-					min_count {previewResult.risk.min_count} · selector {previewResult.selector_hash}
+					min_count {previewResult.risk.min_count}
+					{#if previewResult.privacy?.count_exact === false}
+						· bucket {previewResult.privacy.count_precision}
+					{/if}
+					· selector {previewResult.selector_hash}
 				</div>
 			{/if}
 
