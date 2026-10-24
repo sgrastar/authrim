@@ -31478,15 +31478,59 @@ paths:
       summary: Preview a support operation cohort
       description: >-
         Preview matched, actionable, and blocked counts for a support operation selector without
-        saving a cohort.
-      x-authrim-route-coverage: inferred-from-source
+        saving a cohort. After low-count and complementary suppression, visible counts and the
+        risk summary's matched count are rounded down in steps of the resource's minimum count.
+        Preview privacy reports count_exact=false and count_precision=min_count. Preview audit
+        counts use the same values. Frozen cohort counts retain their existing privacy rules.
       responses:
         '200':
-          $ref: '#/components/responses/SupportOpsCohort'
+          $ref: '#/components/responses/SupportOpsCohortPreview'
+        '400':
+          description: The resource, requested action, or selector is unsupported or invalid.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SupportOpsCohortPreviewError'
+                  - properties:
+                      error:
+                        enum: [unsupported_resource, unsupported_action, invalid_selector]
+              example:
+                error: invalid_selector
+                error_description: Invalid selector
+        '403':
+          description: The caller lacks admin:support_ops:cohorts:preview.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SupportOpsCohortPreviewError'
+                  - properties:
+                      error:
+                        const: forbidden
+              example:
+                error: forbidden
+                error_description: 'Missing permission: admin:support_ops:cohorts:preview'
+        '409':
+          description: >-
+            An account exists in more than one account database (account_store_ambiguous),
+            or counts changed while their ownership was checked (count_unverified).
+            No counts are returned.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SupportOpsCohortPreviewError'
+                  - properties:
+                      error:
+                        enum: [account_store_ambiguous, count_unverified]
+              example:
+                error: count_unverified
+                error_description: The counts could not be verified across the account databases
         default:
           $ref: '#/components/responses/Error'
       requestBody:
-        $ref: '#/components/requestBodies/SupportOpsCohort'
+        $ref: '#/components/requestBodies/SupportOpsCohortPreview'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -37906,6 +37950,48 @@ components:
               field: status
               op: eq
               value: active
+    SupportOpsCohortPreview:
+      description: >-
+        Preview a resource selector without saving a cohort. Only resource is required.
+        Omitting selector selects all active records; omitting intent.action applies no
+        action-specific blockers. Use the resource registry for allowed fields, operators,
+        and implemented actions. Currently only User and its suspend action are supported.
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              resource:
+                type: string
+                enum: [User]
+              selector:
+                type: object
+                description: >-
+                  A field/op/value condition or a nested all/any group of 1-20 selectors.
+                  Fields must be filterable and non-sensitive, and operators and values must
+                  be allowed by the resource registry. PII fields such as email are refused.
+                additionalProperties: true
+              intent:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum: [suspend]
+                  reason:
+                    type: string
+                  support_case_id:
+                    type: string
+            required:
+              - resource
+          example:
+            resource: User
+            selector:
+              field: status
+              op: eq
+              value: active
+            intent:
+              action: suspend
     SupportOpsCohort:
       description: Describe a privacy-preserving support operation cohort selector and intended action.
       required: true
@@ -45929,6 +46015,35 @@ components:
               count_exact: false
               low_count_suppressed: false
               complementary_suppression: false
+    SupportOpsCohortPreview:
+      description: >-
+        A privacy-preserving selector preview. Counts are suppressed when necessary, then
+        rounded down in steps of privacy.count_precision. No cohort, target identities,
+        or selector values are returned.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SupportOpsCohortPreview'
+          example:
+            resource: User
+            matched_count: 30
+            actionable_count: 20
+            blocked_count: 10
+            blocked_reasons: [not_active]
+            blocked_reasons_suppressed: false
+            privacy:
+              min_count: 10
+              low_count_suppressed: false
+              count_exact: false
+              count_precision: 10
+            risk:
+              min_count: 10
+              matched_count: 30
+              low_count_suppressed: false
+              uses_sensitive_field: false
+              risk_level: low
+              approval_required: true
+            selector_hash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     SupportOpsCohort:
       description: Support operation cohort or preview.
       content:
@@ -74107,6 +74222,117 @@ components:
         complementary_suppression:
           type: boolean
           example: false
+    SupportOpsCohortPreviewCount:
+      description: >-
+        Zero or a count rounded down to a multiple of the resource's minimum count.
+        Null means a low count or complementary count was suppressed. Independently
+        rounded counts need not add up exactly.
+      anyOf:
+        - type: integer
+          format: int64
+          minimum: 0
+        - type: 'null'
+    SupportOpsCohortPreviewPrivacy:
+      type: object
+      additionalProperties: false
+      properties:
+        min_count:
+          type: integer
+          minimum: 1
+          example: 10
+        low_count_suppressed:
+          type: boolean
+        count_exact:
+          type: boolean
+          const: false
+        count_precision:
+          type: integer
+          minimum: 1
+          description: Equal to min_count, the resource's minimum count.
+          example: 10
+      required:
+        - min_count
+        - low_count_suppressed
+        - count_exact
+        - count_precision
+    SupportOpsCohortPreviewRisk:
+      type: object
+      additionalProperties: false
+      properties:
+        min_count:
+          type: integer
+          minimum: 1
+          example: 10
+        matched_count:
+          $ref: '#/components/schemas/SupportOpsCohortPreviewCount'
+          description: Equal to the preview's matched_count, including null suppression.
+        low_count_suppressed:
+          type: boolean
+          description: Equal to privacy.low_count_suppressed.
+        uses_sensitive_field:
+          type: boolean
+          const: false
+          description: Sensitive selector fields are refused rather than read.
+        risk_level:
+          type: string
+          enum: [low, medium, high]
+        approval_required:
+          type: boolean
+      required:
+        - min_count
+        - matched_count
+        - low_count_suppressed
+        - uses_sensitive_field
+        - risk_level
+        - approval_required
+    SupportOpsCohortPreview:
+      type: object
+      additionalProperties: false
+      properties:
+        resource:
+          type: string
+          enum: [User]
+        matched_count:
+          $ref: '#/components/schemas/SupportOpsCohortPreviewCount'
+        actionable_count:
+          $ref: '#/components/schemas/SupportOpsCohortPreviewCount'
+        blocked_count:
+          $ref: '#/components/schemas/SupportOpsCohortPreviewCount'
+        blocked_reasons:
+          type: array
+          description: Distinct sorted blocker codes, empty when blocked reasons are suppressed.
+          items:
+            type: string
+        blocked_reasons_suppressed:
+          type: boolean
+        privacy:
+          $ref: '#/components/schemas/SupportOpsCohortPreviewPrivacy'
+        risk:
+          $ref: '#/components/schemas/SupportOpsCohortPreviewRisk'
+        selector_hash:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+      required:
+        - resource
+        - matched_count
+        - actionable_count
+        - blocked_count
+        - blocked_reasons
+        - blocked_reasons_suppressed
+        - privacy
+        - risk
+        - selector_hash
+    SupportOpsCohortPreviewError:
+      type: object
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+      required:
+        - error
+        - error_description
     SupportOpsCohort:
       type: object
       properties:

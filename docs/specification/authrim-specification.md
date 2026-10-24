@@ -1301,6 +1301,8 @@ security: admin permission `admin:support_ops:cohorts:preview`
 
 Preview estimates selector effect without creating a frozen target set. `intent.action` is optional for preview; when present it is used to calculate action-specific blockers.
 
+Preview counts are not exact: after low-count and complementary suppression, matched, actionable, blocked, and the risk summary's matched count are bucketed down to the resource `minCount`, as aggregate counts are. The response and preview audit counts include `privacy.count_exact: false` and `privacy.count_precision`. Counts within one bucket are indistinguishable, but crossing a bucket boundary can change the result; this is coarse counting, not a differential privacy guarantee. No target identities or selector values are added to the response or audit by this change. Frozen cohorts retain their existing low-count suppression and otherwise show their snapshot's exact counts.
+
 ```yaml
 POST /api/admin/support-ops/cohorts
 security: admin permission `admin:support_ops:cohorts:create`

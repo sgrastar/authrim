@@ -376,6 +376,27 @@ function bucketAggregateCount(value: number, minCount: number): number | null {
   return Math.floor(value / minCount) * minCount;
 }
 
+/**
+ * Bucket the visible preview counts after complementary low-count suppression, using the
+ * aggregate's precision. Frozen cohorts retain their existing count contract.
+ */
+function bucketPreviewCounts(
+  resource: { minCount: number },
+  counts: RedactedCohortCounts
+): RedactedCohortCounts & {
+  privacy: RedactedCohortCounts['privacy'] & { count_exact: false; count_precision: number };
+} {
+  const bucket = (value: number | null) =>
+    value === null ? null : bucketAggregateCount(value, resource.minCount);
+  return {
+    ...counts,
+    matched_count: bucket(counts.matched_count),
+    actionable_count: bucket(counts.actionable_count),
+    blocked_count: bucket(counts.blocked_count),
+    privacy: { ...counts.privacy, count_exact: false, count_precision: resource.minCount },
+  };
+}
+
 function hasActionableMinimum(actionableCount: number, minCount: number): boolean {
   return actionableCount >= minCount;
 }
@@ -1433,23 +1454,32 @@ supportOpsRouter.post('/cohorts/preview', async (c) => {
         storeCounts: perStore.map((store) => store.matchedCount - store.actionableCount),
       },
     ]);
-    const redactedCounts = redactCohortCounts(
+    const redactedCounts = bucketPreviewCounts(
       resource,
-      matchedCount,
-      actionableCount,
-      blockedCount,
-      [...new Set(perStore.flatMap((store) => store.blockReasons))].sort()
+      redactCohortCounts(
+        resource,
+        matchedCount,
+        actionableCount,
+        blockedCount,
+        [...new Set(perStore.flatMap((store) => store.blockReasons))].sort()
+      )
     );
     const risk = buildSupportOpsRiskSummary({
       resource,
-      matchedCount,
+      matchedCount: redactedCounts.matched_count ?? matchedCount,
       action: body.intent?.action,
     });
 
     await auditSupportOps(c, 'support_ops.cohort.preview', null, 'success', {
       resource: resource.resource,
       selector_hash: compiled.selectorHash,
-      counts: redactCountAuditSummary(resource, matchedCount, actionableCount, blockedCount),
+      counts: {
+        matched_count: redactedCounts.matched_count,
+        actionable_count: redactedCounts.actionable_count,
+        blocked_count: redactedCounts.blocked_count,
+        blocked_reasons_suppressed: redactedCounts.blocked_reasons_suppressed,
+        privacy: redactedCounts.privacy,
+      },
       support_case_id: body.intent?.support_case_id ?? null,
     });
 

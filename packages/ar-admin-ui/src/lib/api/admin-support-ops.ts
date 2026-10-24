@@ -69,6 +69,13 @@ export interface SupportOpsCohortPreviewResponse {
 	actionable_count: number | null;
 	blocked_count: number | null;
 	blocked_reasons: string[];
+	/** Preview counts use the resource's minimum as their precision. */
+	privacy?: {
+		min_count: number;
+		low_count_suppressed: boolean;
+		count_exact: boolean;
+		count_precision: number;
+	};
 	risk: {
 		min_count: number;
 		matched_count: number | null;

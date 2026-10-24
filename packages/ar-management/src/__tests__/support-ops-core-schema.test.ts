@@ -241,7 +241,12 @@ describe('Support Ops on the Core schema', () => {
       intent: { action: 'suspend' },
     });
     expect(preview.status).toBe(200);
-    expect(preview.body).toMatchObject({ matched_count: 24, actionable_count: 24 });
+    expect(preview.body).toMatchObject({
+      matched_count: 20,
+      actionable_count: 20,
+      privacy: { count_exact: false, count_precision: 10 },
+      risk: { matched_count: 20 },
+    });
 
     const created = await post('/cohorts', {
       resource: 'User',
@@ -360,6 +365,19 @@ describe('Support Ops on the Core schema', () => {
         approval_required: true,
       });
     }
+  });
+
+  it('rejects PII selectors without exposing their value or a count', async () => {
+    const preview = await post('/cohorts/preview', {
+      resource: 'User',
+      selector: { field: 'email', op: 'eq', value: 'private-selector-marker' },
+      intent: { action: 'suspend' },
+    });
+
+    expect(preview.status).toBe(400);
+    expect(preview.body.error).toBe('invalid_selector');
+    expect(preview.body).not.toHaveProperty('matched_count');
+    expect(JSON.stringify(preview.body)).not.toContain('private-selector-marker');
   });
 
   it('selects by status as the account reports it', async () => {

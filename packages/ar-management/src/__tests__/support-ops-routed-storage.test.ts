@@ -269,10 +269,10 @@ describe('Support Ops under routed account storage', () => {
 
     expect(preview.status).toBe(200);
     expect(preview.body).toMatchObject({
-      matched_count: 12,
-      actionable_count: 12,
+      matched_count: 10,
+      actionable_count: 10,
       blocked_count: 0,
-      privacy: { low_count_suppressed: false },
+      privacy: { low_count_suppressed: false, count_exact: false, count_precision: 10 },
     });
     expect(low.status).toBe(200);
     expect(low.body).toMatchObject({
@@ -281,6 +281,35 @@ describe('Support Ops under routed account storage', () => {
       privacy: { low_count_suppressed: true },
     });
     expect(low.body.risk).toMatchObject({ matched_count: null, low_count_suppressed: true });
+  });
+
+  it('buckets combined account-store totals consistently within one ten-count bucket', async () => {
+    // 35 matched / 25 actionable, then 33 / 23: both remain in the same buckets.
+    second.db.exec('PRAGMA foreign_keys = OFF');
+    for (let index = 0; index < 5; index += 1) addAccount(second, `user-r-${index}`);
+    const before = await post('/cohorts/preview', {
+      resource: 'User',
+      intent: { action: 'suspend' },
+    });
+    second.db.exec(
+      "DELETE FROM identity_accounts WHERE legacy_user_id IN ('user-r-0', 'user-r-1')"
+    );
+    second.db.exec('PRAGMA foreign_keys = ON');
+    const after = await post('/cohorts/preview', {
+      resource: 'User',
+      intent: { action: 'suspend' },
+    });
+
+    expect(before.status).toBe(200);
+    expect(after.status).toBe(200);
+    for (const preview of [before, after])
+      expect(preview.body).toMatchObject({
+        matched_count: 30,
+        actionable_count: 20,
+        blocked_count: 10,
+        risk: { matched_count: 30 },
+        privacy: { count_exact: false, count_precision: 10 },
+      });
   });
 
   it('aggregates the groups of every account database before suppressing them', async () => {
