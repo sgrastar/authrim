@@ -721,6 +721,37 @@ export function getTenantMetadataContextFromHono(
     | undefined;
 }
 
+/**
+ * Whether the tenant's accounts are routed through Lookup to their own databases (the
+ * `tenant_core/users` and `tenant_pii` shards) instead of being kept in the tenant metadata
+ * database. Both allocation scopes route accounts. The registry resolves every tenant metadata
+ * context with a route in one of them (resolveTenantMetadataContext returns one or throws), so in
+ * a deployed Worker this is true exactly when the request resolved a tenant metadata context.
+ * A context without an allocation scope (only a single-database setup builds one) keeps its
+ * accounts in the metadata database. A scope this code does not know is refused rather than read
+ * as unrouted, which would send account reads and writes to the metadata database.
+ *
+ * This is the one definition: every Worker that chooses between the metadata database and the
+ * account databases decides with it (ar-auth and ar-management call it through their
+ * `usesRoutedAccountStorage` wrappers). It used to be three: ar-auth's tenant-exclusive-only
+ * check sent shared-pool tenants' passkey, email-code and TOTP requests to the metadata database.
+ */
+export function usesRoutedAccountStorage(metadata: TenantMetadataContext | undefined): boolean {
+  const allocationScope = (metadata?.route as Partial<ResolvedTenantDatabaseSource> | undefined)
+    ?.allocationScope;
+  if (allocationScope === undefined || allocationScope === null) return false;
+  switch (allocationScope) {
+    case 'shared_pool':
+    case 'tenant_exclusive':
+      return true;
+    default: {
+      // A new allocation scope must be classified here before it compiles.
+      const unknownScope: never = allocationScope;
+      throw new Error('tenant_metadata_allocation_scope_invalid', { cause: unknownScope });
+    }
+  }
+}
+
 export function getAccountDataContextFromHono(
   c: HonoContext<{ Bindings: Env }>
 ): AccountDataContext | undefined {

@@ -2,8 +2,8 @@ import type { Context } from 'hono';
 import {
   guestResumeCredentialLookupSubject,
   getChallengeStoreByChallengeId,
-  getTenantMetadataContextFromHono,
   getTenantIdFromContext,
+  getTenantMetadataContextFromHono,
   isCanonicalAccountIdForUser,
   isValidPersistedUserId,
   passkeyCredentialLookupSubject,
@@ -18,6 +18,7 @@ import {
   type Challenge,
   type Env,
   type StoreChallengeRequest,
+  usesRoutedAccountStorage as usesRoutedAccountStorageFor,
 } from '@authrim/ar-lib-core';
 
 const RESUME_TTL_SECONDS = 5 * 60;
@@ -357,21 +358,12 @@ export async function provisionAccount(
 // passkey accounts; the input validation is enforced by the management worker.
 export const provisionEmailAccount = provisionAccount;
 
-// Transitional symbol aliases for authentication handlers; all implementations route through
-// the Control Plane account provisioner above.
-export function usesTenantD1AccountStorage(c: Context<{ Bindings: Env }>): boolean {
-  const metadata = getTenantMetadataContextFromHono(c);
-  const legacyStorageProfileId = (
-    metadata as (typeof metadata & { storageProfileId?: string }) | undefined
-  )?.storageProfileId;
-  return (
-    metadata?.route?.allocationScope === 'tenant_exclusive' ||
-    legacyStorageProfileId === 'builtin:storage:tenant-d1'
-  );
-}
-
+/**
+ * Whether the tenant's accounts are routed to their own databases. One definition for every
+ * Worker: see usesRoutedAccountStorage in ar-lib-core (ar-management decides with it too).
+ */
 export function usesRoutedAccountStorage(c: Context<{ Bindings: Env }>): boolean {
-  return Boolean(getTenantMetadataContextFromHono(c)?.route) || usesTenantD1AccountStorage(c);
+  return usesRoutedAccountStorageFor(getTenantMetadataContextFromHono(c));
 }
 
 /**
