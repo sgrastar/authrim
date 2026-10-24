@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   claimShapes,
   diffClaimShapes,
+  diffValidationRules,
   NO_CATALOG,
   releasePoints,
   type CatalogTypes,
 } from '../identity-mapping-content-diff';
+import type { MappingSetContent } from '../identity-mapping-set-facade-content';
 
 /** The claims a content fills, and how one content's claims change into another's. */
 
@@ -17,6 +19,7 @@ type Rule = {
   action: string;
   edges: Array<{ sourceRef: Record<string, unknown>; targetRef: Record<string, unknown> }>;
   transforms?: Step[];
+  validationRules?: MappingSetContent['rules'][number]['validationRules'];
 };
 
 function rule(
@@ -272,6 +275,47 @@ describe('the changes of a content', () => {
     ).toEqual([]);
   });
 
+  it.each([
+    { before: ['string', 'number'], after: ['string', 'string'], label: 'mixed to one type' },
+    { before: ['string', 'string'], after: ['string', 'number'], label: 'one type to mixed' },
+    { before: ['string', 'number'], after: ['string', 'boolean'], label: 'mixed types changed' },
+    { before: ['string', 'number'], after: ['number', 'string'], label: 'source types swapped' },
+  ])('keeps each source type: $label', ({ before, after }) => {
+    const types = (values: string[]): CatalogTypes => ({
+      bundle: {
+        entries: ['a', 'b'].map((path, index) => ({
+          id: path,
+          namespace: 'authrim.profile',
+          path,
+          valueType: values[index],
+          cardinality: 'single',
+        })),
+      } as never,
+      stableIds: new Map(),
+    });
+    const mapping = rule('nickname', ['a', 'b']);
+    const summary = (values: string[]) => [...new Set(values)].sort().join(' | ');
+
+    expect(diff([mapping], [mapping], { before: types(before), after: types(after) })).toEqual([
+      {
+        kind: 'type_changed',
+        claim: 'nickname',
+        profile_id: 'profile-1',
+        type_before: summary(before),
+        type_after: summary(after),
+        source_types_before: before.map((type, index) => ({
+          source: `authrim.profile:${index === 0 ? 'a' : 'b'}`,
+          type,
+        })),
+        source_types_after: after.map((type, index) => ({
+          source: `authrim.profile:${index === 0 ? 'a' : 'b'}`,
+          type,
+        })),
+      },
+    ]);
+    expect(diff([mapping], [mapping], { before: types(before), after: types(before) })).toEqual([]);
+  });
+
   it('tell a step that moves to another input, or runs in another order across inputs', () => {
     const two = (transforms: Step[]) => rule('name', ['given', 'family'], { transforms });
     const lower = { operation: 'case', parameters: { mode: 'lower' } };
@@ -362,7 +406,7 @@ describe('the changes of a content', () => {
 
   it('release a claim whose edge names no profile through the set’s one profile', () => {
     const unnamed = rule('nickname', ['nickname']);
-    delete (unnamed.edges[0].targetRef as Record<string, unknown>).profileId;
+    delete unnamed.edges[0].targetRef.profileId;
     expect(diff([rule('email', ['email'])], [rule('email', ['email']), unnamed])).toEqual([
       { kind: 'added', claim: 'nickname', profile_id: 'profile-1' },
     ]);
@@ -407,7 +451,7 @@ describe('the changes of a content', () => {
 
   it('tell a claim written in another namespace, which the runtime does not release', () => {
     const moved = rule('email', ['email']);
-    (moved.edges[0].targetRef as Record<string, unknown>).namespace = 'custom.claim';
+    moved.edges[0].targetRef.namespace = 'custom.claim';
     expect(diff([rule('email', ['email'])], [moved])).toEqual([
       {
         kind: 'renamed',
@@ -428,6 +472,64 @@ describe('the changes of a content', () => {
     expect([...shapes.values()].find((shape) => shape.claim === 'name')).toMatchObject({
       sourceKeys: ['authrim.profile:family', 'authrim.profile:given'],
     });
+  });
+});
+
+describe('validation changes', () => {
+  const required = {
+    targetRef: { side: 'source', namespace: 'authrim.profile', path: 'nickname' },
+    validationKind: 'required',
+    severity: 'critical',
+  };
+  const withRules = (...validationRules: NonNullable<Rule['validationRules']>) => ({
+    rules: [{ ...rule('email', ['email']), validationRules }],
+  });
+  const diffValidation = (
+    before: NonNullable<Rule['validationRules']>,
+    after: NonNullable<Rule['validationRules']>
+  ) => diffValidationRules(withRules(...before), withRules(...after), 'p', 'p');
+  const expected = (change: 'added' | 'removed' | 'changed', effect = 'may_reject') => ({
+    kind: 'validation_changed',
+    claim: 'nickname',
+    namespace: 'authrim.profile',
+    profile_id: 'p',
+    validation_change: change,
+    validation_effect: effect,
+  });
+
+  it('reports critical validation added, removed, or changed without any edge changing', () => {
+    expect(diffValidation([], [required])).toEqual([expected('added')]);
+    expect(diffValidation([required], [])).toEqual([expected('removed')]);
+    expect(diffValidation([required], [{ ...required, severity: 'error' }])).toEqual([
+      expected('changed'),
+    ]);
+    const enumeration = {
+      ...required,
+      validationKind: 'enum',
+      parameters: { allowedValues: ['one'] },
+    };
+    expect(
+      diffValidation([enumeration], [{ ...enumeration, parameters: { allowedValues: ['two'] } }])
+    ).toEqual([expected('changed')]);
+  });
+
+  it('distinguishes noncritical changes, including when an unchanged critical rule shares the target', () => {
+    const warning = { ...required, validationKind: 'format', severity: 'warning' };
+    expect(diffValidation([], [warning])).toEqual([expected('added', 'validation_only')]);
+    expect(diffValidation([required], [required, warning])).toEqual([
+      expected('changed', 'validation_only'),
+    ]);
+    // An omitted severity is persisted as error, not the runtime required rule's fallback.
+    const { severity: _severity, ...implicitError } = required;
+    expect(diffValidation([implicitError], [{ ...required, severity: 'error' }])).toEqual([]);
+  });
+
+  it('ignores ordering, repeated identical rules, and parameter object key order', () => {
+    const first = { ...required, parameters: { a: 1, b: 2 } };
+    const second = { ...required, validationKind: 'enum', parameters: { allowedValues: ['one'] } };
+    expect(
+      diffValidation([first, second], [second, { ...first, parameters: { b: 2, a: 1 } }, second])
+    ).toEqual([]);
   });
 });
 

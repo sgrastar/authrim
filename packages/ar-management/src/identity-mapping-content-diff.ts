@@ -37,6 +37,7 @@ export type ClaimChangeKind =
   | 'source_changed'
   | 'transform_changed'
   | 'type_changed'
+  | 'validation_changed'
   /** The set's profile is switched: a claim the new one lists and the old did not, and so on. */
   | 'profile_field_added'
   | 'profile_field_removed'
@@ -57,6 +58,13 @@ export interface ClaimChange {
   namespace: string;
   /** `renamed`: the namespace before, when it differs. */
   previous_namespace?: string;
+  /** A validation definition was added, removed, or changed for this field. */
+  validation_change?: 'added' | 'removed' | 'changed';
+  /** Critical validation can reject the whole app's issuance, independently of claim scopes. */
+  validation_effect?: 'may_reject' | 'validation_only';
+  /** Per-source catalog types when a claim reads several attributes. */
+  source_types_before?: Array<{ source: string; type: string | null }>;
+  source_types_after?: Array<{ source: string; type: string | null }>;
 }
 
 interface ClaimShape {
@@ -69,7 +77,9 @@ interface ClaimShape {
   sourceOrder: string;
   /** The steps on the claim's edges in order, each with the place of its edge, as stable JSON. */
   transforms: string;
-  /** The catalog type of what it reads (`string`, `string[]`), when every source has one. */
+  /** The catalog types of each attribute, retaining their association when types are mixed. */
+  sourceTypes: ReadonlyMap<string, string | null>;
+  /** Distinct catalog types (`string`, `string[]`, or `string | string[]`). */
   type: string | null;
 }
 
@@ -156,7 +166,7 @@ export function claimShapes(
       sources: Set<string>;
       order: string[];
       transforms: string[];
-      types: Set<string>;
+      sourceTypes: Map<string, string | null>;
     }
   >();
   const rules = content.rules;
@@ -189,7 +199,7 @@ export function claimShapes(
         sources: new Set(),
         order: [],
         transforms: [],
-        types: new Set(),
+        sourceTypes: new Map(),
       };
       shapes.set(key, shape);
     }
@@ -197,7 +207,7 @@ export function claimShapes(
     if (source) shape.sources.add(source);
     placeOf.set(edge, { key, place: shape.order.length });
     shape.order.push(source ?? '?');
-    shape.types.add(typeOf(edge.sourceRef, catalog) ?? '');
+    shape.sourceTypes.set(source ?? '?', typeOf(edge.sourceRef, catalog));
   }
   // The steps in the order the runtime loads them: by rule priority, then by each step's place in
   // its rule (so the steps of rules of one priority interleave), then as saved. A step on no edge
@@ -223,7 +233,7 @@ export function claimShapes(
   }
   return new Map(
     [...shapes].map(([key, shape]) => {
-      const types = [...shape.types];
+      const types = [...new Set(shape.sourceTypes.values())];
       return [
         key,
         {
@@ -233,7 +243,13 @@ export function claimShapes(
           sourceKeys: [...shape.sources].sort(),
           sourceOrder: shape.order.join('\n'),
           transforms: shape.transforms.join('|'),
-          type: types.length === 1 && types[0] !== '' ? types[0] : null,
+          sourceTypes: shape.sourceTypes,
+          type: types.some((type) => type !== null)
+            ? types
+                .map((type) => type ?? 'unknown')
+                .sort()
+                .join(' | ')
+            : null,
         },
       ];
     })
@@ -316,8 +332,30 @@ export function diffClaimShapes(
     if (was.transforms !== now.transforms) {
       changes.push({ kind: 'transform_changed', ...base });
     }
-    if (was.type && now.type && was.type !== now.type) {
-      changes.push({ kind: 'type_changed', ...base, type_before: was.type, type_after: now.type });
+    const changedSourceType = [...was.sourceTypes].some(([source, type]) => {
+      const next = now.sourceTypes.get(source);
+      return type !== null && next !== undefined && next !== null && type !== next;
+    });
+    const completeTypes = (shape: ClaimShape) =>
+      [...shape.sourceTypes.values()].every((type) => type !== null);
+    if (
+      was.type &&
+      now.type &&
+      (changedSourceType || (completeTypes(was) && completeTypes(now) && was.type !== now.type))
+    ) {
+      const sourceTypes = (shape: ClaimShape) =>
+        [...shape.sourceTypes]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([source, type]) => ({ source, type }));
+      changes.push({
+        kind: 'type_changed',
+        ...base,
+        type_before: was.type,
+        type_after: now.type,
+        ...(was.sourceTypes.size > 1 || now.sourceTypes.size > 1
+          ? { source_types_before: sourceTypes(was), source_types_after: sourceTypes(now) }
+          : {}),
+      });
     }
   }
   return changes.sort(
@@ -325,6 +363,78 @@ export function diffClaimShapes(
       a.claim.localeCompare(b.claim) ||
       a.namespace.localeCompare(b.namespace) ||
       a.kind.localeCompare(b.kind)
+  );
+}
+
+/**
+ * Validation is independent of the claims an app releases: a critical failure rejects the whole
+ * issuance. Compare definitions per target, without returning parameters or attribute values.
+ * Noncritical changes are still shown on the set, but do not change the app's released claims.
+ */
+export function diffValidationRules(
+  before: Pick<MappingSetContent, 'rules'> | null,
+  after: Pick<MappingSetContent, 'rules'>,
+  profileBefore: string | null,
+  profileAfter: string | null
+): ClaimChange[] {
+  const read = (content: Pick<MappingSetContent, 'rules'> | null) => {
+    const targets = new Map<
+      string,
+      { claim: string; namespace: string; definitions: string[]; critical: string[] }
+    >();
+    for (const rule of content?.rules ?? []) {
+      for (const validation of rule.validationRules ?? []) {
+        const ref = validation.targetRef;
+        const claim = mappingReferencePath(ref) ?? mappingReferenceCatalogEntryId(ref) ?? 'unknown';
+        const namespace = namespaceOf(ref);
+        const side = ref.side === 'canonical' || ref.side === 'destination' ? ref.side : 'source';
+        const key = stable({
+          side,
+          namespace,
+          claim,
+          catalogEntryId: mappingReferenceCatalogEntryId(ref),
+        });
+        const target = targets.get(key) ?? { claim, namespace, definitions: [], critical: [] };
+        // The writer persists an omitted severity as error, including for a required rule.
+        const severity = validation.severity ?? 'error';
+        const definition = stable({
+          kind: validation.validationKind,
+          severity,
+          parameters: validation.parameters ?? {},
+        });
+        target.definitions.push(definition);
+        if (severity === 'critical') target.critical.push(definition);
+        targets.set(key, target);
+      }
+    }
+    return targets;
+  };
+  const was = read(before);
+  const now = read(after);
+  const signature = (definitions: string[] = []) => stable([...new Set(definitions)].sort());
+  const changes: ClaimChange[] = [];
+  for (const key of new Set([...was.keys(), ...now.keys()])) {
+    const previous = was.get(key);
+    const current = now.get(key);
+    if (signature(previous?.definitions) === signature(current?.definitions)) continue;
+    const target = current ?? previous;
+    if (!target) continue;
+    changes.push({
+      kind: 'validation_changed',
+      claim: target.claim,
+      namespace: target.namespace,
+      profile_id: profileAfter,
+      ...(profileBefore !== profileAfter ? { previous_profile_id: profileBefore } : {}),
+      validation_change: !previous ? 'added' : !current ? 'removed' : 'changed',
+      validation_effect:
+        signature(previous?.critical) !== signature(current?.critical)
+          ? 'may_reject'
+          : 'validation_only',
+    });
+  }
+  return changes.sort(
+    (left, right) =>
+      left.claim.localeCompare(right.claim) || left.namespace.localeCompare(right.namespace)
   );
 }
 
@@ -379,14 +489,13 @@ function parseAliases(raw: string | null): Array<{ namespace: string; path: stri
   try {
     const value = JSON.parse(raw ?? '[]') as unknown;
     return Array.isArray(value)
-      ? value.flatMap((item) =>
-          item &&
-          typeof item === 'object' &&
-          typeof (item as Record<string, unknown>).namespace === 'string' &&
-          typeof (item as Record<string, unknown>).path === 'string'
-            ? [{ namespace: item.namespace as string, path: item.path as string }]
-            : []
-        )
+      ? value.flatMap((item: unknown) => {
+          if (!item || typeof item !== 'object') return [];
+          const ref = item as Record<string, unknown>;
+          return typeof ref.namespace === 'string' && typeof ref.path === 'string'
+            ? [{ namespace: ref.namespace, path: ref.path }]
+            : [];
+        })
       : [];
   } catch {
     return [];

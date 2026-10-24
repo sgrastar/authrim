@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ADMIN_PERMISSIONS,
   adminAuthMiddleware,
+  applyOIDCIdentityMapping,
   requireAdminPermissions,
   resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
@@ -14,7 +15,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     createAuditLogFromContext: vi.fn(async () => undefined),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
-      async (env: { TEST_CORES?: Record<string, unknown> }, _partition: string, options) => {
+      async (
+        env: { TEST_CORES?: Record<string, unknown> },
+        _partition: string,
+        options?: { tenantId?: string }
+      ) => {
         const adapter = env.TEST_CORES?.[options?.tenantId ?? ''];
         if (!adapter) throw new Error('tenant_database_unavailable');
         return adapter;
@@ -26,6 +31,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { enforceDeclaredAdminRouteAccess, findAdminRouteAccessRule } from '../admin-route-access';
 import { IdentityMappingControlPlaneRepository } from '../identity-mapping-control-plane';
 import { adminIdentityMappingSetChangePreviewHandler } from '../identity-mapping-set-change-preview';
+import type { ClaimChange } from '../identity-mapping-content-diff';
 import {
   adminIdentityMappingSetCreateHandler,
   adminIdentityMappingSetGetHandler,
@@ -90,10 +96,12 @@ const PROFILE_SCHEMA = {
 
 function kvStore() {
   const store = new Map<string, string>();
+  const read = vi.fn(async (key: string) => store.get(key) ?? null);
   return {
     store,
+    read,
     namespace: {
-      get: vi.fn(async (key: string) => store.get(key) ?? null),
+      get: read,
       put: vi.fn(async (key: string, value: string) => void store.set(key, value)),
       delete: vi.fn(async (key: string) => void store.delete(key)),
       list: vi.fn(async () => ({ keys: [], list_complete: true })),
@@ -120,6 +128,25 @@ const rule = (claim: string, source: string, profileId: string) => ({
 });
 
 let sequence = 0;
+
+/** Shapes read by these fixtures; successful preview bodies are checked against OpenAPI too. */
+interface TestResponse {
+  id: string;
+  content_version?: string;
+  owner?: string;
+  error?: string;
+  error_description?: string;
+  changes: ClaimChange[];
+  references: { count: number };
+  apps: Array<{
+    client_id: string;
+    tier: string;
+    changes: ClaimChange[];
+    held_back: Array<{ claim: string; scope: string | null }>;
+  }>;
+  tenants?: unknown[];
+  defaults_unavailable?: string;
+}
 
 async function setup() {
   // tenant-c has no apps at all.
@@ -243,8 +270,10 @@ async function setup() {
     signIn(context.db, assignments).cookie;
   const admin = cookie();
   const operator = cookie(GLOBAL_SUPER_ADMIN);
-  const call = (who: string, method: string, path: string, body?: unknown, headers = {}) =>
-    context.call(who, method, path, body, headers);
+  const call = async (who: string, method: string, path: string, body?: unknown, headers = {}) => {
+    const response = await context.call(who, method, path, body, headers);
+    return { status: response.status, json: response.json as TestResponse };
+  };
   const tenantContent = (claims: Array<[string, string]>, profileId = tenantProfile) => ({
     catalogVersionId,
     rules: claims.map(([claim, source]) => rule(claim, source, profileId)),
@@ -268,7 +297,7 @@ async function setup() {
       { 'Idempotency-Key': `preview-key-${sequence}` }
     );
     expect(response.status).toBe(201);
-    return response.json.id as string;
+    return response.json.id;
   };
   const app = (tenantId: string, clientId: string, identityMapping?: unknown, scope?: string) => {
     insertOAuthClient(cores[tenantId], { tenantId, clientId, identityMapping });
@@ -287,6 +316,7 @@ async function setup() {
     );
   return {
     ...context,
+    repository,
     cores,
     settings,
     admin,
@@ -304,14 +334,212 @@ async function setup() {
   };
 }
 
-const appOf = (json: Record<string, any>, clientId: string) =>
-  (json.apps as Array<Record<string, any>>).find((line) => line.client_id === clientId);
+const appOf = (json: TestResponse, clientId: string) =>
+  json.apps.find((line) => line.client_id === clientId);
 
 beforeEach(() => {
   sequence += 100;
 });
 
 describe('a change of a tenant’s set', () => {
+  const criticalRequired = {
+    targetRef: { side: 'source', namespace: 'authrim.profile', path: 'nickname' },
+    validationKind: 'required',
+    severity: 'critical',
+  };
+
+  it.each([
+    { change: 'added', before: [], after: [criticalRequired] },
+    { change: 'removed', before: [criticalRequired], after: [] },
+    {
+      change: 'changed',
+      before: [criticalRequired],
+      after: [{ ...criticalRequired, severity: 'error' }],
+    },
+  ])(
+    'shows critical validation $change to every app, independently of release scopes and namespace',
+    async ({ change, before, after }) => {
+      const t = await setup();
+      const content = (validationRules: typeof before) => {
+        const content = t.tenantContent([['email', 'email']]);
+        return { ...content, rules: content.rules.map((rule) => ({ ...rule, validationRules })) };
+      };
+      const setId = await t.createSet(content(before));
+      t.app(TENANT, 'no-profile-scope', { fieldMappingSetId: setId }, 'openid');
+      t.app(
+        TENANT,
+        'other-namespace',
+        {
+          fieldMappingSetId: setId,
+          destinationNamespace: 'custom.claim',
+        },
+        'openid'
+      );
+
+      const { status, json } = await t.preview(setId, { content: content(after) });
+      const expected = {
+        kind: 'validation_changed',
+        claim: 'nickname',
+        namespace: 'authrim.profile',
+        profile_id: expect.any(String) as unknown,
+        validation_change: change,
+        validation_effect: 'may_reject',
+      };
+
+      expect(status).toBe(200);
+      expect(json.changes).toEqual([expected]);
+      for (const id of ['no-profile-scope', 'other-namespace']) {
+        expect(appOf(json, id)).toMatchObject({ changes: [expected], held_back: [] });
+      }
+      const schemas = adminOpenApiSchemas();
+      expect(shapeErrors(schemas, schemas.IdentityMappingSetChangePreviewResponse, json)).toEqual(
+        []
+      );
+      // This is a valid save, including when the validation targets no mapped output.
+      const saved = await t.call(
+        t.admin,
+        'PUT',
+        `${SETS}/${setId}`,
+        {
+          display_name: 'Validation change',
+          content: content(after),
+          confirm_impact: json.references.count,
+        },
+        { 'Idempotency-Key': `validation-save-${sequence}` }
+      );
+      expect(saved.status).toBe(200);
+    }
+  );
+
+  it('warns of a critical validation that actually rejects issuance for an unreleased attribute', async () => {
+    const t = await setup();
+    const content = t.tenantContent([['email', 'email']]);
+    const setId = await t.createSet(content);
+    t.app(TENANT, 'app', { fieldMappingSetId: setId }, 'openid');
+    const input = {
+      adapter: sqliteAdapter(t.cores[TENANT]),
+      env: { DB_ADMIN: t.adapter, SETTINGS: t.settings.namespace },
+      tenantId: TENANT,
+      clientId: 'app',
+      selector: { fieldMappingSetId: setId },
+      claims: { sub: 'preview-test-subject', email: 'preview@example.test' },
+      grantedScopes: ['openid'],
+      fixture: { consent: 'all' as const },
+    };
+    await expect(applyOIDCIdentityMapping(input)).resolves.toHaveProperty(
+      'claims.sub',
+      input.claims.sub
+    );
+    const draft = {
+      ...content,
+      rules: content.rules.map((rule) => ({ ...rule, validationRules: [criticalRequired] })),
+    };
+    const { json } = await t.preview(setId, { content: draft });
+    expect(appOf(json, 'app')?.changes).toContainEqual(
+      expect.objectContaining({
+        kind: 'validation_changed',
+        validation_effect: 'may_reject',
+      })
+    );
+    const saved = await t.call(
+      t.admin,
+      'PUT',
+      `${SETS}/${setId}`,
+      {
+        display_name: 'Critical validation',
+        content: draft,
+        confirm_impact: json.references.count,
+      },
+      { 'Idempotency-Key': `critical-save-${sequence}` }
+    );
+    expect(saved.status).toBe(200);
+    await expect(applyOIDCIdentityMapping(input)).rejects.toMatchObject({
+      details: { code: 'policy.identity_mapping_failed' },
+    });
+  });
+
+  it('shows noncritical validation only at the set level, without calling it a scope restriction', async () => {
+    const t = await setup();
+    const content = t.tenantContent([['email', 'email']]);
+    const setId = await t.createSet(content);
+    t.app(TENANT, 'app', { fieldMappingSetId: setId });
+    const draft = {
+      ...content,
+      rules: content.rules.map((rule) => ({
+        ...rule,
+        validationRules: [{ ...criticalRequired, severity: 'warning' }],
+      })),
+    };
+
+    const { status, json } = await t.preview(setId, { content: draft });
+
+    expect(status).toBe(200);
+    expect(json.changes).toEqual([
+      expect.objectContaining({
+        kind: 'validation_changed',
+        validation_change: 'added',
+        validation_effect: 'validation_only',
+      }),
+    ]);
+    expect(appOf(json, 'app')).toMatchObject({ changes: [], held_back: [] });
+  });
+
+  it.each([
+    { before: ['string', 'number'], after: ['string', 'string'], label: 'mixed to one type' },
+    { before: ['string', 'string'], after: ['string', 'number'], label: 'one type to mixed' },
+    { before: ['string', 'number'], after: ['string', 'boolean'], label: 'mixed types changed' },
+    { before: ['string', 'number'], after: ['number', 'string'], label: 'source types swapped' },
+  ] as const)('previews per-source catalog type changes: $label', async ({ before, after }) => {
+    const t = await setup();
+    const catalog = async (types: readonly ('string' | 'number' | 'boolean')[], suffix: string) => {
+      const created = await t.repository.createCatalog(TENANT, {
+        catalogKey: `preview-type-${sequence}-${suffix}`,
+        displayName: 'Type preview',
+        versionLabel: 'v1',
+        entries: ['email', 'nickname'].map((path, index) => ({
+          id: `field.profile.${path}`,
+          namespace: 'authrim.profile',
+          path,
+          targetType: 'canonical' as const,
+          valueType: types[index],
+          cardinality: 'single' as const,
+          classification: 'pii' as const,
+        })),
+      });
+      return created.activeVersion.id;
+    };
+    const content = t.tenantContent([['nickname', 'email']]);
+    content.rules[0].edges.push({
+      ...content.rules[0].edges[0],
+      sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'nickname' },
+    });
+    const oldContent = { ...content, catalogVersionId: await catalog(before, 'before') };
+    const draft = { ...content, catalogVersionId: await catalog(after, 'after') };
+    const setId = await t.createSet(oldContent);
+    t.app(TENANT, 'app', { fieldMappingSetId: setId });
+
+    const { status, json } = await t.preview(setId, { content: draft });
+
+    expect(status).toBe(200);
+    expect(json.changes).toEqual([
+      expect.objectContaining({
+        kind: 'type_changed',
+        claim: 'nickname',
+        source_types_before: ['email', 'nickname'].map((path, index) => ({
+          source: `authrim.profile:${path}`,
+          type: before[index],
+        })),
+        source_types_after: ['email', 'nickname'].map((path, index) => ({
+          source: `authrim.profile:${path}`,
+          type: after[index],
+        })),
+      }),
+    ]);
+    expect(appOf(json, 'app')?.changes).toEqual(json.changes);
+    const schemas = adminOpenApiSchemas();
+    expect(shapeErrors(schemas, schemas.IdentityMappingSetChangePreviewResponse, json)).toEqual([]);
+  });
+
   it('says what each app that uses it would see, by why it uses it, and saves nothing', async () => {
     const t = await setup();
     const before: Array<[string, string]> = [
@@ -336,13 +564,18 @@ describe('a change of a tenant’s set', () => {
 
     expect(status).toBe(200);
     expect(json.changes).toEqual([
-      { kind: 'added', claim: 'nickname', namespace: 'oidc.claim', profile_id: expect.any(String) },
+      {
+        kind: 'added',
+        claim: 'nickname',
+        namespace: 'oidc.claim',
+        profile_id: expect.any(String) as unknown,
+      },
       {
         kind: 'renamed',
         claim: 'org',
         previous_claim: 'organization',
         namespace: 'oidc.claim',
-        profile_id: expect.any(String),
+        profile_id: expect.any(String) as unknown,
       },
     ]);
     expect(json.apps.map((line: { client_id: string }) => line.client_id)).toEqual([
@@ -512,11 +745,11 @@ describe('a change of a tenant’s set', () => {
     t.app(TENANT, 'follows');
     t.saveDefault(TENANT, setId);
     // The tenant's settings document cannot be read; the rest can.
-    const get = t.settings.namespace.get as unknown as ReturnType<typeof vi.fn>;
-    const readStore = get.getMockImplementation() as (key: string) => Promise<string | null>;
+    const get = t.settings.read;
+    const readStore = get.getMockImplementation();
     get.mockImplementation(async (key: string) => {
       if (key === `settings:tenant:${TENANT}:identity-mapping`) throw new Error('KV is down');
-      return readStore(key);
+      return readStore?.(key) ?? null;
     });
 
     const { status, json } = await t.preview(setId, {

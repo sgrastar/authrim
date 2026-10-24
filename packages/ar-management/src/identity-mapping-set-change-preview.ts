@@ -47,6 +47,7 @@ import {
   claimShapes,
   contentProfile,
   diffClaimShapes,
+  diffValidationRules,
   readCatalogTypes,
   releasePoints,
   type ClaimChange,
@@ -159,8 +160,8 @@ function profileFieldChanges(
   after: string | null
 ): ClaimChange[] {
   if (!before || !after || before === after) return [];
-  const was = profiles.get(before) ?? new Map();
-  const now = profiles.get(after) ?? new Map();
+  const was = profiles.get(before) ?? new Map<string, DestinationProfileConsentField[]>();
+  const now = profiles.get(after) ?? new Map<string, DestinationProfileConsentField[]>();
   const describe = (fields: DestinationProfileConsentField[] | undefined) =>
     JSON.stringify(
       // Everything the release judges a field by: when it is in play, and what it accepts.
@@ -203,6 +204,12 @@ function changesFor(
   const seen: ClaimChange[] = [];
   const heldBack: AppLine['held_back'] = [];
   for (const change of changes) {
+    if (change.kind === 'validation_changed') {
+      // Critical validation can stop issuance before any claim is released. Its target need not
+      // be a claim, be in the app's namespace, or have a scope the app requested.
+      if (change.validation_effect === 'may_reject') seen.push(change);
+      continue;
+    }
     // A change reaches the app when the claim reached it before, or reaches it after: a rename
     // into a claim its scopes do not release still takes away the claim it had.
     const points = releasePoints(change);
@@ -409,6 +416,7 @@ export async function adminIdentityMappingSetChangePreviewHandler(c: AdminContex
     ]);
     const changes = [
       ...claimChanges,
+      ...diffValidationRules(current, draft, profileBefore, profileAfter),
       ...profileFieldChanges(profiles, profileBefore, profileAfter),
     ].sort((a, b) => a.claim.localeCompare(b.claim) || a.kind.localeCompare(b.kind));
 
