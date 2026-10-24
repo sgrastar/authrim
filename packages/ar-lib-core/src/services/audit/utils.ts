@@ -171,6 +171,13 @@ export const USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST = new Set([
   'targetuserid',
   'actoruserid',
   'actorid',
+  'uid',
+  'subjectuserid',
+  'impersonateduserid',
+  'memberid',
+  'memberids',
+  // A SCIM externalId names the user in the customer's own directory.
+  'externalid',
 ]);
 
 /**
@@ -184,26 +191,32 @@ const USER_IDENTIFIER_SCRUB_MAX_DEPTH = 8;
 
 const DROPPED = Symbol('dropped');
 
-function dropUserIdentifiers(value: unknown, depth: number): unknown {
+function dropUserIdentifiers(
+  value: unknown,
+  depth: number,
+  piiFields: ReadonlySet<string>
+): unknown {
   if (typeof value === 'string') return USER_REFERENCE_VALUE_PATTERN.test(value) ? DROPPED : value;
   if (value === null || typeof value !== 'object') return value;
   if (depth >= USER_IDENTIFIER_SCRUB_MAX_DEPTH) return DROPPED;
   if (Array.isArray(value)) {
     return value
-      .map((item) => dropUserIdentifiers(item, depth + 1))
+      .map((item) => dropUserIdentifiers(item, depth + 1, piiFields))
       .filter((item) => item !== DROPPED);
   }
   const out: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
     const normalized = normalizeKey(key);
-    // Nested secrets too (a session ID inside a context object is still the session cookie).
+    // Nested secrets and PII fields too (a session ID inside a context object is still the
+    // session cookie).
     if (
+      piiFields.has(key) ||
       USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST.has(normalized) ||
       SECRET_FIELD_NORMALIZED_BLACKLIST.has(normalized)
     ) {
       continue;
     }
-    const kept = dropUserIdentifiers(item, depth + 1);
+    const kept = dropUserIdentifiers(item, depth + 1, piiFields);
     if (kept !== DROPPED) out[key] = kept;
   }
   return out;
@@ -220,7 +233,7 @@ function dropUserIdentifiers(value: unknown, depth: number): unknown {
  * 1. Remove fields marked as PII in tenant config
  * 2. Remove fields matching SECRET_FIELD_NORMALIZED_BLACKLIST (exact match, normalized)
  * 3. Remove user identifiers (USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST) and typed user
- *    references (`subject:<id>`) at any depth, and nested secret fields
+ *    references (`subject:<id>`) at any depth, and nested secret and PII fields
  * 4. Remove query strings from request_path
  *
  * @param details - Raw event details
@@ -237,6 +250,7 @@ export function sanitizeEventDetails(
     .map(([field]) => field);
 
   const sanitized = { ...details };
+  const piiFieldSet: ReadonlySet<string> = new Set(piiFields);
 
   // 1. Remove PII fields
   for (const field of piiFields) {
@@ -254,7 +268,7 @@ export function sanitizeEventDetails(
   for (const [key, value] of Object.entries(sanitized)) {
     const kept = USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST.has(normalizeKey(key))
       ? DROPPED
-      : dropUserIdentifiers(value, 0);
+      : dropUserIdentifiers(value, 0, piiFieldSet);
     if (kept === DROPPED) {
       delete sanitized[key];
     } else {

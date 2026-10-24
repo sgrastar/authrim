@@ -557,6 +557,8 @@ describe('sanitizeEventDetails user identifiers', () => {
           from: 'subject:user-1',
           members: ['user:user-2', 'group:g1'],
           target: { targetUserId: 'user-2', role: 'viewer', items: [{ subjectId: 'user-3' }] },
+          // A tenant-configured PII field and other user identifier spellings, nested.
+          profile: { email: 'person@example.com', externalId: 'okta-42', uid: 'u-1', tier: 'gold' },
         },
         DEFAULT_PII_CONFIG
       )
@@ -564,6 +566,7 @@ describe('sanitizeEventDetails user identifiers', () => {
       method: 'passkey',
       members: ['group:g1'],
       target: { role: 'viewer', items: [{}] },
+      profile: { tier: 'gold' },
     });
   });
 });
