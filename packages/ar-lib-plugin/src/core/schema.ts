@@ -6,7 +6,10 @@
  */
 
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import {
+  legacyZodErrorMessage,
+  legacyZodIssueCode,
+} from '@authrim/ar-lib-core/utils/zod-legacy-errors';
 import type { AuthrimPlugin, PluginMeta } from './types';
 
 // =============================================================================
@@ -64,21 +67,137 @@ export type JSONSchema7TypeName =
 /**
  * Convert a Zod schema to JSON Schema
  *
+ * Produces the draft-07 document zod-to-json-schema produced for these schemas before
+ * the zod 4 migration (input view: fields with defaults are optional), so the schemas
+ * already stored in KV and rendered by the Admin UI keep their shape.
+ *
  * @param schema - Zod schema to convert
  * @param options - Conversion options
  * @returns JSON Schema 7 compatible object
  */
 export function zodToJSONSchema<T>(
-  schema: z.ZodSchema<T>,
+  schema: z.ZodType<T, unknown>,
   options?: SchemaConversionOptions
 ): JSONSchema7 {
-  const result = zodToJsonSchema(schema, {
-    $refStrategy: 'none',
-    target: 'jsonSchema7',
-    ...options,
+  const document = z.toJSONSchema(schema, {
+    target: 'draft-7',
+    io: 'input',
+    unrepresentable: 'any',
+    reused: options?.$refStrategy && options.$refStrategy !== 'none' ? 'ref' : 'inline',
+    override: ({ zodSchema, jsonSchema }) => keepLegacyJSONSchemaShape(zodSchema, jsonSchema),
   }) as JSONSchema7;
 
-  return result;
+  if (!options?.name) {
+    return document;
+  }
+
+  // zod-to-json-schema wrapped named schemas in a definitions map.
+  const { $schema, ...definition } = document;
+  return {
+    $ref: `#/definitions/${options.name}`,
+    definitions: { [options.name]: definition },
+    $schema,
+  };
+}
+
+const MAX_SAFE_INTEGER_BOUND = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Undo the places where zod 4's JSON Schema output differs from zod-to-json-schema's
+ * for the same schema: strip objects keep `additionalProperties: false` in the input
+ * view, loose objects keep `true`, records drop the implied string `propertyNames`,
+ * built-in string formats do not repeat their regex as `pattern`, unions of literals
+ * stay a typed `enum`, and integers do not spell out the safe-integer range.
+ */
+function keepLegacyJSONSchemaShape(
+  zodSchema: z.core.$ZodType,
+  jsonSchema: z.core.JSONSchema.BaseSchema
+): void {
+  const def = zodSchema._zod.def;
+
+  if (def.type === 'object' && jsonSchema.type === 'object') {
+    const catchall = (def as z.core.$ZodObjectDef).catchall;
+    const catchallType = catchall?._zod.def.type;
+    if (catchall === undefined || catchallType === 'never') {
+      jsonSchema.additionalProperties = false;
+    } else if (catchallType === 'unknown' || catchallType === 'any') {
+      jsonSchema.additionalProperties = true;
+    }
+  }
+
+  if (def.type === 'record') {
+    const propertyNames = jsonSchema.propertyNames as Record<string, unknown> | undefined;
+    if (
+      propertyNames &&
+      Object.keys(propertyNames).length === 1 &&
+      propertyNames.type === 'string'
+    ) {
+      delete jsonSchema.propertyNames;
+    }
+  }
+
+  if (typeof jsonSchema.pattern === 'string' && typeof jsonSchema.format === 'string') {
+    if (builtinFormatPatterns(zodSchema).includes(jsonSchema.pattern)) {
+      delete jsonSchema.pattern;
+    }
+  }
+
+  if (def.type === 'union' && Array.isArray(jsonSchema.anyOf)) {
+    const literals = literalUnionValues(def as z.core.$ZodUnionDef);
+    if (literals) {
+      delete jsonSchema.anyOf;
+      jsonSchema.type = literals.type;
+      jsonSchema.enum = literals.values;
+    }
+  }
+
+  if (jsonSchema.type === 'integer') {
+    if (jsonSchema.minimum === -MAX_SAFE_INTEGER_BOUND) delete jsonSchema.minimum;
+    if (jsonSchema.maximum === MAX_SAFE_INTEGER_BOUND) delete jsonSchema.maximum;
+  }
+}
+
+/** `{ type, enum }` for a union of same-typed primitive literals (`z.literal(6).or(z.literal(8))`). */
+function literalUnionValues(
+  def: z.core.$ZodUnionDef
+): { type: 'string' | 'number' | 'boolean'; values: Array<string | number | boolean> } | undefined {
+  const values: Array<string | number | boolean> = [];
+  for (const option of def.options) {
+    const optionDef = option._zod.def;
+    if (optionDef.type !== 'literal') return undefined;
+    for (const value of (optionDef as z.core.$ZodLiteralDef<z.core.util.Literal>).values) {
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+        return undefined;
+      }
+      values.push(value);
+    }
+  }
+  const types = new Set(values.map((value) => typeof value));
+  const [type] = [...types];
+  if (types.size !== 1 || (type !== 'string' && type !== 'number' && type !== 'boolean')) {
+    return undefined;
+  }
+  return { type, values };
+}
+
+/** Regex sources of the built-in string formats (email, uuid, ...) on a schema. */
+function builtinFormatPatterns(zodSchema: z.core.$ZodType): string[] {
+  const def = zodSchema._zod.def as z.core.$ZodTypeDef & {
+    checks?: z.core.$ZodCheck[];
+  };
+  const candidates: unknown[] = [zodSchema, ...(def.checks ?? [])];
+  const patterns: string[] = [];
+  for (const candidate of candidates) {
+    const candidateDef = (candidate as { _zod?: { def?: Record<string, unknown> } })._zod?.def;
+    if (
+      candidateDef?.format !== undefined &&
+      candidateDef.format !== 'regex' &&
+      candidateDef.pattern instanceof RegExp
+    ) {
+      patterns.push(candidateDef.pattern.source);
+    }
+  }
+  return patterns;
 }
 
 /**
@@ -152,10 +271,11 @@ export function extractPluginSchema<T>(plugin: AuthrimPlugin<T>): PluginSchemaIn
  * @returns Validation result
  */
 export function validatePluginConfig<T>(
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: z.ZodType<T, unknown>,
   config: unknown
 ): ValidationResult<T> {
-  const result = schema.safeParse(config);
+  // zod 3 messages and codes: plugin-config errors are part of the Admin API surface.
+  const result = schema.safeParse(config, { error: legacyZodErrorMessage, reportInput: true });
 
   if (result.success) {
     return {
@@ -166,10 +286,10 @@ export function validatePluginConfig<T>(
 
   return {
     success: false,
-    errors: result.error.errors.map((e) => ({
-      path: e.path.join('.'),
+    errors: result.error.issues.map((e) => ({
+      path: e.path.map(String).join('.'),
       message: e.message,
-      code: e.code,
+      code: legacyZodIssueCode(e),
     })),
   };
 }
@@ -205,7 +325,7 @@ export interface ValidationError {
   /** Error message */
   message: string;
 
-  /** Zod error code */
+  /** Zod error code (zod 3 vocabulary, e.g. `invalid_string`) */
   code: string;
 }
 

@@ -46,12 +46,15 @@ export const ResendNotifierConfigSchema = z.object({
       .describe('Resend API key (starts with re_). Obtain from Resend dashboard')
   ),
 
+  // The message is for a malformed address only; a missing value still reads "Required".
   defaultFrom: z
-    .string()
-    .email('Invalid sender email address')
+    .email({
+      error: (issue) =>
+        issue.code === 'invalid_format' ? 'Invalid sender email address' : undefined,
+    })
     .describe('Default sender email address. Requires domain verification'),
 
-  replyTo: z.string().email().optional().describe('Reply-to email address (optional)'),
+  replyTo: z.email().optional().describe('Reply-to email address (optional)'),
 
   timeoutMs: z
     .number()
@@ -75,7 +78,6 @@ export const ResendNotifierConfigSchema = z.object({
     .describe('Sandbox mode. When enabled, emails are not actually sent (for testing)'),
 
   apiEndpoint: z
-    .string()
     .url()
     .default('https://api.resend.com')
     .describe('Resend API endpoint. Usually no need to change'),
