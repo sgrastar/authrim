@@ -23,6 +23,8 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.set.unnamed': 'Mapping-Set ohne Namen',
 	'mc.set.withState': '{set} ({state})',
 	'mc.failed': 'Kann nicht entschieden werden ({tier} ist kein gültiger Wert)',
+	'mc.failed.settings_unreadable':
+		'Kann nicht bestimmt werden (die Einstellungen können nicht gelesen werden)',
 	'mc.source': 'Quelle',
 	'mc.effective': 'Wirksam',
 	'mc.standardOnly': 'Nur Standard-Claims',
@@ -79,6 +81,8 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ro.reason.tenant_deleted': 'Ausgelassen: Mandant gelöscht',
 	'mc.ro.reason.version_changed':
 		'Die Einstellungen des Mandanten wurden nach der Auswirkungsprüfung geändert',
+	'mc.ro.reason.settings_unavailable':
+		'Die Einstellungen des Mandanten können nicht gelesen werden',
 	'mc.ro.reason.internal_error': 'Konnte nicht verarbeitet werden',
 	'mc.ro.reason.forbidden': 'Keine Berechtigung, diesen Mandanten zu ändern',
 	'mc.ro.run': 'Auf {count} Mandanten anwenden',
@@ -101,6 +105,7 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ro.status.skipped': 'Keine Änderung',
 	'mc.ro.status.failed': 'Nicht angewendet',
 	'mc.ro.status.conflict': 'Nicht angewendet',
+	'mc.ro.status.unsent': 'Nicht gesendet',
 	'mc.ro.status.rejected': 'Ausgelassen',
 	'mc.ro.after': 'Quellen nach der Änderung',
 	'mc.ro.after.desc': 'Die Quelle jedes Mandanten, nach der Änderung erneut gelesen.',
@@ -114,6 +119,15 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ex.user': 'Testbenutzer',
 	'mc.ex.userHint':
 		'Für die Untersuchung eines echten Benutzers ist die Untersuchungsberechtigung nötig, und sie wird an anderer Stelle geöffnet. Hier können nur erfundene Testbenutzer gewählt werden.',
+	'mc.ex.surface': 'Wohin die Claims gehen',
+	'mc.ex.surface.id_token': 'ID-Token',
+	'mc.ex.surface.userinfo': 'UserInfo',
+	'mc.ex.consentChoice': 'Einwilligung des Testbenutzers',
+	'mc.ex.consentChoice.all': 'Allen optionalen Angaben zugestimmt',
+	'mc.ex.consentChoice.none': 'Nicht zugestimmt',
+	'mc.ex.stoppedOther': 'Diese App erhält kein Token. Grundcode: {code}',
+	'mc.ex.stoppedClaim': 'Claim, dessen Wert abgelehnt wurde: {claim}',
+	'mc.ex.implicit': 'Mappings, die früher implizit galten, gelten nicht mehr: {sets}',
 	'mc.ex.run': 'Untersuchen',
 	'mc.ex.stale': 'Die Auswahl wurde geändert. Wählen Sie erneut „Untersuchen“.',
 	'mc.ex.resultFor': 'Ergebnis für {app} · {user}',
@@ -156,15 +170,19 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ex.reason.consent_missing': 'Der Benutzer hat dem Senden dieses Claims nicht zugestimmt.',
 	'mc.ex.reason.not_in_set': 'Das verwendete Mapping-Set enthält diesen Claim nicht.',
 	'mc.ex.reason.mapping_not_applied': 'Für diese App gilt kein Mapping (Quelle: Keine).',
+	'mc.ex.reason.surface_not_listed':
+		'Dieser Claim wird nicht dorthin gesendet, wo Sie gewählt haben (er geht nur an das andere Ziel).',
 	'mc.ex.reason.issuance_stopped':
-		'Das Mapping kann nicht verwendet werden, daher wird kein Token ausgestellt.',
+		'Es wird kein Token ausgestellt, daher wird auch dieser Claim nicht gesendet (der Grund steht oben).',
 	'mc.ex.fix.value_missing': 'Zu beheben in: den Attributen des Benutzers',
 	'mc.ex.fix.value_empty': 'Zu beheben in: den Attributen des Benutzers',
 	'mc.ex.fix.scope_not_granted': 'Zu beheben in: den Scopes, die die App anfordert',
 	'mc.ex.fix.consent_missing': 'Zu beheben in: der Zustimmung des Benutzers',
 	'mc.ex.fix.not_in_set': 'Zu beheben in: dem Mapping-Set',
 	'mc.ex.fix.mapping_not_applied': 'Zu beheben in: der Auswahl der App oder des Mandanten',
-	'mc.ex.fix.issuance_stopped': 'Zu beheben in: dem Zustand des Mapping-Sets',
+	'mc.ex.fix.surface_not_listed': 'Zu beheben in: dem Zielprofil',
+	'mc.ex.fix.issuance_stopped':
+		'Zu beheben in: dem oben genannten Grund, warum kein Token ausgestellt wird',
 
 	'mc.ch.title': 'Mapping-Set bearbeiten',
 	'mc.ch.desc':

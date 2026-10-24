@@ -82,6 +82,39 @@
 </Story>
 
 <Story
+	name="Sent in batches"
+	play={async ({ canvasElement }) => {
+		// The API takes 8 tenants a request here: 19 go as 3 requests, and read as one result.
+		const canvas = await chooseAndCheck(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: t('mc.ro.run', { count: 18 }) }));
+		await typeAndApply('18');
+		await canvas.findByText(t('mc.ro.result.summary', { applied: 18, skipped: 0, failed: 0 }));
+	}}
+>
+	{#snippet template()}
+		<MappingRollout client={createFakeIdentityMapping({ bulkLimit: 8 })} />
+	{/snippet}
+</Story>
+
+<Story
+	name="A request lost midway"
+	play={async ({ canvasElement }) => {
+		// The second of three requests is lost: its tenants and the third's are listed as not
+		// sent, the first's stay applied, and a retry finishes the rest.
+		const canvas = await chooseAndCheck(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: t('mc.ro.run', { count: 18 }) }));
+		await typeAndApply('18');
+		await canvas.findByText(t('mc.ro.result.summary', { applied: 8, skipped: 0, failed: 10 }));
+		await userEvent.click(canvas.getByRole('button', { name: t('mc.ro.retry', { count: 10 }) }));
+		await canvas.findByText(t('mc.ro.result.summary', { applied: 18, skipped: 0, failed: 0 }));
+	}}
+>
+	{#snippet template()}
+		<MappingRollout client={createFakeIdentityMapping({ bulkLimit: 8, failApplyRequest: 2 })} />
+	{/snippet}
+</Story>
+
+<Story
 	name="Some tenants not changed, then retried"
 	play={async ({ canvasElement }) => {
 		const canvas = await chooseAndCheck(canvasElement);
@@ -111,6 +144,22 @@
 >
 	{#snippet template()}
 		<MappingRollout client={createFakeIdentityMapping({ impactUnavailable: ['kelp'] })} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Paged list, settings not readable"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Every page is read (8 tenants a page here): the last tenant is listed too.
+		await canvas.findByRole('checkbox', { name: t('table.selectRow', { name: 'Willow' }) });
+		await canvas.findByText(t('mc.failed.settings_unreadable'));
+	}}
+>
+	{#snippet template()}
+		<MappingRollout
+			client={createFakeIdentityMapping({ pageSize: 8, settingsUnreadable: ['nettle'] })}
+		/>
 	{/snippet}
 </Story>
 

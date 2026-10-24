@@ -18,7 +18,9 @@ import type {
 	ClientMappingChoice,
 	EffectiveMapping,
 	EffectiveSelection,
+	ExplainConsent,
 	ExplainedClaim,
+	ExplainRequest,
 	HistoryEntry,
 	IdentityMappingClient,
 	LevelValue,
@@ -53,6 +55,14 @@ export interface FakeIdentityMappingOptions {
 	inactiveTenantSet?: boolean;
 	/** Tenants whose impact cannot be counted (the provider answers `available: false`). */
 	impactUnavailable?: string[];
+	/** Tenants whose settings cannot be read (no tenant default; the selection fails). */
+	settingsUnreadable?: string[];
+	/** This apply request (1 = the first) fails as a whole once, as a lost request would. */
+	failApplyRequest?: number;
+	/** The most tenants one bulk-apply request may name (the API's default is 25). */
+	bulkLimit?: number;
+	/** The most tenants one page of the list holds (the API's is 100), to show paging. */
+	pageSize?: number;
 	/** Milliseconds every call waits (to show loading states). */
 	delay?: number;
 }
@@ -77,6 +87,18 @@ export function createFakeIdentityMapping(
 	const applied = new Map<string, unknown>();
 
 	const pause = () => wait(options.delay ?? 120);
+	const bulkLimit = options.bulkLimit ?? 25;
+	let applyRequests = 0;
+	/** As the API: a request naming more tenants than the limit is refused whole. */
+	const refuseTooMany = (request: BulkApplyRequest) => {
+		if (request.tenant_ids.length > bulkLimit) {
+			throw new ApiError(400, 'invalid_request', 'Too many tenants', {
+				error: 'invalid_request',
+				code: 'too_many_tenants',
+				limit: bulkLimit
+			});
+		}
+	};
 	const findSet = (id: string | undefined) => sets.find((s) => s.id === id);
 	const tenant = (id: string): FakeTenant => {
 		const found = tenants.find((t) => t.id === id);
@@ -178,7 +200,10 @@ export function createFakeIdentityMapping(
 				? 'empty'
 				: 'present';
 
-	function explain(tenantId: string, clientId: string, userId: string): ClaimExplanation {
+	function explain(tenantId: string, request: ExplainRequest): ClaimExplanation {
+		const clientId = request.client_id;
+		const userId = request.subject.id;
+		const consentAsked: ExplainConsent = request.consent ?? 'all';
 		const target = appOf(clientId);
 		const user = TEST_USERS.find((u) => u.user_id === userId);
 		if (!user) throw new ApiError(404, 'not_found', 'test user not found');
@@ -186,32 +211,40 @@ export function createFakeIdentityMapping(
 		const { selection } = effective;
 		const set = selection.kind === 'bound' ? findSet(selection.setId) : undefined;
 		const stopped = selection.kind === 'bound' && (!set || !set.enabled);
-		const granted = (scope: string) => target.scopes.includes(scope);
+		const scopes = request.scopes ?? target.scopes;
+		const granted = (scope: string) => scopes.includes(scope);
+		const idTokenWithoutSet = request.surface === 'id_token' && selection.kind !== 'bound';
 		const claims: ExplainedClaim[] = STANDARD_CLAIMS.map(({ claim, scope }) => ({
 			claim,
 			field: null,
+			sources: claim === 'sub' ? [] : [claim],
 			origin: 'standard',
 			value: 'present',
 			scope,
 			scope_granted: granted(scope),
 			consent: 'not_required',
-			released: !stopped && granted(scope),
+			// Without a set, the token endpoint's ID token carries the protocol's claims only.
+			released: !stopped && granted(scope) && !(idTokenWithoutSet && claim !== 'sub'),
 			...(stopped
 				? { reason: 'issuance_stopped' as const }
-				: granted(scope)
-					? {}
-					: { reason: 'scope_not_granted' as const })
+				: idTokenWithoutSet && claim !== 'sub'
+					? { reason: 'surface_not_listed' as const }
+					: granted(scope)
+						? {}
+						: { reason: 'scope_not_granted' as const })
 		}));
 		for (const mapped of MAPPED_CLAIMS) {
 			const mapping = set?.mappings.find((m) => m.target === mapped.claim);
+			// A test user's consent is the one asked for: every optional item, or none.
 			const consent = mapped.consent
-				? target.consentMissing?.includes(mapped.claim)
+				? consentAsked === 'none'
 					? 'missing'
 					: 'granted'
 				: 'not_required';
 			const base = {
 				claim: mapped.claim,
 				field: mapping?.sources[0] ?? null,
+				sources: mapping ? [...mapping.sources] : [],
 				origin: 'mapping' as const,
 				scope: mapped.scope,
 				scope_granted: granted(mapped.scope),
@@ -249,14 +282,36 @@ export function createFakeIdentityMapping(
 			const released = reason ? false : value === 'not_evaluated' ? null : true;
 			claims.push({ ...base, value, released, ...(reason ? { reason } : {}) });
 		}
+		// Claims asked about by name that nothing builds: listed, with why they are not sent.
+		for (const name of request.claims ?? []) {
+			if (claims.some((c) => c.claim === name)) continue;
+			claims.push({
+				claim: name,
+				field: null,
+				sources: [],
+				origin: 'requested',
+				value: 'not_read',
+				scope: null,
+				scope_granted: false,
+				consent: 'not_required',
+				released: false,
+				reason: stopped
+					? 'issuance_stopped'
+					: selection.kind === 'bound'
+						? 'not_in_set'
+						: 'mapping_not_applied'
+			});
+		}
 		return {
 			tenantId,
 			clientId,
-			surface: 'id_token',
+			surface: request.surface,
 			subject: { kind: 'test_user', user_id: userId },
-			scopes: target.scopes,
+			scopes,
+			consent: consentAsked,
 			selection,
 			chain: effective.chain,
+			warnings: [],
 			outcome: stopped
 				? {
 						kind: 'stopped',
@@ -443,6 +498,26 @@ export function createFakeIdentityMapping(
 			};
 		}
 		const proposed = plannedSet(request);
+		if (options.settingsUnreadable?.includes(id)) {
+			// As the API: its values in effect are unknown, so it is neither previewed nor written.
+			return {
+				tenant_id: id,
+				status: 'nothing_to_do',
+				changes: [
+					{
+						category: IDENTITY_MAPPING_CATEGORY,
+						key: OIDC_DEFAULT_SET_KEY,
+						current: null,
+						proposed: proposed ?? null,
+						action: 'would_reject',
+						reason: 'settings_unavailable',
+						validation: { ok: null },
+						version: null
+					}
+				],
+				impact: {}
+			};
+		}
 		const own = found.ownDefault;
 		const skip =
 			own === proposed
@@ -456,12 +531,8 @@ export function createFakeIdentityMapping(
 		const effective = select(id, null).selection;
 		return {
 			tenant_id: id,
-			status:
-				action === 'would_apply'
-					? 'ready'
-					: action === 'would_reject'
-						? 'rejected'
-						: 'nothing_to_do',
+			// The API's preview says only whether anything would be written; the why is per key.
+			status: action === 'would_apply' ? 'ready' : 'nothing_to_do',
 			changes: [
 				{
 					category: IDENTITY_MAPPING_CATEGORY,
@@ -525,6 +596,16 @@ export function createFakeIdentityMapping(
 		if (preview.status === 'rejected' && !entry) {
 			return { tenant_id: id, status: 'rejected', reason: preview.reason, changes: [] };
 		}
+		if (entry.reason === 'settings_unavailable') {
+			// Not read, not written: a failure the API reports as such (it can be retried).
+			return {
+				tenant_id: id,
+				status: 'failed',
+				changes: [
+					{ ...base, status: 'failed', reason: 'settings_unavailable', version_after: null }
+				]
+			};
+		}
 		// As the API does: a tenant changed since the preview is a conflict, before anything else.
 		if (request.expected?.[id]?.[IDENTITY_MAPPING_CATEGORY] !== entry.version) {
 			return {
@@ -586,7 +667,7 @@ export function createFakeIdentityMapping(
 		return {
 			mode: request.mode,
 			on_existing_override: request.on_existing_override ?? 'skip',
-			limits: { max_tenants_per_request: 100, max_keys_per_request: 20 },
+			limits: { max_tenants_per_request: bulkLimit, max_keys_per_request: 20 },
 			summary: { tenants: results.length, by_status: byStatus },
 			results
 		};
@@ -608,12 +689,15 @@ export function createFakeIdentityMapping(
 		).length;
 
 	const tenantRow = (t: FakeTenant): PlatformTenantRow => {
+		const unreadable = options.settingsUnreadable?.includes(t.id);
 		const { chain, selection } = select(t.id, null);
 		const base = {
 			tenant_id: t.id,
 			display_name: t.name,
-			tenant_default: chain[1],
-			effective: selection
+			lifecycle_state: 'active',
+			// As the API: unreadable settings leave no tenant level, and a failed selection.
+			tenant_default: unreadable ? null : chain[1],
+			effective: unreadable ? ({ kind: 'failed', code: 'settings_unreadable' } as const) : selection
 		};
 		if (options.impactUnavailable?.includes(t.id)) {
 			return { ...base, apps: null, apps_unavailable: 'core_database_unavailable' };
@@ -680,6 +764,7 @@ export function createFakeIdentityMapping(
 		},
 		async bulkPreview(request) {
 			await pause();
+			refuseTooMany(request);
 			return copy(
 				bulkResponse(
 					request,
@@ -691,6 +776,11 @@ export function createFakeIdentityMapping(
 			await pause();
 			// Same key, same answer (the API keeps the result of a request it has run).
 			if (applied.has(key)) return copy(applied.get(key)) as never;
+			refuseTooMany(request);
+			applyRequests += 1;
+			if (applyRequests === options.failApplyRequest) {
+				throw new ApiError(503, 'temporarily_unavailable', 'The request could not be completed');
+			}
 			const answer = {
 				bulk_id: `bulk_${applied.size + 1}`,
 				...bulkResponse(
@@ -738,8 +828,14 @@ export function createFakeIdentityMapping(
 				...history
 			];
 		},
-		async tenantsOverview() {
+		async tenantsOverview(page = {}) {
 			await pause();
+			const limit = Math.min(page.limit ?? 50, options.pageSize ?? 100);
+			// Tenant ID order, from after the cursor (the last ID of the page before).
+			const ordered = [...tenants].sort((a, b) => a.id.localeCompare(b.id));
+			const start = page.cursor ? ordered.findIndex((t) => t.id > page.cursor!) : 0;
+			const rest = start < 0 ? [] : ordered.slice(start);
+			const shown = rest.slice(0, limit);
 			const platform: ChainEntry = platformDefault
 				? {
 						tier: 'platform_default',
@@ -750,17 +846,26 @@ export function createFakeIdentityMapping(
 				: { tier: 'platform_default', state: 'unset' };
 			return copy({
 				platform_default: platform,
-				tenants: tenants.map(tenantRow),
+				tenants: shown.map(tenantRow),
+				next_cursor: rest.length > limit ? shown[shown.length - 1].id : null,
 				generated_at: new Date().toISOString()
 			});
 		},
 		async testUsers() {
 			await pause();
-			return TEST_USERS.map(({ user_id, label }) => ({ user_id, label }));
+			return copy({
+				test_users: TEST_USERS.map(({ user_id, label, attributes }) => ({
+					user_id,
+					label,
+					attributes,
+					updated_at: Date.parse('2026-10-20T00:00:00Z')
+				})),
+				limits: { max_users: 10, max_attributes: 50 }
+			});
 		},
 		async explain(tenantId, request) {
 			await pause();
-			return copy(explain(tenantId, request.client_id, request.user_id));
+			return copy(explain(tenantId, request));
 		},
 		async previewChoice(tenantId, clientId, choice) {
 			await pause();

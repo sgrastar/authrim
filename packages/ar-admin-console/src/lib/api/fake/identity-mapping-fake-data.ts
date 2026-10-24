@@ -151,22 +151,18 @@ export interface FakeApp {
 	name: string;
 	identity_mapping: ClientMappingChoice;
 	scopes: string[];
-	/** Claims whose release this app's users have not agreed to (consent). */
-	consentMissing?: string[];
 }
 
 const app = (
 	client_id: string,
 	name: string,
 	scopes: string,
-	identity_mapping: ClientMappingChoice = null,
-	consentMissing?: string[]
+	identity_mapping: ClientMappingChoice = null
 ): FakeApp => ({
 	client_id,
 	name,
 	identity_mapping,
-	scopes: scopes.split(' '),
-	...(consentMissing ? { consentMissing } : {})
+	scopes: scopes.split(' ')
 });
 
 const FULL = 'openid email profile affiliation';
@@ -179,7 +175,7 @@ export function fakeApps(): FakeApp[] {
 		app('app_mail', 'Student mail', 'openid email profile'),
 		app('app_timetable', 'Timetable', 'openid email'),
 		app('app_repository', 'Research repository', FULL),
-		app('app_events', 'Event booking', FULL, null, ['department']),
+		app('app_events', 'Event booking', FULL),
 		app('app_printing', 'Printing', 'openid profile'),
 		app('app_guest', 'Guest Wi-Fi', 'openid'),
 		app('app_alumni', 'Alumni site', FULL),

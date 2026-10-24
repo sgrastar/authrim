@@ -41,14 +41,20 @@ export const setUsable = (facts: SetFacts): boolean =>
 export function sourceText(selection: EffectiveSelection): string {
 	if (selection.kind === 'bound') return tierLabel(selection.tier);
 	if (selection.kind === 'none') return t('mc.tier.none');
-	return t('mc.failed', { tier: selection.tier ? tierLabel(selection.tier) : '' });
+	return failedText(selection);
+}
+
+/** Why the selection could not be made: the level that failed, or the settings unread. */
+function failedText(selection: Extract<EffectiveSelection, { kind: 'failed' }>): string {
+	if (selection.tier) return t('mc.failed', { tier: tierLabel(selection.tier) });
+	return label('mc.failed.', selection.code);
 }
 
 /** What is in effect: the set, or the kind of "none". */
 export function effectText(selection: EffectiveSelection): string {
 	if (selection.kind === 'bound') return setText(selection.setId, selection);
 	if (selection.kind === 'none') return label('mc.none.', selection.reason);
-	return t('mc.failed', { tier: selection.tier ? tierLabel(selection.tier) : '' });
+	return failedText(selection);
 }
 
 /** The value one level of the chain holds. */

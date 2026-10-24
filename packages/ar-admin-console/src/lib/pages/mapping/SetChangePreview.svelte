@@ -99,7 +99,7 @@
 		try {
 			const [next, testUsers] = await Promise.all([
 				client.setContent(ids.tenantId, ids.setId),
-				client.testUsers(ids.tenantId)
+				client.testUsers(ids.tenantId).then((list) => list.test_users)
 			]);
 			// The preview of the saved content lists who uses the set, with no changes.
 			const current = await client.previewSetChange(ids.tenantId, ids.setId, {

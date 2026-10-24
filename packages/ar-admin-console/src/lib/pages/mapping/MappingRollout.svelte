@@ -10,6 +10,7 @@
 		type MappingSetSummary,
 		type PlatformTenantsOverview
 	} from '$lib/api/identity-mapping';
+	import { ApiError } from '$lib/api/api-error';
 	import { i18n, t } from '$lib/i18n/i18n.svelte';
 	import { formatNumber } from '$lib/ui/format';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
@@ -70,10 +71,24 @@
 	let result = $state<BulkApplyResponse<BulkApplyResult> | null>(null);
 	let actionError = $state('');
 
+	/**
+	 * Every page of the tenant list: an operator picks across all tenants, and "select all" must
+	 * mean all of them. Pages of up to 100 (the API's most).
+	 */
+	async function readAllTenants(): Promise<PlatformTenantsOverview> {
+		let page = await client.tenantsOverview({ limit: 100 });
+		const rows = [...page.tenants];
+		while (page.next_cursor) {
+			page = await client.tenantsOverview({ cursor: page.next_cursor, limit: 100 });
+			rows.push(...page.tenants);
+		}
+		return { ...page, tenants: rows, next_cursor: null };
+	}
+
 	async function load() {
 		loadError = false;
 		try {
-			const [next, list] = await Promise.all([client.tenantsOverview(), client.sets('platform')]);
+			const [next, list] = await Promise.all([readAllTenants(), client.sets('platform')]);
 			overview = next;
 			sets = list.sets.filter((set) => set.owner === 'platform' && set.enabled);
 		} catch {
@@ -102,10 +117,23 @@
 	const succeeded = (status: string) =>
 		status === 'applied' || status === 'cleared' || status === 'skipped';
 	/** Every tenant not changed as asked; the ones that failed or conflicted can be run again. */
+	/** Tenants of a run whose batch never got an answer (the request itself failed). */
+	let unsent = $state<string[]>([]);
 	const notApplied = $derived(result?.results.filter((r) => !succeeded(r.status)) ?? []);
-	const retryable = $derived(
-		notApplied.filter((r) => r.status === 'failed' || r.status === 'conflict')
-	);
+	/**
+	 * Run again: the tenants that failed or conflicted, and the ones never sent, each once (a
+	 * tenant can be both after a retry is itself lost).
+	 */
+	const retryIds = $derived([
+		...new Set([
+			...notApplied
+				.filter((r) => r.status === 'failed' || r.status === 'conflict')
+				.map((r) => r.tenant_id),
+			...unsent
+		])
+	]);
+	/** Tenants not changed as asked, each counted once. */
+	const failedCount = $derived(new Set([...notApplied.map((r) => r.tenant_id), ...unsent]).size);
 
 	const request = (
 		mode: 'preview' | 'apply',
@@ -120,6 +148,46 @@
 		on_existing_override: operation.policy
 	});
 
+	/**
+	 * The most tenants one bulk request may name: the API's default until an answer says (its
+	 * `limits`), or a refusal names the limit. A selection larger than that goes in batches.
+	 */
+	let batchSize = 25;
+
+	async function inBatches<R extends { status: string }>(
+		tenantIds: string[],
+		send: (batch: string[]) => Promise<BulkApplyResponse<R>>
+	): Promise<BulkApplyResponse<R>> {
+		const results: R[] = [];
+		let last: BulkApplyResponse<R> | null = null;
+		let start = 0;
+		while (start < tenantIds.length) {
+			const batch = tenantIds.slice(start, start + batchSize);
+			try {
+				last = await send(batch);
+			} catch (error) {
+				const limit = error instanceof ApiError ? error.body.limit : undefined;
+				if (
+					error instanceof ApiError &&
+					error.body.code === 'too_many_tenants' &&
+					typeof limit === 'number' &&
+					limit > 0 &&
+					limit < batch.length
+				) {
+					batchSize = limit;
+					continue;
+				}
+				throw error;
+			}
+			batchSize = last.limits.max_tenants_per_request;
+			results.push(...last.results);
+			start += batch.length;
+		}
+		const byStatus: Record<string, number> = {};
+		for (const r of results) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
+		return { ...last!, results, summary: { tenants: results.length, by_status: byStatus } };
+	}
+
 	async function check() {
 		// One thing at a time: a check while a run is going would mix their results.
 		if (running || retrying) return;
@@ -128,12 +196,15 @@
 		checking = true;
 		actionError = '';
 		try {
-			const answer = await client.bulkPreview(request('preview', tenantIds, operation));
+			const answer = await inBatches(tenantIds, (batch) =>
+				client.bulkPreview(request('preview', batch, operation))
+			);
 			// An answer for a choice changed meanwhile is not shown as the current one.
 			if (operation.signature !== signature) return;
 			preview = answer;
 			previewed = operation;
 			result = null;
+			unsent = [];
 		} catch {
 			actionError = t('mc.actionFailed');
 		} finally {
@@ -152,16 +223,30 @@
 				{ [IDENTITY_MAPPING_CATEGORY]: r.changes[0]?.version ?? '' }
 			])
 		);
-		const answer = await client.bulkApply(
-			{ ...request('apply', tenantIds, operation), expected },
-			crypto.randomUUID()
-		);
 		ran = operation;
-		// Results of earlier runs stay; the tenants run again take their new result.
-		const again = new Set(answer.results.map((r) => r.tenant_id));
-		const earlier = result?.results.filter((r) => !again.has(r.tenant_id)) ?? [];
-		result = { ...answer, results: [...earlier, ...answer.results] };
-		overview = await client.tenantsOverview();
+		// Until its batch is answered, each tenant counts as not sent: a failing request leaves the
+		// rest listed, to run again, and the tenants already answered keep their outcome.
+		unsent = [...new Set([...unsent, ...tenantIds])];
+		try {
+			// Batch by batch, each kept as it comes: a later batch failing loses none of them.
+			await inBatches(tenantIds, async (batch) => {
+				const answer = await client.bulkApply(
+					{
+						...request('apply', batch, operation),
+						expected: Object.fromEntries(batch.map((id) => [id, expected[id]]))
+					},
+					crypto.randomUUID()
+				);
+				// Results of earlier runs stay; the tenants run again take their new result.
+				const again = new Set(answer.results.map((r) => r.tenant_id));
+				const earlier = result?.results.filter((r) => !again.has(r.tenant_id)) ?? [];
+				result = { ...answer, results: [...earlier, ...answer.results] };
+				unsent = unsent.filter((id) => !again.has(id));
+				return answer;
+			});
+		} finally {
+			overview = await readAllTenants();
+		}
 	}
 
 	async function apply() {
@@ -177,10 +262,12 @@
 				ready.map((r) => r.tenant_id),
 				previewed
 			);
-			confirming = false;
 		} catch {
-			confirmError = t('mc.actionFailed');
+			// Some batches may have been applied: the result lists them, and the rest as not sent.
+			// The dialog closes so its versions are never sent again; retry checks anew.
+			actionError = t('mc.actionFailed');
 		} finally {
+			confirming = false;
 			running = false;
 		}
 	}
@@ -191,10 +278,13 @@
 		const operation = ran;
 		retrying = true;
 		actionError = '';
-		const ids = retryable.map((r) => r.tenant_id);
+		const ids = [...retryIds];
 		try {
 			// A tenant changed since the first check needs its new version: check those again.
-			await run(await client.bulkPreview(request('preview', ids, operation)), ids, operation);
+			const plan = await inBatches(ids, (batch) =>
+				client.bulkPreview(request('preview', batch, operation))
+			);
+			await run(plan, ids, operation);
 		} catch {
 			actionError = t('mc.actionFailed');
 		} finally {
@@ -286,9 +376,13 @@
 					{#if column.key === 'tenant'}
 						<strong>{row.display_name}</strong>
 					{:else if column.key === 'default'}
-						<span class:muted={row.tenant_default.state === 'unset'}>
-							{chainValueText(row.tenant_default)}
-						</span>
+						{#if row.tenant_default}
+							<span class:muted={row.tenant_default.state === 'unset'}>
+								{chainValueText(row.tenant_default)}
+							</span>
+						{:else}
+							<span class="muted">—</span>
+						{/if}
 					{:else if column.key === 'source'}
 						<SourceLabel selection={row.effective} />
 					{:else if column.key === 'apps'}
@@ -310,7 +404,9 @@
 						{/if}
 					{:else}
 						{@const outcome = resultOf.get(row.tenant_id)}
-						{#if outcome}
+						{#if unsent.includes(row.tenant_id)}
+							<Badge tone="warning">{t('mc.ro.status.unsent')}</Badge>
+						{:else if outcome}
 							<span class="stack">
 								<Badge tone={statusTone(outcome.status)}>
 									{label('mc.ro.status.', outcome.status)}
@@ -395,22 +491,22 @@
 			</Card>
 		{/if}
 
-		{#if result}
+		{#if result || unsent.length > 0}
 			<Card title={t('mc.ro.result')}>
 				<div class="form">
 					<p class="lead">
 						{t('mc.ro.result.summary', {
-							applied: result.results.filter((r) => r.status === 'applied').length,
-							skipped: result.results.filter((r) => r.status === 'skipped').length,
-							failed: notApplied.length
+							applied: result?.results.filter((r) => r.status === 'applied').length ?? 0,
+							skipped: result?.results.filter((r) => r.status === 'skipped').length ?? 0,
+							failed: failedCount
 						})}
 					</p>
-					{#if notApplied.length > 0}
+					{#if failedCount > 0}
 						<Callout tone="warning" live>{t('mc.ro.result.partial')}</Callout>
-						{#if retryable.length > 0}
+						{#if retryIds.length > 0}
 							<div class="actions">
 								<Button loading={retrying} disabled={checking} onclick={retry}>
-									{t('mc.ro.retry', { count: retryable.length })}
+									{t('mc.ro.retry', { count: retryIds.length })}
 								</Button>
 							</div>
 						{/if}

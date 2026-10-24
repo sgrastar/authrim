@@ -81,7 +81,7 @@ describe('fake identity mapping', () => {
 		const api = createFakeIdentityMapping();
 		const missing = await api.explain(DEMO_TENANT, {
 			client_id: 'app_library',
-			user_id: 'test_no_affiliation',
+			subject: { kind: 'test_user', id: 'test_no_affiliation' },
 			surface: 'id_token'
 		});
 		expect(missing.claims.find((c) => c.claim === 'affiliation')).toMatchObject({
@@ -92,13 +92,17 @@ describe('fake identity mapping', () => {
 		expect(JSON.stringify(missing)).not.toContain('Faculty');
 		const scope = await api.explain(DEMO_TENANT, {
 			client_id: 'app_timetable',
-			user_id: 'test_full',
+			subject: { kind: 'test_user', id: 'test_full' },
 			surface: 'id_token'
 		});
 		expect(scope.claims.find((c) => c.claim === 'affiliation')?.reason).toBe('scope_not_granted');
 		const stopped = await createFakeIdentityMapping({ inactiveTenantSet: true }).explain(
 			DEMO_TENANT,
-			{ client_id: 'app_library', user_id: 'test_full', surface: 'id_token' }
+			{
+				client_id: 'app_library',
+				subject: { kind: 'test_user', id: 'test_full' },
+				surface: 'id_token'
+			}
 		);
 		expect(stopped.outcome).toEqual({
 			kind: 'stopped',
@@ -219,7 +223,7 @@ describe('fake identity mapping', () => {
 		);
 		const explained = await api.explain(DEMO_TENANT, {
 			client_id: 'app_library',
-			user_id: 'test_no_affiliation',
+			subject: { kind: 'test_user', id: 'test_no_affiliation' },
 			surface: 'id_token'
 		});
 		expect(explained.claims.find((c) => c.claim === 'affiliation')).toMatchObject({
@@ -230,5 +234,87 @@ describe('fake identity mapping', () => {
 		const platform = await api.previewSetChange('platform', 'fms_groups', { mappings: [] });
 		expect(platform.tenants).toEqual([{ tenant_id: DEMO_TENANT, apps_using: 1 }]);
 		expect(platform.usage_complete).toBe(false);
+	});
+
+	it('pages the tenant list and keeps tenants whose settings cannot be read', async () => {
+		const api = createFakeIdentityMapping({ pageSize: 8, settingsUnreadable: ['nettle'] });
+		const rows = [];
+		let page = await api.tenantsOverview({ limit: 100 });
+		rows.push(...page.tenants);
+		while (page.next_cursor) {
+			page = await api.tenantsOverview({ cursor: page.next_cursor, limit: 100 });
+			rows.push(...page.tenants);
+		}
+		const ids = rows.map((row) => row.tenant_id);
+		expect(page.tenants.length).toBeLessThanOrEqual(8);
+		expect(ids).toHaveLength(21);
+		expect(ids).toEqual([...ids].sort());
+		const nettle = rows.find((row) => row.tenant_id === 'nettle');
+		expect(nettle).toMatchObject({
+			tenant_default: null,
+			effective: { kind: 'failed', code: 'settings_unreadable' }
+		});
+	});
+
+	it('refuses too many tenants, and neither previews nor writes unreadable settings', async () => {
+		const api = createFakeIdentityMapping({ bulkLimit: 2, settingsUnreadable: ['nettle'] });
+		await expect(
+			api.bulkPreview(request('preview', ['birch', 'cedar', 'elm']))
+		).rejects.toMatchObject({ status: 400, body: { code: 'too_many_tenants', limit: 2 } });
+		const preview = await api.bulkPreview(request('preview', ['nettle']));
+		expect(preview.results[0]).toMatchObject({
+			status: 'nothing_to_do',
+			changes: [{ action: 'would_reject', reason: 'settings_unavailable', version: null }]
+		});
+		const applied = await api.bulkApply({ ...request('apply', ['nettle']), expected: {} }, 'k9');
+		expect(applied.results[0]).toMatchObject({
+			status: 'failed',
+			changes: [{ reason: 'settings_unavailable' }]
+		});
+	});
+
+	it('explains with the consent asked for and lists every source attribute', async () => {
+		const api = createFakeIdentityMapping();
+		const none = await api.explain(DEMO_TENANT, {
+			client_id: 'app_library',
+			subject: { kind: 'test_user', id: 'test_full' },
+			surface: 'userinfo',
+			consent: 'none'
+		});
+		expect(none).toMatchObject({ surface: 'userinfo', consent: 'none', warnings: [] });
+		expect(none.claims.find((c) => c.claim === 'department')).toMatchObject({
+			consent: 'missing',
+			released: false,
+			reason: 'consent_missing',
+			sources: ['department']
+		});
+		const users = await api.testUsers(DEMO_TENANT);
+		expect(users.limits).toEqual({ max_users: 10, max_attributes: 50 });
+		expect(users.test_users[0]).toHaveProperty('attributes');
+	});
+
+	it('sends only sub in an ID token without a set, and lists claims asked about', async () => {
+		const api = createFakeIdentityMapping();
+		const asked = {
+			client_id: 'app_conformance',
+			subject: { kind: 'test_user' as const, id: 'test_full' }
+		};
+		const idToken = await api.explain(DEMO_TENANT, {
+			...asked,
+			surface: 'id_token',
+			claims: ['extra_claim']
+		});
+		expect(idToken.claims.find((c) => c.claim === 'email')).toMatchObject({
+			released: false,
+			reason: 'surface_not_listed'
+		});
+		expect(idToken.claims.find((c) => c.claim === 'sub')?.released).toBe(true);
+		expect(idToken.claims.find((c) => c.claim === 'extra_claim')).toMatchObject({
+			origin: 'requested',
+			released: false,
+			reason: 'mapping_not_applied'
+		});
+		const userinfo = await api.explain(DEMO_TENANT, { ...asked, surface: 'userinfo' });
+		expect(userinfo.claims.find((c) => c.claim === 'email')?.released).toBe(true);
 	});
 });

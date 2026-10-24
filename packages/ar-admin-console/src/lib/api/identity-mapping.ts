@@ -203,6 +203,7 @@ export interface BulkApplyResponse<R> {
 
 // ---------------------------------------------------------------------------------------------
 // PROPOSED: GET /api/admin/platform/identity-mapping/tenants (MAP-01, MAP-07)
+// Built in #593 (B1, not merged yet): the shape below is the one its handler returns.
 // ---------------------------------------------------------------------------------------------
 
 /** How the apps of one tenant choose. Counts only, with the same reading as the selection. */
@@ -217,8 +218,11 @@ export interface AppCounts {
 export interface PlatformTenantRow {
 	tenant_id: string;
 	display_name: string;
-	/** The tenant level of the chain, for the tenant itself (no app). */
-	tenant_default: ChainEntry;
+	/** The tenant's own state (deleted tenants are not listed). */
+	lifecycle_state: string;
+	/** The tenant level of the chain, for the tenant itself (no app); null when its settings
+	 * could not be read (`effective` is then failed with `settings_unreadable`). */
+	tenant_default: ChainEntry | null;
 	/** What an app of this tenant that names no set gets, from the selection. */
 	effective: EffectiveSelection;
 	/** Null when the tenant's apps could not be counted (`apps_unavailable` says why). */
@@ -228,12 +232,16 @@ export interface PlatformTenantRow {
 
 export interface PlatformTenantsOverview {
 	platform_default: ChainEntry;
+	/** One page, in tenant ID order. */
 	tenants: PlatformTenantRow[];
+	/** Pass back as `cursor` for the next page; null on the last one. */
+	next_cursor: string | null;
 	generated_at: string;
 }
 
 // ---------------------------------------------------------------------------------------------
-// PROPOSED: POST /api/admin/identity-mapping/explain (MAP-04)
+// PROPOSED: POST /api/admin/identity-mapping/explain, GET/PUT …/test-users (MAP-04)
+// Built in #595 (B2, not merged yet): the shapes below are the ones its handlers return.
 // ---------------------------------------------------------------------------------------------
 
 export type ExplainSurface = 'id_token' | 'userinfo';
@@ -246,12 +254,15 @@ export type ClaimDropReason =
 	| 'consent_missing'
 	| 'not_in_set'
 	| 'mapping_not_applied'
+	| 'surface_not_listed'
 	| 'issuance_stopped';
 
 export interface ExplainedClaim {
 	claim: string;
 	/** The Authrim attribute the set fills it from; null for claims Authrim gives itself. */
 	field: string | null;
+	/** Every attribute it reads (several for a combined value; none for `sub` or a fixed value). */
+	sources: string[];
 	/** `standard`: released by Authrim whatever the set; `mapping`: from the set. */
 	origin: 'standard' | 'mapping' | 'requested';
 	/**
@@ -273,19 +284,50 @@ export interface ClaimExplanation {
 	clientId: string;
 	surface: ExplainSurface;
 	subject: { kind: 'test_user'; user_id: string };
-	/** The scopes the app's last authorization asked for and was granted. */
+	/** The scopes the release ran with (the request's, else the app's registered ones). */
 	scopes: string[];
+	/** The test user's consent asked for: every optional item, or none. */
+	consent: ExplainConsent;
 	selection: EffectiveSelection;
 	chain: ChainEntry[];
-	/** `stopped`: the set the selection names cannot be used, so no token is issued (MAP-06). */
-	outcome: { kind: 'issued' } | { kind: 'stopped'; code: string; tier?: MappingTier };
+	warnings: ImplicitActivationWarning[];
+	warnings_unavailable?: true;
+	/**
+	 * `stopped`: no token is issued — the selected set cannot be used (MAP-06), a value the
+	 * profile requires is missing or refused (`claim` names it), or the release safety check.
+	 */
+	outcome:
+		| { kind: 'issued' }
+		| { kind: 'stopped'; code: string; tier?: MappingTier; claim?: string };
 	claims: ExplainedClaim[];
+}
+
+export type ExplainConsent = 'all' | 'none';
+
+export interface ExplainRequest {
+	client_id: string;
+	subject: { kind: 'test_user'; id: string };
+	surface: ExplainSurface;
+	/** Defaults to the app's registered scopes. */
+	scopes?: string[];
+	/** Defaults to `all`. */
+	consent?: ExplainConsent;
+	/** Claims to look at as well, beyond those the release builds. */
+	claims?: string[];
 }
 
 export interface TestUser {
 	user_id: string;
 	/** A label for test users (made up, never a real person). */
 	label: string;
+	/** Made-up attribute values, keyed by canonical or tenant custom field. */
+	attributes: Record<string, unknown>;
+	updated_at: number;
+}
+
+export interface TestUsers {
+	test_users: TestUser[];
+	limits: { max_users: number; max_attributes: number };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -443,15 +485,12 @@ export interface IdentityMappingClient {
 	/** existing: PUT /api/admin/clients/{id} with `identity_mapping`. */
 	setAppChoice(tenantId: string, clientId: string, choice: ClientMappingChoice): Promise<void>;
 
-	/** PROPOSED: GET /api/admin/platform/identity-mapping/tenants */
-	tenantsOverview(): Promise<PlatformTenantsOverview>;
-	/** PROPOSED: GET /api/admin/identity-mapping/test-users */
-	testUsers(tenantId: string): Promise<TestUser[]>;
-	/** PROPOSED: POST /api/admin/identity-mapping/explain */
-	explain(
-		tenantId: string,
-		request: { client_id: string; user_id: string; surface: ExplainSurface }
-	): Promise<ClaimExplanation>;
+	/** PROPOSED (#593): GET /api/admin/platform/identity-mapping/tenants?cursor=&limit= */
+	tenantsOverview(page?: { cursor?: string; limit?: number }): Promise<PlatformTenantsOverview>;
+	/** PROPOSED (#595): GET /api/admin/identity-mapping/test-users */
+	testUsers(tenantId: string): Promise<TestUsers>;
+	/** PROPOSED (#595): POST /api/admin/identity-mapping/explain */
+	explain(tenantId: string, request: ExplainRequest): Promise<ClaimExplanation>;
 	/** PROPOSED: POST /api/admin/identity-mapping/preview-effective (an app's choice, not saved). */
 	previewChoice(
 		tenantId: string,

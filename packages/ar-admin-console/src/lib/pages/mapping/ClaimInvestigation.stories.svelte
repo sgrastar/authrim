@@ -10,7 +10,8 @@
 		component: ClaimInvestigation,
 		// draft: not wired to a route. api-pending: the explanation by stage with reason codes
 		// (POST /api/admin/identity-mapping/explain) and the test users it runs on
-		// (GET /api/admin/identity-mapping/test-users) do not exist yet.
+		// (GET /api/admin/identity-mapping/test-users) are in review (#595); the fake answers in
+		// their shape.
 		tags: ['autodocs', 'draft', 'api-pending'],
 		parameters: {
 			layout: 'fullscreen',
@@ -77,6 +78,7 @@
 			tenantId={DEMO_TENANT}
 			clientId="app_events"
 			userId="test_full"
+			consent="none"
 			autorun
 		/>
 	{/snippet}

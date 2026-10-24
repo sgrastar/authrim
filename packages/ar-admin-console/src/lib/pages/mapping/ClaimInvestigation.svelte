@@ -3,7 +3,9 @@
 	import type {
 		AppSummary,
 		ClaimExplanation,
+		ExplainConsent,
 		ExplainedClaim,
+		ExplainSurface,
 		IdentityMappingClient,
 		TestUser
 	} from '$lib/api/identity-mapping';
@@ -15,6 +17,7 @@
 	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
 	import Badge from '$lib/ui/primitives/Badge.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
+	import RadioGroup from '$lib/ui/primitives/RadioGroup.svelte';
 	import Select from '$lib/ui/primitives/Select.svelte';
 	import Page from '$lib/ui/templates/Page.svelte';
 	import ChainList from './ChainList.svelte';
@@ -34,19 +37,32 @@
 		/** Preselected app and user, and whether to investigate at once (links, stories). */
 		clientId?: string;
 		userId?: string;
+		/** Where the claims go, and the test user's consent, to start with. */
+		surface?: ExplainSurface;
+		consent?: ExplainConsent;
 		autorun?: boolean;
 	}
 
-	let { client, tenantId, clientId = '', userId = '', autorun = false }: Props = $props();
+	let {
+		client,
+		tenantId,
+		clientId = '',
+		userId = '',
+		surface: initialSurface = 'id_token',
+		consent: initialConsent = 'all',
+		autorun = false
+	}: Props = $props();
 
 	let apps = $state<AppSummary[] | null>(null);
 	let users = $state<TestUser[]>([]);
 	let loadError = $state(false);
 	let appId = $state(untrack(() => clientId));
 	let user = $state(untrack(() => userId));
+	let surface = $state<ExplainSurface>(untrack(() => initialSurface));
+	let consent = $state<ExplainConsent>(untrack(() => initialConsent));
 	let result = $state<ClaimExplanation | null>(null);
 	/** The app and user the result shown was asked for. */
-	let resultFor = $state({ app: '', user: '' });
+	let resultFor = $state({ app: '', user: '', surface: '', consent: '' });
 	let running = $state(false);
 	let runError = $state(false);
 	/** Each load or investigation counts up; an answer for an older one is dropped. */
@@ -62,7 +78,7 @@
 		try {
 			const [nextApps, nextUsers] = await Promise.all([
 				client.apps(tenantId),
-				client.testUsers(tenantId)
+				client.testUsers(tenantId).then((list) => list.test_users)
 			]);
 			if (mine !== generation) return;
 			[apps, users] = [nextApps, nextUsers];
@@ -78,14 +94,15 @@
 
 	async function investigate() {
 		const mine = ++generation;
-		const asked = { app: appId, user };
+		const asked = { app: appId, user, surface, consent };
 		running = true;
 		runError = false;
 		try {
 			const answer = await client.explain(tenantId, {
 				client_id: asked.app,
-				user_id: asked.user,
-				surface: 'id_token'
+				subject: { kind: 'test_user', id: asked.user },
+				surface: asked.surface,
+				consent: asked.consent
 			});
 			if (mine !== generation) return;
 			result = answer;
@@ -98,7 +115,13 @@
 	}
 
 	/** A result for another app or user than the ones chosen now is not shown as theirs. */
-	const stale = $derived(result !== null && (resultFor.app !== appId || resultFor.user !== user));
+	const stale = $derived(
+		result !== null &&
+			(resultFor.app !== appId ||
+				resultFor.user !== user ||
+				resultFor.surface !== surface ||
+				resultFor.consent !== consent)
+	);
 	const subjectText = $derived(
 		t('mc.ex.resultFor', {
 			app: apps?.find((a) => a.client_id === resultFor.app)?.name ?? resultFor.app,
@@ -158,6 +181,26 @@
 						bind:value={user}
 					/>
 				</div>
+				<div class="row">
+					<Select
+						label={t('mc.ex.surface')}
+						options={[
+							{ value: 'id_token', label: t('mc.ex.surface.id_token') },
+							{ value: 'userinfo', label: t('mc.ex.surface.userinfo') }
+						]}
+						value={surface}
+						onchange={(value) => (surface = value === 'userinfo' ? 'userinfo' : 'id_token')}
+					/>
+					<RadioGroup
+						label={t('mc.ex.consentChoice')}
+						options={[
+							{ value: 'all', label: t('mc.ex.consentChoice.all') },
+							{ value: 'none', label: t('mc.ex.consentChoice.none') }
+						]}
+						value={consent}
+						onchange={(value) => (consent = value === 'none' ? 'none' : 'all')}
+					/>
+				</div>
 				<div>
 					<Button disabled={!appId || !user} loading={running} onclick={investigate}>
 						{t('mc.ex.run')}
@@ -174,7 +217,7 @@
 			<Callout tone="info">{t('mc.ex.stale')}</Callout>
 		{:else}
 			<p class="subject">{subjectText}</p>
-			{#if stopped && result.selection.kind === 'bound'}
+			{#if stopped && result.selection.kind === 'bound' && (stopped.code === 'set_inactive' || stopped.code === 'set_missing')}
 				<Callout tone="warning" live>
 					{t('mc.ex.stopped', {
 						tier: tierLabel(result.selection.tier),
@@ -182,6 +225,20 @@
 						state: label('mc.set.', stopped.code === 'set_missing' ? 'missing' : 'inactive')
 					})}
 					{t('mc.ex.stopped.fix', { tier: tierLabel(result.selection.tier) })}
+				</Callout>
+			{:else if stopped}
+				<Callout tone="warning" live>
+					{t('mc.ex.stoppedOther', { code: stopped.code })}
+					{#if stopped.claim}{t('mc.ex.stoppedClaim', { claim: stopped.claim })}{/if}
+				</Callout>
+			{/if}
+			{#if result.warnings.length > 0}
+				<Callout tone="info">
+					{t('mc.ex.implicit', {
+						sets: result.warnings
+							.flatMap((w) => w.activations.map((a) => a.setName ?? a.setId))
+							.join(', ')
+					})}
 				</Callout>
 			{/if}
 
@@ -233,8 +290,10 @@
 						{:else if column.key === 'from'}
 							{#if claim.origin === 'standard'}
 								<span class="muted">{t('mc.ex.origin.standard')}</span>
-							{:else if claim.field}
-								<code>{claim.field}</code>
+							{:else if claim.sources.length > 0}
+								<span class="sources">
+									{#each claim.sources as source (source)}<code>{source}</code>{/each}
+								</span>
 							{:else}
 								<span class="muted">—</span>
 							{/if}
@@ -298,6 +357,12 @@
 
 	.muted {
 		color: var(--text-secondary);
+	}
+
+	.sources {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: 4px;
 	}
 
 	.subject {
