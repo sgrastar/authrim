@@ -191,8 +191,6 @@ export async function sendLogoutToken(
       maxResponseSize: 64 * 1024,
     });
 
-    const duration_ms = Date.now() - startTime;
-
     // 200 OK or 204 No Content = success
     if (response.status === 200 || response.status === 204) {
       return { success: true, statusCode: response.status };

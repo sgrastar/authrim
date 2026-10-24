@@ -32,7 +32,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'field-mapping: lint skipped'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist"

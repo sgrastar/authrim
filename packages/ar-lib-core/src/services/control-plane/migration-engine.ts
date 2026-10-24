@@ -202,7 +202,7 @@ function assertDraftAppendHistoryPrefix(
   for (const [filename, applied] of history) {
     const index = indexByPath.get(filename);
     if (index === undefined) throw new Error('migration_history_unexpected_file');
-    if (base[index]!.checksum !== applied.checksum) {
+    if (base[index].checksum !== applied.checksum) {
       throw new Error('migration_history_checksum_mismatch');
     }
   }
@@ -217,7 +217,7 @@ function assertDraftAppendHistoryPrefix(
     throw new Error('migration_history_prefix_missing');
   }
   let prefixLength = 0;
-  while (prefixLength < base.length && history.has(base[prefixLength]!.path)) prefixLength += 1;
+  while (prefixLength < base.length && history.has(base[prefixLength].path)) prefixLength += 1;
   for (const filename of history.keys()) {
     if (indexByPath.get(filename)! >= prefixLength) throw new Error('migration_history_prefix_gap');
   }

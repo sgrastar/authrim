@@ -130,9 +130,9 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const { requests: stored } = (await listResponse.json()) as {
+    const { requests: stored } = await listResponse.json<{
       requests?: CIBARequestMetadata[];
-    };
+    }>();
     // The same ownership rule the approval applies, so the list never shows a request the user
     // could not approve.
     const pending = (stored ?? []).filter(

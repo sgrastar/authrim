@@ -123,7 +123,7 @@ export const ADMIN_CONFIGURATION_TOOL_DEFINITIONS: readonly AgentToolDefinition[
     ].map(([name, id, action]) => ({
       id,
       name,
-      title: `${action![0]!.toUpperCase()}${action!.slice(1)} authentication configuration Plan`,
+      title: `${action[0].toUpperCase()}${action.slice(1)} authentication configuration Plan`,
       description: `${action} a version-bound immutable authentication configuration Plan.`,
       contractVersion: '1',
       requiredPermissions: [

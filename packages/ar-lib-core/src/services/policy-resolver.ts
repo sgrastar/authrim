@@ -54,11 +54,8 @@ import type {
   PolicyResolutionResult,
   PolicyResolutionSuccess,
   PolicyResolutionFailure,
-  PolicyResolutionDebug,
   PolicyResolutionStep,
   ContractValidationResult,
-  FlowPolicyValidationResult,
-  PolicyViolation,
   FlowDesignerOptions,
   AuthMethodOption,
   CapabilityOption,
@@ -72,7 +69,7 @@ import type {
 } from '../types/contracts/resolver';
 import type { ContractError, ContractWarning } from '../types/contracts/errors';
 import { CONTRACT_ERROR_CODES } from '../types/contracts/errors';
-import type { SigningAlgorithm, GrantType } from '../types/contracts';
+import type { SigningAlgorithm } from '../types/contracts';
 
 // =============================================================================
 // Constants
@@ -296,26 +293,6 @@ export class PolicyResolverService implements PolicyResolver {
   }
 
   /**
-   * Validate a flow against resolved policy.
-   */
-  async validateFlowAgainstPolicy(
-    policy: ResolvedPolicy,
-    _flowId: string
-  ): Promise<FlowPolicyValidationResult> {
-    const violations: PolicyViolation[] = [];
-    const warnings: { type: string; nodeId?: string; message: string; suggestion?: string }[] = [];
-
-    // Note: Full implementation requires access to flow definitions
-    // This validates against the policy constraints
-
-    return {
-      valid: violations.length === 0,
-      violations,
-      warnings,
-    };
-  }
-
-  /**
    * Get available options for flow designer based on policy.
    */
   async getAvailableOptions(policy: ResolvedPolicy): Promise<FlowDesignerOptions> {
@@ -487,7 +464,7 @@ export class PolicyResolverService implements PolicyResolver {
 
     const idTokenSigningAlg = tenant.allowedIdTokenSigningAlgs.includes(client.idTokenSigningAlg)
       ? client.idTokenSigningAlg
-      : (tenant.allowedIdTokenSigningAlgs[0] as SigningAlgorithm);
+      : tenant.allowedIdTokenSigningAlgs[0];
 
     const settings: EffectiveOAuthSettings = {
       accessTokenExpiry: Math.min(client.accessTokenExpiry, tenant.maxAccessTokenExpiry),
@@ -497,8 +474,8 @@ export class PolicyResolverService implements PolicyResolver {
       idTokenSigningAlg,
       allowedResponseTypes: client.allowedResponseTypes.filter((rt) =>
         tenant.allowedResponseTypes.includes(rt)
-      ) as ('code' | 'token' | 'id_token')[],
-      allowedGrantTypes: client.allowedGrantTypes as GrantType[],
+      ),
+      allowedGrantTypes: client.allowedGrantTypes,
       pkceRequired:
         tenant.pkceRequirement === 'required' ||
         client.pkceRequired ||

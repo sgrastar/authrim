@@ -121,39 +121,35 @@ export async function queryDnsTxtRecords(
   url.searchParams.set('name', domain);
   url.searchParams.set('type', 'TXT');
 
-  try {
-    const data = await safeFetchJson<DohResponse>(url.toString(), {
-      method: 'GET',
-      headers: {
-        Accept: 'application/dns-json',
-      },
-      timeoutMs: timeout,
-      maxResponseSize: 64 * 1024,
-    });
+  const data = await safeFetchJson<DohResponse>(url.toString(), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/dns-json',
+    },
+    timeoutMs: timeout,
+    maxResponseSize: 64 * 1024,
+  });
 
-    // Check for NXDOMAIN or other errors
-    if (data.Status !== 0) {
-      // Status 0 = NOERROR, 3 = NXDOMAIN
-      return [];
-    }
-
-    if (!data.Answer) {
-      return [];
-    }
-
-    // Extract TXT record values
-    return data.Answer.filter((answer) => answer.type === DNS_TYPE_TXT).map((answer) => {
-      // TXT records may be quoted in the response
-      let value = answer.data;
-      // Remove surrounding quotes if present
-      if (value.startsWith('"') && value.endsWith('"')) {
-        value = value.slice(1, -1);
-      }
-      return value;
-    });
-  } catch (error) {
-    throw error;
+  // Check for NXDOMAIN or other errors
+  if (data.Status !== 0) {
+    // Status 0 = NOERROR, 3 = NXDOMAIN
+    return [];
   }
+
+  if (!data.Answer) {
+    return [];
+  }
+
+  // Extract TXT record values
+  return data.Answer.filter((answer) => answer.type === DNS_TYPE_TXT).map((answer) => {
+    // TXT records may be quoted in the response
+    let value = answer.data;
+    // Remove surrounding quotes if present
+    if (value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1);
+    }
+    return value;
+  });
 }
 
 // =============================================================================

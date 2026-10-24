@@ -14,12 +14,7 @@ import {
   institutionFromSettings,
   resolveEffectiveSettings,
 } from '@authrim/ar-lib-core';
-import {
-  SAML_NAMESPACES,
-  BINDING_URIS,
-  NAMEID_FORMATS,
-  SIGNATURE_ALGORITHMS,
-} from '../common/constants';
+import { SAML_NAMESPACES, BINDING_URIS, NAMEID_FORMATS } from '../common/constants';
 import {
   createDocument,
   createElement,

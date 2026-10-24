@@ -267,7 +267,7 @@ export interface DIDResolver {
  */
 export function parseDID(did: string): ParsedDID | null {
   // DID syntax: did:<method>:<method-specific-id>[/<path>][?<query>][#<fragment>]
-  const regex = /^did:([a-z0-9]+):([^?#\/]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i;
+  const regex = /^did:([a-z0-9]+):([^?#/]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i;
   const match = did.match(regex);
 
   if (!match) {
@@ -426,17 +426,6 @@ function toBase64Url(bytes: Uint8Array): string {
   }
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]+$/, '');
 }
-
-/**
- * Multicodec prefixes for did:key
- * @see https://github.com/multiformats/multicodec/blob/master/table.csv
- */
-const MULTICODEC = {
-  ED25519_PUB: 0xed, // ed25519-pub (varint: 0xed01)
-  P256_PUB: 0x1200, // p256-pub
-  P384_PUB: 0x1201, // p384-pub
-  P521_PUB: 0x1202, // p521-pub
-} as const;
 
 /**
  * Decode multibase key and convert to JWK

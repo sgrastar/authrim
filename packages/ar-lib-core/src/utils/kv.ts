@@ -10,7 +10,7 @@
  */
 
 import type { Env } from '../types/env';
-import type { ClientMetadata, RefreshTokenData } from '../types/oidc';
+import type { ClientMetadata } from '../types/oidc';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { resolveEffectiveSettings } from '../services/effective-settings';
@@ -19,13 +19,7 @@ import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
 import { createCompatibilityError } from './errors';
-import { getDefaultTenantId } from './issuer';
 import { readResponseTextWithLimit } from './url-security';
-import {
-  storeRefreshToken as storeRefreshTokenCanonical,
-  getRefreshToken as getRefreshTokenCanonical,
-  deleteRefreshToken as deleteRefreshTokenCanonical,
-} from './refresh-token-store';
 import { CanonicalRuntimeUserStore } from '../repositories/identity';
 
 /** User cache lifetime unless USER_CACHE_TTL sets one (it includes PII). */
@@ -406,7 +400,7 @@ export async function getCachedUser(
         expirationTtl: userCacheTTL,
       });
     }
-  } catch (error) {
+  } catch {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId (can be used for tracking)
     log.warn('Failed to cache user data');
@@ -651,7 +645,7 @@ export async function getCachedConsent(
     await env.CONSENT_CACHE.put(cacheKey, JSON.stringify(consent), {
       expirationTtl: consentCacheTTL,
     });
-  } catch (error) {
+  } catch {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId/clientId
     log.warn('Failed to cache consent data');
@@ -717,7 +711,7 @@ export async function invalidateConsentCache(
     const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
     try {
       await env.CONSENT_CACHE.delete(cacheKey);
-    } catch (error) {
+    } catch {
       // PII Protection: Don't log userId/clientId
       log.warn('Failed to invalidate consent cache');
     }
@@ -1265,7 +1259,7 @@ export async function deleteClientFromKV(
   try {
     await env.CLIENTS_CACHE.delete(cacheKey);
     log.debug('Client data deleted from KV');
-  } catch (error) {
+  } catch {
     // Log error but don't throw - D1 is source of truth
     log.warn('Failed to delete client data from KV');
   }
@@ -1365,47 +1359,4 @@ export async function isTokenRevoked(env: Env, jti: string, tenantId: string): P
     log.error('Failed to check token revocation', {}, error as Error);
     return false;
   }
-}
-
-// RefreshTokenData is now imported from types/oidc
-
-/**
- * Legacy internal shim for refresh token storage.
- *
- * Canonical public exports live in `utils/refresh-token-store.ts`.
- * Keep this wrapper only to avoid rewriting every internal reference in one step.
- */
-async function storeRefreshToken(
-  env: Env,
-  jti: string,
-  data: RefreshTokenData,
-  tenantId: string
-): Promise<void> {
-  return storeRefreshTokenCanonical(env, jti, data, tenantId);
-}
-
-/**
- * Legacy internal shim for refresh token lookup.
- */
-async function getRefreshToken(
-  env: Env,
-  userId: string,
-  version: number,
-  clientId: string,
-  jti: string,
-  tenantId: string
-): Promise<RefreshTokenData | null> {
-  return getRefreshTokenCanonical(env, userId, version, clientId, jti, tenantId);
-}
-
-/**
- * Legacy internal shim for refresh token deletion.
- */
-async function deleteRefreshToken(
-  env: Env,
-  jti: string,
-  client_id: string,
-  tenantId: string
-): Promise<void> {
-  return deleteRefreshTokenCanonical(env, jti, client_id, tenantId);
 }

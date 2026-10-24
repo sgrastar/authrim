@@ -21,14 +21,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
-import {
-  BaseRepository,
-  type BaseEntity,
-  type PaginationOptions,
-  type PaginationResult,
-  generateId,
-  getCurrentTimestamp,
-} from '../base';
+import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 import { requireTenantId } from '../tenant';
 
 /**

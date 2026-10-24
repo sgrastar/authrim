@@ -208,7 +208,7 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
       throw new Error(`Hub returned ${response.status}`);
     }
 
-    const stats = (await response.json()) as Record<string, unknown>;
+    const stats = await response.json<Record<string, unknown>>();
     return c.json({
       tenant_id: tenantId,
       websocket_enabled: isWebSocketEnabled(c.env),

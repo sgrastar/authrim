@@ -42,7 +42,6 @@ import {
   sendBackchannelLogoutFanout,
   sendLogoutWebhookFanout,
   DEFAULT_LOGOUT_CONFIG,
-  DEFAULT_LOGOUT_WEBHOOK_CONFIG,
   type LogoutFanoutSession,
   type SessionClientRepository,
 } from '@authrim/ar-lib-core';

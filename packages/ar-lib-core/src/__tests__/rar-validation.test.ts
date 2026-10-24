@@ -7,6 +7,12 @@
 import { describe, it, expect } from 'vitest';
 import { validateAuthorizationDetails } from '../utils/rar-validation';
 
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
+/** The types /authorize and PAR accept. */
+const ENDPOINT_ALLOWED_TYPES = ['ai_agent_action', 'payment_initiation', 'account_information'];
+
 describe('RAR Validation', () => {
   describe('Basic Validation', () => {
     it('should validate a valid authorization_details array', () => {
@@ -298,5 +304,52 @@ describe('RAR Validation', () => {
       expect(result.valid).toBe(false);
       expect(result.errors.length).toBeGreaterThanOrEqual(2);
     });
+  });
+
+  describe('Sanitize option', () => {
+    securityRegressionIt(
+      'rejects an invalid known-type entry whether or not sanitize is on',
+      () => {
+        const input = [{ type: 'payment_initiation', creditorAccount: { iban: 'DE89' } }];
+
+        for (const sanitize of [true, false]) {
+          const result = validateAuthorizationDetails(input, { sanitize });
+          expect(result.valid).toBe(false);
+          expect(result.sanitized).toBeUndefined();
+          expect(result.errors[0].field).toBe('instructedAmount');
+        }
+      }
+    );
+
+    securityRegressionIt(
+      'strips fields a known type does not define only when sanitize is on',
+      () => {
+        const input = [{ type: 'account_information', actions: ['read'], injected: 'x' }];
+
+        expect(validateAuthorizationDetails(input, { sanitize: true }).sanitized).toEqual([
+          { type: 'account_information', actions: ['read'] },
+        ]);
+        expect(validateAuthorizationDetails(input, { sanitize: false }).sanitized).toEqual(input);
+      }
+    );
+
+    securityRegressionIt(
+      'passes an unknown type through even with sanitize on, so allowedTypes is what keeps it out',
+      () => {
+        const input = [{ type: 'custom_type', injected: 'x' }];
+
+        const passed = validateAuthorizationDetails(input, { sanitize: true });
+        expect(passed.valid).toBe(true);
+        expect(passed.sanitized).toEqual(input);
+
+        const restricted = validateAuthorizationDetails(input, {
+          sanitize: true,
+          allowedTypes: ENDPOINT_ALLOWED_TYPES,
+        });
+        expect(restricted.valid).toBe(false);
+        expect(restricted.sanitized).toBeUndefined();
+        expect(restricted.errors[0].code).toBe('type_not_allowed');
+      }
+    );
   });
 });

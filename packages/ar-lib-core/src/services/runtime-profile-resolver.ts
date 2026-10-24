@@ -3,7 +3,6 @@ import { createSettingsManager } from '../utils/settings-manager';
 import { getTenantSettingsDocument } from '../utils/tenant-settings';
 import { INFRASTRUCTURE_CATEGORY_META } from '../types/settings/infrastructure';
 import type { InfrastructureSettings } from '../types/settings/infrastructure';
-import type { TenantSettings } from '../types/settings/tenant';
 import {
   DatabaseProfileRegistryBackend,
   KVProfileRegistryBackend,

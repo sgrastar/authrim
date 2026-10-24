@@ -173,7 +173,7 @@ function isSimpleEmail(value: string): boolean {
 
   let previousWasDomainDot = false;
   for (let index = 0; index < value.length; index += 1) {
-    const char = value[index]!;
+    const char = value[index];
     if (char === ' ' || char === '\t' || char === '\n' || char === '\r') {
       return false;
     }

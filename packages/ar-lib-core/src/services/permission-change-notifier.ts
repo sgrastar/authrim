@@ -30,7 +30,7 @@
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
-import type { PermissionChangeEvent, AuditLogConfig } from '../types/check-api';
+import type { PermissionChangeEvent } from '../types/check-api';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('PERMISSION-CHANGE-NOTIFIER');
@@ -49,8 +49,6 @@ export interface PermissionChangeNotifierConfig {
   cache?: KVNamespace;
   /** PermissionChangeHub Durable Object namespace */
   permissionChangeHub?: DurableObjectNamespace;
-  /** Audit log configuration */
-  auditConfig?: AuditLogConfig;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -119,7 +117,7 @@ function requireTenantId(tenantId: string | undefined, context: string): string 
 export function createPermissionChangeNotifier(
   config: PermissionChangeNotifierConfig
 ): PermissionChangeNotifier {
-  const { db, cache, permissionChangeHub, auditConfig, debug = false } = config;
+  const { db, cache, permissionChangeHub, debug = false } = config;
 
   const debugLog = debug
     ? (message: string, context?: Record<string, unknown>) => log.debug(message, context)
@@ -179,7 +177,7 @@ export function createPermissionChangeNotifier(
           try {
             await cache.delete(key);
             debugLog('Deleted cache key', { key });
-          } catch (e) {
+          } catch {
             // Ignore errors for non-existent keys
           }
         })
@@ -267,7 +265,7 @@ export function createPermissionChangeNotifier(
         return 0;
       }
 
-      const result = (await response.json()) as { notified?: number };
+      const result = await response.json<{ notified?: number }>();
       debugLog('WebSocket notification sent', { notified: result.notified ?? 0 });
       return result.notified ?? 0;
     } catch (error) {

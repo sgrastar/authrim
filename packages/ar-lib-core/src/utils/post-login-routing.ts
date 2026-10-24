@@ -1,5 +1,5 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
-import { LOGIN_ENTRY_DEFAULTS, type LoginEntrySettings } from '../types/settings/login-entry';
+import { LOGIN_ENTRY_DEFAULTS } from '../types/settings/login-entry';
 import { SELF_SERVICE_DEFAULTS } from '../types/settings/self-service';
 import { arrayBufferToBase64Url, generateSecureRandomString } from './crypto';
 

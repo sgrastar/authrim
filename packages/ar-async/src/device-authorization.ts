@@ -120,7 +120,7 @@ async function issueDeviceAuthorization(c: Context<{ Bindings: Env }>): Promise<
     }
 
     // Only an authenticated client learns whether it may use the grant
-    const grantTypes = clientMetadata.grant_types as string[] | undefined;
+    const grantTypes = clientMetadata.grant_types;
     if (grantTypes && !grantTypes.includes('urn:ietf:params:oauth:grant-type:device_code')) {
       return deviceAuthorizationError(
         c,

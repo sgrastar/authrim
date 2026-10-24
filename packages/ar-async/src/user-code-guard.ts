@@ -102,7 +102,7 @@ export async function checkUserCodeRateLimit(
     if (!response.ok) {
       throw new Error(`User code rate limiter reserve returned ${response.status}`);
     }
-    result = (await response.json()) as Answer;
+    result = await response.json<Answer>();
     if (!result || typeof result.blocked !== 'boolean') {
       throw new Error('User code rate limiter returned an unexpected body');
     }
@@ -136,11 +136,11 @@ export async function checkUserCodeRateLimit(
       if (!response.ok) {
         throw new Error(`User code rate limiter returned ${response.status}`);
       }
-      const answer = (await response.json()) as {
+      const answer = await response.json<{
         settled?: unknown;
         expired?: unknown;
         outcome?: unknown;
-      };
+      }>();
       const unexpected = () => {
         log.error('User code rate limiter answered a settle with an unexpected body', {});
         return 'failed' as const;
@@ -208,7 +208,7 @@ export async function lookUpDeviceCodeByUserCode(
     if (!response.ok) {
       throw new Error(`Device code store returned ${response.status}`);
     }
-    const metadata = (await response.json()) as DeviceCodeMetadata | null;
+    const metadata = await response.json<DeviceCodeMetadata | null>();
     return metadata ? { status: 'found', metadata } : { status: 'absent' };
   } catch (error) {
     getLogger(c)

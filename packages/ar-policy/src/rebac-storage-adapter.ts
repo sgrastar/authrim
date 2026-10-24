@@ -47,7 +47,7 @@ export function createReBACStorageAdapter(adapter: DatabaseAdapter): IStorageAda
 
 export function createPolicyReBACService(adapter: DatabaseAdapter, cache?: unknown): ReBACService {
   const config: ReBACConfig = {
-    cache_namespace: cache as unknown as ReBACConfig['cache_namespace'],
+    cache_namespace: cache as ReBACConfig['cache_namespace'],
     cache_ttl: 60,
     max_depth: 5,
   };

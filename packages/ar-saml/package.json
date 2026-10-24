@@ -8,7 +8,8 @@
     "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-saml --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'op-saml: lint skipped (uses root eslint config)'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run --fileParallelism=false",
     "test:property": "vitest run -c vitest.property.config.ts",
     "clean": "rm -rf dist"

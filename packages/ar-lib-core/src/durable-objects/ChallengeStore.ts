@@ -513,7 +513,7 @@ export class ChallengeStore extends DurableObject<Env> {
     try {
       // POST /challenge - Store new challenge
       if (path === '/challenge' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<StoreChallengeRequest>;
+        const body = await request.json<Partial<StoreChallengeRequest>>();
 
         if (!body.id || !body.type || !body.userId || !body.challenge || !body.ttl) {
           return new Response(
@@ -538,7 +538,7 @@ export class ChallengeStore extends DurableObject<Env> {
 
       // POST /challenge/consume - Consume challenge (atomic)
       if (path === '/challenge/consume' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<ConsumeChallengeRequest>;
+        const body = await request.json<Partial<ConsumeChallengeRequest>>();
 
         // Note: challenge field is optional - it's only validated if provided
         if (!body.id || !body.type) {

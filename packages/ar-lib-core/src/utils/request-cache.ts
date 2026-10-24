@@ -20,7 +20,7 @@ import type { TenantProfile } from '../types/contracts/tenant-profile';
 import type { ClientContract } from '../types/contracts';
 import { createAuthContextFromHono } from '../context';
 import { getClient } from './kv';
-import { loadTenantProfile, loadTenantContract, loadClientContract } from './contract-loader';
+import { loadTenantContract, loadClientContract } from './contract-loader';
 import { getTenantProfile } from '../types/contracts/tenant-profile';
 import { buildVersionedKey, getCacheTTL } from './cache-config';
 import { buildKVKey } from './tenant-context';
@@ -436,7 +436,7 @@ export async function getFeatureFlagCached(
   }
 
   // 2. Check environment variable
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const envValue = (env as unknown as Record<string, string | undefined>)[flagName];
   if (envValue !== undefined) {
     value = envValue === 'true';

@@ -83,9 +83,6 @@ const DEFAULT_SETTINGS: NativeSSOSettings = {
 /** In-memory cache for settings */
 let settingsCache: { settings: NativeSSOSettings; expiresAt: number } | null = null;
 
-/** Default cache TTL: 3 minutes */
-const DEFAULT_CACHE_TTL_MS = 180 * 1000;
-
 /**
  * Get Native SSO settings
  *

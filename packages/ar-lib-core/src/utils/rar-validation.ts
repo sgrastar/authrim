@@ -23,17 +23,9 @@ import type {
   AccountInformationDetail,
   RARValidationResult,
   RARValidationError,
-  RARErrorCode,
 } from '../types/rar';
 
-import {
-  isAIAgentActionDetail,
-  isPaymentInitiationDetail,
-  isAccountInformationDetail,
-  isAuthorizationDetailsBase,
-  DEFAULT_RAR_MAX_SIZE,
-  DEFAULT_RAR_MAX_ENTRIES,
-} from '../types/rar';
+import { DEFAULT_RAR_MAX_SIZE, DEFAULT_RAR_MAX_ENTRIES } from '../types/rar';
 
 // =============================================================================
 // Validation Options
@@ -708,11 +700,14 @@ function validateAccountInformation(
 
 /**
  * Validate unknown type (base validation only)
+ *
+ * `sanitize` strips the fields a known type does not define; an unknown type defines none we know,
+ * so the entry passes through as-is either way. Callers keep unknown types out with `allowedTypes`.
  */
 function validateUnknownType(
   obj: Record<string, unknown>,
   index: number,
-  sanitize: boolean
+  _sanitize: boolean
 ): TypeValidationResult {
   const errors: RARValidationError[] = [];
   const warnings: RARValidationError[] = [];

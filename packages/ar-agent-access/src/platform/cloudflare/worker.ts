@@ -104,7 +104,7 @@ async function resolveActiveBulkTenantIds(
   await Promise.all(
     Array.from({ length: Math.min(8, tenantIds.length) }, async () => {
       while (cursor < tenantIds.length) {
-        const tenantId = tenantIds[cursor++]!;
+        const tenantId = tenantIds[cursor++];
         const store = await resolveTenantDatabaseSourceFromRegistry(env, {
           tenantId,
           role: 'tenant_core',

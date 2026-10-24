@@ -270,7 +270,7 @@ export class VersionManager extends DurableObject<Env> {
         }
 
         const workerName = versionMatch[1];
-        const body = (await request.json()) as { uuid: string; deployTime: string };
+        const body = await request.json<{ uuid: string; deployTime: string }>();
 
         if (!body.uuid || !body.deployTime) {
           return new Response(

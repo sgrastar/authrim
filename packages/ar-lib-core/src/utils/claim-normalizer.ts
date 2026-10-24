@@ -257,10 +257,11 @@ function compareEquality(a: NormalizedClaimValue, b: NormalizedClaimValue): bool
       return a.value === (b as { type: 'number'; value: number }).value;
     case 'boolean':
       return a.value === (b as { type: 'boolean'; value: boolean }).value;
-    case 'array':
+    case 'array': {
       const bArray = (b as { type: 'array'; value: string[] }).value;
       if (a.value.length !== bArray.length) return false;
       return a.value.every((v, i) => v === bArray[i]);
+    }
     default:
       return false;
   }
