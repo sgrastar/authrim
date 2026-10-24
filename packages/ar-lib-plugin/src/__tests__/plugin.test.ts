@@ -755,7 +755,7 @@ describe('Schema Utilities - Extended', () => {
 
     it('should convert z.record() type', () => {
       const schema = z.object({
-        headers: z.record(z.string()),
+        headers: z.record(z.string(), z.string()),
       });
 
       const jsonSchema = zodToJSONSchema(schema);

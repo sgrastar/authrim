@@ -26,6 +26,7 @@ import type {
   Env,
 } from './types';
 import { z } from 'zod';
+import { legacyZodErrorMessage } from '@authrim/ar-lib-core/utils/zod-legacy-errors';
 
 // =============================================================================
 // Plugin Context Options
@@ -97,7 +98,7 @@ export class KVPluginConfigStore implements PluginConfigStore {
     this.env = env;
   }
 
-  async get<T>(pluginId: string, schema: z.ZodSchema<T>): Promise<T> {
+  async get<T>(pluginId: string, schema: z.ZodType<T>): Promise<T> {
     const key = `plugins:config:${pluginId}`;
 
     // Check cache
@@ -133,7 +134,7 @@ export class KVPluginConfigStore implements PluginConfigStore {
     }
 
     // Parse with defaults from schema
-    const result = schema.parse(config ?? {});
+    const result = schema.parse(config ?? {}, { error: legacyZodErrorMessage });
 
     // Cache the result
     this.cache.set(key, {
@@ -144,7 +145,7 @@ export class KVPluginConfigStore implements PluginConfigStore {
     return result;
   }
 
-  async getForTenant<T>(pluginId: string, tenantId: string, schema: z.ZodSchema<T>): Promise<T> {
+  async getForTenant<T>(pluginId: string, tenantId: string, schema: z.ZodType<T>): Promise<T> {
     const tenantKey = `plugins:config:${pluginId}:tenant:${tenantId}`;
 
     // Check cache
@@ -174,7 +175,7 @@ export class KVPluginConfigStore implements PluginConfigStore {
     // Merge with global config (tenant overrides global)
     const globalConfig = await this.get(pluginId, schema);
     const mergedConfig = { ...globalConfig, ...config };
-    const result = schema.parse(mergedConfig);
+    const result = schema.parse(mergedConfig, { error: legacyZodErrorMessage });
 
     // Cache the result
     this.cache.set(tenantKey, {

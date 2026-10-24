@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '../zod';
 import type { Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {

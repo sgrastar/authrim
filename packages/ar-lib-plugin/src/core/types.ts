@@ -78,7 +78,7 @@ export interface AuthrimPlugin<TConfig = unknown> {
    * })
    * ```
    */
-  readonly configSchema: z.ZodType<TConfig, z.ZodTypeDef, unknown>;
+  readonly configSchema: z.ZodType<TConfig, unknown>;
 
   /** Plugin metadata for UI display and management */
   readonly meta: PluginMeta;
@@ -174,7 +174,7 @@ export interface FlowNodeDefinition {
   outputs: FlowPortDefinition[];
 
   /** Node configuration schema (Zod) */
-  configSchema?: z.ZodSchema;
+  configSchema?: z.ZodType;
 
   /** UI display category */
   category: 'authentication' | 'notification' | 'condition' | 'action';
@@ -655,7 +655,7 @@ export interface PluginConfigStore {
    * @param pluginId - Plugin identifier
    * @param schema - Zod schema for validation
    */
-  get<T>(pluginId: string, schema: z.ZodSchema<T>): Promise<T>;
+  get<T>(pluginId: string, schema: z.ZodType<T>): Promise<T>;
 
   /**
    * Get plugin configuration for a specific tenant
@@ -664,7 +664,7 @@ export interface PluginConfigStore {
    * @param tenantId - Tenant identifier
    * @param schema - Zod schema for validation
    */
-  getForTenant<T>(pluginId: string, tenantId: string, schema: z.ZodSchema<T>): Promise<T>;
+  getForTenant<T>(pluginId: string, tenantId: string, schema: z.ZodType<T>): Promise<T>;
 
   /**
    * Set plugin configuration (via Admin API)

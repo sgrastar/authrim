@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { z } from 'zod';
+import { z } from './zod';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,

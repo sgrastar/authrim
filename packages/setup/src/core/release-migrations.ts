@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { z } from 'zod';
+import { z } from './zod.js';
 import {
   MIGRATION_LOGICAL_ROLES,
   MIGRATION_MANIFEST_DIALECTS,
@@ -33,7 +33,7 @@ const MigrationPathSchema = z
   .string()
   .regex(/^[0-9A-Za-z][0-9A-Za-z._/-]*\.sql$/u)
   .refine((path) => !path.includes('..') && !path.includes('//'), {
-    message: 'Migration paths must remain inside their logical stream directory',
+    error: 'Migration paths must remain inside their logical stream directory',
   });
 
 export const ReleaseMigrationSupersededFileSchema = z.object({
@@ -65,7 +65,7 @@ const SemanticBaselineEvidenceSchema = z
     (evidence) =>
       new Set(evidence.streams.map((stream) => stream.id)).size === evidence.streams.length,
     {
-      message: 'Semantic baseline evidence stream IDs must be unique',
+      error: 'Semantic baseline evidence stream IDs must be unique',
     }
   );
 
@@ -82,7 +82,7 @@ export const ReleaseMigrationFileSchema = z.object({
   supersedes: z
     .array(ReleaseMigrationSupersededFileSchema)
     .refine((files) => new Set(files.map((file) => file.path)).size === files.length, {
-      message: 'Superseded migration paths must be unique',
+      error: 'Superseded migration paths must be unique',
     })
     .optional(),
 });
@@ -112,13 +112,13 @@ export const ReleaseMigrationStreamSchema = z
     }
   })
   .refine((stream) => new Set(stream.files.map((file) => file.path)).size === stream.files.length, {
-    message: 'Migration paths must be unique within a stream',
+    error: 'Migration paths must be unique within a stream',
   })
   .refine(
     (stream) =>
       stream.files.every((file, index) => index === 0 || stream.files[index - 1]!.path < file.path),
     {
-      message: 'Migration paths must be in strict lexicographic execution order',
+      error: 'Migration paths must be in strict lexicographic execution order',
     }
   );
 
@@ -132,7 +132,7 @@ export const ReleaseMigrationUpgradePathSchema = z
     streams: z.array(ReleaseMigrationStreamSchema),
   })
   .refine((path) => new Set(path.streams.map((stream) => stream.id)).size === path.streams.length, {
-    message: 'Release migration upgrade stream IDs must be unique',
+    error: 'Release migration upgrade stream IDs must be unique',
   });
 
 export const FreshInstallBaselineSchema = z.object({
@@ -150,7 +150,7 @@ export const ReleaseRolloutPolicySchema = z.object({
         .min(1)
         .max(100)
         .refine((versions) => new Set(versions).size === versions.length, {
-          message: 'Database-only compatible Worker versions must be unique',
+          error: 'Database-only compatible Worker versions must be unique',
         }),
     })
     .optional(),
@@ -173,19 +173,19 @@ export const ReleaseMigrationManifestSchema = z
   .refine(
     (manifest) =>
       new Set(manifest.streams.map((stream) => stream.id)).size === manifest.streams.length,
-    { message: 'Release migration stream IDs must be unique' }
+    { error: 'Release migration stream IDs must be unique' }
   )
   .refine(
     (manifest) =>
       new Set((manifest.upgradePaths ?? []).map((path) => path.fromProductVersion)).size ===
       (manifest.upgradePaths ?? []).length,
-    { message: 'Release migration upgrade source versions must be unique' }
+    { error: 'Release migration upgrade source versions must be unique' }
   )
   .refine(
     (manifest) =>
       new Set((manifest.acceptedMigrationHistory ?? []).map((stream) => stream.id)).size ===
       (manifest.acceptedMigrationHistory ?? []).length,
-    { message: 'Accepted migration history stream IDs must be unique' }
+    { error: 'Accepted migration history stream IDs must be unique' }
   )
   .refine(
     (manifest) =>
@@ -197,7 +197,7 @@ export const ReleaseMigrationManifestSchema = z
           : compareProductVersions(path.fromProductVersion, manifest.productVersion) < 0
       ),
     {
-      message:
+      error:
         'Release migration upgrade paths must start below the target version (a draft append starts at it)',
     }
   )
@@ -220,7 +220,7 @@ export const ReleaseMigrationManifestSchema = z
       );
     },
     {
-      message:
+      error:
         'Fresh-install baseline must be the major/minor boundary for the manifest product series',
     }
   )
@@ -235,7 +235,7 @@ export const ReleaseMigrationManifestSchema = z
               baselineVersionFromPath(file.path) === manifest.freshInstallBaseline!.productVersion
           ).length === 1
       ),
-    { message: 'Fresh-install streams must contain exactly one selected series baseline' }
+    { error: 'Fresh-install streams must contain exactly one selected series baseline' }
   )
   .refine(
     (manifest) =>
@@ -244,7 +244,7 @@ export const ReleaseMigrationManifestSchema = z
           stream.files.every((file) => baselineVersionFromPath(file.path) === null)
         )
       ),
-    { message: 'Upgrade paths must not contain fresh-install baselines' }
+    { error: 'Upgrade paths must not contain fresh-install baselines' }
   );
 
 export type ReleaseMigrationFile = z.infer<typeof ReleaseMigrationFileSchema>;
