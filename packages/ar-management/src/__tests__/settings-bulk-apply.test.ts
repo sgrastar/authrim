@@ -782,6 +782,9 @@ describe('a preview', () => {
       apps_total: 4,
       apps_following_default: 2,
       apps_with_unusable_choice: 0,
+      // Left alone by a change of the default: app-3 names its own set, app-4 opts out.
+      apps_with_own_set: 1,
+      apps_opted_out: 1,
       // The tenant's set a1 has an activation of the whole tenant, which no longer applies.
       warnings: [
         {
@@ -890,6 +893,9 @@ describe('a preview', () => {
         apps_total: 4,
         apps_following_default: 1,
         apps_with_unusable_choice: 2,
+        // A set beside the older profile is the app's own set.
+        apps_with_own_set: 1,
+        apps_opted_out: 0,
       });
     });
   });
