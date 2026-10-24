@@ -10,7 +10,7 @@
  */
 
 import type { Env } from '../types/env';
-import type { ClientMetadata, RefreshTokenData } from '../types/oidc';
+import type { ClientMetadata } from '../types/oidc';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { resolveEffectiveSettings } from '../services/effective-settings';
@@ -21,11 +21,6 @@ import { createLogger } from './logger';
 import { createCompatibilityError } from './errors';
 import { getDefaultTenantId } from './issuer';
 import { readResponseTextWithLimit } from './url-security';
-import {
-  storeRefreshToken as storeRefreshTokenCanonical,
-  getRefreshToken as getRefreshTokenCanonical,
-  deleteRefreshToken as deleteRefreshTokenCanonical,
-} from './refresh-token-store';
 import { CanonicalRuntimeUserStore } from '../repositories/identity';
 
 /** User cache lifetime unless USER_CACHE_TTL sets one (it includes PII). */
@@ -1365,47 +1360,4 @@ export async function isTokenRevoked(env: Env, jti: string, tenantId: string): P
     log.error('Failed to check token revocation', {}, error as Error);
     return false;
   }
-}
-
-// RefreshTokenData is now imported from types/oidc
-
-/**
- * Legacy internal shim for refresh token storage.
- *
- * Canonical public exports live in `utils/refresh-token-store.ts`.
- * Keep this wrapper only to avoid rewriting every internal reference in one step.
- */
-async function storeRefreshToken(
-  env: Env,
-  jti: string,
-  data: RefreshTokenData,
-  tenantId: string
-): Promise<void> {
-  return storeRefreshTokenCanonical(env, jti, data, tenantId);
-}
-
-/**
- * Legacy internal shim for refresh token lookup.
- */
-async function getRefreshToken(
-  env: Env,
-  userId: string,
-  version: number,
-  clientId: string,
-  jti: string,
-  tenantId: string
-): Promise<RefreshTokenData | null> {
-  return getRefreshTokenCanonical(env, userId, version, clientId, jti, tenantId);
-}
-
-/**
- * Legacy internal shim for refresh token deletion.
- */
-async function deleteRefreshToken(
-  env: Env,
-  jti: string,
-  client_id: string,
-  tenantId: string
-): Promise<void> {
-  return deleteRefreshTokenCanonical(env, jti, client_id, tenantId);
 }

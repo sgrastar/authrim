@@ -858,58 +858,6 @@ async function validateProvisionedCustomClaims(
   return validation;
 }
 
-/**
- * Create user from external identity
- * PII/Non-PII DB separation: creates records in both Core DB and PII DB
- */
-async function createUserFromExternalIdentity(
-  env: Env,
-  params: CreateUserParams
-): Promise<{ id: string }> {
-  await validateProvisionedCustomClaims(env, params.tenantId, {});
-
-  const id = crypto.randomUUID();
-
-  // Generate a placeholder email if not provided
-  const email = params.email || `${id}@external.authrim.local`;
-
-  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, params.tenantId);
-  if (!piiAdapter) {
-    throw new ExternalIdPError(
-      ExternalIdPErrorCode.ACCOUNT_CREATION_FAILED,
-      'Canonical runtime user creation requires a PII database.'
-    );
-  }
-  const runtimeUsers = new CanonicalRuntimeUserStore({
-    coreAdapter,
-    piiAdapter,
-    tenantId: params.tenantId,
-  });
-  await runtimeUsers.syncUser({
-    userId: id,
-    email: email.toLowerCase(),
-    name: params.name || null,
-    active: true,
-    emailVerified: params.emailVerified,
-    userType: 'end_user',
-    sourceRef: `external-idp:${params.identityProviderId}`,
-    piiFields: {
-      given_name: params.givenName !== undefined,
-      family_name: params.familyName !== undefined,
-      picture: params.picture !== undefined,
-      locale: params.locale !== undefined,
-    },
-    sensitiveValues: {
-      given_name: params.givenName ?? null,
-      family_name: params.familyName ?? null,
-      picture: params.picture ?? null,
-      locale: params.locale ?? null,
-    },
-  });
-
-  return { id };
-}
-
 interface AuditEventParams {
   tenantId: string;
   userId: string;
