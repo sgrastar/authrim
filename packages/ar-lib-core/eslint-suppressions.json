@@ -818,7 +818,7 @@
   },
   "src/services/__tests__/destination-profile-consent.test.ts": {
     "@typescript-eslint/unbound-method": {
-      "count": 2
+      "count": 4
     }
   },
   "src/services/__tests__/device-flow-settings.test.ts": {
@@ -1264,6 +1264,11 @@
   "src/services/__tests__/oidc-id-token-release.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
+    }
+  },
+  "src/services/__tests__/oidc-identity-mapping-fixture.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 2
     }
   },
   "src/services/__tests__/oidc-identity-mapping-platform-owner.test.ts": {

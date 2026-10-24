@@ -1906,6 +1906,23 @@
       "count": 14
     }
   },
+  "src/__tests__/identity-mapping-explain.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 6
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 15
+    }
+  },
   "src/__tests__/identity-mapping-implicit-application-runbook-sql.integration.test.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 1
@@ -4039,7 +4056,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 50
+      "count": 52
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
