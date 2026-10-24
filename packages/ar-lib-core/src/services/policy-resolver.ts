@@ -57,8 +57,6 @@ import type {
   PolicyResolutionDebug,
   PolicyResolutionStep,
   ContractValidationResult,
-  FlowPolicyValidationResult,
-  PolicyViolation,
   FlowDesignerOptions,
   AuthMethodOption,
   CapabilityOption,
@@ -292,26 +290,6 @@ export class PolicyResolverService implements PolicyResolver {
       warnings,
       validatedFields,
       skippedFields,
-    };
-  }
-
-  /**
-   * Validate a flow against resolved policy.
-   */
-  async validateFlowAgainstPolicy(
-    policy: ResolvedPolicy,
-    _flowId: string
-  ): Promise<FlowPolicyValidationResult> {
-    const violations: PolicyViolation[] = [];
-    const warnings: { type: string; nodeId?: string; message: string; suggestion?: string }[] = [];
-
-    // Note: Full implementation requires access to flow definitions
-    // This validates against the policy constraints
-
-    return {
-      valid: violations.length === 0,
-      violations,
-      warnings,
     };
   }
 
