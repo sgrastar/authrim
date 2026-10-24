@@ -371,8 +371,10 @@ export interface AuthEventData extends BaseEventData {
   connectorId?: string;
   /** Upstream/correlation request ID for connector-backed auth methods */
   requestId?: string;
-  /** Error code (for failed auth) */
+  /** Error code (for failed auth): a code Authrim defines, recorded in the unified log */
   errorCode?: string;
+  /** Failure reason a directory connector reported (connector-defined text, event data only) */
+  connectorReason?: string;
   /** Tenant-scoped HMAC of the normalized user-supplied identifier for failed auth */
   usernameHash?: string;
   /** IP address (hashed for privacy) */

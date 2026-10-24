@@ -267,6 +267,19 @@ describe('an SP minimum IAL in the SAML provider Admin API', () => {
     expect(metadata('saml.provider.created')).toMatchObject({ minimum_ial: 'IAL2' });
   });
 
+  it('audits a failed create with its failure result, which the unified event_log reads', async () => {
+    mocks.adapter!.execute.mockRejectedValueOnce(new Error('write failed'));
+    const response = await handleCreateProvider(context({ body: createBody() }));
+    expect(response.status).toBe(500);
+    const entry = mocks.audit.mock.calls.find(
+      ([, call]) => call.action === 'saml.provider.created'
+    )?.[1];
+    expect(JSON.parse(entry?.metadata ?? '{}')).toMatchObject({
+      result: 'failure',
+      error_class: 'Error',
+    });
+  });
+
   it('hands the stored minimum to the SSO flows with the SP config', async () => {
     mocks.adapter!.query.mockResolvedValue([
       {
