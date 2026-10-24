@@ -176,8 +176,8 @@ export function describeSelectionFailure(failure: IdentityMappingSelectionError)
  * as the warnings of the answer. Only this tenant's rows are read; what is returned is IDs and
  * names.
  */
-async function readImplicitActivationWarnings(
-  c: Context<{ Bindings: Env }>,
+export async function readImplicitActivationWarnings(
+  env: Env,
   tenantId: string,
   clientId: string | undefined
 ): Promise<{
@@ -188,7 +188,7 @@ async function readImplicitActivationWarnings(
   warnings_unavailable?: true;
 }> {
   try {
-    const admin = ensureAdminDatabaseAdapter(c.env, 'identity-mapping-effective');
+    const admin = ensureAdminDatabaseAdapter(env, 'identity-mapping-effective');
     if (!admin) return { warnings: [], warnings_unavailable: true };
     const activations = await findImplicitOidcActivations(admin, { tenantId, clientId });
     return activations.length === 0
@@ -265,7 +265,7 @@ export async function adminIdentityMappingEffectiveHandler(c: Context<{ Bindings
 
     const implicit =
       selection?.kind === 'none' && selection.reason === 'no_default'
-        ? await readImplicitActivationWarnings(c, tenantId, clientId)
+        ? await readImplicitActivationWarnings(c.env, tenantId, clientId)
         : { warnings: [] };
 
     return c.json({
