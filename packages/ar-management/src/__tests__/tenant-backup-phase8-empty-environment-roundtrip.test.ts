@@ -180,6 +180,8 @@ async function* values<T>(items: readonly T[]) {
 }
 
 describe('Phase 8 empty-environment SQL roundtrip', () => {
+  // Six migrated databases and installed-schema inspection need the same local CI coverage
+  // budget as the other real-SQL cases; assertions and the global timeout stay unchanged.
   it('roundtrips failure aggregates selected by last_at with their complete cumulative count', async () => {
     const planned = await phase8Plan();
     const entry = planned.find(({ dataset }) => dataset.id === 'admin.identity_mapping_failures');
@@ -277,7 +279,7 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       source.close();
       target.close();
     }
-  });
+  }, 20_000);
 
   it('rejects a shard whose installed schema cannot carry every family dataset', async () => {
     const coreA = freshDatabase('core');
