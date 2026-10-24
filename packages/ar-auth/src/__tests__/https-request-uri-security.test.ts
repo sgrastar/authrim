@@ -612,6 +612,40 @@ describe('HTTPS Request URI Security', () => {
       expect(error.get('error_description')).not.toContain('too large');
     });
 
+    it('rejects an oversized streamed body without an unhandled rejection from cancelling it', async () => {
+      // A body with no Content-Length that streams past the limit, and whose cancel fails (the
+      // upstream connection is already gone).
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(150_000));
+        },
+        cancel() {
+          throw new Error('upstream connection reset');
+        },
+      });
+      mockFetch.mockResolvedValueOnce(new Response(body, { status: 200 }));
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        const response = await app.request(
+          '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://external.com/request.jwt',
+          { method: 'GET' },
+          { ...mockEnv, ENABLE_HTTPS_REQUEST_URI: 'true' }
+        );
+        // Node reports an unhandled rejection once the microtask queue drains.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const error = getRedirectedOAuthError(response);
+        expect(error.get('error')).toBe('invalid_request_uri');
+        expect(error.get('error_description')).toContain('too large');
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
     it('lets a saved size limit win over the environment variable', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

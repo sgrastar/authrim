@@ -1569,7 +1569,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
           totalSize += value.length;
           if (totalSize > maxSizeBytes) {
-            reader.cancel();
+            // Cancel without waiting; a cancel that fails (the connection is gone) is not an error.
+            void reader.cancel().catch(() => {});
             return sendRequestUriError(
               'invalid_request_uri',
               `Response too large: exceeds limit of ${maxSizeBytes} bytes`

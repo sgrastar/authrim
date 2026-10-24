@@ -421,7 +421,11 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   private startCleanup(): void {
     if (this.cleanupInterval === null) {
       this.cleanupInterval = setInterval(() => {
-        this.cleanupExpiredCodes();
+        // Nothing awaits a timer callback: a storage failure is logged here, not left unhandled.
+        // The codes are already out of memory and expired; a restart reloads and cleans them up.
+        this.cleanupExpiredCodes().catch((error: unknown) => {
+          this.log.error('Failed to clean up expired codes', {}, error as Error);
+        });
       }, this.CLEANUP_INTERVAL_MS) as unknown as number;
     }
   }
