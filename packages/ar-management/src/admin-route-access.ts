@@ -929,6 +929,15 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_READ,
     'identity mapping effective selection'
   ),
+  // Every tenant's source and app counts: platform authority (the handler asks for the settings
+  // read permission held for every tenant).
+  rule({
+    pattern: '/api/admin/platform/identity-mapping/tenants',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'identity mapping sources of every tenant',
+  }),
   readOnly(
     '/api/admin/credential-profiles',
     ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,

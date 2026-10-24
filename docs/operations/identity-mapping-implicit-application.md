@@ -113,7 +113,10 @@ did, or leave it unset on purpose (the warning goes away when a default, or the 
 saved). `warnings_unavailable: true` means the Admin database could not be read for the check. The
 preview of the bulk apply gives the same warning per tenant in `impact.warnings`, and counts in
 `impact.apps_with_unusable_choice` the apps whose selector names only a Destination Profile
-(Statement 3), which fail rather than follow the default.
+(Statement 3), which fail rather than follow the default; `impact.apps_with_own_set` and
+`impact.apps_opted_out` count the apps the change leaves alone. The operator's list of every
+tenant (`GET /api/admin/platform/identity-mapping/tenants`) gives the same source and counts per
+tenant, before and after.
 
 ## How the old lookup picked an activation (what Statements 1 and 2 reproduce)
 
