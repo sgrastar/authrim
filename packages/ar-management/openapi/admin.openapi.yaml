@@ -11343,6 +11343,65 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/platform/identity-mapping/tenants:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminPlatformIdentityMappingTenants
+      summary: List every tenant with the source of its Mapping Set and how its apps choose.
+      description: >-
+        For the operator, before and after a bulk apply of the default Mapping Set or a change of
+        the platform default. Each tenant (a deleted one is left out) is one row: `tenant_default`
+        is what the tenant's level says (`unset`, `set`, `none`, `invalid`), and `effective` is what
+        an app of the tenant that names no Mapping Set gets, from the same selection the effective
+        endpoint and the release of claims run (`bound` with the level that decided it, `none`
+        with the reason, or `failed` with the level that failed). `apps` counts the tenant's apps
+        by how they choose, each stored `identity_mapping` read the way the selection reads it:
+        `following_default` (no choice of their own), `own_set` (they name a Mapping Set),
+        `opted_out` (`{"mode":"none"}`) and `unusable` (a value that is not a choice, for which
+        the selection fails); the four add up to `total`. A tenant whose apps cannot be counted
+        keeps its row with `apps: null` and `apps_unavailable`; one whose settings cannot be read
+        keeps its row with `tenant_default: null` and a `failed` selection (`settings_unreadable`).
+        The platform's own default is given once (`platform_default`). Tenants are in the order
+        of their IDs, a page at a time. Needs the settings read permission for every tenant (a
+        global assignment, or a machine token for every tenant); a tenant's administrator and an
+        Agent are refused. Counts, IDs and names of tenants and sets only. Each tenant is a
+        settings read and a query on its Core database, so the endpoint is rate limited with the
+        strict profile.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: How many tenants a page holds.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The `next_cursor` of the page before.
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingPlatformTenants'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/identity-mapping/sets:
     get:
       tags:
@@ -37796,6 +37855,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/IdentityMappingEffectiveResponse'
+    IdentityMappingPlatformTenants:
+      description: A page of tenants, each with the source of its Mapping Set and its app counts.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentityMappingPlatformTenantsResponse'
     MappingSetInUse:
       description: >-
         The change was refused: the Mapping Set is named somewhere (`referenced`), the version
@@ -57142,6 +57207,84 @@ components:
             Whether deleting, deactivating, rolling back or replacing the set would be refused
             now (it is named, or could not be checked everywhere). Null when it is not known: the
             other tenants of a platform set were not looked at and nothing else is in the way.
+    IdentityMappingPlatformTenantsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - platform_default
+        - tenants
+        - next_cursor
+        - generated_at
+      properties:
+        platform_default:
+          $ref: '#/components/schemas/IdentityMappingEffectiveChainEntry'
+        tenants:
+          type: array
+          items:
+            $ref: '#/components/schemas/IdentityMappingPlatformTenantRow'
+        next_cursor:
+          type:
+            - string
+            - 'null'
+          description: Null on the last page.
+        generated_at:
+          type: string
+          format: date-time
+    IdentityMappingPlatformTenantRow:
+      type: object
+      additionalProperties: false
+      required:
+        - tenant_id
+        - display_name
+        - lifecycle_state
+        - tenant_default
+        - effective
+        - apps
+      properties:
+        tenant_id:
+          type: string
+        display_name:
+          type: string
+        lifecycle_state:
+          type: string
+          description: The tenant's state in the directory (never `deleted`).
+        tenant_default:
+          oneOf:
+            - $ref: '#/components/schemas/IdentityMappingEffectiveChainEntry'
+            - type: 'null'
+          description: >-
+            The tenant's level of the chain; null when its settings could not be read.
+        effective:
+          $ref: '#/components/schemas/IdentityMappingEffectiveSelection'
+        apps:
+          type:
+            - object
+            - 'null'
+          additionalProperties: false
+          required:
+            - total
+            - following_default
+            - own_set
+            - opted_out
+            - unusable
+          properties:
+            total:
+              type: integer
+            following_default:
+              type: integer
+            own_set:
+              type: integer
+            opted_out:
+              type: integer
+            unusable:
+              type: integer
+        apps_unavailable:
+          type: string
+          enum:
+            - core_database_unavailable
+            - query_failed
+          description: >-
+            Given with `apps: null`, why the apps could not be counted.
     IdentityMappingEffectiveChainEntry:
       type: object
       required:
@@ -57261,8 +57404,12 @@ components:
               enum:
                 - default_setting_invalid
                 - client_selector_invalid
+                - settings_unreadable
               description: >-
                 A level is set and not usable. The selection does not fall to the next level.
+                `settings_unreadable` (no `tier`: the settings decide both defaults) is given only
+                in the list of every tenant, for a tenant whose settings could not be read; the
+                effective endpoint answers 503 instead.
             tier:
               type: string
               enum:
@@ -57271,13 +57418,14 @@ components:
                 - platform_default
             reason:
               type: string
-              enum:
-                - legacy_profile_only_selector
               description: >-
-                Given when the app's own choice names a Destination Profile (`destinationProfileId`)
-                and no Mapping Set and no opt-out: a selector of the older kind, which is not a
-                choice. The release fails for the app (400 `invalid_client`) rather than lose the
-                profile's gate in silence. Select a Mapping Set or save `{ "mode": "none" }`.
+                A fixed code for what failed underneath. `legacy_profile_only_selector`: the app's
+                own choice names a Destination Profile (`destinationProfileId`) and no Mapping Set
+                and no opt-out, a selector of the older kind, which is not a choice; the release
+                fails for the app (400 `invalid_client`) rather than lose the profile's gate in
+                silence (select a Mapping Set or save `{ "mode": "none" }`). With
+                `settings_unreadable`, the code of the read that failed (`unknown` when it has
+                none).
     BulkApplyRequest:
       type: object
       additionalProperties: false
@@ -57432,8 +57580,10 @@ components:
           description: >-
             Preview only. What a category's changes affect in the tenant, by category. For
             `identity-mapping`: `apps_total` and `apps_following_default` (the apps with no Mapping
-            Set of their own), `apps_with_unusable_choice` (apps whose selector names only a
-            Destination Profile, which fail rather than follow the default), and `warnings`: with
+            Set of their own), `apps_with_own_set` and `apps_opted_out` (apps a change of the
+            default leaves alone: they name a Mapping Set, or opt out with `{"mode":"none"}`),
+            `apps_with_unusable_choice` (apps whose selector names only a Destination Profile,
+            which fail rather than follow the default), and `warnings`: with
             code `implicit_activation_no_longer_applies`, the tenant's own active activations
             (`activationId`, `setId`, `setName`; nothing of their scope or claims) that once bound
             apps naming no Mapping Set and no longer do. `warnings_unavailable: true` says the

@@ -1031,6 +1031,7 @@ import {
   sweepExpiredMappingSetSaveRecords,
 } from './identity-mapping-set-facade';
 import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
+import { adminPlatformIdentityMappingTenantsHandler } from './identity-mapping-tenants';
 import {
   getLoggingConfig,
   updateLoggingConfig,
@@ -3147,6 +3148,20 @@ app.get(
   '/api/admin/identity-mapping/effective',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingEffectiveHandler
+);
+// Every tenant's source and app counts: a settings read and a Core database query per tenant of
+// the page, so the strict profile, as the usage search's fan-out.
+app.use('/api/admin/platform/identity-mapping/tenants', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/platform/identity-mapping/tenants'],
+  })(c, next);
+});
+app.get(
+  '/api/admin/platform/identity-mapping/tenants',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPlatformIdentityMappingTenantsHandler
 );
 // The Mapping Set facade. A save runs the validation of the content, the compile and the checks
 // of what names the set, and one of the references search per call, so every route is rate

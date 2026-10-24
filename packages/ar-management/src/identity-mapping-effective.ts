@@ -34,8 +34,10 @@ import {
 } from '@authrim/ar-lib-core';
 
 const CLIENT_ID_MAX_LENGTH = 256;
+/** How many set IDs one query binds (D1 binds at most 100 parameters). */
+const SET_FACTS_CHUNK = 90;
 
-interface SetFacts {
+export interface SetFacts {
   /** The set exists and the calling tenant may name it (its own or the platform's). */
   found: boolean;
   name?: string;
@@ -44,45 +46,79 @@ interface SetFacts {
 }
 
 /**
- * What the Admin database says of the sets the selection names, in one query. A set another
- * tenant owns reads as one that does not exist. Null when the database cannot be read.
+ * What the Admin database says of the sets each tenant's selection names, in one query for all of
+ * them. For each tenant, a set another tenant owns reads as one that does not exist. Null when the
+ * database cannot be read.
  */
-async function readSetFacts(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string,
-  setIds: string[]
-): Promise<Map<string, SetFacts> | null> {
-  if (setIds.length === 0) return new Map();
+export async function readSetFactsForTenants(
+  env: Env,
+  partition: string,
+  wanted: ReadonlyMap<string, readonly string[]>
+): Promise<Map<string, Map<string, SetFacts>> | null> {
+  const setIds = [...new Set([...wanted.values()].flat())];
+  const byTenant = new Map<string, Map<string, SetFacts>>();
+  for (const [tenantId, ids] of wanted) {
+    byTenant.set(tenantId, new Map(ids.map((id) => [id, { found: false }])));
+  }
+  if (setIds.length === 0) return byTenant;
   try {
-    const admin = ensureAdminDatabaseAdapter(c.env, 'identity-mapping-effective');
+    const admin = ensureAdminDatabaseAdapter(env, partition);
     if (!admin) return null;
-    const rows = await admin.query<{
+    // D1 binds at most 100 parameters to a statement: a page of tenants names up to one set each,
+    // and the platform's, so the IDs are read a chunk at a time.
+    const rows: Array<{
       id: string;
       tenant_id: string;
       display_name: string | null;
       lifecycle_state: string;
-    }>(
-      `SELECT id, tenant_id, display_name, lifecycle_state
-         FROM field_mapping_sets
-        WHERE id IN (${setIds.map(() => '?').join(', ')}) AND tenant_id IN (?, ?)`,
-      [...setIds, tenantId, PLATFORM_MAPPING_TENANT_ID]
-    );
-    const facts = new Map<string, SetFacts>(setIds.map((id) => [id, { found: false }]));
-    for (const row of rows) {
-      facts.set(row.id, {
-        found: true,
-        ...(row.display_name ? { name: row.display_name } : {}),
-        owner: row.tenant_id === PLATFORM_MAPPING_TENANT_ID ? 'platform' : 'tenant',
-        lifecycleState: row.lifecycle_state,
-      });
+    }> = [];
+    for (let start = 0; start < setIds.length; start += SET_FACTS_CHUNK) {
+      const chunk = setIds.slice(start, start + SET_FACTS_CHUNK);
+      rows.push(
+        ...(await admin.query<(typeof rows)[number]>(
+          `SELECT id, tenant_id, display_name, lifecycle_state
+             FROM field_mapping_sets
+            WHERE id IN (${chunk.map(() => '?').join(', ')})`,
+          chunk
+        ))
+      );
     }
-    return facts;
+    const rowsById = new Map(rows.map((row) => [row.id, row]));
+    for (const [tenantId, facts] of byTenant) {
+      for (const id of facts.keys()) {
+        const row = rowsById.get(id);
+        if (!row || (row.tenant_id !== tenantId && row.tenant_id !== PLATFORM_MAPPING_TENANT_ID)) {
+          continue;
+        }
+        facts.set(id, {
+          found: true,
+          ...(row.display_name ? { name: row.display_name } : {}),
+          owner: row.tenant_id === PLATFORM_MAPPING_TENANT_ID ? 'platform' : 'tenant',
+          lifecycleState: row.lifecycle_state,
+        });
+      }
+    }
+    return byTenant;
   } catch {
     return null;
   }
 }
 
-function describeSet(setId: string | undefined, facts: Map<string, SetFacts> | null) {
+/** The same for the sets one tenant's selection names. */
+async function readSetFacts(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  setIds: string[]
+): Promise<Map<string, SetFacts> | null> {
+  const facts = await readSetFactsForTenants(
+    c.env,
+    'identity-mapping-effective',
+    new Map([[tenantId, setIds]])
+  );
+  return facts?.get(tenantId) ?? null;
+}
+
+function describeSet(setId: string | undefined, facts: ReadonlyMap<string, SetFacts> | null) {
   if (!setId || !facts) return {};
   const fact = facts.get(setId);
   if (!fact) return {};
@@ -94,7 +130,10 @@ function describeSet(setId: string | undefined, facts: Map<string, SetFacts> | n
   };
 }
 
-function describeChain(chain: IdentityMappingChainEntry[], facts: Map<string, SetFacts> | null) {
+export function describeChain(
+  chain: readonly IdentityMappingChainEntry[],
+  facts: ReadonlyMap<string, SetFacts> | null
+) {
   return chain.map((entry) => ({
     tier: entry.tier,
     state: entry.state,
@@ -103,9 +142,9 @@ function describeChain(chain: IdentityMappingChainEntry[], facts: Map<string, Se
   }));
 }
 
-function describeSelection(
+export function describeSelection(
   selection: IdentityMappingSelection,
-  facts: Map<string, SetFacts> | null
+  facts: ReadonlyMap<string, SetFacts> | null
 ) {
   if (selection.kind === 'none') return { kind: 'none' as const, reason: selection.reason };
   return {
@@ -116,6 +155,19 @@ function describeSelection(
     ...(selection.selector?.fieldMappingVersionId
       ? { pinnedVersionId: selection.selector.fieldMappingVersionId }
       : {}),
+  };
+}
+
+/**
+ * A selection that failed: the level that failed is named, never its value (the selection fails
+ * rather than fall to another level).
+ */
+export function describeSelectionFailure(failure: IdentityMappingSelectionError) {
+  return {
+    kind: 'failed' as const,
+    code: failure.code,
+    tier: failure.tier,
+    ...(failure.reasonCode ? { reason: failure.reasonCode } : {}),
   };
 }
 
@@ -221,14 +273,7 @@ export async function adminIdentityMappingEffectiveHandler(c: Context<{ Bindings
       clientId: clientId ?? null,
       selection: selection
         ? describeSelection(selection, facts)
-        : // The level that failed is named, never its value: the selection fails rather than
-          // fall to another level.
-          {
-            kind: 'failed' as const,
-            code: failure!.code,
-            tier: failure!.tier,
-            ...(failure!.reasonCode ? { reason: failure!.reasonCode } : {}),
-          },
+        : describeSelectionFailure(failure!),
       chain: describeChain(chain, facts),
       ...implicit,
     });
