@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, join, relative, sep } from 'node:path';
-import { z } from 'zod';
+import { z } from './zod.js';
 import { getSecretNamesForWorker } from './secrets.js';
 import { getControlGeneratedDatabaseDataRoleFromBinding } from './tenant-database.js';
 import { WORKER_COMPONENTS, type WorkerComponent } from './naming.js';
@@ -111,7 +111,7 @@ export const workerCapabilityManifestSchema = z
     for (const [index, binding] of manifest.bindings.entries()) {
       if (binding.dataRole && !requiredRoles.has(binding.dataRole)) {
         context.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['bindings', index, 'dataRole'],
           message: 'binding_data_role_not_declared',
         });
@@ -129,7 +129,7 @@ export const workerCapabilityManifestSchema = z
         allowedDynamicBindings.get(binding.kind) !== binding.prefix
       ) {
         context.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['dynamicBindings', index],
           message: 'dynamic_binding_family_not_allowed',
         });
@@ -140,7 +140,7 @@ export const workerCapabilityManifestSchema = z
       if (!CLOUDFLARE_TOKEN_NAME.test(secret.name)) continue;
       if (manifest.worker !== 'ar-control' || !CONTROL_TOKEN_NAMES.has(secret.name)) {
         context.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['secrets', index, 'name'],
           message: 'cloudflare_api_token_not_allowed_for_worker',
         });
@@ -152,7 +152,7 @@ export const workerCapabilityManifestSchema = z
       for (const requiredSecret of ['LOOKUP_HMAC_KEY_SLOT_A', 'LOOKUP_HMAC_KEY_SLOT_B']) {
         if (!secretNames.has(requiredSecret)) {
           context.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: 'custom',
             path: ['secrets'],
             message: `lookup_blind_index_secret_missing:${requiredSecret}`,
           });
@@ -201,7 +201,7 @@ function reportDuplicates(values: readonly string[], path: string, context: z.Re
   for (const [index, value] of values.entries()) {
     if (seen.has(value)) {
       context.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: [path, index],
         message: `duplicate_${path}_entry`,
       });

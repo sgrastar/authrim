@@ -5,7 +5,7 @@
  * and validation. The configuration is stored in authrim-config.json.
  */
 
-import { z } from 'zod';
+import { legacyDatetimeString, legacyUrlString, z } from './zod.js';
 import { isReservedTenantId, TENANT_ID_STRICT_PATTERN } from './tenant-id.js';
 
 // =============================================================================
@@ -24,7 +24,7 @@ const urlOrHostname = z
     }
     return val;
   })
-  .pipe(z.string().url());
+  .pipe(legacyUrlString());
 
 export const UrlConfigSchema = z.object({
   /** Custom domain (null = use auto-generated URL) */
@@ -81,7 +81,7 @@ export const SourceInfoSchema = z.object({
 export const EnvironmentConfigSchema = z.object({
   /** Environment prefix (e.g., "prod", "staging", "dev") */
   prefix: z.string().regex(/^[a-z][a-z0-9-]*$/, {
-    message:
+    error:
       'Prefix must start with a letter and contain only lowercase letters, numbers, and hyphens',
   }),
 });
@@ -102,10 +102,10 @@ export const TenantIdSchema = z
   .min(1)
   .max(63)
   .regex(TENANT_ID_STRICT_PATTERN, {
-    message:
+    error:
       'Tenant ID must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens',
   })
-  .refine((id) => !isReservedTenantId(id), { message: 'Tenant ID "platform" is reserved' });
+  .refine((id) => !isReservedTenantId(id), { error: 'Tenant ID "platform" is reserved' });
 
 export const TenantConfigSchema = z.object({
   /** Default tenant identifier */
@@ -146,7 +146,8 @@ export const TenantConfigSchema = z.object({
    * When true: https://example.com (no tenant subdomain)
    * When false: https://tenant.example.com (with tenant subdomain)
    */
-  nakedDomain: z.boolean().default(false).optional(),
+  // zod 3 never applied a default behind .optional(); an unset value stays unset.
+  nakedDomain: z.boolean().optional(),
 });
 
 // =============================================================================
@@ -244,7 +245,7 @@ const EmailVerificationOriginTrialTokenSchema = z
   .min(32)
   .max(4096)
   .regex(/^[A-Za-z0-9+/_-]+={0,2}$/, {
-    message: 'Origin Trial token must be a base64/base64url value without whitespace',
+    error: 'Origin Trial token must be a base64/base64url value without whitespace',
   });
 
 const EmailVerificationOriginTrialTokensSchema = z
@@ -252,7 +253,7 @@ const EmailVerificationOriginTrialTokensSchema = z
   .superRefine((tokens, ctx) => {
     if (Object.keys(tokens).length === 0) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Origin Trial token map must contain at least one HTTPS origin',
       });
     }
@@ -273,7 +274,7 @@ const EmailVerificationOriginTrialTokensSchema = z
         }
       } catch {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: [origin],
           message: 'Origin Trial token map keys must be exact HTTPS origins',
         });
@@ -289,14 +290,14 @@ export const EmailVerificationOriginTrialConfigSchema = z
     tokens: EmailVerificationOriginTrialTokensSchema.optional(),
   })
   .refine((value) => Boolean(value.token) !== Boolean(value.tokens), {
-    message: 'Configure exactly one of token or tokens for the Email Verification Origin Trial',
+    error: 'Configure exactly one of token or tokens for the Email Verification Origin Trial',
   });
 
 export const EmailFeatureSchema = z.object({
   /** Email provider (cloudflare, resend, sendgrid, ses, or none) */
   provider: z.enum(['none', 'cloudflare', 'resend', 'sendgrid', 'ses']).default('none'),
   /** Sender email address (e.g., "noreply@yourdomain.com") */
-  fromAddress: z.string().email().optional(),
+  fromAddress: z.email().optional(),
   /** Sender display name (e.g., "Authrim") */
   fromName: z.string().optional(),
   /**
@@ -310,20 +311,20 @@ export const EmailFeatureSchema = z.object({
 
 export const FeaturesConfigSchema = z
   .object({
-    queue: QueueFeatureSchema.default({}),
-    r2: R2FeatureSchema.default({}),
-    email: EmailFeatureSchema.default({}),
+    queue: QueueFeatureSchema.prefault({}),
+    r2: R2FeatureSchema.prefault({}),
+    email: EmailFeatureSchema.prefault({}),
     /** Enable custom plugin execution through the paid Dynamic Workers Worker Loader. */
     pluginDynamicWorkers: z
       .object({
         enabled: z.boolean().default(false),
       })
-      .default({}),
+      .prefault({}),
   })
   .superRefine((features, context) => {
     if (features.pluginDynamicWorkers.enabled && !features.r2.enabled) {
       context.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['pluginDynamicWorkers', 'enabled'],
         message: 'Dynamic Worker plugins require R2 bundle storage',
       });
@@ -338,7 +339,7 @@ export const KeysConfigSchema = z.object({
   /** Key ID (kid) for JWK */
   keyId: z.string().optional(),
   /** Public key in JWK format */
-  publicKeyJwk: z.record(z.unknown()).optional(),
+  publicKeyJwk: z.record(z.string(), z.unknown()).optional(),
   /**
    * Path to secrets directory
    * - External (.authrim-keys/{env}/): absolute path
@@ -395,9 +396,9 @@ export const DatabaseLocationSchema = z.object({
 
 export const DatabaseConfigSchema = z.object({
   /** Fixed platform metadata and non-PII audit database location */
-  core: DatabaseLocationSchema.default({}),
+  core: DatabaseLocationSchema.prefault({}),
   /** Fixed platform PII audit and anonymization database location */
-  pii: DatabaseLocationSchema.default({}),
+  pii: DatabaseLocationSchema.prefault({}),
 });
 
 export const ControlPlaneConfigSchema = z
@@ -413,12 +414,12 @@ export const ControlPlaneConfigSchema = z
 
 export const ProfileIdSchema = z
   .string()
-  .regex(/^[A-Za-z0-9:_-]+$/, { message: 'Profile ID may only contain letters, numbers, :, _, -' });
+  .regex(/^[A-Za-z0-9:_-]+$/, { error: 'Profile ID may only contain letters, numbers, :, _, -' });
 const REMOVED_MINIMAL_AUDIT_PROFILE_MESSAGE =
   'builtin:audit:minimal is not supported. Use builtin:audit:standard or a setup-defined custom audit profile.';
 export const AuditProfileIdSchema = ProfileIdSchema.refine(
   (value) => value !== 'builtin:audit:minimal',
-  { message: REMOVED_MINIMAL_AUDIT_PROFILE_MESSAGE }
+  { error: REMOVED_MINIMAL_AUDIT_PROFILE_MESSAGE }
 );
 
 export const ProfileRegistryBackendSchema = z.enum(['kv', 'database']);
@@ -462,17 +463,15 @@ const DatabaseAuditTargetSeedSchema = z
     dataset: z.string().min(1).optional(),
   })
   .refine((value) => Boolean(value.bindingRef || value.connectionRef), {
-    message: 'Database audit targets require bindingRef or connectionRef',
+    error: 'Database audit targets require bindingRef or connectionRef',
   });
 
 const HttpAuditTargetSeedSchema = z
   .object({
     type: z.literal('http'),
-    url: z
-      .string()
-      .url()
+    url: legacyUrlString()
       .refine((value) => value.startsWith('https://'), {
-        message: 'HTTP audit targets must use https URLs',
+        error: 'HTTP audit targets must use https URLs',
       })
       .optional(),
     urlRef: z.string().min(1).optional(),
@@ -482,7 +481,7 @@ const HttpAuditTargetSeedSchema = z
     format: z.literal('json').optional(),
   })
   .refine((value) => Boolean(value.url || value.urlRef), {
-    message: 'HTTP audit targets require url or urlRef',
+    error: 'HTTP audit targets require url or urlRef',
   });
 
 const _AuditTargetSeedSchema = z.union([
@@ -581,10 +580,10 @@ export const ProfileSeedConfigSchema = z
 
 export const ProfilesConfigSchema = z
   .object({
-    defaults: ProfileDefaultsConfigSchema.default({}),
-    registry: ProfileRegistryConfigSchema.default({}),
-    references: ProfileReferencesConfigSchema.default({}),
-    seed: ProfileSeedConfigSchema.default({}),
+    defaults: ProfileDefaultsConfigSchema.prefault({}),
+    registry: ProfileRegistryConfigSchema.prefault({}),
+    references: ProfileReferencesConfigSchema.prefault({}),
+    seed: ProfileSeedConfigSchema.prefault({}),
   })
   .strict();
 
@@ -652,9 +651,9 @@ export const AuthrimConfigSchema = z
     /** Configuration schema version */
     version: z.string().default('1.0.0'),
     /** Creation timestamp */
-    createdAt: z.string().datetime().optional(),
+    createdAt: legacyDatetimeString().optional(),
     /** Last update timestamp */
-    updatedAt: z.string().datetime().optional(),
+    updatedAt: legacyDatetimeString().optional(),
 
     /** Source information */
     source: SourceInfoSchema.optional(),
@@ -666,40 +665,40 @@ export const AuthrimConfigSchema = z
     urls: UrlsConfigSchema.optional(),
 
     /** Tenant configuration */
-    tenant: TenantConfigSchema.default({}),
+    tenant: TenantConfigSchema.prefault({}),
 
     /** Enabled components */
-    components: ComponentsConfigSchema.default({}),
+    components: ComponentsConfigSchema.prefault({}),
 
     /** OIDC profile */
     profile: ProfileSchema.default('basic-op'),
 
     /** OIDC settings */
-    oidc: OidcConfigSchema.default({}),
+    oidc: OidcConfigSchema.prefault({}),
 
     /** Sharding configuration */
-    sharding: ShardingConfigSchema.default({}),
+    sharding: ShardingConfigSchema.prefault({}),
 
     /** Feature flags */
-    features: FeaturesConfigSchema.default({}),
+    features: FeaturesConfigSchema.prefault({}),
 
     /** Key configuration */
-    keys: KeysConfigSchema.default({}),
+    keys: KeysConfigSchema.prefault({}),
 
     /** Cloudflare configuration */
-    cloudflare: CloudflareConfigSchema.default({}),
+    cloudflare: CloudflareConfigSchema.prefault({}),
 
     /** Database configuration (D1 location/jurisdiction) */
-    database: DatabaseConfigSchema.default({}),
+    database: DatabaseConfigSchema.prefault({}),
 
     /** Unified D1 Control Plane bootstrap configuration. */
-    controlPlane: ControlPlaneConfigSchema.default({}),
+    controlPlane: ControlPlaneConfigSchema.prefault({}),
 
     /** Runtime profile defaults and registry backend selection */
-    profiles: ProfilesConfigSchema.default({}),
+    profiles: ProfilesConfigSchema.prefault({}),
 
     /** Security configuration (PII encryption, domain hashing) */
-    security: SecurityConfigSchema.default({}),
+    security: SecurityConfigSchema.prefault({}),
 
     /** User-owned service site fallback configuration */
     serviceSite: ServiceSiteConfigSchema.optional(),

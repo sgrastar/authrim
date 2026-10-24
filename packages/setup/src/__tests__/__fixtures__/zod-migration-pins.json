@@ -453,7 +453,7 @@
       "status": 200
     },
     "lockFile:badDns": {
-      "error": "Invalid lock file schema: Invalid uuid, String must contain at least 1 character(s), Invalid literal value, expected \"CNAME\", Invalid datetime, Invalid enum value. Expected 'api_base' | 'tenant_wildcard', received 'bogus', Required, Required, Required, Required, Required, Required, Required, Required"
+      "error": "Invalid lock file schema: Invalid uuid, String must contain at least 1 character(s), Invalid literal value, expected \"CNAME\", Invalid datetime, Unrecognized key(s) in object: 'bogus'"
     },
     "lockFile:badShapes": {
       "error": "Invalid lock file schema: String must contain at least 1 character(s), Invalid enum value. Expected 'planned' | 'control_handoff' | 'awaiting_setup' | 'schema_applied' | 'workers_deployed' | 'verified' | 'database_only_verified', received 'done', Invalid, Invalid datetime, Required, Expected string, received number, Invalid discriminator value. Expected 'provisional' | 'pending_tag', String must contain at least 1 character(s), Required"
@@ -848,67 +848,10 @@
           "validation": "datetime"
         },
         {
-          "code": "invalid_enum_value",
-          "message": "Invalid enum value. Expected 'api_base' | 'tenant_wildcard', received 'bogus'",
-          "options": ["api_base", "tenant_wildcard"],
-          "path": ["dns", "bogus"],
-          "received": "bogus"
-        },
-        {
-          "code": "invalid_type",
-          "expected": "'api_base' | 'tenant_wildcard'",
-          "message": "Required",
-          "path": ["dns", "bogus", "role"],
-          "received": "undefined"
-        },
-        {
-          "code": "invalid_type",
-          "expected": "'mutation_pending' | 'managed'",
-          "message": "Required",
-          "path": ["dns", "bogus", "state"],
-          "received": "undefined"
-        },
-        {
-          "code": "invalid_type",
-          "expected": "'created' | 'updated' | 'adopted'",
-          "message": "Required",
-          "path": ["dns", "bogus", "action"],
-          "received": "undefined"
-        },
-        {
-          "code": "invalid_type",
-          "expected": "string",
-          "message": "Required",
-          "path": ["dns", "bogus", "operationId"],
-          "received": "undefined"
-        },
-        {
-          "code": "invalid_type",
-          "expected": "string",
-          "message": "Required",
-          "path": ["dns", "bogus", "zoneId"],
-          "received": "undefined"
-        },
-        {
-          "code": "invalid_type",
-          "expected": "string",
-          "message": "Required",
-          "path": ["dns", "bogus", "name"],
-          "received": "undefined"
-        },
-        {
-          "code": "invalid_type",
-          "expected": "string",
-          "message": "Required",
-          "path": ["dns", "bogus", "target"],
-          "received": "undefined"
-        },
-        {
-          "code": "invalid_type",
-          "expected": "string",
-          "message": "Required",
-          "path": ["dns", "bogus", "updatedAt"],
-          "received": "undefined"
+          "code": "unrecognized_keys",
+          "keys": ["bogus"],
+          "message": "Unrecognized key(s) in object: 'bogus'",
+          "path": ["dns"]
         }
       ]
     },
@@ -983,11 +926,7 @@
           "code": "invalid_type",
           "expected": "string",
           "message": "Required",
-          "path": [
-            "workerScriptOwnership",
-            "ar-auth",
-            "pendingCloudflareVersionId"
-          ],
+          "path": ["workerScriptOwnership", "ar-auth", "pendingCloudflareVersionId"],
           "received": "undefined"
         }
       ]
@@ -1380,12 +1319,7 @@
         "dynamicBindings": [],
         "lookupBlindIndex": true,
         "packageName": "@authrim/ar-management",
-        "requiredDataRoles": [
-          "tenant_core/default",
-          "tenant_core/users",
-          "tenant_pii",
-          "lookup"
-        ],
+        "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
         "schemaVersion": 1,
         "secrets": [
           {
