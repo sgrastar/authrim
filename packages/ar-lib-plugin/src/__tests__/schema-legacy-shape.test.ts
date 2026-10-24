@@ -115,6 +115,21 @@ describe('zodToJSONSchema legacy collections and unions', () => {
     );
   });
 
+  it('keeps numeric TypeScript enum unions valid (no reverse-mapping entries)', () => {
+    enum Level {
+      Off,
+      On,
+    }
+    enum Mode {
+      Auto = 2,
+    }
+    const document = zodToJSONSchema(z.object({ u: z.union([z.enum(Level), z.enum(Mode)]) }));
+    const field = (document.properties?.u ?? {}) as { type?: unknown; enum?: unknown[] };
+    expect(JSON.stringify(document)).not.toContain('"Off"');
+    expect(JSON.stringify(document)).not.toContain('"Auto"');
+    expect(field.type).not.toBe('string');
+  });
+
   it('does not overflow on a set of recursive elements', () => {
     type Node = { children: Set<Node> };
     const node: z.ZodType<Node> = z.lazy(() => z.object({ children: z.set(node) }));

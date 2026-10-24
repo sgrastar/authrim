@@ -232,9 +232,28 @@ function flattenLiteralUnion(
 
   const options = def.options.map((option) => option._zod.def);
   if (options.every((option) => option.type === 'enum')) {
-    const values = options.flatMap((option) =>
-      Object.values((option as z.core.$ZodEnumDef).entries)
-    ) as string[];
+    // Read the converted alternatives, not the enum entries: numeric TypeScript enums
+    // carry reverse-mapping entries that are not valid values. Only string enums merge.
+    const values: string[] = [];
+    for (const alternative of alternatives) {
+      const {
+        type,
+        enum: members,
+        ...rest
+      } = alternative as {
+        type?: unknown;
+        enum?: unknown;
+      } & Record<string, unknown>;
+      if (
+        type !== 'string' ||
+        Object.keys(rest).length > 0 ||
+        !Array.isArray(members) ||
+        !members.every((member) => typeof member === 'string')
+      ) {
+        return undefined;
+      }
+      values.push(...(members as string[]));
+    }
     return { type: 'string', values: [...new Set(values)] };
   }
 
