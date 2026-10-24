@@ -67,9 +67,10 @@ auditConfig:
     # sprintf-js <=1.1.3 (DoS): only the dev-only Lighthouse CI reaches it (@lhci/cli > js-yaml 3 >
     # argparse 1), and no fixed release is published yet (latest 1.1.3). Drop when 1.1.4 ships.
     - GHSA-hp3w-g68c-fv3c
-    # zod <4.6.6 (memory exhaustion validating oversized constrained collections): zod 4 is
-    # raised to 4.6.7 by the override above; zod 3 has no fixed release. zod 3 is used by
-    # ar-management, ar-lib-plugin and setup (admin and plugin-config validation, authenticated
-    # input) and by the dev-only Lighthouse CI. Temporary until they move to zod 4; review by
-    # 2026-11-30.
+    # zod <4.6.6 (memory exhaustion validating oversized constrained collections): every
+    # workspace package is on zod 4 (raised to 4.6.7 by the override above). zod 3 has no fixed
+    # release and is left only in the dev-only Lighthouse CI (@lhci/cli 0.15.1 > lighthouse
+    # 12.6.1 > puppeteer-core 24 > chromium-bidi 11, which imports zod 3's API); chromium-bidi
+    # moves to zod 4 only with puppeteer-core 25. Drop when @lhci/cli reaches lighthouse 13;
+    # review by 2026-11-30.
     - GHSA-mrhx-c7xc-m3w5
