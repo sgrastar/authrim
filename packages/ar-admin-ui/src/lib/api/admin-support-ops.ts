@@ -26,6 +26,7 @@ export interface SupportOpsResourceDescriptor {
 	displayName: string;
 	minCount: number;
 	maxSnapshotCount: number;
+	maxSyncExecuteCount?: number;
 	fields: Record<string, SupportOpsFieldDescriptor>;
 	actions: Record<
 		string,

@@ -16,6 +16,13 @@ type HoldRule =
  * with parent/child execution state are held as a unit so no child can become runnable by itself.
  */
 export const PHASE8_RESTORE_HOLD_RULES: Readonly<Record<string, HoldRule>> = {
+  // Admin jobs are already held as source-only workflows. A source running action must not be
+  // made runnable independently of its excluded DO/Core execution receipts in the target.
+  'core.support_operation_actions': {
+    reason: 'source_support_operation',
+    column: 'status',
+    holdValues: ['running'],
+  },
   'admin.identity_mapping_level_history': {
     reason: 'source_pending_mapping_history',
     column: 'status',

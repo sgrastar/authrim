@@ -5,6 +5,7 @@
 		type SupportOpsAggregateResponse,
 		type SupportOpsCohortCreateResponse,
 		type SupportOpsCohortPreviewResponse,
+		type SupportOpsActionResponse,
 		type SupportOpsFieldDescriptor,
 		type SupportOpsResourceDescriptor,
 		type SupportOpsSelector,
@@ -60,6 +61,8 @@
 	let currentCohortId = $state('');
 	let currentActionId = $state('');
 	let cohortPollTimer: ReturnType<typeof setInterval> | null = null;
+	let actionPollTimer: ReturnType<typeof setTimeout> | null = null;
+	let actionPollGeneration = 0;
 
 	let selectorRows = $state<SelectorRow[]>([
 		{ id: crypto.randomUUID(), field: 'status', op: 'eq', value: 'active' }
@@ -110,6 +113,7 @@
 
 	onDestroy(() => {
 		stopCohortPolling();
+		stopActionPolling();
 	});
 
 	async function loadRegistry() {
@@ -166,6 +170,48 @@
 		cohortPollTimer = setInterval(() => {
 			void refreshCohortStatus(false);
 		}, 5000);
+	}
+
+	function stopActionPolling() {
+		actionPollGeneration += 1;
+		if (actionPollTimer) {
+			clearTimeout(actionPollTimer);
+			actionPollTimer = null;
+		}
+	}
+
+	function isRunning(result: unknown): boolean {
+		return (
+			!!result && typeof result === 'object' && 'status' in result && result.status === 'running'
+		);
+	}
+
+	/**
+	 * An action executed by a background job: read, one read at a time, until it is no longer
+	 * running (or the polling is stopped or started again).
+	 */
+	function startActionPolling(actionId: string) {
+		stopActionPolling();
+		const generation = actionPollGeneration;
+		const next = () => {
+			actionPollTimer = setTimeout(() => void read(), 5000);
+		};
+		const read = async () => {
+			let action: SupportOpsActionResponse;
+			try {
+				action = await adminSupportOpsAPI.getAction(actionId);
+			} catch {
+				if (generation === actionPollGeneration && actionId === currentActionId) next();
+				return;
+			}
+			if (generation !== actionPollGeneration || actionId !== currentActionId) return;
+			actionResult = { ...action };
+			if (isRunning(action)) return next();
+			actionPollTimer = null;
+			if (action.status === 'completed') success = $LL.admin_support_ops_action_completed();
+			else error = $LL.admin_support_ops_action_execution_failed();
+		};
+		next();
 	}
 
 	function formatCount(value: number | null | undefined): string {
@@ -407,11 +453,21 @@
 
 	async function executeAction() {
 		if (!currentActionId) return;
+		stopActionPolling();
+		const generation = actionPollGeneration;
+		const actionId = currentActionId;
 		resetMessages();
 		loading = true;
 		try {
-			actionResult = await adminSupportOpsAPI.executeAction(currentActionId);
-			success = $LL.admin_support_ops_action_completed();
+			const result = await adminSupportOpsAPI.executeAction(actionId);
+			if (generation !== actionPollGeneration || actionId !== currentActionId) return;
+			actionResult = result;
+			if (isRunning(actionResult)) {
+				success = $LL.admin_support_ops_action_running();
+				startActionPolling(actionId);
+			} else {
+				success = $LL.admin_support_ops_action_completed();
+			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_support_ops_action_execution_failed();
 		} finally {

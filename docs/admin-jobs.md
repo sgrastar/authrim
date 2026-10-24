@@ -132,3 +132,47 @@ Each processor is isolated so one failing job family does not prevent the remain
 | `GET`  | `/api/admin/jobs/artifacts/:artifactId`               | Get artifact manifest                           |
 | `GET`  | `/api/admin/jobs/artifacts/:artifactId/download`      | Download artifact by public artifact id         |
 | `GET`  | `/api/admin/jobs/artifacts/:artifactId/chunks/:index` | Download a chunked artifact part                |
+
+## Support operation execution
+
+Approved User suspension actions use `support-ops/action-execute`. This type cannot be created
+through the generic Jobs API. Eligible small actions run the same durable state machine inline;
+large target/session counts or an exhausted request budget return 202 with a job ID. The UI polls
+the action until it leaves `running`. Closing the UI does not cancel the operation.
+
+Execution is bounded by target pages, session scan pages (100), session transfer pages (10), a
+request deadline, and an explicit budget for job SQL statements and Durable Object RPCs. This
+budget is shared between Support Ops snapshot and execution jobs; it is not a global budget for
+all maintenance or for archive transport internals.
+
+The session authority retains a replayable receipt until deterministic Admin logout jobs have
+been confirmed. Internal `support-ops/action-execute-logout` jobs reuse the normal minute logout
+processor, and are excluded from public Jobs list, status, result, and artifact lookups. Public
+execution progress excludes target IDs, session IDs, selectors, and receipts. `completed` means
+account outcomes and logout-job transfer are durable; downstream delivery can still be retrying.
+
+Account outcomes are stored atomically with the account/subject update in the dedicated Core
+`support_ops_account_result_receipts` table. No tenant inventory row is required in account shards.
+Unacknowledged outcomes never expire. Confirming the outcome in Admin starts a fixed one-day Core
+receipt TTL; repeated ACKs do not extend it. Cleanup removes at most 25 acknowledged expired
+receipts per processed account. A run-start deadline prevents an old delayed runner from
+recreating a cleaned receipt. Every account store is checked before enqueueing or changing the
+action: unsupported database adapters or an unavailable receipt schema return 503. Execution
+currently supports D1/SQLite atomic batches, not external PostgreSQL account stores.
+
+Jobs pin the metadata database and each active target's physical database ID, shard, assignment,
+and binding-route generation. A route change blocks further effects instead of searching a new
+store for an old result. This deliberately does not provide automatic recovery after placement
+changes; the original evidence must remain reachable on the pinned source store.
+
+Attempt exhaustion fixes a failed outcome but cannot skip an active session receipt or unknown
+account result. Reconciliation remains pending until those are transferred and confirmed. Final
+Admin audit uses a deterministic ID and exact-payload checks. Archive fanout is retried at least
+once with the same event ID; external exactly-once delivery is not promised. An Admin run-owner
+heartbeat precedes each side effect, while DO owner/fence/sequence enforces its local transfer.
+There is no atomic lease shared across Admin, Core, and Durable Object storage.
+
+Core result receipts are source-only ephemeral data and are excluded from tenant exports. Admin
+jobs retain the existing encrypted source-workflow restore hold. Running Core support actions
+are also held so that restoring a tenant cannot resume a source action without its session
+receipt. Completed action/audit history retains its existing dataset rules.

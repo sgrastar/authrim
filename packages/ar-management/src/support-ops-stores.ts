@@ -25,11 +25,21 @@ export interface SupportOpsAccountStore {
   /** Stable across requests and job runs (the store's binding), so a job can resume by it. */
   key: string;
   adapter: DatabaseAdapter;
+  /** Execution pins the physical route; a reused binding alone cannot identify old receipts. */
+  identity?: SupportOpsStoreIdentity;
+}
+
+export interface SupportOpsStoreIdentity {
+  databaseId: string;
+  bindingRouteGeneration: number;
+  shardId: string;
+  assignmentGeneration: number;
 }
 
 export interface SupportOpsStores {
   /** The tenant metadata database: cohorts, cohort targets and actions. */
   metadata: DatabaseAdapter;
+  metadataIdentity?: SupportOpsStoreIdentity;
   /** Every database the tenant's accounts are in, each once, ordered by key. */
   accounts: SupportOpsAccountStore[];
 }
@@ -40,8 +50,23 @@ async function storesOf(
   metadata: DatabaseAdapter,
   metadataContext: TenantMetadataContext | undefined
 ): Promise<SupportOpsStores> {
+  const route = metadataContext?.route;
+  const metadataIdentity = route?.registryRow?.database_id
+    ? {
+        databaseId: route.registryRow.database_id,
+        bindingRouteGeneration: route.bindingRouteGeneration,
+        shardId: route.shardId,
+        assignmentGeneration: route.assignmentGeneration,
+      }
+    : undefined;
   if (!usesRoutedAccountStorage(metadataContext)) {
-    return { metadata, accounts: [{ key: METADATA_ACCOUNT_STORE_KEY, adapter: metadata }] };
+    return {
+      metadata,
+      metadataIdentity,
+      accounts: [
+        { key: METADATA_ACCOUNT_STORE_KEY, adapter: metadata, identity: metadataIdentity },
+      ],
+    };
   }
   const stores = await tenantCoreStores(env, tenantId, {
     accountsOfRoutedTenant: true,
@@ -51,9 +76,11 @@ async function storesOf(
   const metadataBinding = metadataContext?.route?.bindingRef;
   return {
     metadata,
+    metadataIdentity,
     accounts: stores
       .map((store) => ({
         key: store.bindingRef,
+        identity: store.identity,
         adapter: store.bindingRef === metadataBinding ? metadata : store.adapter,
       }))
       .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)),

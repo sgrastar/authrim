@@ -35,6 +35,8 @@ export interface SupportOpsResourceDescriptor {
   displayName: string;
   minCount: number;
   maxSnapshotCount: number;
+  /** Maximum targets eligible for bounded inline execution; budget exhaustion still returns 202. */
+  maxSyncExecuteCount: number;
   fields: Record<string, SupportOpsFieldDescriptor>;
   actions: Record<SupportOpsActionName, SupportOpsActionDescriptor>;
 }

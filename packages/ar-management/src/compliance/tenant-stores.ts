@@ -30,6 +30,15 @@ export async function tenantCoreStores(
     .filter((store) => !seen.has(store.bindingRef) && (seen.add(store.bindingRef), true))
     .map((store) => ({
       bindingRef: store.bindingRef,
+      // Preserve the physical route separately from the binding's public/compliance key.
+      identity: store.registryRow?.database_id
+        ? {
+            databaseId: store.registryRow.database_id,
+            bindingRouteGeneration: store.bindingRouteGeneration,
+            shardId: store.shardId,
+            assignmentGeneration: store.assignmentGeneration,
+          }
+        : undefined,
       adapter: ensureDatabaseAdapter(
         store.source,
         `${options.purpose ?? 'access-review'}:${store.bindingRef}`

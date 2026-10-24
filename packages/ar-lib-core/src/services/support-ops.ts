@@ -63,6 +63,7 @@ const USER_RESOURCE: SupportOpsSqlResourceDescriptor = {
   displayName: 'Users',
   minCount: 10,
   maxSnapshotCount: 10_000,
+  maxSyncExecuteCount: 1_000,
   table: 'identity_accounts',
   idColumn: 'legacy_user_id',
   activeWhereSql: "lifecycle_state = 'active' AND legacy_user_id IS NOT NULL",
@@ -174,6 +175,7 @@ export function listSupportOpsResources(): SupportOpsResourceDescriptor[] {
       displayName: resource.displayName,
       minCount: resource.minCount,
       maxSnapshotCount: resource.maxSnapshotCount,
+      maxSyncExecuteCount: resource.maxSyncExecuteCount,
       fields,
       actions: resource.actions,
     };

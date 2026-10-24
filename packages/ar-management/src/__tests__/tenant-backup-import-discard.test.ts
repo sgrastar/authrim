@@ -20,6 +20,7 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/restore-target-discard';
 import { TENANT_DATASET_POLICIES } from '@authrim/ar-lib-core/services/tenant-portability/dataset-registry';
 import type { BackupSchemaTable } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-schema-types';
+import type { SQLiteDatabase } from './test-sqlite';
 import { planPhase8InstalledSqliteResources } from '../tenant-backup-phase8-plan-loader';
 import {
   createTenantBackupImportDiscard,
@@ -574,6 +575,41 @@ describe('tenant restore discard after a partially written import', () => {
     const env = await environment();
     const { core, pii, admin: adminDb } = env.databases;
     try {
+      // Source-only execution receipts are never restored, but a discarded target must not
+      // retain its own stale results. Ownership is tenant_id, not an optional/deleted account.
+      const receiptDatabase = core as SQLiteDatabase;
+      expect(receiptDatabase.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
+      for (const [tenant, prefix] of [
+        ['tenant-a', 'a'],
+        ['tenant-b', 'b'],
+      ] as const) {
+        for (const acknowledged of [false, true]) {
+          const receiptId = `${prefix}${acknowledged ? '1' : '0'}`.repeat(32);
+          receiptDatabase
+            .prepare(
+              `INSERT INTO support_ops_account_result_receipts
+              (receipt_id,tenant_id,action_id,account_id,legacy_user_id,operation_id,
+               source_version_ms,actor_id,request_hash,attempt_token,succeeded,applied,
+               created_at_ms,acknowledged_at_ms,delete_after_ms)
+              VALUES (?,?,'shared-action','absent-account','absent-user','shared-op',?,'admin',?,
+                '00000000-0000-4000-8000-000000000001',1,1,1,?,?)`
+            )
+            .run(
+              receiptId,
+              tenant,
+              acknowledged ? 2 : 1,
+              receiptId,
+              acknowledged ? 2 : null,
+              acknowledged ? 86_400_002 : null
+            );
+        }
+      }
+      const retainedReceipts = receiptDatabase
+        .prepare(
+          "SELECT * FROM support_ops_account_result_receipts WHERE tenant_id='tenant-b' ORDER BY receipt_id"
+        )
+        .all();
+      expect(retainedReceipts).toHaveLength(2);
       const before = env.tenantB();
       expect(await env.store.requestCancel('tenant-a', OPERATION, env.now.value)).toMatchObject({
         state: 'cancelling',
@@ -582,7 +618,13 @@ describe('tenant restore discard after a partially written import', () => {
       expect(codes).toEqual([]);
       expect(operation).toMatchObject({ state: 'cancelled', failure_reason: null });
 
-      for (const table of ['users_core', 'sessions', 'roles', 'service_group_inputs'])
+      for (const table of [
+        'users_core',
+        'sessions',
+        'roles',
+        'service_group_inputs',
+        'support_ops_account_result_receipts',
+      ])
         expect(
           count(core, `SELECT count(*) AS n FROM ${table} WHERE tenant_id='tenant-a'`),
           table
@@ -615,6 +657,11 @@ describe('tenant restore discard after a partially written import', () => {
       ]);
       expect(env.settings.values.has('settings:tenant:tenant-a:security')).toBe(false);
       expect(env.settings.values.has('settings:tenant:tenant-b:security')).toBe(true);
+      expect(
+        receiptDatabase
+          .prepare('SELECT * FROM support_ops_account_result_receipts ORDER BY receipt_id')
+          .all()
+      ).toEqual(retainedReceipts);
       expect(env.tenantB()).toEqual(before);
     } finally {
       env.close();

@@ -48,6 +48,7 @@ const adminSupportOps = {
 	admin_support_ops_action_approved: 'Action approved',
 	admin_support_ops_action_approval_failed: 'Action approval failed',
 	admin_support_ops_action_completed: 'Action completed',
+	admin_support_ops_action_running: 'Action running as a background job',
 	admin_support_ops_action_execution_failed: 'Action execution failed',
 	admin_support_ops_load_failed: 'Failed to load support operations'
 } as const;

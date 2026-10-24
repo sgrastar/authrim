@@ -494,7 +494,7 @@ async function getJobResultArtifactRowById(
          ON oc.id = aj.object_catalog_id
         AND oc.tenant_id = aj.tenant_id
         AND oc.deleted_at IS NULL
-      WHERE aj.id = ? AND aj.tenant_id = ?`,
+      WHERE aj.id = ? AND aj.tenant_id = ? AND aj.job_type <> 'support-ops/action-execute-logout'`,
     [jobId, tenantId]
   );
 }
@@ -512,6 +512,7 @@ async function getJobResultArtifactRowByArtifactId(
          ON oc.id = aj.object_catalog_id
         AND oc.tenant_id = aj.tenant_id
       WHERE oc.public_artifact_id = ?
+        AND aj.job_type <> 'support-ops/action-execute-logout'
         AND oc.deleted_at IS NULL
         AND aj.tenant_id = ?`,
     [artifactId, tenantId]
@@ -703,6 +704,14 @@ interface JobProgress {
 }
 
 const SUPPORT_OPS_SNAPSHOT_JOB_TYPE = 'support-ops/cohort-snapshot';
+const SUPPORT_OPS_EXECUTE_JOB_TYPE = 'support-ops/action-execute';
+/** Downstream logout an execute job keeps for later: its sessions are not shown. */
+const SUPPORT_OPS_EXECUTE_LOGOUT_JOB_TYPE = 'support-ops/action-execute-logout';
+/** Support Ops jobs: their counts are shown bucketed, their config without its selector. */
+const SUPPORT_OPS_JOB_TYPES = new Set([
+  SUPPORT_OPS_SNAPSHOT_JOB_TYPE,
+  SUPPORT_OPS_EXECUTE_JOB_TYPE,
+]);
 const SUPPORT_OPS_JOB_COUNT_PRECISION = 10;
 
 function bucketSupportOpsJobCount(value: unknown): number | null {
@@ -749,10 +758,9 @@ function formatJob(row: JobRow) {
     job_id: row.id,
     type: row.job_type,
     status: row.status,
-    progress:
-      row.job_type === SUPPORT_OPS_SNAPSHOT_JOB_TYPE
-        ? sanitizeSupportOpsJobProgress(progress)
-        : progress,
+    progress: SUPPORT_OPS_JOB_TYPES.has(row.job_type)
+      ? sanitizeSupportOpsJobProgress(progress)
+      : progress,
     created_by: row.created_by,
     created_at: toISOString(row.created_at),
     updated_at: toISOString(row.updated_at),
@@ -829,6 +837,12 @@ function parseJobConfig(
 
   try {
     const parsed = JSON.parse(config) as Record<string, unknown>;
+    if (jobType === SUPPORT_OPS_EXECUTE_JOB_TYPE) {
+      return { action_id: parsed.action_id, cohort_id: parsed.cohort_id };
+    }
+    if (jobType === SUPPORT_OPS_EXECUTE_LOGOUT_JOB_TYPE) {
+      return { execute_job_id: parsed.execute_job_id };
+    }
     if (jobType !== SUPPORT_OPS_SNAPSHOT_JOB_TYPE) {
       return parsed;
     }
@@ -922,7 +936,10 @@ export async function adminJobsListHandler(c: Context<{ Bindings: Env }>) {
 
   try {
     // Build query
-    const whereClauses: string[] = ['tenant_id = ?'];
+    const whereClauses: string[] = [
+      'tenant_id = ?',
+      "job_type <> 'support-ops/action-execute-logout'",
+    ];
     const bindings: unknown[] = [tenantId];
 
     // Sort (an allowed field, validated above), then id ascending
@@ -1050,7 +1067,7 @@ export async function adminJobGetHandler(c: Context<{ Bindings: Env }>) {
                 created_by, created_at, updated_at, started_at, completed_at, estimated_completion,
                 attempt_count, max_attempts, next_run_at, dead_lettered_at
          FROM admin_jobs
-         WHERE id = ? AND tenant_id = ?`,
+         WHERE id = ? AND tenant_id = ? AND job_type <> 'support-ops/action-execute-logout'`,
         [jobId, tenantId]
       )
     );
@@ -1236,7 +1253,7 @@ export async function adminJobResultHandler(c: Context<{ Bindings: Env }>) {
              ON oc.id = aj.object_catalog_id
             AND oc.tenant_id = aj.tenant_id
             AND oc.deleted_at IS NULL
-           WHERE aj.id = ? AND aj.tenant_id = ?`,
+           WHERE aj.id = ? AND aj.tenant_id = ? AND aj.job_type <> 'support-ops/action-execute-logout'`,
           [jobId, tenantId]
         )
       )

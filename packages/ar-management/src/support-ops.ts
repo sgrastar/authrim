@@ -1,3 +1,9 @@
+import {
+  isLowCount,
+  redactCohortCounts,
+  redactResultSummary,
+  type RedactedCohortCounts,
+} from './support-ops-redaction';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type {
@@ -11,8 +17,6 @@ import type {
 import {
   ADMIN_PERMISSIONS,
   ApprovalRequestApprovalRepository,
-  SUBJECT_UPDATED_AT_FORWARD_SQL,
-  SUPPORT_OPS_ACCOUNT_METADATA_SQL,
   ApprovalRequestRepository,
   buildSupportOpsRiskSummary,
   canonicalizeApprovalScope,
@@ -25,15 +29,21 @@ import {
   hasAdminPermission,
   listSupportOpsResources,
   requireDedicatedAdminDatabaseAdapter,
-  transitionAccountAuthenticationStateEndingSessions,
   validateSupportOpsAction,
 } from '@authrim/ar-lib-core';
-import { writeAdminAuditLog } from './admin-shared';
-import { startAdminSessionEndLogout } from './admin-session-end';
-import { endedSessionsOf, type EndedSession } from './session-end-logout';
+import { writeAdminAuditLog, getAdminActorAuditMetadata } from './admin-shared';
 import { getApprovalPresetExpiry } from './approval-policy-presets';
 import {
-  accountIdChunks,
+  assertSupportOpsStoreIdentity,
+  preflightSupportOpsExecutionStores,
+} from './support-ops-execution-stores';
+import {
+  createSupportOpsExecuteJob,
+  deleteSupportOpsExecuteJob,
+  processSupportOpsExecuteJobInline,
+  type SupportOpsRunBudget,
+} from './support-ops-execute-job';
+import {
   accountsByStore,
   ACCOUNT_ID_CHUNK,
   heldByAnotherStore,
@@ -122,18 +132,6 @@ interface SupportOpsLogger {
   error(message: string, metadata?: Record<string, unknown>, error?: Error): void;
 }
 
-interface RedactedCohortCounts {
-  matched_count: number | null;
-  actionable_count: number | null;
-  blocked_count: number | null;
-  blocked_reasons: string[];
-  blocked_reasons_suppressed: boolean;
-  privacy: {
-    min_count: number;
-    low_count_suppressed: boolean;
-  };
-}
-
 interface SupportOpsCountAuditSummary {
   matched_count: number | null;
   actionable_count: number | null;
@@ -172,7 +170,12 @@ function requirePermission(c: SupportOpsContext, permission: string): Response |
   return null;
 }
 
-function jsonError(c: SupportOpsContext, status: 400 | 404 | 409, error: string, message: string) {
+function jsonError(
+  c: SupportOpsContext,
+  status: 400 | 404 | 409 | 503,
+  error: string,
+  message: string
+) {
   return c.json({ error, error_description: message }, status);
 }
 
@@ -269,10 +272,6 @@ function createSupportOpsAuthContext(c: SupportOpsContext, tenantId: string) {
   );
 }
 
-function isLowCount(value: number, minCount: number): boolean {
-  return value > 0 && value < minCount;
-}
-
 /**
  * A risk summary as a response shows it: its matched count only as the counts beside it show it,
  * so a suppressed count cannot be told from it.
@@ -291,67 +290,11 @@ function redactRiskSummary(
   };
 }
 
-function redactCohortCounts(
-  resource: { minCount: number },
-  matchedCount: number,
-  actionableCount: number,
-  blockedCount: number,
-  blockedReasons: string[] = []
-): RedactedCohortCounts {
-  const actionableSuppressed = isLowCount(actionableCount, resource.minCount);
-  const blockedSuppressed = isLowCount(blockedCount, resource.minCount);
-  const matchedSuppressed =
-    isLowCount(matchedCount, resource.minCount) ||
-    (actionableSuppressed && blockedCount > 0) ||
-    (blockedSuppressed && actionableCount > 0);
-
-  return {
-    matched_count: matchedSuppressed ? null : matchedCount,
-    actionable_count: actionableSuppressed ? null : actionableCount,
-    blocked_count: blockedSuppressed ? null : blockedCount,
-    blocked_reasons: blockedSuppressed ? [] : blockedReasons,
-    blocked_reasons_suppressed: blockedSuppressed,
-    privacy: {
-      min_count: resource.minCount,
-      low_count_suppressed: matchedSuppressed || actionableSuppressed || blockedSuppressed,
-    },
-  };
-}
-
 /**
  * An action's result as a response or audit shows it. Its succeeded and failed counts are shown
  * only together and only when neither is a low count (nor the attempted count they add up to):
  * one of them is the other subtracted from the attempted count.
  */
-function redactResultSummary(
-  resource: { minCount: number },
-  resultSummary: Record<string, unknown>,
-  matchedCount: number,
-  actionableCount: number,
-  blockedCount: number
-): Record<string, unknown> {
-  const redacted = redactCohortCounts(resource, matchedCount, actionableCount, blockedCount);
-  const outcomes = ['succeeded_count', 'failed_count'].filter((key) => key in resultSummary);
-  const outcomeSuppressed =
-    outcomes.length > 0 &&
-    (redacted.actionable_count === null ||
-      outcomes.some((key) => {
-        const value = Number(resultSummary[key]);
-        return !Number.isFinite(value) || isLowCount(value, resource.minCount);
-      }));
-  return {
-    ...resultSummary,
-    ...(outcomeSuppressed ? Object.fromEntries(outcomes.map((key) => [key, null])) : {}),
-    matched_count: redacted.matched_count,
-    attempted_count: redacted.actionable_count,
-    blocked_count: redacted.blocked_count,
-    blocked_reasons_suppressed: redacted.blocked_reasons_suppressed,
-    privacy: {
-      ...redacted.privacy,
-      low_count_suppressed: redacted.privacy.low_count_suppressed || outcomeSuppressed,
-    },
-  };
-}
 
 function redactCountAuditSummary(
   resource: { minCount: number },
@@ -859,8 +802,9 @@ interface SupportOpsSnapshotStores {
 }
 
 /**
- * How much one run of a snapshot job reads (smaller in tests, to stop it part-way): its rows, and
- * its statements (each page reads one database and checks the others for its accounts).
+ * How much a scheduled run of the snapshot jobs reads (smaller in tests, to stop it part-way): a
+ * job's rows, and the statements of all its jobs (each page reads one database and checks the
+ * others for its accounts).
  */
 export interface SupportOpsSnapshotRunLimits {
   pageSize?: number;
@@ -904,7 +848,7 @@ function resumeSnapshotStore(
   const index =
     progress.store_key === '' ? 0 : accounts.findIndex(({ key }) => key >= progress.store_key);
   if (index < 0 || index >= accounts.length) return null;
-  if (accounts[index]!.key !== progress.store_key) progress.last_target_id = '';
+  if (accounts[index].key !== progress.store_key) progress.last_target_id = '';
   return index;
 }
 
@@ -912,7 +856,9 @@ async function processSupportOpsSnapshotJob(
   stores: SupportOpsSnapshotStores,
   job: SupportOpsSnapshotJobRow,
   logger?: SupportOpsLogger,
-  limits: SupportOpsSnapshotRunLimits = {}
+  limits: SupportOpsSnapshotRunLimits = {},
+  /** Statements the jobs of this scheduled run may still make; this job's are taken from it. */
+  budget: { remaining: number } = { remaining: limits.maxQueriesPerRun ?? 400 }
 ): Promise<void> {
   const metadata = stores.tenant.metadata;
   const accounts = stores.tenant.accounts;
@@ -969,9 +915,7 @@ async function processSupportOpsSnapshotJob(
     const cutoffExpression = buildSnapshotCutoffExpression(resource);
     const pageSize = limits.pageSize ?? 500;
     const maxRowsPerRun = limits.maxRowsPerRun ?? 5000;
-    const maxQueriesPerRun = limits.maxQueriesPerRun ?? 400;
     let processedThisRun = 0;
-    let queriesThisRun = 0;
     let storeIndex = resumeSnapshotStore(accounts, progress);
     const failAmbiguous = async () => {
       await metadata.execute(
@@ -990,12 +934,8 @@ async function processSupportOpsSnapshotJob(
     // Each account database in turn, in pages by account id, as many as a run's rows and
     // statements allow. A page whose progress was not recorded (the run ended before) is read
     // again, and its targets already taken are skipped.
-    while (
-      storeIndex !== null &&
-      processedThisRun < maxRowsPerRun &&
-      queriesThisRun < maxQueriesPerRun
-    ) {
-      const store = accounts[storeIndex]!;
+    while (storeIndex !== null && processedThisRun < maxRowsPerRun && budget.remaining > 0) {
+      const store = accounts[storeIndex];
       progress.store_key = store.key;
       const limit = Math.min(pageSize, maxRowsPerRun - processedThisRun);
       const rows = await store.adapter.query<SupportOpsTargetSnapshotRow>(
@@ -1016,12 +956,12 @@ async function processSupportOpsSnapshotJob(
         ]
       );
 
-      queriesThisRun += 1;
+      budget.remaining -= 1;
 
       // An account of the page in another database too (in any state) is one whose copy is
       // unknown: the cohort is refused, as cohort creation and execute refuse it.
       if (rows.length > 0 && accounts.length > 1) {
-        queriesThisRun += (accounts.length - 1) * Math.ceil(rows.length / ACCOUNT_ID_CHUNK);
+        budget.remaining -= (accounts.length - 1) * Math.ceil(rows.length / ACCOUNT_ID_CHUNK);
         if (
           await heldByAnotherStore(
             accounts,
@@ -1055,7 +995,7 @@ async function processSupportOpsSnapshotJob(
                 ],
               }))
             );
-      queriesThisRun += rows.length === 0 ? 0 : 1;
+      budget.remaining -= rows.length === 0 ? 0 : 1;
       rows.forEach((target, index) => {
         if ((inserted[index]?.rowsAffected ?? 0) === 0) return;
         progress.processed += 1;
@@ -1071,9 +1011,9 @@ async function processSupportOpsSnapshotJob(
         // This database is done: the next one, from its start.
         storeIndex = storeIndex + 1 < accounts.length ? storeIndex + 1 : null;
         progress.last_target_id = '';
-        if (storeIndex !== null) progress.store_key = accounts[storeIndex]!.key;
+        if (storeIndex !== null) progress.store_key = accounts[storeIndex].key;
       } else {
-        progress.last_target_id = rows[rows.length - 1]!.target_id;
+        progress.last_target_id = rows[rows.length - 1].target_id;
       }
       if (storeIndex === null) break;
 
@@ -1084,7 +1024,7 @@ async function processSupportOpsSnapshotJob(
           WHERE tenant_id = ? AND id = ?`,
         [toJson(progress), nowTs, job.tenant_id, job.id]
       );
-      queriesThisRun += 1;
+      budget.remaining -= 1;
     }
 
     if (storeIndex !== null) {
@@ -1194,9 +1134,31 @@ async function processSupportOpsSnapshotJob(
 export async function processPendingSupportOpsSnapshotJobs(
   env: Env,
   logger?: SupportOpsLogger,
-  limits?: SupportOpsSnapshotRunLimits
+  limits: SupportOpsSnapshotRunLimits = {},
+  /** The scheduled run's budget, shared with its other Support Ops jobs; this run's is taken from it. */
+  shared?: SupportOpsRunBudget
 ): Promise<void> {
+  // One budget for all the jobs of this run (they run in one invocation).
+  const budget = {
+    remaining: Math.min(limits.maxQueriesPerRun ?? 400, shared?.remaining ?? Infinity),
+  };
+  const started = budget.remaining;
+  try {
+    await processSnapshotJobs(env, logger, limits, budget);
+  } finally {
+    if (shared) shared.remaining -= started - budget.remaining;
+  }
+}
+
+async function processSnapshotJobs(
+  env: Env,
+  logger: SupportOpsLogger | undefined,
+  limits: SupportOpsSnapshotRunLimits,
+  budget: { remaining: number }
+): Promise<void> {
+  if (budget.remaining <= 0) return;
   const jobsAdapter = requireDedicatedAdminDatabaseAdapter(env, 'support-ops-snapshot-jobs');
+  budget.remaining -= 1;
   const jobs = await jobsAdapter.query<SupportOpsSnapshotJobRow>(
     `SELECT id, tenant_id, status, progress, config, updated_at
        FROM admin_jobs
@@ -1215,6 +1177,7 @@ export async function processPendingSupportOpsSnapshotJobs(
       // every run. Only as this run found it: another run may have claimed or ended it since.
       // The cohort stays pending until it expires.
       const nowTs = Math.floor(Date.now() / 1000);
+      budget.remaining -= 1;
       await jobsAdapter.execute(
         `UPDATE admin_jobs
             SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ?
@@ -1236,7 +1199,8 @@ export async function processPendingSupportOpsSnapshotJobs(
       );
       continue;
     }
-    await processSupportOpsSnapshotJob({ jobs: jobsAdapter, tenant }, job, logger, limits);
+    if (budget.remaining <= 0) break;
+    await processSupportOpsSnapshotJob({ jobs: jobsAdapter, tenant }, job, logger, limits, budget);
   }
 }
 
@@ -2084,16 +2048,6 @@ supportOpsRouter.post('/actions/:actionId/approve', async (c) => {
   return c.json({ action_id: actionId, status: 'approved' });
 });
 
-/** An execute that failed in an account database, after `succeededCount` accounts took it. */
-class SupportOpsExecutionError extends Error {
-  constructor(
-    readonly succeededCount: number,
-    cause: unknown
-  ) {
-    super('support_ops_execution_failed', { cause });
-  }
-}
-
 supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
   const forbidden = requirePermission(c, ADMIN_PERMISSIONS.SUPPORT_OPS_ACTIONS_EXECUTE);
   if (forbidden) return forbidden;
@@ -2162,6 +2116,7 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
     );
   }
   let approvalActors: string[] = [];
+  let pendingApprovalActor: string | undefined;
   if (action.status === 'approval_required' && action.approval_request_id) {
     const approvalState = await getSupportOpsApprovalWorkflowState(c, action.approval_request_id, {
       tenantId,
@@ -2188,19 +2143,10 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
     if (!approvalState.approved) {
       return jsonError(c, 409, 'not_executable', 'Action must be approved before execution');
     }
-    const approvedBy =
+    pendingApprovalActor =
       approvalActors.length > 0
         ? approvalActors.join(',')
         : `approval:${action.approval_request_id}`;
-    const approvalTransition = await authCtx.coreAdapter.execute(
-      `UPDATE support_operation_actions
-          SET status = 'approved', approved_by = ?, approved_at = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ? AND status = 'approval_required'`,
-      [approvedBy, Date.now(), Date.now(), tenantId, actionId]
-    );
-    if (approvalTransition.rowsAffected === 0) {
-      return jsonError(c, 409, 'not_executable', 'Action is no longer pending approval');
-    }
   } else if (action.status !== 'approved') {
     return jsonError(c, 409, 'not_executable', 'Action must be approved before execution');
   } else if (action.approved_by) {
@@ -2236,207 +2182,140 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
     );
   }
 
-  // The accounts to suspend and the database each is in, found before the action starts running:
-  // an account in more than one database (which copy is it?) is not acted on.
-  const stores = await supportOpsStoresFromHono(c, tenantId);
-  const targets = await authCtx.coreAdapter.query<{ target_id: string }>(
-    `SELECT target_id
-       FROM support_operation_cohort_targets
-      WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL`,
-    [tenantId, action.cohort_id]
-  );
-  let holders: Map<string, string[]>;
+  let executionStores: SupportOpsStores;
   try {
-    holders = await accountsByStore(
-      stores.accounts,
-      tenantId,
-      targets.map((target) => target.target_id)
-    );
-  } catch (error) {
-    if (!(error instanceof SupportOpsAmbiguousAccountError)) throw error;
-    await auditSupportOps(c, 'support_ops.action.execute', actionId, 'failure', {
-      cohort_id: action.cohort_id,
-      resource: action.resource,
-      action: action.action,
-      reason: 'account_store_ambiguous',
-    });
+    executionStores = await supportOpsStoresFromHono(c, tenantId);
+    await preflightSupportOpsExecutionStores(executionStores);
+  } catch {
     return jsonError(
       c,
-      409,
-      'account_store_ambiguous',
-      'An account of the cohort is in more than one account database'
+      503,
+      'execution_store_unavailable',
+      'Action execution stores could not be verified'
     );
   }
-  const now = Date.now();
-  const transition = await authCtx.coreAdapter.execute(
-    `UPDATE support_operation_actions
-        SET status = 'running', updated_at = ?
-      WHERE tenant_id = ? AND id = ? AND status = 'approved'`,
-    [now, tenantId, actionId]
-  );
-  if (transition.rowsAffected === 0) {
+  if (pendingApprovalActor !== undefined) {
+    const approvalTransition = await authCtx.coreAdapter.execute(
+      `UPDATE support_operation_actions
+          SET status = 'approved', approved_by = ?, approved_at = ?, updated_at = MAX(updated_at,?)
+        WHERE tenant_id = ? AND id = ? AND status = 'approval_required'`,
+      [pendingApprovalActor, Date.now(), Date.now(), tenantId, actionId]
+    );
+    if (approvalTransition.rowsAffected === 0)
+      return jsonError(c, 409, 'not_executable', 'Action is no longer pending approval');
+  }
+
+  // The same durable operation is used for both bounded inline execution and scheduled work.
+  // Persist intent before the Core action CAS; a restart can always find the original source version.
+  const jobsAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'support-ops-execute-jobs');
+  const jobId = crypto.randomUUID();
+  const sourceVersionMs = Date.now();
+  const adminAuth = getAdminAuth(c);
+  assertSupportOpsStoreIdentity(executionStores.metadataIdentity);
+  await createSupportOpsExecuteJob(jobsAdapter, {
+    jobId,
+    tenantId,
+    actionId,
+    cohortId: action.cohort_id,
+    executor,
+    sourceVersionMs,
+    actionableCount: action.actionable_count,
+    matchedCount: action.matched_count,
+    blockedCount: action.blocked_count,
+    actor: {
+      adminUserId:
+        adminAuth?.authMethod === 'machine_access_token' ? null : adminAuth?.userId || 'system',
+      metadata: getAdminActorAuditMetadata(adminAuth),
+    },
+    metadataIdentity: executionStores.metadataIdentity,
+  });
+  let confirmed = false;
+  try {
+    await authCtx.coreAdapter.execute(
+      `UPDATE support_operation_actions SET status='running', result_summary_json=?,
+        updated_at=MAX(updated_at,?) WHERE tenant_id=? AND id=? AND status='approved'`,
+      [toJson({ job_id: jobId }), sourceVersionMs, tenantId, actionId]
+    );
+    const bound = await authCtx.coreAdapter.queryOne<{
+      status: string;
+      result_summary_json: string | null;
+    }>(
+      'SELECT status,result_summary_json FROM support_operation_actions WHERE tenant_id=? AND id=?',
+      [tenantId, actionId],
+      { consistencyClass: 'primary_required' }
+    );
+    confirmed =
+      bound?.status === 'running' && bound.result_summary_json === toJson({ job_id: jobId });
+  } catch {
+    // An uncertain write is left durable for the scheduler; it is never deleted from an error guess.
+    return jsonError(
+      c,
+      503,
+      'execution_state_unavailable',
+      'Action execution state could not be confirmed'
+    );
+  }
+  if (!confirmed) {
+    await deleteSupportOpsExecuteJob(jobsAdapter, tenantId, jobId);
     return jsonError(c, 409, 'not_executable', 'Action is no longer approved for execution');
   }
-
-  // Accounts whose sessions this action ended: their relying parties are told after the
-  // response, also when a later account or step fails.
-  const ended: EndedSession[] = [];
-  try {
-    // Stable per action and account, so the account's record names this action's transition.
-    const operationPrefix = `support-op:${actionId}:`;
-    for (let offset = 0; offset < targets.length; offset += 20) {
-      const settled = await Promise.allSettled(
-        targets.slice(offset, offset + 20).map(async (target) => {
-          const { endedSessionIds } = await transitionAccountAuthenticationStateEndingSessions(
-            c.env,
-            {
-              tenantId,
-              userId: target.target_id,
-              lifecycle: 'suspended',
-              sourceVersionMs: now,
-              operationId: `${operationPrefix}${target.target_id}`,
-              revokeSessions: true,
-            }
-          );
-          ended.push(...endedSessionsOf(target.target_id, endedSessionIds));
-        })
-      );
-      const failure = settled.find(
-        (result): result is PromiseRejectedResult => result.status === 'rejected'
-      );
-      if (failure) throw failure.reason;
+  await auditSupportOps(c, 'support_ops.action.execute', actionId, 'success', {
+    cohort_id: action.cohort_id,
+    resource: action.resource,
+    action: action.action,
+    execution: 'job',
+    job_id: jobId,
+  });
+  if (action.actionable_count <= resource.maxSyncExecuteCount) {
+    await processSupportOpsExecuteJobInline(c.env, tenantId, jobId, {
+      maxCallsPerRun: 400,
+      maxTargetsPerRun: resource.maxSyncExecuteCount,
+    });
+    const completed = await authCtx.coreAdapter.queryOne<{
+      status: string;
+      result_summary_json: string | null;
+    }>(
+      'SELECT status,result_summary_json FROM support_operation_actions WHERE tenant_id=? AND id=?',
+      [tenantId, actionId],
+      { consistencyClass: 'primary_required' }
+    );
+    const durable = await jobsAdapter.queryOne<{ status: string }>(
+      'SELECT status FROM admin_jobs WHERE tenant_id=? AND id=?',
+      [tenantId, jobId],
+      { consistencyClass: 'primary_required' }
+    );
+    // Completion includes final durable audit and logout-job transfer, not remote logout delivery.
+    if (completed?.status === 'completed' && durable?.status === 'completed') {
+      const summary = JSON.parse(completed.result_summary_json ?? '{}') as Record<string, unknown>;
+      return c.json({
+        action_id: actionId,
+        status: 'completed',
+        resource: action.resource,
+        action: action.action,
+        cohort_id: action.cohort_id,
+        ...redactResultSummary(
+          resource,
+          summary,
+          action.matched_count,
+          action.actionable_count,
+          action.blocked_count
+        ),
+      });
     }
-    // Each account takes this action's transition (its version and operation) only if no newer
-    // one did, and its subject only along with it, as single-account status changes do. Metadata
-    // that is not a JSON object reads as none, as the cohort read it. Each account is updated in
-    // the database that holds it, its subject with it.
-    const metadata = SUPPORT_OPS_ACCOUNT_METADATA_SQL;
-    const lifecycleVersion = `COALESCE(CAST(json_extract(${metadata}, '$.lifecycle_version_ms') AS INTEGER), 0)`;
-    // One batch a database: its accounts and their subjects together, or none of them.
-    const perStore = await mapAccountStores(stores.accounts, async ({ key, adapter }) => {
-      const chunks = accountIdChunks(holders.get(key) ?? []);
-      if (chunks.length === 0) return { succeeded: 0, error: null };
-      // Every database is updated even when another fails, so the count is of all of them.
-      try {
-        const results = await adapter.batch(
-          chunks.flatMap((chunk) => [
-            {
-              sql: `UPDATE identity_accounts
-                       SET lifecycle_state = 'suspended',
-                           metadata_json = json_set(${metadata},
-                             '$.status', 'suspended', '$.suspended_at', ?,
-                             '$.lifecycle_version_ms', ?, '$.lifecycle_operation_id', ? || legacy_user_id),
-                           updated_at = ?
-                     WHERE tenant_id = ?
-                       AND legacy_user_id IN (SELECT value FROM json_each(?))
-                       AND lifecycle_state = 'active'
-                       AND ${lifecycleVersion} < ?`,
-              params: [Math.floor(now / 1000), now, operationPrefix, now, tenantId, chunk, now],
-            },
-            {
-              sql: `UPDATE identity_subjects
-                       SET lifecycle_state = 'suspended', ${SUBJECT_UPDATED_AT_FORWARD_SQL}
-                     WHERE tenant_id = ?
-                       AND id IN (
-                         SELECT primary_subject_id
-                           FROM identity_accounts
-                          WHERE tenant_id = ?
-                            AND legacy_user_id IN (SELECT value FROM json_each(?))
-                            AND ${lifecycleVersion} = ?
-                            AND json_extract(${metadata}, '$.lifecycle_operation_id') = ? || legacy_user_id
-                       )`,
-              params: [now, now, tenantId, tenantId, chunk, now, operationPrefix],
-            },
-          ])
-        );
-        // The accounts' statements (each chunk's first) count the accounts suspended.
-        const succeeded = results
-          .filter((_, index) => index % 2 === 0)
-          .reduce((sum, result) => sum + (result.rowsAffected ?? 0), 0);
-        return { succeeded, error: null };
-      } catch (error) {
-        return { succeeded: 0, error };
-      }
-    });
-    const succeededCount = perStore.reduce((sum, store) => sum + store.succeeded, 0);
-    const storeFailure = perStore.find((store) => store.error !== null);
-    if (storeFailure) {
-      throw new SupportOpsExecutionError(succeededCount, storeFailure.error);
-    }
-    const failedCount = Math.max(0, action.actionable_count - succeededCount);
-    const resultSummary = {
-      matched_count: action.matched_count,
-      attempted_count: action.actionable_count,
-      succeeded_count: succeededCount,
-      failed_count: failedCount,
-      blocked_count: action.blocked_count,
-    };
-    await authCtx.coreAdapter.execute(
-      `UPDATE support_operation_actions
-          SET status = 'completed', result_summary_json = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ? AND status = 'running'`,
-      [toJson(resultSummary), Date.now(), tenantId, actionId]
-    );
-
-    await auditSupportOps(c, 'support_ops.action.execute', actionId, 'success', {
-      cohort_id: action.cohort_id,
-      resource: action.resource,
-      action: action.action,
-      result: redactResultSummary(
-        resource,
-        resultSummary,
-        action.matched_count,
-        action.actionable_count,
-        action.blocked_count
-      ),
-    });
-    const redactedResultSummary = redactResultSummary(
-      resource,
-      resultSummary,
-      action.matched_count,
-      action.actionable_count,
-      action.blocked_count
-    );
-
-    return c.json({
-      action_id: actionId,
-      status: 'completed',
-      resource: action.resource,
-      action: action.action,
-      cohort_id: action.cohort_id,
-      ...redactedResultSummary,
-    });
-  } catch (error) {
-    // The accounts already suspended in the databases that did not fail stay suspended.
-    const succeededCount = error instanceof SupportOpsExecutionError ? error.succeededCount : 0;
-    const failureSummary = {
-      matched_count: action.matched_count,
-      attempted_count: action.actionable_count,
-      succeeded_count: succeededCount,
-      failed_count: Math.max(0, action.actionable_count - succeededCount),
-      blocked_count: action.blocked_count,
-      error: 'execution_failed',
-    };
-    await authCtx.coreAdapter.execute(
-      `UPDATE support_operation_actions
-          SET status = 'failed', result_summary_json = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ? AND status = 'running'`,
-      [toJson(failureSummary), Date.now(), tenantId, actionId]
-    );
-    await auditSupportOps(c, 'support_ops.action.execute', actionId, 'failure', {
-      cohort_id: action.cohort_id,
-      resource: action.resource,
-      action: action.action,
-      reason: 'execution_failed',
-    });
-    return jsonError(c, 409, 'execution_failed', 'Action execution failed');
-  } finally {
-    await startAdminSessionEndLogout(c, {
-      tenantId,
-      sessions: ended,
-      trigger: { action: 'support_ops.action.execute', operationId: actionId, actorId: executor },
-    });
+    if (completed?.status === 'failed' && durable?.status === 'failed')
+      return jsonError(c, 409, 'execution_failed', 'Action execution failed');
   }
+  return c.json(
+    {
+      action_id: actionId,
+      status: 'running',
+      resource: action.resource,
+      action: action.action,
+      cohort_id: action.cohort_id,
+      job_id: jobId,
+    },
+    202
+  );
 });
 
 supportOpsRouter.get('/actions/:actionId', async (c) => {

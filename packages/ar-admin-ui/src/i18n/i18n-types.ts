@@ -24735,6 +24735,7 @@ type RootTranslation = {
 	 * A​c​t​i​o​n​ ​c​o​m​p​l​e​t​e​d
 	 */
 	admin_support_ops_action_completed: string
+	admin_support_ops_action_running: string
 	/**
 	 * A​c​t​i​o​n​ ​e​x​e​c​u​t​i​o​n​ ​f​a​i​l​e​d
 	 */
@@ -58488,6 +58489,7 @@ Remove this role from {email}?
 	 * Action completed
 	 */
 	admin_support_ops_action_completed: () => LocalizedString
+	admin_support_ops_action_running: () => LocalizedString
 	/**
 	 * Action execution failed
 	 */
