@@ -7,6 +7,7 @@ import {
   legacyZodErrorMessage,
   legacyZodIssueCode,
   toLegacyZodIssue,
+  toLegacyZodIssues,
 } from '../zod-legacy-errors';
 
 /**
@@ -196,14 +197,64 @@ describe('legacy zod error output', () => {
     }
   });
 
-  it('keeps single-value enum messages even though finalized issues read as literals', () => {
-    const result = z
+  it.each([
+    ['missing', {}],
+    ['wrong value', { e: 'b' }],
+    ['wrong type', { e: 1 }],
+  ])('projects a single-value enum like zod 3 (%s)', (_name, input) => {
+    const legacy = z3.object({ e: z3.enum(['a']) }).safeParse(input);
+    const modern = z
       .object({ e: z.enum(['a']) })
-      .safeParse({}, { error: legacyZodErrorMessage, reportInput: true });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].message).toBe('Required');
+      .safeParse(input, { error: legacyZodErrorMessage, reportInput: true });
+    expect(legacy.success || modern.success).toBe(false);
+    if (!legacy.success && !modern.success) {
+      expect(JSON.parse(JSON.stringify(modern.error.issues.map(toLegacyZodIssue)))).toEqual(
+        JSON.parse(JSON.stringify(legacy.error.issues))
+      );
     }
+  });
+
+  it('unwraps record-key issues to the key path like zod 3', () => {
+    const v3Schema = z3.object({
+      h: z3.record(
+        z3
+          .string()
+          .regex(/^[A-Z]+$/)
+          .min(3),
+        z3.string()
+      ),
+    });
+    const v4Schema = z.object({
+      h: z.record(
+        z
+          .string()
+          .regex(/^[A-Z]+$/)
+          .min(3),
+        z.string()
+      ),
+    });
+    const input = { h: { 'b-k': 'v', OK: 'v', GOOD: 'v' } };
+    const legacy = v3Schema.safeParse(input);
+    const modern = v4Schema.safeParse(input, { error: legacyZodErrorMessage, reportInput: true });
+    expect(legacy.success || modern.success).toBe(false);
+    if (!legacy.success && !modern.success) {
+      expect(JSON.parse(JSON.stringify(toLegacyZodIssues(modern.error.issues)))).toEqual(
+        JSON.parse(JSON.stringify(legacy.error.issues))
+      );
+      expect(modern.error.issues.map((issue) => issue.message).join(', ')).toBe(
+        legacy.error.issues.map((issue) => issue.message).join(', ')
+      );
+    }
+  });
+
+  it('documents that zod 4 measures string lengths in code points', () => {
+    // zod 3 counted UTF-16 units. Only strings with astral characters (emoji, ...) differ:
+    // a max(N) limit admits up to 2N units and a min(N) floor needs N code points.
+    const emoji = '\u{1F600}';
+    expect(z3.string().max(3).safeParse(emoji.repeat(3)).success).toBe(false);
+    expect(z.string().max(3).safeParse(emoji.repeat(3)).success).toBe(true);
+    expect(z3.string().min(3).safeParse(emoji.repeat(2)).success).toBe(true);
+    expect(z.string().min(3).safeParse(emoji.repeat(2)).success).toBe(false);
   });
 
   it('reports non-finite numbers with the zod 3 finite() message', () => {

@@ -11,7 +11,7 @@
 
 import { Hono } from 'hono';
 import { z } from '../core/zod.js';
-import { toLegacyZodIssue } from '@authrim/ar-lib-core/utils/zod-legacy-errors';
+import { toLegacyZodIssues } from '@authrim/ar-lib-core/utils/zod-legacy-errors';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -2432,7 +2432,7 @@ export function createApiRoutes(): Hono {
       } catch (error) {
         if (error instanceof z.ZodError) {
           // zod 3 issue objects: the response shape predates the zod 4 migration.
-          return c.json({ success: false, errors: error.issues.map(toLegacyZodIssue) }, 400);
+          return c.json({ success: false, errors: toLegacyZodIssues(error.issues) }, 400);
         }
         return c.json({ success: false, error: sanitizeError(error) }, 500);
       } finally {
@@ -2507,7 +2507,7 @@ export function createApiRoutes(): Hono {
       } catch (error) {
         if (error instanceof z.ZodError) {
           // zod 3 issue objects: the response shape predates the zod 4 migration.
-          return c.json({ success: false, errors: error.issues.map(toLegacyZodIssue) }, 400);
+          return c.json({ success: false, errors: toLegacyZodIssues(error.issues) }, 400);
         }
         return c.json({ success: false, error: sanitizeError(error) }, 500);
       }

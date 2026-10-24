@@ -166,15 +166,34 @@ type InvalidValueKind =
   | { kind: 'enum'; options: readonly unknown[] };
 
 /**
+ * Whether an `invalid_value` issue came from a literal. The error map sees the schema
+ * instance; a finalized issue does not, but its message was written by the error map,
+ * so the zod 3 wording tells literal and enum apart. Only a custom message on a
+ * single-value schema falls back to guessing a literal.
+ */
+function isLiteralIssue(issue: LegacyZodIssueSource, values: readonly unknown[]): boolean {
+  const type = schemaType(issue.inst);
+  if (type) return type === 'literal';
+  const message = issue.message;
+  if (message?.startsWith('Invalid literal value, expected ')) return true;
+  if (
+    message !== undefined &&
+    (message.startsWith('Invalid enum value. Expected ') ||
+      message === 'Required' ||
+      message.startsWith(`Expected ${joinValues(values)}, received `))
+  ) {
+    return false;
+  }
+  return values.length === 1;
+}
+
+/**
  * zod 4 reports literal and enum mismatches (and enums given a non-string) as
- * `invalid_value`; zod 3 had three distinct issues. Without the schema instance
- * (finalized issues drop it) a single allowed value is read as a literal.
+ * `invalid_value`; zod 3 had three distinct issues.
  */
 function classifyInvalidValue(issue: LegacyZodIssueSource): InvalidValueKind {
   const values = issue.values ?? [];
-  const type = schemaType(issue.inst);
-  const isLiteral = type ? type === 'literal' : values.length === 1;
-  if (isLiteral) {
+  if (isLiteralIssue(issue, values)) {
     return { kind: 'literal', expected: values[0] };
   }
   const input = issue.input;
@@ -311,7 +330,12 @@ export function legacyZodErrorMessage(issue: LegacyZodIssueSource): string | und
     case 'not_multiple_of':
       return `Number must be a multiple of ${String(issue.divisor)}`;
     case 'invalid_key':
-      return issue.issues?.[0]?.message;
+      // zod 3 reported each key issue on its own; joined, they read the same in the
+      // `issues.map((i) => i.message).join(', ')` bodies.
+      return issue.issues
+        ?.map((nested) => nested.message ?? legacyZodErrorMessage(nested))
+        .filter((message): message is string => message !== undefined)
+        .join(', ');
     case 'custom':
       return 'Invalid input';
     default:
@@ -420,6 +444,23 @@ export function toLegacyZodIssue(issue: LegacyZodIssueSource): LegacyZodIssue {
     default:
       return { code: issue.code ?? 'custom', ...base };
   }
+}
+
+/**
+ * Project a list of finalized zod 4 issues onto zod 3 issue objects. zod 4 wraps
+ * record-key failures in one `invalid_key` issue; zod 3 reported each key issue
+ * directly at the key's path, so those are unwrapped here.
+ */
+export function toLegacyZodIssues(issues: readonly LegacyZodIssueSource[]): LegacyZodIssue[] {
+  return issues.flatMap((issue) => {
+    if (issue.code !== 'invalid_key' || !issue.issues?.length) {
+      return [toLegacyZodIssue(issue)];
+    }
+    const keyPath = issue.path ?? [];
+    return toLegacyZodIssues(
+      issue.issues.map((nested) => ({ ...nested, path: [...keyPath, ...(nested.path ?? [])] }))
+    );
+  });
 }
 
 /**

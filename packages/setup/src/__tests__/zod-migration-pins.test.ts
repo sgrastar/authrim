@@ -26,7 +26,7 @@ import { parseWorkerCapabilityManifest } from '../core/worker-capabilities.js';
 import { createApiRoutes, generateSessionToken } from '../web/api.js';
 import {
   type LegacyZodIssueSource,
-  toLegacyZodIssue,
+  toLegacyZodIssues,
 } from '@authrim/ar-lib-core/utils/zod-legacy-errors';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -54,9 +54,7 @@ function safe(
   const parsed = schema.safeParse(input, { reportInput: true }) as
     | { success: true; data: unknown }
     | { success: false; error: { issues: LegacyZodIssueSource[] } };
-  return parsed.success
-    ? { ok: parsed.data }
-    : { issues: parsed.error.issues.map(toLegacyZodIssue) };
+  return parsed.success ? { ok: parsed.data } : { issues: toLegacyZodIssues(parsed.error.issues) };
 }
 
 type Draft = Record<string, unknown>;

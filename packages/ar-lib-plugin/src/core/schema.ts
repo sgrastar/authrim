@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import {
   legacyZodErrorMessage,
-  legacyZodIssueCode,
+  toLegacyZodIssues,
 } from '@authrim/ar-lib-core/utils/zod-legacy-errors';
 import type { AuthrimPlugin, PluginMeta } from './types';
 
@@ -79,25 +79,33 @@ export function zodToJSONSchema<T>(
   schema: z.ZodType<T, unknown>,
   options?: SchemaConversionOptions
 ): JSONSchema7 {
-  const document = z.toJSONSchema(schema, {
+  const document = toLegacyJSONSchema(schema, options);
+
+  if (!options?.name) {
+    return document;
+  }
+
+  // zod-to-json-schema wrapped named schemas in a root definitions map. Generated
+  // definitions (shared or recursive parts) stay at the root so their refs resolve.
+  const { $schema, definitions, ...definition } = document;
+  return {
+    $ref: `#/definitions/${options.name}`,
+    definitions: { ...definitions, [options.name]: definition },
+    $schema,
+  };
+}
+
+function toLegacyJSONSchema(
+  schema: z.core.$ZodType,
+  options?: SchemaConversionOptions
+): JSONSchema7 {
+  return z.toJSONSchema(schema, {
     target: 'draft-7',
     io: 'input',
     unrepresentable: 'any',
     reused: options?.$refStrategy && options.$refStrategy !== 'none' ? 'ref' : 'inline',
     override: ({ zodSchema, jsonSchema }) => keepLegacyJSONSchemaShape(zodSchema, jsonSchema),
   }) as JSONSchema7;
-
-  if (!options?.name) {
-    return document;
-  }
-
-  // zod-to-json-schema wrapped named schemas in a definitions map.
-  const { $schema, ...definition } = document;
-  return {
-    $ref: `#/definitions/${options.name}`,
-    definitions: { [options.name]: definition },
-    $schema,
-  };
 }
 
 const MAX_SAFE_INTEGER_BOUND = Number.MAX_SAFE_INTEGER;
@@ -107,7 +115,9 @@ const MAX_SAFE_INTEGER_BOUND = Number.MAX_SAFE_INTEGER;
  * for the same schema: strip objects keep `additionalProperties: false` in the input
  * view, loose objects keep `true`, records drop the implied string `propertyNames`,
  * built-in string formats do not repeat their regex as `pattern`, unions of literals
- * stay a typed `enum`, and integers do not spell out the safe-integer range.
+ * stay a typed `enum`, integers do not spell out the safe-integer range, and dates,
+ * bigints and sets keep the types zod-to-json-schema gave them (zod 4 treats them as
+ * unrepresentable and would emit `{}`).
  */
 function keepLegacyJSONSchemaShape(
   zodSchema: z.core.$ZodType,
@@ -148,6 +158,25 @@ function keepLegacyJSONSchemaShape(
       delete jsonSchema.anyOf;
       jsonSchema.type = literals.type;
       jsonSchema.enum = literals.values;
+    }
+  }
+
+  if (def.type === 'date') {
+    jsonSchema.type = 'string';
+    jsonSchema.format = 'date-time';
+  } else if (def.type === 'bigint') {
+    jsonSchema.type = 'integer';
+    jsonSchema.format = 'int64';
+  } else if (def.type === 'set') {
+    const setDef = def as z.core.$ZodSetDef;
+    const { $schema: _schema, ...items } = toLegacyJSONSchema(setDef.valueType);
+    jsonSchema.type = 'array';
+    jsonSchema.uniqueItems = true;
+    jsonSchema.items = items as z.core.JSONSchema.BaseSchema;
+    for (const check of setDef.checks ?? []) {
+      const checkDef = check._zod.def as { check?: string; minimum?: number; maximum?: number };
+      if (checkDef.check === 'min_size') jsonSchema.minItems = checkDef.minimum;
+      if (checkDef.check === 'max_size') jsonSchema.maxItems = checkDef.maximum;
     }
   }
 
@@ -286,10 +315,10 @@ export function validatePluginConfig<T>(
 
   return {
     success: false,
-    errors: result.error.issues.map((e) => ({
+    errors: toLegacyZodIssues(result.error.issues).map((e) => ({
       path: e.path.map(String).join('.'),
       message: e.message,
-      code: legacyZodIssueCode(e),
+      code: e.code,
     })),
   };
 }
