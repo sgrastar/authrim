@@ -151,6 +151,15 @@ describe('account directory removal PII erasure', () => {
       CREATE TABLE subject_identifiers (
         id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, subject_id TEXT NOT NULL
       );
+      CREATE TABLE user_anonymization_map (
+        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        anonymized_user_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+        UNIQUE(tenant_id, user_id)
+      );
+      INSERT INTO user_anonymization_map (id, tenant_id, user_id, anonymized_user_id, created_at)
+      VALUES ('map-a', 'tenant-a', 'user-a', 'anon-a', 1),
+             ('map-b', 'tenant-b', 'user-b', 'anon-b', 1),
+             ('map-a-other-tenant', 'tenant-b', 'user-a', 'anon-a2', 1);
       INSERT INTO users_pii (id, tenant_id) VALUES
         ('user-a', 'tenant-a'),
         ('user-b', 'tenant-b');
@@ -203,6 +212,11 @@ describe('account directory removal PII erasure', () => {
     expect(
       database.prepare('SELECT id FROM pairwise_subject_identifiers ORDER BY id').all()
     ).toEqual([{ id: 'pairwise-b' }]);
+    // The audit pseudonym: the unified event log's records of the user no longer lead to it.
+    expect(database.prepare('SELECT id FROM user_anonymization_map ORDER BY id').all()).toEqual([
+      { id: 'map-a-other-tenant' },
+      { id: 'map-b' },
+    ]);
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       adapter,

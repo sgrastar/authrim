@@ -298,8 +298,9 @@ describe('compliance reports', () => {
   it('lists audit log entries of the period, oldest first', async () => {
     const events = sqliteStore();
     const insert = events.db.prepare(
-      `INSERT INTO event_log (id, tenant_id, event_type, event_category, result, created_at)
-       VALUES (?, ?, 'login.success', 'auth', 'success', ?)`
+      `INSERT INTO event_log (id, tenant_id, event_type, event_category, result, created_at,
+         anonymized_user_id)
+       VALUES (?, ?, 'login.success', 'auth', 'success', ?, 'anon-1')`
     );
     insert.run('e-before', 'tenant-a', Date.parse('2026-08-31T23:59:59Z'));
     insert.run('e-2', 'tenant-a', Date.parse('2026-09-02T00:00:00Z'));
@@ -326,9 +327,11 @@ describe('compliance reports', () => {
     expect(response.status).toBe(201);
     const lines = (mocks.materialize.mock.calls[0]![2].content as string).split('\n');
     expect(lines[0]).toBe(
-      'id,occurred_at,action,event_category,result,severity,actor,client_id,error_code'
+      'id,occurred_at,action,event_category,result,severity,actor,subject_user,client_id,error_code'
     );
     expect(lines.slice(1).map((line) => line.split(',')[0])).toEqual(['e-1', 'e-2']);
+    // The event's user is not reported as who acted.
+    expect(lines[1]!.split(',').slice(6, 8)).toEqual(['', 'anon-1']);
 
     mocks.hotSupport.mockReturnValue({ supported: false, status: 'not_supported' });
     expect(

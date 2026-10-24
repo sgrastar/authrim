@@ -9,6 +9,7 @@ import {
   resolveAccountDataContextByIdentifierFromHono,
   resolveAccountDataContextFromHono,
   resolveAccountCoreDataContext,
+  resolveAccountPiiSourceForAudit,
   resolveOtpAccountCoreDataContextByIdentifier,
 } from '../runtime-data-context';
 
@@ -539,6 +540,41 @@ describe('runtime account data context', () => {
       }).catch((error: unknown) => error as Error);
       expect(pii).toMatchObject({ message: 'lookup_destination_revalidation_failed' });
       expect(pii.cause).toBeUndefined();
+    }
+  );
+
+  it.each(['suspended', 'locked', 'deleted'])(
+    'resolves the PII store of a %s account for its audit pseudonym, verified there',
+    async (accountLifecycleState) => {
+      const inactive = env();
+      (inactive as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+      });
+      await expect(
+        resolveAccountDataContext(inactive, { tenantId: 'tenant-a', accountId: 'user-a' })
+      ).rejects.toThrow('lookup_destination_revalidation_failed');
+      expect(
+        await resolveAccountPiiSourceForAudit(inactive, {
+          tenantId: 'tenant-a',
+          accountId: 'user-a',
+        })
+      ).toBe((inactive as unknown as Record<string, unknown>).TDB_PII_A);
+
+      const piiMismatch = env();
+      (piiMismatch as unknown as Record<string, unknown>).TDB_PII_A = d1({
+        role: 'tenant_pii',
+        metadataBindingRef: 'TDB_PII_B',
+      });
+      await expect(
+        resolveAccountPiiSourceForAudit(piiMismatch, { tenantId: 'tenant-a', accountId: 'user-a' })
+      ).rejects.toThrow('lookup_destination_revalidation_failed');
+      clearLookupRouteMemoryCache();
+      mocks.tenantId = 'tenant-b';
+      await expect(
+        resolveAccountPiiSourceForAudit(env(), { tenantId: 'tenant-a', accountId: 'user-a' })
+      ).rejects.toThrow('account_data_route_not_found');
+      mocks.tenantId = 'tenant-a';
     }
   );
 

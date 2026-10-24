@@ -12,6 +12,7 @@
 
 import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../../db';
 import type { UserAnonymizationMap } from './types';
+import { forgetCachedAnonymizedUserId } from './anonymized-user-id-cache';
 
 function isUniqueConstraintError(error: unknown): boolean {
   return String(error).includes('UNIQUE constraint');
@@ -115,6 +116,42 @@ export class AnonymizationService implements IAnonymizationService {
   }
 
   /**
+   * Get or create the anonymized user ID, but never create one for a user the store records as
+   * deleted or anonymized (a `users_pii_tombstone` row, written before the account's PII is
+   * erased). An existing mapping is returned as is; null when there is none and the user is gone.
+   * The tombstone check and the insert are one statement, so a late caller (an audit written
+   * after the response) cannot put the real user ID back into the store after the erasure.
+   */
+  async getAnonymizedUserIdUnlessErased(tenantId: string, userId: string): Promise<string | null> {
+    const select = () =>
+      this.piiAdapter.queryOne<{ anonymized_user_id: string }>(
+        'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
+        [tenantId, userId]
+      );
+    const existing = await select();
+    if (existing) {
+      return existing.anonymized_user_id;
+    }
+
+    try {
+      await this.piiAdapter.execute(
+        `INSERT INTO user_anonymization_map (id, tenant_id, user_id, anonymized_user_id, created_at)
+         SELECT ?, ?, ?, ?, ?
+          WHERE NOT EXISTS (
+            SELECT 1 FROM users_pii_tombstone WHERE tenant_id = ? AND id = ?
+          )`,
+        [crypto.randomUUID(), tenantId, userId, crypto.randomUUID(), Date.now(), tenantId, userId]
+      );
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
+    }
+
+    return (await select())?.anonymized_user_id ?? null;
+  }
+
+  /**
    * Delete anonymization mapping (GDPR "right to be forgotten").
    */
   async deleteMapping(tenantId: string, userId: string): Promise<boolean> {
@@ -122,6 +159,7 @@ export class AnonymizationService implements IAnonymizationService {
       'DELETE FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
       [tenantId, userId]
     );
+    forgetCachedAnonymizedUserId(tenantId, userId);
 
     return result.rowsAffected > 0;
   }
@@ -137,6 +175,22 @@ export class AnonymizationService implements IAnonymizationService {
 
     return mapping?.user_id ?? null;
   }
+}
+
+/**
+ * The statement that deletes a user's mapping, for an erasure that runs its statements as one
+ * batch. After the batch commits, call forgetCachedAnonymizedUserId for this isolate's cache.
+ * Write the user's users_pii_tombstone first: getAnonymizedUserIdUnlessErased then never
+ * creates the mapping again, so the user's events stay unlinked from the user.
+ */
+export function deleteAnonymizationMappingStatement(
+  tenantId: string,
+  userId: string
+): { sql: string; params: unknown[] } {
+  return {
+    sql: 'DELETE FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
+    params: [tenantId, userId],
+  };
 }
 
 /**
