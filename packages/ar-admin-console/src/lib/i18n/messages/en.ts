@@ -1,10 +1,12 @@
 import type { Messages } from './ja';
 import { enSettings } from './settings/en';
 import { enCompliance } from './compliance/en';
+import { enMappingConsole } from './mapping-console/en';
 
 export const en = {
 	...enSettings,
 	...enCompliance,
+	...enMappingConsole,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -44,7 +46,7 @@ export const en = {
 	'nav.apps.webhooks': 'Webhooks',
 	'nav.auth.methods': 'Sign-in methods',
 	'nav.auth.social': 'Social connections',
-	'nav.auth.enterprise': 'Enterprise SSO',
+	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'Directory authentication',
 	'nav.auth.protection': 'Attack protection',
 	'nav.custom.branding': 'Themes',
