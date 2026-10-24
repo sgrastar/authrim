@@ -1165,6 +1165,7 @@ function emitLogpushSink(
   body: AuditQueueMessage
 ) {
   for (const entry of body.entries) {
+    // eslint-disable-next-line no-console -- the Logpush sink is Workers console output by design
     console.log(JSON.stringify(buildCanonicalAuditRecord(target, body, entry, 'logpush')));
   }
 }

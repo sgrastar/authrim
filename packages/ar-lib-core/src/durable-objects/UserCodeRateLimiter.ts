@@ -107,7 +107,7 @@ export class UserCodeRateLimiter {
 
       // Reserve one guess (see the header): allowed with a reservation id, or blocked
       if (path === '/reserve' && request.method === 'POST') {
-        const { ip } = (await request.json()) as { ip: string };
+        const { ip } = await request.json<{ ip: string }>();
         const decision = this.reserve(ip);
         return new Response(JSON.stringify(decision), {
           headers: { 'Content-Type': 'application/json' },
@@ -116,10 +116,10 @@ export class UserCodeRateLimiter {
 
       // Drop a reservation without counting it
       if (path === '/release' && request.method === 'POST') {
-        const { ip, reservation_id } = (await request.json()) as {
+        const { ip, reservation_id } = await request.json<{
           ip?: string;
           reservation_id?: string;
-        };
+        }>();
         const result =
           typeof reservation_id === 'string' && typeof ip === 'string'
             ? await this.settleReservation(reservation_id, ip, 'released')
@@ -131,10 +131,10 @@ export class UserCodeRateLimiter {
 
       // Settle a reservation as a failed guess: the failure takes its place and counts once
       if (path === '/record-failure' && request.method === 'POST') {
-        const { ip, reservation_id } = (await request.json()) as {
+        const { ip, reservation_id } = await request.json<{
           ip?: string;
           reservation_id?: string;
-        };
+        }>();
         if (typeof ip !== 'string' || typeof reservation_id !== 'string') {
           return new Response(JSON.stringify({ error: 'invalid_request' }), {
             status: 400,
@@ -150,7 +150,7 @@ export class UserCodeRateLimiter {
 
       // Reset attempts (after successful verification)
       if (path === '/reset' && request.method === 'POST') {
-        const { ip } = (await request.json()) as { ip: string };
+        const { ip } = await request.json<{ ip: string }>();
         if (this.attempts.delete(ip)) {
           await this.persist();
         }

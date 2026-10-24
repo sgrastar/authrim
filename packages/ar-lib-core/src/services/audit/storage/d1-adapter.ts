@@ -281,7 +281,7 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
         durationMs: Date.now() - startTime,
         backend: this.id,
       };
-    } catch (error) {
+    } catch {
       return {
         eventEntries: [],
         totalCount: 0,
@@ -345,7 +345,7 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
         durationMs: Date.now() - startTime,
         backend: this.id,
       };
-    } catch (error) {
+    } catch {
       return {
         piiEntries: [],
         totalCount: 0,

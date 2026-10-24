@@ -223,11 +223,10 @@ export class RelationParser implements IRelationParser {
     // Only track visited for expressions that actually traverse relationships (direct, tuple_to_userset)
     // Union/intersection/exclusion are expression combinators and should not be tracked
     if (expression.type === 'direct' || expression.type === 'tuple_to_userset') {
-      const relationSuffix =
-        expression.type === 'direct' ? `:${(expression as DirectRelation).relation}` : '';
+      const relationSuffix = expression.type === 'direct' ? `:${expression.relation}` : '';
       const tuplesetSuffix =
         expression.type === 'tuple_to_userset'
-          ? `:${(expression as TupleToUsersetRelation).tupleset.relation}:${(expression as TupleToUsersetRelation).computed_userset.relation}`
+          ? `:${expression.tupleset.relation}:${expression.computed_userset.relation}`
           : '';
       const visitKey = `${context.user_type}:${context.user_id}:${expression.type}${relationSuffix}${tuplesetSuffix}:${context.object_type}:${context.object_id}`;
       if (context.visited.has(visitKey)) {

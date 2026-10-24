@@ -72,7 +72,7 @@ export function createStepUpErrorBody(input: CreateStepUpErrorBodyInput): StepUp
     ...(input.details ?? {}),
     ...(input.field ? { field: input.field } : {}),
     ...(input.input_state ? { input_state: input.input_state } : {}),
-  }) as Phase1ErrorDetails<StepUpErrorDetailCode>;
+  });
 
   return {
     error: input.error,

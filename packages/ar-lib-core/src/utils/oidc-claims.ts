@@ -150,7 +150,7 @@ export function parseClaimsRequest(claims?: string): ClaimsEvaluationResult & {
     };
   }
 
-  const root = parsed as Record<string, unknown>;
+  const root = parsed;
   // OIDC Core 5.5 requires members that are not understood to be ignored. Only
   // validate sections implemented by Authrim; extension members must not turn an
   // otherwise valid authorization request into an error.
@@ -230,7 +230,7 @@ function validateASC(
     };
   }
 
-  const ascValue = value as Record<string, unknown>;
+  const ascValue = value;
   const asc: ClaimsRequestASC = {};
 
   if (ascValue.transformed_claims !== undefined) {
@@ -241,7 +241,7 @@ function validateASC(
         error_description: 'claims._asc.transformed_claims must be an object',
       };
     }
-    asc.transformed_claims = ascValue.transformed_claims as Record<string, unknown>;
+    asc.transformed_claims = ascValue.transformed_claims;
   }
 
   if (ascValue.sao !== undefined) {
@@ -254,7 +254,7 @@ function validateASC(
     }
     const sao: Partial<Record<ClaimsTarget, SAORule[]>> = {};
     for (const target of ['id_token', 'userinfo'] as const) {
-      const rules = (ascValue.sao as Record<string, unknown>)[target];
+      const rules = ascValue.sao[target];
       if (rules === undefined) continue;
       if (!Array.isArray(rules)) {
         return {
@@ -284,7 +284,7 @@ function validateSAORule(
   if (!isPlainObject(value)) {
     return { ok: false, error: 'invalid_request', error_description: `${path} must be an object` };
   }
-  const rule = value as Record<string, unknown>;
+  const rule = value;
   const method = (rule.method ?? 'exists') as string;
 
   if (typeof rule.loc !== 'string' || !rule.loc.startsWith('/')) {
@@ -545,6 +545,23 @@ const NEUTRAL_USER_ATTRIBUTE_ALIASES: Readonly<Record<string, string>> = {
   display_name: 'name',
   picture_url: 'picture',
 };
+
+/**
+ * A user's attributes under the standard claim names: an attribute held only under a neutral
+ * alias (`display_name`, `picture_url`) gives the standard claim it stands for. For attributes
+ * named as a field catalog names them (a test user's), before `buildStandardUserClaims`.
+ */
+export function withStandardUserAttributeNames(
+  attributes: Readonly<Record<string, unknown>>
+): Record<string, unknown> {
+  const named: Record<string, unknown> = { ...attributes };
+  for (const [alias, claim] of Object.entries(NEUTRAL_USER_ATTRIBUTE_ALIASES)) {
+    if (!Object.hasOwn(named, claim) && Object.hasOwn(attributes, alias)) {
+      named[claim] = attributes[alias];
+    }
+  }
+  return named;
+}
 
 /**
  * Of the attribute names an identity mapping reads, the standard user claims they stand for (a

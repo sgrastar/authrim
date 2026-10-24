@@ -58,14 +58,14 @@ export async function getFeatureFlag(
         });
         return value;
       }
-    } catch (error) {
+    } catch {
       log.warn(`Error reading KV for ${flagName}`);
       // Fall through to environment variable
     }
   }
 
   // 3. Check environment variable
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const envValue = (env as unknown as Record<string, string | undefined>)[flagName];
   if (envValue !== undefined) {
     value = envValue === 'true';

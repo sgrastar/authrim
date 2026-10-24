@@ -5,7 +5,7 @@
 	import SettingsPage from '$lib/settings/SettingsPage.svelte';
 
 	/**
-	 * Authentication → Enterprise SSO (SAML). A settings page: what it shows is its placement
+	 * Authentication → SAML. A settings page: what it shows is its placement
 	 * (`ENTERPRISE_SAML`); loading, access, saving and notices are SettingsPage's.
 	 */
 	interface Props {

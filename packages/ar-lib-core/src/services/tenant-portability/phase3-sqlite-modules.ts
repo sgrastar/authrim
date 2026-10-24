@@ -96,6 +96,7 @@ export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
       'field_mapping_activations',
       'field_mapping_sets',
       'field_mapping_versions',
+      'identity_mapping_test_users',
       'mapping_conflict_rules',
       'mapping_release_rules',
       'mapping_rule_edges',

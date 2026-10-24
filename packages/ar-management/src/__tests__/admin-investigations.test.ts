@@ -10,6 +10,7 @@ import {
   SIGN_IN_ATTEMPT_METHODS,
   SIGN_IN_ATTEMPT_REASON_CODES,
 } from '@authrim/ar-lib-core';
+import { shapeErrors, type Schema } from './helpers/openapi-shape';
 
 /**
  * The status-only investigation read (GET /api/admin/investigations/subjects/:handle/status) on
@@ -872,73 +873,6 @@ describe('status-only investigation read', () => {
     });
   });
 });
-
-type Schema = {
-  $ref?: string;
-  type?: string | string[];
-  enum?: unknown[];
-  required?: string[];
-  properties?: Record<string, Schema>;
-  additionalProperties?: boolean;
-  items?: Schema;
-  oneOf?: Schema[];
-};
-
-/**
- * Whether `value` has the shape `schema` documents: every required key, no key it does not list,
- * enums kept. Returns the paths that differ.
- */
-function shapeErrors(
-  schemas: Record<string, Schema>,
-  schema: Schema,
-  value: unknown,
-  path = '$'
-): string[] {
-  const errors: string[] = [];
-  const resolved = schema.$ref ? (schemas[schema.$ref.split('/').pop() ?? ''] ?? {}) : schema;
-  if (resolved.oneOf) {
-    const matching = resolved.oneOf.filter(
-      (variant) => shapeErrors(schemas, variant, value, path).length === 0
-    );
-    return matching.length === 1 ? [] : [`${path}: matches ${matching.length} variants`];
-  }
-  const typeOf = (item: unknown) =>
-    item === null
-      ? 'null'
-      : Array.isArray(item)
-        ? 'array'
-        : Number.isInteger(item)
-          ? 'integer'
-          : typeof item;
-  const types = [resolved.type ?? (resolved.properties ? 'object' : [])].flat();
-  const actual = typeOf(value);
-  if (
-    types.length > 0 &&
-    !types.includes(actual) &&
-    !(actual === 'integer' && types.includes('number'))
-  ) {
-    return [`${path}: ${actual} is not ${types.join('|')}`];
-  }
-  if (resolved.enum && !resolved.enum.includes(value)) errors.push(`${path}: ${String(value)}`);
-  if (resolved.properties && actual === 'object') {
-    const record = value as Record<string, unknown>;
-    for (const key of resolved.required ?? []) if (!(key in record)) errors.push(`${path}.${key}`);
-    for (const [key, child] of Object.entries(record)) {
-      const childSchema = resolved.properties[key];
-      if (!childSchema) {
-        if (resolved.additionalProperties === false) errors.push(`${path}.${key} (undocumented)`);
-        continue;
-      }
-      errors.push(...shapeErrors(schemas, childSchema, child, `${path}.${key}`));
-    }
-  }
-  if (resolved.items && Array.isArray(value)) {
-    value.forEach((item, index) =>
-      errors.push(...shapeErrors(schemas, resolved.items!, item, `${path}[${index}]`))
-    );
-  }
-  return errors;
-}
 
 describe('status-only investigation contract', () => {
   it('answers exactly the documented shape', async () => {

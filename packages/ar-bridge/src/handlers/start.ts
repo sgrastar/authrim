@@ -259,7 +259,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
             clientRedirectUris = client.redirect_uris;
           }
         }
-      } catch (error) {
+      } catch {
         // Client lookup failed - continue without client redirect_uris
         log.warn('Failed to load client for redirect_uri validation', { clientId });
       }
@@ -1073,7 +1073,7 @@ async function checkRateLimit(c: Context<{ Bindings: Env }>): Promise<RateLimitR
       remaining: config.maxRequests - current.count,
       retryAfter: 0,
     };
-  } catch (error) {
+  } catch {
     // If rate limiting fails, allow the request (fail open)
     const log = getLogger(c).module('START');
     log.warn('Rate limit check failed, allowing request');

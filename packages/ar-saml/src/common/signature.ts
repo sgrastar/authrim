@@ -356,7 +356,7 @@ export function verifyXmlSignatureAndGetReferences(
     }
 
     for (let referenceIndex = 0; referenceIndex < references.length; referenceIndex++) {
-      validateReferenceTransforms(references[referenceIndex]!);
+      validateReferenceTransforms(references[referenceIndex]);
     }
 
     // 5. Check signature algorithm (reject SHA-1) BEFORE verification
@@ -464,7 +464,7 @@ function getSingleDirectXmlDsigChild(parent: Element, localName: string): Elemen
   if (children.length !== 1) {
     throw new Error(`XML signature must contain exactly one direct ${localName}`);
   }
-  return children[0]!;
+  return children[0];
 }
 
 function getDirectXmlDsigChildren(parent: Element, localName: string): Element[] {

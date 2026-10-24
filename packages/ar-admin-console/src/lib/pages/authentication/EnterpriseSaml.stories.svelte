@@ -8,7 +8,7 @@
 	import EnterpriseSaml from './EnterpriseSaml.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Authentication/Enterprise SSO (SAML)',
+		title: 'Pages/Authentication/SAML',
 		component: EnterpriseSaml,
 		tags: ['autodocs'],
 		parameters: {
@@ -16,7 +16,7 @@
 			docs: {
 				description: {
 					component:
-						'Authentication → Enterprise SSO (SAML): whether the tenant answers SAML at all (on by default), how long the assertions it issues and the requests it handles stay valid, and the NameID format and bindings a new SAML provider starts from. Built from the Settings API `federation` settings by its placement (`ENTERPRISE_SAML` in `settings/placement.ts`). Turning SAML off refuses the SAML endpoints and metadata but keeps the registered providers. The Artifact binding settings are not on the page until that binding exists.'
+						'Authentication → SAML: whether the tenant answers SAML at all (on by default), how long the assertions it issues and the requests it handles stay valid, and the NameID format and bindings a new SAML provider starts from. Built from the Settings API `federation` settings by its placement (`ENTERPRISE_SAML` in `settings/placement.ts`). Turning SAML off refuses the SAML endpoints and metadata but keeps the registered providers. The Artifact binding settings are not on the page until that binding exists.'
 				}
 			}
 		}

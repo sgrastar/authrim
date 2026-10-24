@@ -99,7 +99,7 @@ export type {
  * This worker only exports Durable Objects, so the default export is a minimal fetch handler
  */
 export default {
-  fetch(request: Request, env: unknown, ctx: ExecutionContext): Response {
+  fetch(_request: Request, _env: unknown, _ctx: ExecutionContext): Response {
     return new Response('Authrim Shared - Durable Objects Worker', {
       status: 200,
       headers: { 'Content-Type': 'text/plain' },

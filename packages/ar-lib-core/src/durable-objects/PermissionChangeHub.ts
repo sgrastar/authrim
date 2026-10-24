@@ -71,7 +71,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
     super(ctx, env);
 
     // Restore state on cold start
-    this.ctx.blockConcurrencyWhile(async () => {
+    void this.ctx.blockConcurrencyWhile(async () => {
       // Load tenant ID if stored
       const stored = await this.ctx.storage.get<string>('tenantId');
       if (stored) {
@@ -118,7 +118,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
    */
   private async handleSetup(request: Request): Promise<Response> {
     try {
-      const body = (await request.json()) as { tenant_id?: string };
+      const body = await request.json<{ tenant_id?: string }>();
       const tenantId = requireTenantId(body.tenant_id, 'PermissionChangeHub setup');
       if (this.tenantId && this.tenantId !== tenantId) {
         return new Response(JSON.stringify({ error: 'Tenant mismatch' }), {
@@ -131,7 +131,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json' },
       });
-    } catch (error) {
+    } catch {
       return new Response(JSON.stringify({ error: 'Invalid request' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -326,7 +326,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
    */
   private async handleBroadcast(request: Request): Promise<Response> {
     try {
-      const event = (await request.json()) as PermissionChangeEvent;
+      const event = await request.json<PermissionChangeEvent>();
       const eventTenantId = requireTenantId(event.tenant_id, 'PermissionChangeHub broadcast');
       if (this.tenantId && this.tenantId !== eventTenantId) {
         return new Response(JSON.stringify({ error: 'Tenant mismatch' }), {

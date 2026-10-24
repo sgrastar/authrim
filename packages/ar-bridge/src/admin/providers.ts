@@ -893,9 +893,7 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
       // existing secret values when an admin round-trips the sanitized quirks,
       // and never accept a caller-supplied value named as an encrypted secret.
       const existingProvider = await getProvider(c.env, getTenantIdFromContext(c), id);
-      const existingQuirks = existingProvider?.providerQuirks as
-        | Record<string, unknown>
-        | undefined;
+      const existingQuirks = existingProvider?.providerQuirks;
       const mergedQuirks = mergeProviderQuirksPreservingSecrets(
         body.provider_quirks,
         existingQuirks

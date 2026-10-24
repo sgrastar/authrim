@@ -11343,6 +11343,176 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/platform/identity-mapping/tenants:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminPlatformIdentityMappingTenants
+      summary: List every tenant with the source of its Mapping Set and how its apps choose.
+      description: >-
+        For the operator, before and after a bulk apply of the default Mapping Set or a change of
+        the platform default. Each tenant (a deleted one is left out) is one row: `tenant_default`
+        is what the tenant's level says (`unset`, `set`, `none`, `invalid`), and `effective` is what
+        an app of the tenant that names no Mapping Set gets, from the same selection the effective
+        endpoint and the release of claims run (`bound` with the level that decided it, `none`
+        with the reason, or `failed` with the level that failed). `apps` counts the tenant's apps
+        by how they choose, each stored `identity_mapping` read the way the selection reads it:
+        `following_default` (no choice of their own), `own_set` (they name a Mapping Set),
+        `opted_out` (`{"mode":"none"}`) and `unusable` (a value that is not a choice, for which
+        the selection fails); the four add up to `total`. A tenant whose apps cannot be counted
+        keeps its row with `apps: null` and `apps_unavailable`; one whose settings cannot be read
+        keeps its row with `tenant_default: null` and a `failed` selection (`settings_unreadable`).
+        The platform's own default is given once (`platform_default`). Tenants are in the order
+        of their IDs, a page at a time. Needs the settings read permission for every tenant (a
+        global assignment, or a machine token for every tenant); a tenant's administrator and an
+        Agent are refused. Counts, IDs and names of tenants and sets only. Each tenant is a
+        settings read and a query on its Core database, so the endpoint is rate limited with the
+        strict profile.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: How many tenants a page holds.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The `next_cursor` of the page before.
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingPlatformTenants'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/test-users:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminIdentityMappingTestUsers
+      summary: List the tenant's test users for explaining the release of claims.
+      description: >-
+        A test user is a made-up set of Authrim attributes kept for the calling tenant, used by
+        `POST /api/admin/identity-mapping/explain` instead of a real person. It is not an account:
+        there is no user row, and nothing else reads it. The values are fixtures the administrator
+        typed and are given back as they are. Rate limited with the moderate profile.
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingTestUsers'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Field Mapping
+      operationId: putApiAdminIdentityMappingTestUsers
+      summary: Replace the tenant's test users.
+      description: >-
+        Replaces the whole list in one batch (at most 10 test users, 50 attributes each). A test
+        user kept from before is named by the `user_id` the endpoint gave; one without is new and
+        gets an ID. An attribute key must be a canonical field of the tenant's or the platform's
+        field catalog, or one of the tenant's custom fields (400 with `unknown_attributes`
+        otherwise); `sub` is never one. A value is a string (at most 256 characters), a number, a
+        boolean, null, a list of those (at most 20), or one object of strings (an address). The
+        audit record names the counts, never a value. An Agent is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityMappingTestUsersRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingTestUsers'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/explain:
+    post:
+      tags:
+        - Field Mapping
+      operationId: postApiAdminIdentityMappingExplain
+      summary: Explain, for a test user, why an app gets or does not get each claim.
+      description: >-
+        Runs the release of claims the token endpoint (the code flow's ID token, no claims
+        parameter) or UserInfo runs for the app, for one of the tenant's test users: the claims
+        the endpoint starts from (`evaluateClaimsForTarget`), then `applyOIDCIdentityMapping`
+        with the same surface, scopes, claims and source attributes. The release is told that the
+        subject is a test user, so nothing is looked up by its ID (no consent record, custom
+        field or persistent identifier secret), and its consent to the Destination Profile's
+        optional fields is `consent` (`all` by default, or `none`). The answer gives the
+        selection and its levels (as the effective endpoint), the warnings of an activation that
+        no longer applies, the `outcome` (`issued`, or `stopped` with the code of what stopped the
+        release and, for a value the profile refused, the claim), and one line per claim:
+        where it comes from, whether the test user has a value (never the value), the scope that
+        releases it and whether it was granted, the consent, whether it was released and, if not,
+        a fixed reason. A claim made from a persistent identifier is `not_evaluated` and its
+        `released` is null. Only test users are explained: a real person is the investigations'
+        entrance. Needs the settings read and the clients read permissions. Rate limited with the
+        strict profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityMappingExplainRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentityMappingExplain'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/identity-mapping/sets:
     get:
       tags:
@@ -37169,14 +37339,14 @@ components:
                 type: array
                 items:
                   type: string
-                  example: status
+                  example: lifecycle_state
             required:
               - resource
               - group_by
           example:
             resource: User
             group_by:
-              - status
+              - lifecycle_state
             selector:
               field: status
               op: eq
@@ -37796,6 +37966,24 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/IdentityMappingEffectiveResponse'
+    IdentityMappingTestUsers:
+      description: The tenant's test users.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentityMappingTestUsersResponse'
+    IdentityMappingExplain:
+      description: Why each claim is or is not released for the test user.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentityMappingExplainResponse'
+    IdentityMappingPlatformTenants:
+      description: A page of tenants, each with the source of its Mapping Set and its app counts.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentityMappingPlatformTenantsResponse'
     MappingSetInUse:
       description: >-
         The change was refused: the Mapping Set is named somewhere (`referenced`), the version
@@ -57142,6 +57330,404 @@ components:
             Whether deleting, deactivating, rolling back or replacing the set would be refused
             now (it is named, or could not be checked everywhere). Null when it is not known: the
             other tenants of a platform set were not looked at and nothing else is in the way.
+    IdentityMappingTestUserAttributes:
+      type: object
+      description: Attribute key → a made-up value.
+      additionalProperties:
+        oneOf:
+          - type: string
+            maxLength: 256
+          - type: number
+          - type: boolean
+          - type: 'null'
+          - type: array
+            maxItems: 20
+            items:
+              oneOf:
+                - type: string
+                - type: number
+                - type: boolean
+          - type: object
+            additionalProperties:
+              type: string
+    IdentityMappingTestUsersRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - test_users
+      properties:
+        test_users:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - label
+              - attributes
+            properties:
+              user_id:
+                type: string
+                pattern: '^tu_[A-Za-z0-9_-]{1,61}$'
+                description: A test user kept from before; left out for a new one.
+              label:
+                type: string
+                minLength: 1
+                maxLength: 100
+              attributes:
+                $ref: '#/components/schemas/IdentityMappingTestUserAttributes'
+    IdentityMappingTestUsersResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - test_users
+        - limits
+      properties:
+        test_users:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - user_id
+              - label
+              - attributes
+              - updated_at
+            properties:
+              user_id:
+                type: string
+              label:
+                type: string
+              attributes:
+                $ref: '#/components/schemas/IdentityMappingTestUserAttributes'
+              updated_at:
+                type: integer
+                description: Milliseconds since the epoch.
+        limits:
+          type: object
+          additionalProperties: false
+          required:
+            - max_users
+            - max_attributes
+          properties:
+            max_users:
+              type: integer
+            max_attributes:
+              type: integer
+    IdentityMappingExplainRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - client_id
+        - subject
+        - surface
+      properties:
+        client_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        subject:
+          type: object
+          additionalProperties: false
+          required:
+            - kind
+            - id
+          properties:
+            kind:
+              type: string
+              enum:
+                - test_user
+            id:
+              type: string
+        surface:
+          type: string
+          enum:
+            - id_token
+            - userinfo
+        scopes:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+          description: >-
+            The scopes granted. Left out: the app's registered scopes, with `openid`.
+        consent:
+          type: string
+          enum:
+            - all
+            - none
+          default: all
+          description: The test user's selection of the Destination Profile's optional fields.
+        claims:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+          description: More claims to explain (one the app expects and the set may not give).
+    IdentityMappingExplainResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tenantId
+        - clientId
+        - surface
+        - subject
+        - scopes
+        - consent
+        - selection
+        - chain
+        - warnings
+        - outcome
+        - claims
+      properties:
+        tenantId:
+          type: string
+        clientId:
+          type: string
+        surface:
+          type: string
+          enum:
+            - id_token
+            - userinfo
+        subject:
+          type: object
+          additionalProperties: false
+          required:
+            - kind
+            - user_id
+          properties:
+            kind:
+              type: string
+              enum:
+                - test_user
+            user_id:
+              type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        consent:
+          type: string
+          enum:
+            - all
+            - none
+        selection:
+          $ref: '#/components/schemas/IdentityMappingEffectiveSelection'
+        chain:
+          type: array
+          items:
+            $ref: '#/components/schemas/IdentityMappingEffectiveChainEntry'
+        warnings:
+          type: array
+          description: As the effective endpoint gives them.
+          items:
+            type: object
+            additionalProperties: true
+        warnings_unavailable:
+          type: boolean
+        outcome:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+                - kind
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - issued
+            - type: object
+              additionalProperties: false
+              required:
+                - kind
+                - code
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - stopped
+                code:
+                  type: string
+                  description: >-
+                    What stopped the release: a selection or set code (`set_missing`,
+                    `set_inactive`, `destination_profile_invalid`, `admin_database_unavailable`,
+                    `default_setting_invalid`, `client_selector_invalid`,
+                    `settings_unreadable`), a Destination Profile check of a value
+                    (`required_field_missing`, `non_nullable_field_null`,
+                    `invalid_field_value`, `destination_profile_unavailable`), a release safety
+                    rule (`release_safety.*`), or a code of the release (`policy.*`).
+                tier:
+                  type: string
+                  enum:
+                    - client
+                    - tenant_default
+                    - platform_default
+                claim:
+                  type: string
+                  description: The claim whose value the profile refused.
+        claims:
+          type: array
+          items:
+            $ref: '#/components/schemas/IdentityMappingExplainedClaim'
+    IdentityMappingExplainedClaim:
+      type: object
+      additionalProperties: false
+      required:
+        - claim
+        - field
+        - sources
+        - origin
+        - value
+        - scope
+        - scope_granted
+        - consent
+        - released
+      properties:
+        claim:
+          type: string
+        field:
+          type:
+            - string
+            - 'null'
+          description: The first attribute the claim is filled from; null for `sub` and asked claims.
+        sources:
+          type: array
+          items:
+            type: string
+          description: Every attribute the claim is filled from.
+        origin:
+          type: string
+          enum:
+            - standard
+            - mapping
+            - requested
+          description: >-
+            `mapping`: the selected set fills it. `standard`: a claim Authrim gives from the
+            user's standard attributes. `requested`: asked about, and neither.
+        value:
+          type: string
+          enum:
+            - present
+            - missing
+            - empty
+            - not_read
+            - not_evaluated
+          description: >-
+            Whether the test user has a value as the release saw it (never the value).
+            `not_read`: the release stopped before reading it. `not_evaluated`: it comes from a
+            persistent identifier, which is not derived for a test user.
+        scope:
+          type:
+            - string
+            - 'null'
+        scope_granted:
+          type: boolean
+        consent:
+          type: string
+          enum:
+            - not_required
+            - granted
+            - missing
+        released:
+          type:
+            - boolean
+            - 'null'
+          description: Null for a `not_evaluated` value that nothing else holds back.
+        reason:
+          type: string
+          enum:
+            - issuance_stopped
+            - mapping_not_applied
+            - not_in_set
+            - surface_not_listed
+            - scope_not_granted
+            - value_missing
+            - value_empty
+            - consent_missing
+          description: >-
+            Given when the claim is not released. `mapping_not_applied`: no Mapping Set applies
+            and the claim is not a standard one. `not_in_set`: the selected set's Destination
+            Profile does not list it. `surface_not_listed`: not released on this surface (the
+            profile lists it for the other, or, with no set, the token endpoint's ID token
+            carries only the protocol claims).
+    IdentityMappingPlatformTenantsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - platform_default
+        - tenants
+        - next_cursor
+        - generated_at
+      properties:
+        platform_default:
+          $ref: '#/components/schemas/IdentityMappingEffectiveChainEntry'
+        tenants:
+          type: array
+          items:
+            $ref: '#/components/schemas/IdentityMappingPlatformTenantRow'
+        next_cursor:
+          type:
+            - string
+            - 'null'
+          description: Null on the last page.
+        generated_at:
+          type: string
+          format: date-time
+    IdentityMappingPlatformTenantRow:
+      type: object
+      additionalProperties: false
+      required:
+        - tenant_id
+        - display_name
+        - lifecycle_state
+        - tenant_default
+        - effective
+        - apps
+      properties:
+        tenant_id:
+          type: string
+        display_name:
+          type: string
+        lifecycle_state:
+          type: string
+          description: The tenant's state in the directory (never `deleted`).
+        tenant_default:
+          oneOf:
+            - $ref: '#/components/schemas/IdentityMappingEffectiveChainEntry'
+            - type: 'null'
+          description: >-
+            The tenant's level of the chain; null when its settings could not be read.
+        effective:
+          $ref: '#/components/schemas/IdentityMappingEffectiveSelection'
+        apps:
+          type:
+            - object
+            - 'null'
+          additionalProperties: false
+          required:
+            - total
+            - following_default
+            - own_set
+            - opted_out
+            - unusable
+          properties:
+            total:
+              type: integer
+            following_default:
+              type: integer
+            own_set:
+              type: integer
+            opted_out:
+              type: integer
+            unusable:
+              type: integer
+        apps_unavailable:
+          type: string
+          enum:
+            - core_database_unavailable
+            - query_failed
+          description: >-
+            Given with `apps: null`, why the apps could not be counted.
     IdentityMappingEffectiveChainEntry:
       type: object
       required:
@@ -57261,8 +57847,12 @@ components:
               enum:
                 - default_setting_invalid
                 - client_selector_invalid
+                - settings_unreadable
               description: >-
                 A level is set and not usable. The selection does not fall to the next level.
+                `settings_unreadable` (no `tier`: the settings decide both defaults) is given only
+                in the list of every tenant, for a tenant whose settings could not be read; the
+                effective endpoint answers 503 instead.
             tier:
               type: string
               enum:
@@ -57271,13 +57861,14 @@ components:
                 - platform_default
             reason:
               type: string
-              enum:
-                - legacy_profile_only_selector
               description: >-
-                Given when the app's own choice names a Destination Profile (`destinationProfileId`)
-                and no Mapping Set and no opt-out: a selector of the older kind, which is not a
-                choice. The release fails for the app (400 `invalid_client`) rather than lose the
-                profile's gate in silence. Select a Mapping Set or save `{ "mode": "none" }`.
+                A fixed code for what failed underneath. `legacy_profile_only_selector`: the app's
+                own choice names a Destination Profile (`destinationProfileId`) and no Mapping Set
+                and no opt-out, a selector of the older kind, which is not a choice; the release
+                fails for the app (400 `invalid_client`) rather than lose the profile's gate in
+                silence (select a Mapping Set or save `{ "mode": "none" }`). With
+                `settings_unreadable`, the code of the read that failed (`unknown` when it has
+                none).
     BulkApplyRequest:
       type: object
       additionalProperties: false
@@ -57432,8 +58023,10 @@ components:
           description: >-
             Preview only. What a category's changes affect in the tenant, by category. For
             `identity-mapping`: `apps_total` and `apps_following_default` (the apps with no Mapping
-            Set of their own), `apps_with_unusable_choice` (apps whose selector names only a
-            Destination Profile, which fail rather than follow the default), and `warnings`: with
+            Set of their own), `apps_with_own_set` and `apps_opted_out` (apps a change of the
+            default leaves alone: they name a Mapping Set, or opt out with `{"mode":"none"}`),
+            `apps_with_unusable_choice` (apps whose selector names only a Destination Profile,
+            which fail rather than follow the default), and `warnings`: with
             code `implicit_activation_no_longer_applies`, the tenant's own active activations
             (`activationId`, `setId`, `setName`; nothing of their scope or claims) that once bound
             apps naming no Mapping Set and no longer do. `warnings_unavailable: true` says the

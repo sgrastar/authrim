@@ -35,15 +35,12 @@ import {
   // Event System
   publishEvent,
   AUTH_EVENTS,
-  SESSION_EVENTS,
   type AuthEventData,
-  type SessionEventData,
   // Logger
   getLogger,
   createLogger,
   registerExternalProviderSession,
   // Audit Log
-  createAuditLog,
   // Errors
   AR_ERROR_CODES,
   createErrorResponse,

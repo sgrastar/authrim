@@ -344,7 +344,7 @@ export class CloudflareAgentBulkPlanAdapter implements AgentBulkPlanPort {
       tools.some(
         (tool, index) =>
           !tool ||
-          tool.contractVersion !== definition.plan.steps[index]!.toolContractVersion ||
+          tool.contractVersion !== definition.plan.steps[index].toolContractVersion ||
           !agentGrantPinsToolContract(grant, tool)
       ) ||
       requiredPermissions.some(

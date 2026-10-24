@@ -313,7 +313,7 @@ export class RateLimiterCounter extends DurableObject<Env> {
     try {
       // POST /increment - Increment rate limit counter
       if (path === '/increment' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<IncrementRequest>;
+        const body = await request.json<Partial<IncrementRequest>>();
 
         if (!body.clientIP || !body.config) {
           return new Response(

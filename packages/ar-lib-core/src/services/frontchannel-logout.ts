@@ -21,11 +21,7 @@
  * @packageDocumentation
  */
 
-import type {
-  FrontchannelLogoutConfig,
-  FrontchannelLogoutIframe,
-  FrontchannelLogoutRequest,
-} from '../types/logout';
+import type { FrontchannelLogoutConfig, FrontchannelLogoutIframe } from '../types/logout';
 import type { SessionClientWithDetails } from '../repositories/core/session-client';
 
 /**

@@ -19,7 +19,7 @@
  */
 
 import type { Env } from '../types/env';
-import { fnv1a32, DEFAULT_TENANT_ID } from './tenant-context';
+import { fnv1a32 } from './tenant-context';
 import { createLogger } from './logger';
 
 const log = createLogger().module('REGION_SHARD');
@@ -946,7 +946,7 @@ function buildConfigFromEnv(env: Env, now: number): RegionShardConfigV2 | null {
   if (env.REGION_SHARD_GROUPS_JSON) {
     try {
       groups = JSON.parse(env.REGION_SHARD_GROUPS_JSON);
-    } catch (e) {
+    } catch {
       log.warn('Failed to parse REGION_SHARD_GROUPS_JSON, using defaults');
     }
   }

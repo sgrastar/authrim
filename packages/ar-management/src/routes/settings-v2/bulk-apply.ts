@@ -28,6 +28,7 @@ import {
   type TenantDatabaseRequestCache,
   settingsParentScopes,
 } from '@authrim/ar-lib-core';
+import { mapWithConcurrency } from '../../map-with-concurrency';
 import { getSingleTenantId, isSingleTenantMode } from '../../single-tenant-guard';
 import { bulkApplyImpactProviders } from './bulk-apply-impact';
 import { BULK_APPLY_STARTED } from './bulk-apply-idempotency';
@@ -736,23 +737,6 @@ function tenantProblem(
   if (!row) return 'tenant_not_found';
   if (row.lifecycleState === 'deleted') return 'tenant_deleted';
   return null;
-}
-
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  size: number,
-  work: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const runners = Array.from({ length: Math.min(size, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await work(items[index]);
-    }
-  });
-  await Promise.all(runners);
-  return results;
 }
 
 function countBy<T>(items: readonly T[], pick: (item: T) => string): Record<string, number> {

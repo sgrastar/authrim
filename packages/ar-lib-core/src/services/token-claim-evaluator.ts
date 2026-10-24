@@ -31,11 +31,9 @@ import type {
   TokenClaimAction,
   TokenClaimEvaluationContext,
   TokenClaimEvaluationResult,
-  TokenType,
 } from '../types/token-claim-rules';
 import type { RuleCondition, CompoundCondition, ConditionOperator } from '../types/policy-rules';
 import { normalizeClaimValue, compareNormalized, getNestedValue } from '../utils/claim-normalizer';
-import { getEmbeddingLimits } from '../utils/resource-permissions';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('TOKEN-CLAIM-EVALUATOR');
@@ -247,7 +245,7 @@ export class TokenClaimEvaluator {
       tenant_id: row.tenant_id,
       name: row.name,
       description: row.description ?? undefined,
-      token_type: row.token_type as TokenType,
+      token_type: row.token_type,
       condition: JSON.parse(row.conditions_json) as
         | TokenClaimCondition
         | TokenClaimCompoundCondition,
@@ -629,7 +627,7 @@ export function testTokenClaimRule(
       ctx: TokenClaimEvaluationContext
     ): boolean {
       if ('type' in condition && (condition.type === 'and' || condition.type === 'or')) {
-        const compound = condition as TokenClaimCompoundCondition;
+        const compound = condition;
         if (compound.type === 'and') {
           return compound.conditions.every((c) => this.evaluateCondition(c, ctx));
         } else {

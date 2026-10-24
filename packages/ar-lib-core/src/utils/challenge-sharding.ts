@@ -18,8 +18,7 @@
  */
 
 import type { Env } from '../types/env';
-import type { DurableObjectNamespace, DurableObjectStub } from '@cloudflare/workers-types';
-import type { ChallengeStore } from '../durable-objects/ChallengeStore';
+import type { DurableObjectNamespace } from '@cloudflare/workers-types';
 import { fnv1a32 } from './tenant-context';
 import {
   getRegionShardConfig,

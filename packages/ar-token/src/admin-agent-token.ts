@@ -399,7 +399,7 @@ async function handleAdminAgentRefresh(
   if (form.resource && form.resource !== resource) {
     return errorResponse(c, 'invalid_target', 'resource must identify this MCP endpoint');
   }
-  const client = (await getClientCached(c, c.env, form.client_id)) as ClientMetadata | null;
+  const client = await getClientCached(c, c.env, form.client_id);
   if (!client || !selfServiceClientIsActive(client)) {
     return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
   }
@@ -413,7 +413,7 @@ async function handleAdminAgentRefresh(
   if (!credentials.ok) {
     return errorResponse(c, credentials.error, credentials.errorDescription, 401);
   }
-  const publicClient = (client.token_endpoint_auth_method as string | undefined) === 'none';
+  const publicClient = client.token_endpoint_auth_method === 'none';
   if (publicClient) {
     const methodValidation = validateRegisteredClientAuthenticationMethod(
       client,
@@ -744,7 +744,7 @@ export async function adminAgentDelegationHandler(
           grant.consentVersion
         )
       : Promise.resolve(false),
-    getClientCached(c, c.env, actor.clientId) as Promise<ClientMetadata | null>,
+    getClientCached(c, c.env, actor.clientId),
   ]);
   if (
     !delegatorPermissions ||
@@ -921,7 +921,7 @@ async function handleAdminAgentModeBExchange(
           grant.consentVersion
         )
       : Promise.resolve(false),
-    getClientCached(c, c.env, actor.clientId) as Promise<ClientMetadata | null>,
+    getClientCached(c, c.env, actor.clientId),
   ]);
   const tokenScopes =
     typeof delegation.scope === 'string' ? requestedAgentScopes(delegation.scope) : [];
@@ -1083,7 +1083,7 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
   if (form.resource !== resource) {
     return errorResponse(c, 'invalid_target', 'resource must identify this MCP endpoint');
   }
-  const client = (await getClientCached(c, c.env, form.client_id)) as ClientMetadata | null;
+  const client = await getClientCached(c, c.env, form.client_id);
   if (!client || !selfServiceClientIsActive(client)) {
     return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
   }
@@ -1097,7 +1097,7 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
   if (!credentials.ok) {
     return errorResponse(c, credentials.error, credentials.errorDescription, 401);
   }
-  const publicClient = (client.token_endpoint_auth_method as string | undefined) === 'none';
+  const publicClient = client.token_endpoint_auth_method === 'none';
   if (publicClient) {
     const methodValidation = validateRegisteredClientAuthenticationMethod(
       client,

@@ -228,12 +228,14 @@ export async function auditLogReport(
   const { tableName } = getAuditHotQuerySqlSpec(context);
   const toStored = (ms: number) =>
     context.createdAtUnit === 'milliseconds' ? ms : Math.floor(ms / 1000);
+  // event_log names the user an event is about (anonymized_user_id: the user who signed in, or
+  // the user an administrator changed), not who acted; audit_log names who acted (user_id).
   const columns =
     tableName === 'event_log'
       ? `id, created_at, event_type AS action, event_category, result, severity,
-         anonymized_user_id AS actor, client_id, error_code`
+         NULL AS actor, anonymized_user_id AS subject_user, client_id, error_code`
       : `id, created_at, action, NULL AS event_category, NULL AS result, severity,
-         user_id AS actor, NULL AS client_id, NULL AS error_code`;
+         user_id AS actor, NULL AS subject_user, NULL AS client_id, NULL AS error_code`;
   const rows = await context.adapter.query<Record<string, unknown> & { created_at: number }>(
     `SELECT ${columns} FROM ${tableName}
       WHERE tenant_id = ? AND created_at >= ? AND created_at < ?
@@ -250,6 +252,7 @@ export async function auditLogReport(
       result: row.result,
       severity: row.severity,
       actor: row.actor,
+      subject_user: row.subject_user,
       client_id: row.client_id,
       error_code: row.error_code,
     })),
@@ -261,6 +264,7 @@ export async function auditLogReport(
       'result',
       'severity',
       'actor',
+      'subject_user',
       'client_id',
       'error_code',
     ]

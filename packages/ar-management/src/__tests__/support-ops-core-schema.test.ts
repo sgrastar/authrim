@@ -30,7 +30,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         : resource;
     }),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => stores.admin),
-    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => stores.core),
+    resolveTenantMetadataContext: vi.fn(async () => ({
+      tenantId: 'tenant-a',
+      coreDb: stores.core,
+    })),
     transitionAccountAuthenticationStateEndingSessions: mockTransition,
   };
 });

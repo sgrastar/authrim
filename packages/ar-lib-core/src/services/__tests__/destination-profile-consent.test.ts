@@ -1008,3 +1008,124 @@ describe('destination profile field consent', () => {
     ).rejects.toThrow(/cannot lower sensitive classification/i);
   });
 });
+
+describe('the release filter for an explanation', () => {
+  const profileOf = (claims: unknown[]) =>
+    adapter({
+      queryOne: vi.fn().mockResolvedValue({
+        profile_id: 'profile_oidc',
+        destination_type: 'oidc',
+        version_id: 'version_1',
+        schema_json: JSON.stringify({ claims }),
+      }),
+    });
+  const consentTo = (fields: string[]) =>
+    adapter({
+      queryOne: vi.fn().mockResolvedValue({
+        released_claims_json: JSON.stringify(fields),
+        released_attributes_json: null,
+      }),
+    });
+
+  it('judges each entry of a claim the profile lists twice, as the release always did', async () => {
+    // email listed for the ID token, then again for UserInfo only.
+    const claims = [
+      { claimName: 'sub', required: true },
+      { claimName: 'email', surfaces: ['id_token'] },
+      { claimName: 'email', surfaces: ['userinfo'] },
+    ];
+    for (const trace of [undefined, {}]) {
+      const released = await filterOidcClaimsByDestinationConsent({
+        coreAdapter: consentTo(['email']),
+        adminAdapter: profileOf(claims),
+        tenantId: 'tenant-a',
+        subjectId: 'user_1',
+        clientId: 'client-a',
+        profileId: 'profile_oidc',
+        surface: 'id_token',
+        claims: { sub: 'user_1', email: 'a@example.test' },
+        ...(trace ? { trace } : {}),
+      });
+      expect(released).toEqual({ sub: 'user_1', email: 'a@example.test' });
+    }
+  });
+
+  it('takes the assumed consent without reading a consent record, and records each field', async () => {
+    const coreAdapter = consentTo(['email']);
+    const trace: { release?: unknown } = {};
+    const base = {
+      coreAdapter,
+      adminAdapter: profileOf([
+        { claimName: 'sub', required: true },
+        { claimName: 'email', requiredScopes: ['email'] },
+        { claimName: 'nickname', surfaces: ['userinfo'] },
+      ]),
+      tenantId: 'tenant-a',
+      subjectId: 'tu_1',
+      clientId: 'client-a',
+      profileId: 'profile_oidc',
+      surface: 'id_token' as const,
+      grantedScopes: ['openid'],
+      claims: { sub: 'tu_1', email: 'a@example.test', nickname: 'n' },
+    };
+
+    expect(
+      await filterOidcClaimsByDestinationConsent({ ...base, assumedConsent: 'all', trace })
+    ).toEqual({
+      sub: 'tu_1',
+    });
+    expect(coreAdapter.queryOne).not.toHaveBeenCalled();
+    expect(trace.release).toEqual({
+      profileId: 'profile_oidc',
+      fields: [
+        { claim: 'sub', required: true, requiredScopes: [], consent: 'not_required' },
+        {
+          claim: 'email',
+          required: false,
+          requiredScopes: ['email'],
+          excludedBy: 'scope',
+          consent: 'granted',
+        },
+        {
+          claim: 'nickname',
+          required: false,
+          requiredScopes: ['profile'],
+          excludedBy: 'surface',
+          consent: 'granted',
+        },
+      ],
+    });
+    expect(JSON.stringify(trace)).not.toContain('a@example.test');
+
+    const none = await filterOidcClaimsByDestinationConsent({
+      ...base,
+      grantedScopes: ['openid', 'email'],
+      assumedConsent: 'none',
+    });
+    expect(none).toEqual({ sub: 'tu_1' });
+    expect(coreAdapter.queryOne).not.toHaveBeenCalled();
+  });
+
+  it('does not judge a placeholder for an identifier it did not derive against the profile', async () => {
+    const claims = [
+      { claimName: 'sub', required: true, allowedValues: ['pairwise-a', 'pairwise-b'] },
+    ];
+    const run = (unevaluated?: Set<string>) =>
+      filterOidcClaimsByDestinationConsent({
+        coreAdapter: consentTo([]),
+        adminAdapter: profileOf(claims),
+        tenantId: 'tenant-a',
+        subjectId: 'tu_1',
+        clientId: 'client-a',
+        profileId: 'profile_oidc',
+        claims: { sub: 'authrim:not-evaluated:persistent-identifier' },
+        assumedConsent: 'all',
+        ...(unevaluated ? { unevaluatedClaims: unevaluated } : {}),
+      });
+
+    await expect(run()).rejects.toMatchObject({ code: 'invalid_field_value' });
+    await expect(run(new Set(['sub']))).resolves.toEqual({
+      sub: 'authrim:not-evaluated:persistent-identifier',
+    });
+  });
+});

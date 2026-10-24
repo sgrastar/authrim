@@ -301,7 +301,7 @@ export class DiagnosticLogR2Adapter {
         durationMs: Date.now() - startTime,
         backend: 'r2-diagnostic',
       };
-    } catch (error) {
+    } catch {
       return {
         entries: [],
         totalCount: 0,

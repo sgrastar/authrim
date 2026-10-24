@@ -19,7 +19,6 @@ import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
 import { createCompatibilityError } from './errors';
-import { getDefaultTenantId } from './issuer';
 import { readResponseTextWithLimit } from './url-security';
 import { CanonicalRuntimeUserStore } from '../repositories/identity';
 
@@ -401,7 +400,7 @@ export async function getCachedUser(
         expirationTtl: userCacheTTL,
       });
     }
-  } catch (error) {
+  } catch {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId (can be used for tracking)
     log.warn('Failed to cache user data');
@@ -646,7 +645,7 @@ export async function getCachedConsent(
     await env.CONSENT_CACHE.put(cacheKey, JSON.stringify(consent), {
       expirationTtl: consentCacheTTL,
     });
-  } catch (error) {
+  } catch {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId/clientId
     log.warn('Failed to cache consent data');
@@ -712,7 +711,7 @@ export async function invalidateConsentCache(
     const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
     try {
       await env.CONSENT_CACHE.delete(cacheKey);
-    } catch (error) {
+    } catch {
       // PII Protection: Don't log userId/clientId
       log.warn('Failed to invalidate consent cache');
     }
@@ -1260,7 +1259,7 @@ export async function deleteClientFromKV(
   try {
     await env.CLIENTS_CACHE.delete(cacheKey);
     log.debug('Client data deleted from KV');
-  } catch (error) {
+  } catch {
     // Log error but don't throw - D1 is source of truth
     log.warn('Failed to delete client data from KV');
   }

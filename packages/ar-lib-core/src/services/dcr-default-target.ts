@@ -55,6 +55,7 @@ export function grantsUseDefaultTarget(grantTypes: readonly string[]): boolean {
 /** Longest default audience or resource (characters). */
 export const DCR_DEFAULT_TARGET_MAX_LENGTH = 2048;
 
+// eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
 const WHITESPACE_OR_CONTROL = /[\s\u0000-\u001f\u007f-\u009f]/;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 

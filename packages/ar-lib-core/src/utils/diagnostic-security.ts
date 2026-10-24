@@ -260,7 +260,7 @@ async function transformEntryForMode(
     sanitized.reason = redactPII(sanitized.reason);
   }
   if (sanitized.metadata && typeof sanitized.metadata === 'object') {
-    sanitized.metadata = redactObjectFields(sanitized.metadata as Record<string, unknown>);
+    sanitized.metadata = redactObjectFields(sanitized.metadata);
   }
 
   if (sanitized.category === 'http-request') {
@@ -303,7 +303,7 @@ async function transformEntryForMode(
 
     // Mask body summary
     if (sanitized.bodySummary && typeof sanitized.bodySummary === 'object') {
-      const summary = sanitized.bodySummary as Record<string, unknown>;
+      const summary = sanitized.bodySummary;
       for (const [key, value] of Object.entries(summary)) {
         if (options.mode === 'minimal') {
           const allowlist = new Set([
@@ -360,7 +360,7 @@ async function transformEntryForMode(
       sanitized.headers = {};
       sanitized.bodySummary = undefined;
     } else if (sanitized.bodySummary && typeof sanitized.bodySummary === 'object') {
-      sanitized.bodySummary = redactObjectFields(sanitized.bodySummary as Record<string, unknown>);
+      sanitized.bodySummary = redactObjectFields(sanitized.bodySummary);
     }
   }
 
@@ -368,7 +368,7 @@ async function transformEntryForMode(
     if (sanitized.details && typeof sanitized.details === 'object') {
       sanitized.details = await applyTokenDetailsPrivacy(
         sanitized.step,
-        sanitized.details as Record<string, unknown>,
+        sanitized.details,
         options.mode,
         options.secret,
         hashPrefixLength,
@@ -384,7 +384,7 @@ async function transformEntryForMode(
   if (sanitized.category === 'auth-decision') {
     if (sanitized.context && typeof sanitized.context === 'object') {
       sanitized.context = await applyAuthContextPrivacy(
-        sanitized.context as Record<string, unknown>,
+        sanitized.context,
         options.mode,
         options.secret,
         hashPrefixLength

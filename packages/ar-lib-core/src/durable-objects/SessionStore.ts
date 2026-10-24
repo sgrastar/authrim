@@ -177,7 +177,7 @@ export class SessionStore extends DurableObject<Env> {
     super(ctx, env);
     this.actorCtx = new CloudflareActorContext(ctx);
 
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       if ((await ctx.storage.getAlarm()) === null) {
         await ctx.storage.setAlarm(Date.now() + SESSION_CLEANUP_INTERVAL_MS);
       }
@@ -904,7 +904,7 @@ export class SessionStore extends DurableObject<Env> {
 
       // POST /session - Create new session
       if (path === '/session' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<CreateSessionRequest>;
+        const body = await request.json<Partial<CreateSessionRequest>>();
 
         if (!body.sessionId || !body.userId || !body.ttl || !body.tenantId) {
           return new Response(
@@ -948,7 +948,7 @@ export class SessionStore extends DurableObject<Env> {
 
       // POST /sessions/batch-delete - Batch invalidate multiple sessions
       if (path === '/sessions/batch-delete' && request.method === 'POST') {
-        const body = (await request.json()) as { sessionIds?: string[] };
+        const body = await request.json<{ sessionIds?: string[] }>();
 
         if (!body.sessionIds || !Array.isArray(body.sessionIds)) {
           return new Response(
@@ -988,7 +988,7 @@ export class SessionStore extends DurableObject<Env> {
       // POST /session/:id/extend - Extend session expiration
       if (path.match(/^\/session\/[^/]+\/extend$/) && request.method === 'POST') {
         const sessionId = path.split('/')[2];
-        const body = (await request.json()) as { seconds?: number };
+        const body = await request.json<{ seconds?: number }>();
 
         if (!body.seconds || body.seconds <= 0) {
           return new Response(JSON.stringify({ error: 'Invalid seconds value' }), {

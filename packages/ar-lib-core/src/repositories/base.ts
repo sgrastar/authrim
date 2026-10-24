@@ -473,16 +473,18 @@ export abstract class BaseRepository<T extends BaseEntity> {
         return { clause: `${validatedField} < ?`, value };
       case 'lte':
         return { clause: `${validatedField} <= ?`, value };
-      case 'like':
+      case 'like': {
         // Escape SQL LIKE wildcards (% and _) to prevent unintended pattern matching
         const escapedValue = String(value).replace(/[%_]/g, (char) => `\\${char}`);
         return { clause: `${validatedField} LIKE ? ESCAPE '\\'`, value: `%${escapedValue}%` };
-      case 'in':
+      }
+      case 'in': {
         if (!Array.isArray(value)) {
           throw new Error('IN operator requires array value');
         }
         const placeholders = value.map(() => '?').join(', ');
         return { clause: `${validatedField} IN (${placeholders})`, value };
+      }
       default:
         throw new Error(`Unknown operator: ${operator}`);
     }
