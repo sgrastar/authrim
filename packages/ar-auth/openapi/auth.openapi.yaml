@@ -518,11 +518,30 @@ paths:
       tags:
         - Directory Password
       summary: Authenticate with a directory password and create a managed browser session.
+      description:
+        A directory identity route that cannot be published returns 503 without creating a session.
+        A refused route reservation removes only the identity link created by this request;
+        existing links and links whose publication outcome is unknown are preserved for retry.
       requestBody:
         $ref: '#/components/requestBodies/DirectoryPasswordLogin'
       responses:
         '200':
           $ref: '#/components/responses/DirectoryPasswordLogin'
+        '503':
+          description: Directory sign-in could not complete. Retry after the indicated delay.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+                const: '1'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, error_description]
+                properties:
+                  error: { type: string, const: temporarily_unavailable }
+                  error_description: { type: string }
   /api/auth/directory-password/migration/passkey/options:
     post:
       tags:
@@ -973,6 +992,8 @@ paths:
         A direct RP-initiated POST renders the same confirmation interaction as GET. A follow-up POST
         validates the form confirmation token against the short-lived confirmation cookie, then
         invalidates the selected session and performs configured logout propagation.
+        If credential revocation or session invalidation cannot complete, returns 503 and preserves
+        cookies so the confirmed request can be retried.
       requestBody:
         required: false
         content:
@@ -996,16 +1017,23 @@ paths:
           description: Redirect after successful logout.
         '400':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogoutUnavailable'
   /logout/backchannel:
     post:
       tags:
         - Logout
       summary: Receive OIDC back-channel logout token.
+      description:
+        Returns 503 when credential revocation or session invalidation cannot complete, allowing
+        the authenticated logout request to be retried.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '503':
+          $ref: '#/components/responses/LogoutUnavailable'
   /api/auth/dids/register/challenge:
     post:
       tags:
@@ -2855,6 +2883,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    LogoutUnavailable:
+      description: Logout could not complete. Retry with the same session context and parameters.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, error_description]
+            properties:
+              error: { type: string, const: temporarily_unavailable }
+              error_description: { type: string }
     AuthHealth:
       description: Successful JSON response.
       content:

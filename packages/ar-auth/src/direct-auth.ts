@@ -81,7 +81,6 @@ import {
   // Native SSO logout propagation
   isNativeSSOEnabled,
   normalizeDeviceSecretLogoutScope,
-  revokeDeviceSecretsForLogoutScope,
   // Refresh Token
   listRefreshTokenFamiliesByUser,
   expireRefreshTokenFamiliesByUser,
@@ -176,6 +175,8 @@ import {
   resolveTenantD1EmailAccountRoute,
   usesRoutedAccountStorage,
 } from './account-provisioning';
+import { getRequestIssuer } from './issuer';
+import { revokeSessionDeviceSecrets } from './logout-device-secrets';
 
 // ===== Constants =====
 
@@ -4282,10 +4283,16 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
     const originUrl = new URL(webAuthnOrigin);
     const rpID = originUrl.hostname;
 
-    // Get user info
+    // Get user info: from the account's own databases where accounts are routed.
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const accountScoped = usesRoutedAccountStorage(c);
+    if (accountScoped) {
+      await resolveAccountDataContextFromHono(c, session.userId);
+    }
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
 
     const runtimeUser = await runtimeUsers.findById(session.userId);
     if (!runtimeUser) {
@@ -4742,6 +4749,31 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
           logoutSession = session;
           // Revoke the durable resume credential before losing the session that identifies it.
           await revokeGuestResumeForSession(c, session);
+          // Likewise the session's Native SSO device secrets: the session names their user (and
+          // so, where accounts are routed, their database), and a failure keeps the session for a
+          // retry instead of answering a logout that left the secrets usable.
+          if (session && (await isNativeSSOEnabled(c.env))) {
+            const result = await revokeSessionDeviceSecrets(c, {
+              tenantId: getTenantIdFromContext(c),
+              issuer: getRequestIssuer(c),
+              sessionId,
+              userId: session.userId,
+              clientId: client_id,
+              scope: logoutScope,
+              reason: 'logout',
+              callerAuthMode: 'access_token',
+            });
+            if (result.revokedDeviceSecrets > 0 || result.revokedInstallations > 0) {
+              log.info('Revoked device secrets on Direct Auth logout', {
+                action: 'direct_logout_device_secret_revoke',
+                revokedCount: result.revokedDeviceSecrets,
+                revokedInstallations: result.revokedInstallations,
+                logoutScope: result.scope,
+                trustGroupId: result.trustGroupId,
+                targetClientId: result.clientId,
+              });
+            }
+          }
           await sessionStore.invalidateSessionRpc(sessionId);
         } catch (error) {
           log.warn('Failed to revoke session during logout', {
@@ -4753,39 +4785,6 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
 
       const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-
-      const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
-      if (nativeSSOEnabled) {
-        try {
-          const result = await revokeDeviceSecretsForLogoutScope({
-            adapter: authCtx.coreAdapter,
-            tenantId,
-            sessionIds: [sessionId],
-            userId: session?.userId,
-            clientId: client_id,
-            scope: logoutScope,
-            reason: 'logout',
-            callerAuthMode: 'access_token',
-          });
-
-          if (result.revokedDeviceSecrets > 0 || result.revokedInstallations > 0) {
-            log.info('Revoked device secrets on Direct Auth logout', {
-              action: 'direct_logout_device_secret_revoke',
-              revokedCount: result.revokedDeviceSecrets,
-              revokedInstallations: result.revokedInstallations,
-              logoutScope: result.scope,
-              trustGroupId: result.trustGroupId,
-              targetClientId: result.clientId,
-            });
-          }
-        } catch (error) {
-          log.warn('Failed to revoke device secrets on logout', {
-            action: 'direct_logout_device_secret_revoke_error',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-        }
-      }
 
       // Revoke refresh tokens for this user if requested
       if (revoke_tokens && c.env.REFRESH_TOKEN_ROTATOR) {

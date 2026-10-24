@@ -33,7 +33,7 @@ const {
     revokeFamilyRpc: rotatorStub.revokeFamilyRpc,
     createAuditLog: vi.fn(),
     // ar-token indexes refresh-token families in the user's account database.
-    tenantMetadataCore: { database: 'tenant-metadata' },
+    tenantMetadataCore: { database: 'tenant-metadata', query: vi.fn(async () => []) },
     accountCore: { database: 'account' },
     resolveAccountDataContextFromHono: vi.fn(async (_c: unknown, userId: string) => ({
       tenantId: 'tenant_test',
@@ -91,6 +91,8 @@ function createContext(body: Record<string, unknown>) {
     env: {
       REFRESH_TOKEN_ROTATOR: {},
     },
+    // No tenant metadata route: accounts are not routed, device secrets are in the metadata DB.
+    get: (key: string) => (key === 'tenantId' ? 'tenant_test' : undefined),
     header: (name: string, value: string) => {
       responseHeaders.append(name, value);
     },
@@ -113,8 +115,11 @@ describe('Direct Auth logout scope', () => {
     sessionStore.invalidateSessionRpc.mockResolvedValue(undefined);
     revokeDeviceSecretsForLogoutScope.mockResolvedValue({
       scope: 'local',
+      tenantId: 'tenant_test',
+      sessionIds: [],
       revokedDeviceSecrets: 0,
       revokedInstallations: 0,
+      matchedInstallations: 0,
     });
     listRefreshTokenFamiliesByUser.mockResolvedValue([
       {
@@ -313,7 +318,12 @@ describe('Direct Auth guest logout', () => {
       expect(response.status).toBe(503);
       expect(response.headers.get('set-cookie')).toBeNull();
       if (stage !== 'invalidate') expect(sessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
-      expect(revokeDeviceSecretsForLogoutScope).not.toHaveBeenCalled();
+      // Device secrets are revoked before the session ends (a retry revokes them again).
+      if (stage === 'invalidate') {
+        expect(revokeDeviceSecretsForLogoutScope).toHaveBeenCalledTimes(1);
+      } else {
+        expect(revokeDeviceSecretsForLogoutScope).not.toHaveBeenCalled();
+      }
     }
   );
 });

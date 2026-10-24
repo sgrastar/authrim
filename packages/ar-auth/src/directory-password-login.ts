@@ -7,6 +7,7 @@ import {
   buildDOKey,
   completeDirectoryAuthEmailCodeFallback,
   completeDirectoryAuthPasskeyEnrollment,
+  createAccountAuthContextFromHono,
   createAuditLog,
   createAuthContextFromHono,
   createDirectoryAuthMigrationTransaction,
@@ -37,11 +38,15 @@ import {
   resolveDirectoryAuthEmailFallbackRecoveryCampaign,
   resolveDirectoryAuthEffectiveEmailCodeFallbackMode,
   resolveDirectoryAuthMigrationDecision,
+  resolveAccountDataContextByIdentifierFromHono,
+  resolveAccountDataContextFromHono,
   resolvePostLoginRedirectUrl,
+  type AccountDataContext,
   type AuthEventData,
   type DatabaseAdapter,
   type DirectoryAuthMigrationDecision,
   type Env,
+  type PasskeyRepository,
   type SessionEventData,
   resolveAuthMaxFailedAttempts,
   resolveEmailCodeTtlSeconds,
@@ -68,7 +73,13 @@ import { verifyHumanVerificationForAction } from './human-verification';
 import { getRequestIssuer } from './issuer';
 import { resolveSessionTtl } from './session-ttl';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
-import { publishTenantD1PasskeyRoute } from './account-provisioning';
+import {
+  isDeletedDestinationRouteError,
+  publishDirectoryRoute,
+  publishTenantD1PasskeyRoute,
+  resolveDirectoryAccountRoute,
+  usesRoutedAccountStorage,
+} from './account-provisioning';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import type {
@@ -271,17 +282,155 @@ interface RegistrationInfoCompat {
 type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 
-function createCanonicalRuntimeUserStore(
+/**
+ * The stores of a directory sign-in's account: the account's own databases where accounts are
+ * routed (shared_pool and tenant_exclusive), the metadata database otherwise. The account's
+ * directory identity links and passkeys are there. The directory's tenant records (pending users,
+ * migration campaigns, user states and transactions) are in the metadata database either way, as
+ * ar-management keeps them.
+ */
+interface DirectoryAccountStores {
+  /** The Core database of the account: its directory identity links. */
+  accountCore: DatabaseAdapter;
+  passkeys: PasskeyRepository;
+  runtimeUsers: CanonicalRuntimeUserStore;
+}
+
+/** The stores of the account attached to the request (where accounts are routed). */
+function directoryAccountStores(
   c: Context<{ Bindings: Env }>,
   tenantId: string
-): CanonicalRuntimeUserStore {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+): DirectoryAccountStores {
+  const authCtx = usesRoutedAccountStorage(c)
+    ? createAccountAuthContextFromHono(c, tenantId)
+    : createAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
-  return new CanonicalRuntimeUserStore({
-    coreAdapter: authCtx.coreAdapter,
-    piiAdapter: piiCtx.defaultPiiAdapter,
+  return {
+    accountCore: authCtx.coreAdapter,
+    passkeys: authCtx.repositories.passkey,
+    runtimeUsers: new CanonicalRuntimeUserStore({
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: piiCtx.defaultPiiAdapter,
+      tenantId,
+    }),
+  };
+}
+
+/** The stores of the user's account, which is resolved first where accounts are routed. */
+async function resolveDirectoryAccountStores(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<DirectoryAccountStores> {
+  if (usesRoutedAccountStorage(c)) await resolveAccountDataContextFromHono(c, userId);
+  return directoryAccountStores(c, tenantId);
+}
+
+/** The account an address's Lookup route names, attached to the request; null without one. */
+async function resolveEmailAccountRouteOrNull(
+  c: Context<{ Bindings: Env }>,
+  email: string
+): Promise<AccountDataContext | null> {
+  try {
+    return await resolveAccountDataContextByIdentifierFromHono(c, {
+      indexKind: 'email_exact',
+      identifier: email,
+    });
+  } catch (error) {
+    // No account holds the address, or the one its route names is gone: as no user found.
+    if (
+      (error instanceof Error && error.message === 'account_data_route_not_found') ||
+      isDeletedDestinationRouteError(error)
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** How a verified directory identity matches an account. */
+type DirectoryAccountMatch =
+  | { status: 'none' }
+  /** The identity's link (or route) names an account that is gone or no longer active. */
+  | { status: 'stale' }
+  /** The address names an account whose database links the identity to another user. */
+  | { status: 'conflict' }
+  | {
+      status: 'linked';
+      stores: DirectoryAccountStores;
+      runtimeUser: NonNullable<Awaited<ReturnType<CanonicalRuntimeUserStore['findById']>>>;
+      /** False where the link was found by the address: its route is still to be published. */
+      routePublished: boolean;
+    }
+  | {
+      status: 'found_by_email';
+      stores: DirectoryAccountStores;
+      runtimeUser: NonNullable<Awaited<ReturnType<CanonicalRuntimeUserStore['findByEmail']>>>;
+    };
+
+/**
+ * The account a verified directory identity signs in to: the one its link names, else the one
+ * holding the directory's address (which is then linked). Where accounts are routed, the
+ * identity's Lookup route (published with its link) names the account, else the address's route;
+ * the link is read from that account's database.
+ */
+async function matchDirectoryAccount(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  identity: { connectorId: string; directorySubject: string },
+  email: string | null
+): Promise<DirectoryAccountMatch> {
+  if (!usesRoutedAccountStorage(c)) {
+    const stores = directoryAccountStores(c, tenantId);
+    const linkedUserId = await findDirectoryIdentityLink(
+      stores.accountCore,
+      tenantId,
+      identity.connectorId,
+      identity.directorySubject
+    );
+    if (linkedUserId) {
+      const runtimeUser = await stores.runtimeUsers.findById(linkedUserId);
+      return runtimeUser
+        ? { status: 'linked', stores, runtimeUser, routePublished: true }
+        : { status: 'stale' };
+    }
+    if (!email) return { status: 'none' };
+    const runtimeUser = await stores.runtimeUsers.findByEmail(email);
+    return runtimeUser ? { status: 'found_by_email', stores, runtimeUser } : { status: 'none' };
+  }
+
+  let account: AccountDataContext | null;
+  try {
+    account = await resolveDirectoryAccountRoute(c, identity);
+  } catch (error) {
+    if (isDeletedDestinationRouteError(error)) return { status: 'stale' };
+    throw error;
+  }
+  const routePublished = account !== null;
+  if (!account && email) account = await resolveEmailAccountRouteOrNull(c, email);
+  if (!account) return { status: 'none' };
+
+  const stores = directoryAccountStores(c, tenantId);
+  const linkedUserId = await findDirectoryIdentityLink(
+    stores.accountCore,
     tenantId,
-  });
+    identity.connectorId,
+    identity.directorySubject
+  );
+  const runtimeUser = await stores.runtimeUsers.findById(account.legacyUserId);
+  if (routePublished) {
+    // The route names the account; its link there must name the same user.
+    return linkedUserId === account.legacyUserId && runtimeUser
+      ? { status: 'linked', stores, runtimeUser, routePublished: true }
+      : { status: 'stale' };
+  }
+  if (!runtimeUser) return { status: 'none' };
+  // Linked before, but its route was not published (a publication that failed).
+  if (linkedUserId === account.legacyUserId) {
+    return { status: 'linked', stores, runtimeUser, routePublished: false };
+  }
+  if (linkedUserId) return { status: 'conflict' };
+  return { status: 'found_by_email', stores, runtimeUser };
 }
 
 async function ensureDirectoryAccountAuthenticationState(
@@ -289,7 +438,7 @@ async function ensureDirectoryAccountAuthenticationState(
   tenantId: string,
   userId: string
 ): Promise<void> {
-  const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+  const { runtimeUsers } = await resolveDirectoryAccountStores(c, tenantId, userId);
   await timeAuthRequestDiagnosticOperation(c, 'auth_account_state_read', () =>
     ensureAccountAuthenticationState(c.env, tenantId, userId, () =>
       runtimeUsers.findAccountAuthenticationState(userId)
@@ -467,17 +616,16 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
 
     await accountRateLimit.limiter.resetRpc(accountRateLimit.key);
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    // The directory's tenant records are in the metadata database (see DirectoryAccountStores).
+    const metadataCore = createAuthContextFromHono(c, tenantId).coreAdapter;
     const directoryFacts = buildDirectoryFacts(connector, verdict);
-    const linkedUserId = await findDirectoryIdentityLink(
-      authCtx.coreAdapter,
-      tenantId,
-      connector.wordwardenConnectorId,
-      verdict.subject.directory_id
-    );
-    let runtimeUser = linkedUserId ? await runtimeUsers.findById(linkedUserId) : null;
-    if (linkedUserId && !runtimeUser) {
+    const email = directoryEmail(verdict);
+    const identity = {
+      connectorId: connector.wordwardenConnectorId,
+      directorySubject: verdict.subject.directory_id,
+    };
+    const match = await matchDirectoryAccount(c, tenantId, identity, email);
+    if (match.status === 'stale') {
       log.warn('Directory identity link references a missing or inactive user', {
         action: 'directory_identity_link_stale',
         connectorId: connector.connectorId,
@@ -490,42 +638,90 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       );
       return c.json({ error: 'directory_identity_unmapped' }, 409);
     }
+    const directoryIdentityLinkConflict = async () => {
+      log.warn('Directory identity link conflict during first login', {
+        action: 'directory_identity_link_conflict',
+        connectorId: connector.connectorId,
+      });
+      await publishDirectoryPasswordFailureEvent(
+        c,
+        connector.connectorId,
+        'directory_identity_link_conflict',
+        verdict.request_id
+      );
+      return c.json({ error: 'directory_identity_unmapped' }, 409);
+    };
+    if (match.status === 'conflict') return directoryIdentityLinkConflict();
 
-    const email = directoryEmail(verdict);
-    if (!runtimeUser && email) {
-      runtimeUser = await runtimeUsers.findByEmail(email);
-      if (runtimeUser) {
-        try {
-          await upsertDirectoryIdentityLink(authCtx.coreAdapter, {
-            tenantId,
-            connectorId: connector.wordwardenConnectorId,
-            directorySubject: verdict.subject.directory_id,
-            userId: runtimeUser.id,
-            facts: directoryFacts,
-          });
-        } catch {
-          log.warn('Directory identity link conflict during first login', {
-            action: 'directory_identity_link_conflict',
-            connectorId: connector.connectorId,
-          });
-          await publishDirectoryPasswordFailureEvent(
-            c,
-            connector.connectorId,
-            'directory_identity_link_conflict',
-            verdict.request_id
-          );
-          return c.json({ error: 'directory_identity_unmapped' }, 409);
-        }
+    const runtimeUser = match.status === 'none' ? null : match.runtimeUser;
+    const accountStores = match.status === 'none' ? null : match.stores;
+    if (match.status === 'found_by_email') {
+      try {
+        await upsertDirectoryIdentityLink(match.stores.accountCore, {
+          tenantId,
+          ...identity,
+          userId: match.runtimeUser.id,
+          facts: directoryFacts,
+        });
+      } catch {
+        return directoryIdentityLinkConflict();
       }
     }
 
-    if (runtimeUser && linkedUserId) {
-      await recordDirectoryIdentityLogin(authCtx.coreAdapter, {
+    if (match.status === 'linked') {
+      await recordDirectoryIdentityLogin(match.stores.accountCore, {
         tenantId,
-        connectorId: connector.wordwardenConnectorId,
-        directorySubject: verdict.subject.directory_id,
+        ...identity,
         facts: directoryFacts,
       });
+    }
+
+    // Where accounts are routed, a new link is found next time by its Lookup route. A link made
+    // here whose route was refused is removed again: left without its route, a later sign-in with
+    // another address (routed to another account's database) would not see it and could link the
+    // identity to that account too. A link whose publication may have been written (no answer, an
+    // internal error) is kept: removing it under a published route would leave the route naming
+    // no link. Found by the address on the next sign-in, it is published again.
+    if (
+      (match.status === 'found_by_email' && usesRoutedAccountStorage(c)) ||
+      (match.status === 'linked' && !match.routePublished)
+    ) {
+      try {
+        await publishDirectoryRoute(c, { tenantId, userId: match.runtimeUser.id, ...identity });
+      } catch (error) {
+        log.error(
+          'Directory identity route publication failed',
+          { action: 'directory_identity_route_publish', connectorId: connector.connectorId },
+          error as Error
+        );
+        if (
+          match.status === 'found_by_email' &&
+          error instanceof Error &&
+          DIRECTORY_ROUTE_REFUSED_ERRORS.has(error.message)
+        ) {
+          await deleteDirectoryIdentityLink(match.stores.accountCore, {
+            tenantId,
+            ...identity,
+            userId: match.runtimeUser.id,
+          }).catch((deleteError: unknown) => {
+            log.error(
+              'Unpublished directory identity link could not be removed',
+              { action: 'directory_identity_link_unpublished', connectorId: connector.connectorId },
+              deleteError as Error
+            );
+          });
+        }
+        const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+        if (writeFenceResponse) return writeFenceResponse;
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Directory sign-in could not be completed. Please try again.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
     }
 
     if (!runtimeUser) {
@@ -539,7 +735,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         return c.json({ error: 'directory_identity_unmapped' }, 409);
       }
       const pendingStatus = await findDirectoryPendingStatus(
-        authCtx.coreAdapter,
+        metadataCore,
         tenantId,
         connector.wordwardenConnectorId,
         verdict.subject.directory_id
@@ -553,7 +749,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         );
         return c.json({ error: 'directory_identity_unmapped' }, 409);
       }
-      const pendingRecorded = await upsertDirectoryPendingUser(authCtx.coreAdapter, {
+      const pendingRecorded = await upsertDirectoryPendingUser(metadataCore, {
         tenantId,
         connectorId: connector.wordwardenConnectorId,
         directorySubject: verdict.subject.directory_id,
@@ -584,14 +780,14 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       );
     }
 
-    if (!runtimeUser) {
+    if (!runtimeUser || !accountStores) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
     const now = passwordVerifiedAtMs;
     const authTime = Math.floor(now / 1000);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'directory_password');
-    const migrationDecision = await resolveDirectoryAuthMigrationDecision(authCtx.coreAdapter, {
+    const migrationDecision = await resolveDirectoryAuthMigrationDecision(metadataCore, {
       tenantId,
       userId: runtimeUser.id,
       connectorId: connector.wordwardenConnectorId,
@@ -601,10 +797,10 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     });
     let migrationSatisfiedByExistingPasskey = false;
     if (migrationDecision.action !== 'none') {
-      const existingPasskeys = await authCtx.repositories.passkey.findByUserId(runtimeUser.id);
+      const existingPasskeys = await accountStores.passkeys.findByUserId(runtimeUser.id);
       if (existingPasskeys.length > 0) {
         migrationSatisfiedByExistingPasskey = true;
-        await markDirectoryAuthMigrationUserEnrolled(authCtx.coreAdapter, {
+        await markDirectoryAuthMigrationUserEnrolled(metadataCore, {
           tenantId,
           campaignId: migrationDecision.campaign.id,
           userId: runtimeUser.id,
@@ -621,7 +817,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       } else if (migrationDecision.action === 'require_passkey') {
         return createMigrationRequiredResponse(c, {
           tenantId,
-          adapter: authCtx.coreAdapter,
+          adapter: metadataCore,
           connector,
           runtimeUser,
           verdict,
@@ -850,13 +1046,17 @@ export async function directoryMigrationPasskeyOptionsHandler(c: Context<{ Bindi
     const originUrl = new URL(originHeader as string);
     const rpID = originUrl.hostname;
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const { runtimeUsers, passkeys } = await resolveDirectoryAccountStores(
+      c,
+      tenantId,
+      transaction.user_id
+    );
     const runtimeUser = await runtimeUsers.findById(transaction.user_id, { includeInactive: true });
     if (!runtimeUser || runtimeUser.active !== 1) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    const existingPasskeys = await authCtx.repositories.passkey.findByUserId(transaction.user_id);
+    const existingPasskeys = await passkeys.findByUserId(transaction.user_id);
     const excludeCredentials: Array<{
       id: string;
       type: 'public-key';
@@ -1017,7 +1217,8 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
 
     const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
     const passkeyId = crypto.randomUUID();
-    await authCtx.repositories.passkey.create({
+    const accountStores = await resolveDirectoryAccountStores(c, tenantId, transaction.user_id);
+    await accountStores.passkeys.create({
       id: passkeyId,
       user_id: transaction.user_id,
       credential_id: credentialIDBase64URL,
@@ -1051,8 +1252,9 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    const runtimeUser = await runtimeUsers.findById(transaction.user_id, { includeInactive: true });
+    const runtimeUser = await accountStores.runtimeUsers.findById(transaction.user_id, {
+      includeInactive: true,
+    });
     if (!runtimeUser || runtimeUser.active !== 1) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
@@ -1140,7 +1342,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const { runtimeUsers } = await resolveDirectoryAccountStores(c, tenantId, transaction.user_id);
     const runtimeUser = await runtimeUsers.findById(transaction.user_id, { includeInactive: true });
     if (!runtimeUser || runtimeUser.active !== 1 || !runtimeUser.email) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
@@ -1371,7 +1573,7 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
     }
 
     const now = Date.now();
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const { runtimeUsers } = await resolveDirectoryAccountStores(c, tenantId, transaction.user_id);
     const runtimeUser = await runtimeUsers.findById(transaction.user_id, { includeInactive: true });
     if (!runtimeUser || runtimeUser.active !== 1) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
@@ -1534,15 +1736,22 @@ async function createDirectoryUnavailableRecoveryResponse(
   if (!(await isDirectoryEmailCodeOfferable(c, input.tenantId))) return null;
 
   const authCtx = createAuthContextFromHono(c, input.tenantId);
-  const runtimeUsers = createCanonicalRuntimeUserStore(c, input.tenantId);
-  const runtimeUser = await runtimeUsers.findByEmail(email);
+  // Where accounts are routed, the address's Lookup route names the account to look in.
+  if (usesRoutedAccountStorage(c) && !(await resolveEmailAccountRouteOrNull(c, email))) {
+    return null;
+  }
+  const accountStores = directoryAccountStores(c, input.tenantId);
+  const runtimeUser = await accountStores.runtimeUsers.findByEmail(email);
   if (!runtimeUser || runtimeUser.active !== 1 || !runtimeUser.email) return null;
 
-  const hasLinkedDirectoryIdentity = await hasDirectoryIdentityLinkForUser(authCtx.coreAdapter, {
-    tenantId: input.tenantId,
-    connectorId: input.connector.wordwardenConnectorId,
-    userId: runtimeUser.id,
-  });
+  const hasLinkedDirectoryIdentity = await hasDirectoryIdentityLinkForUser(
+    accountStores.accountCore,
+    {
+      tenantId: input.tenantId,
+      connectorId: input.connector.wordwardenConnectorId,
+      userId: runtimeUser.id,
+    }
+  );
   if (!hasLinkedDirectoryIdentity) return null;
 
   const campaign = await resolveDirectoryAuthEmailFallbackRecoveryCampaign(authCtx.coreAdapter, {
@@ -2205,6 +2414,28 @@ async function upsertDirectoryIdentityLink(
   if (result.rowsAffected !== 1) {
     throw new Error('directory identity link conflict');
   }
+}
+
+/** Route publication failures that wrote nothing: refused before (or instead of) publishing. */
+const DIRECTORY_ROUTE_REFUSED_ERRORS = new Set([
+  'account_provisioner_unavailable',
+  'directory_route_account_mismatch',
+  'auth_account_provisioning_rpc_caller_unauthorized',
+  'auth_directory_route_input_invalid',
+  'auth_directory_route_account_mismatch',
+  'auth_directory_route_authority_not_found',
+  'directory_identifier_reservation_conflict',
+]);
+
+async function deleteDirectoryIdentityLink(
+  adapter: DatabaseAdapter,
+  input: { tenantId: string; connectorId: string; directorySubject: string; userId: string }
+): Promise<void> {
+  await adapter.execute(
+    `DELETE FROM directory_identity_links
+      WHERE tenant_id = ? AND connector_id = ? AND directory_subject = ? AND user_id = ?`,
+    [input.tenantId, input.connectorId, input.directorySubject, input.userId]
+  );
 }
 
 async function findDirectoryPendingStatus(
