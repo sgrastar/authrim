@@ -90,7 +90,7 @@ async function syncTenantExistsCache(
   }
   await deleteTenantExistsCache(kv, tenantId);
 }
-import { z } from 'zod';
+import { z } from './zod';
 import {
   createSingleTenantMutationError,
   ensureSupportedTenantId,

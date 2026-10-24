@@ -15,7 +15,7 @@
  */
 
 import type { Context } from 'hono';
-import { z } from 'zod';
+import { z } from '../../zod';
 import {
   createAuditLogFromContext,
   createAuthContextFromHono,

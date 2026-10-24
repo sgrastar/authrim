@@ -32,7 +32,7 @@ import {
   calculateVerificationExpiry,
   isVerificationExpired,
 } from '@authrim/ar-lib-core';
-import { z } from 'zod';
+import { z } from './zod';
 
 // =============================================================================
 // Constants

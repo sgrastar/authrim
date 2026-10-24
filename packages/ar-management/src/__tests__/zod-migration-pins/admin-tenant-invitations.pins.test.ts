@@ -179,7 +179,8 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
       formErrors: [],
       fieldErrors: {
         expires_in_hours: ['Expected number, received string'],
-        max_uses: ['Expected integer, received float', 'Number must be less than or equal to 1000'],
+        // zod 4: a non-integer stops at the integer check, so the range message no longer follows.
+        max_uses: ['Expected integer, received float'],
         invited_email: ['Invalid email'],
         role_id: ['String must contain at least 1 character(s)'],
         org_id: ['Expected string, received number'],
@@ -194,21 +195,15 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
     expect(Object.keys(d.fieldErrors)).toEqual(['invited_email', 'org_id', 'max_uses']);
   });
 
-  it('non-integer AND out-of-range number reports both checks for the same field', async () => {
+  it('non-integer AND out-of-range number reports only the integer check', async () => {
+    // zod 3 listed both checks; zod 4: a non-integer stops at the integer check, so the range message no longer follows.
     expect(await details({ max_uses: 1000.5 })).toEqual({
       formErrors: [],
-      fieldErrors: {
-        max_uses: ['Expected integer, received float', 'Number must be less than or equal to 1000'],
-      },
+      fieldErrors: { max_uses: ['Expected integer, received float'] },
     });
     expect(await details({ max_uses: -1.5 })).toEqual({
       formErrors: [],
-      fieldErrors: {
-        max_uses: [
-          'Expected integer, received float',
-          'Number must be greater than or equal to -1',
-        ],
-      },
+      fieldErrors: { max_uses: ['Expected integer, received float'] },
     });
   });
 

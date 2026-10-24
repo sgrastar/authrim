@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { z } from 'zod';
+import { legacyUrlString, z } from './zod';
 import type { Env, LoginEntrySettings } from '@authrim/ar-lib-core';
 import {
   LOGIN_ENTRY_DEFAULTS,
@@ -41,12 +41,12 @@ const DISCOVERY_REQUEST_SCHEMA = z.object({
 const DISCOVERY_GRANT_CREATE_SCHEMA = z.object({
   tenant_id: z.string().min(1).max(255),
   expected_tenant_id: z.string().min(1).max(255).optional(),
-  return_to: z.string().url().max(2048).optional(),
+  return_to: legacyUrlString().max(2048).optional(),
   login_hint: z.string().min(1).max(320).optional(),
 });
 const DISCOVERY_GRANT_VERIFY_SCHEMA = z.object({
   grant: z.string().min(1).max(8192),
-  current_url: z.string().url().max(2048),
+  current_url: legacyUrlString().max(2048),
 });
 const DISCOVERY_EMAIL_START_SCHEMA = z.object({ email: z.string().min(3).max(320) });
 const DISCOVERY_EMAIL_VERIFY_SCHEMA = z.object({

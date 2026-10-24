@@ -105,11 +105,13 @@ describe('zod pins: ListAlertsQuerySchema (z.coerce.number on query strings)', (
       ['abc', 'Expected number, received nan'],
       ['', 'Number must be greater than or equal to 1'],
       [' ', 'Number must be greater than or equal to 1'],
-      ['Infinity', 'Expected integer, received float, Number must be less than or equal to 100'],
-      ['-Infinity', 'Expected integer, received float, Number must be greater than or equal to 1'],
+      // zod 4 rejects ±Infinity at the number type check (zod 3 reached .int() and the range).
+      ['Infinity', 'Number must be finite'],
+      ['-Infinity', 'Number must be finite'],
       ['1.5e2', 'Number must be less than or equal to 100'],
-      ['100.5', 'Expected integer, received float, Number must be less than or equal to 100'],
-      ['0.5', 'Expected integer, received float, Number must be greater than or equal to 1'],
+      // zod 4: a non-integer stops at the integer check, so the range message no longer follows.
+      ['100.5', 'Expected integer, received float'],
+      ['0.5', 'Expected integer, received float'],
       ['null', 'Expected number, received nan'],
     ];
     for (const [limit, reason] of cases) {

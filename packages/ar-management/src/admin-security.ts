@@ -26,7 +26,7 @@ import {
   createAuditLogFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
-import { z } from 'zod';
+import { z } from './zod';
 import {
   createAuditHotQueryUnsupportedResponse,
   getAuditHotQuerySqlSpec,

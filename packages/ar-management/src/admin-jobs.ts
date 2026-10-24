@@ -39,7 +39,7 @@ import {
   loadCatalogObjectArtifact,
   loadCatalogObjectRepresentation,
 } from '@authrim/ar-lib-core/services/object-artifact-store';
-import { z } from 'zod';
+import { legacyDatetimeString, z } from './zod';
 import {
   auditAdminSensitiveRead,
   requireAdminPermissionOrElevationGrant,
@@ -1503,8 +1503,8 @@ const BulkUpdateOptionsSchema = z.object({
  */
 const ReportOptionsSchema = z.object({
   type: z.enum(['user_activity', 'access_summary', 'compliance_audit', 'security_events']),
-  from_date: z.string().datetime(),
-  to_date: z.string().datetime(),
+  from_date: legacyDatetimeString(),
+  to_date: legacyDatetimeString(),
   format: z.enum(['json', 'csv']).default('json'),
   filters: z.record(z.string(), z.unknown()).optional(),
   result_delivery: JobResultDeliverySchema,
@@ -2066,7 +2066,7 @@ export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env
  * Bulk members options schema
  */
 const BulkMembersOptionsSchema = z.object({
-  user_ids: z.array(z.string().uuid()).min(1).max(1000),
+  user_ids: z.array(z.guid()).min(1).max(1000),
   role: z.enum(['member', 'admin', 'owner']).optional(),
   action: z.enum(['add', 'remove']).default('add'),
   result_delivery: JobResultDeliverySchema,

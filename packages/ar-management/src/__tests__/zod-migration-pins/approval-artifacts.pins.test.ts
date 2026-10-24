@@ -200,7 +200,7 @@ describe('zod pins: passkey / otp / ciba / switch-method schemas', () => {
     );
   });
 
-  it('passkey/verify: z.custom() without a check accepts ANY credential value, even a missing one', async () => {
+  it('passkey/verify: credential accepts any present value and is required', async () => {
     expect(await post('passkey/verify', {})).toEqual(invalid('challenge_id', 'Required'));
     expect(await post('passkey/verify', { challenge_id: '' })).toEqual(
       invalid('challenge_id', 'String must contain at least 1 character(s)')
@@ -208,8 +208,12 @@ describe('zod pins: passkey / otp / ciba / switch-method schemas', () => {
     expect(await post('passkey/verify', { challenge_id: 5, credential: {} })).toEqual(
       invalid('challenge_id', 'Expected string, received number')
     );
-    // accepted: credential absent / null / primitive
-    expect(await post('passkey/verify', { challenge_id: 'c' })).toEqual(ACCEPTED);
+    // zod 3 let a missing credential through (the handler then threw on credential.id);
+    // zod 4 reports it as a validation error.
+    expect(await post('passkey/verify', { challenge_id: 'c' })).toEqual(
+      invalid('credential', 'Required')
+    );
+    // accepted: credential null / primitive / object
     expect(await post('passkey/verify', { challenge_id: 'c', credential: null })).toEqual(ACCEPTED);
     expect(
       await post('passkey/verify', { challenge_id: 'c', credential: 'not-an-object' })

@@ -123,10 +123,8 @@ describe('zod pins: tenant domain mappings CreateSchema', () => {
       [{ ...base, is_active: 'true' }, 'Expected boolean, received string'],
       [{ ...base, is_active: 1 }, 'Expected boolean, received number'],
       [{ ...base, verified: null }, 'Expected boolean, received null'],
-      [
-        { ...base, priority: 1000.5 },
-        'Expected integer, received float, Number must be less than or equal to 1000',
-      ],
+      // zod 4: a non-integer stops at the integer check, so the range message no longer follows.
+      [{ ...base, priority: 1000.5 }, 'Expected integer, received float'],
       [
         { domain: 1, tenant_id: 2, priority: 'p', is_active: 'a', verified: 'v' },
         'Expected string, received number, Expected string, received number, Expected number, received string, Expected boolean, received string, Expected boolean, received string',
