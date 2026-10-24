@@ -57419,6 +57419,7 @@ components:
       required:
         - kind
         - claim
+        - namespace
         - profile_id
       properties:
         kind:
@@ -57431,8 +57432,24 @@ components:
             - source_changed
             - transform_changed
             - type_changed
+            - profile_field_added
+            - profile_field_removed
+            - profile_field_changed
+          description: >-
+            `profile_field_*`: the set's one Destination Profile is switched for another, and the
+            new one lists a claim the old did not (or no longer lists it, or with other scopes,
+            surfaces or requirement), even one no edge writes (the standard claims pass the profile
+            too).
         claim:
           type: string
+        namespace:
+          type: string
+          description: >-
+            The namespace the claim is written in; the runtime releases an app's claims from
+            `oidc.claim`, or from the namespace the app's own choice names.
+        previous_namespace:
+          type: string
+          description: '`renamed`: the namespace before, when it differs.'
         previous_claim:
           type: string
           description: "`renamed`: the claim's name before."
@@ -57535,6 +57552,13 @@ components:
                         - 'null'
         apps_truncated:
           type: boolean
+        defaults_unavailable:
+          type: string
+          enum:
+            - settings_unreadable
+          description: >-
+            The tenant's defaults could not be read: `apps` lists the apps that name the set
+            themselves, not those that follow the defaults.
         tenants:
           type: array
           description: >-

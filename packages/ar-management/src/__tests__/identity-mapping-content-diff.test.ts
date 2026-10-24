@@ -53,6 +53,7 @@ function rule(
 }
 
 const content = (...rules: Rule[]) => ({ rules }) as never;
+/** The changes, without the release namespace each claim here is written in (said once). */
 const diff = (
   before: Rule[],
   after: Rule[],
@@ -61,6 +62,8 @@ const diff = (
   diffClaimShapes(
     claimShapes(content(...before), catalogs.before ?? NO_CATALOG),
     claimShapes(content(...after), catalogs.after ?? NO_CATALOG)
+  ).map(({ namespace, ...change }) =>
+    namespace === 'oidc.claim' ? change : { ...change, namespace }
   );
 
 /** A catalog version with one entry, as the runtime reads it. */
@@ -185,18 +188,49 @@ describe('the changes of a content', () => {
     ).toEqual(changed);
     expect(
       diff(
-        [rule('email', ['email'], { transforms: [lower, upper] })],
-        [rule('email', ['email'], { transforms: [upper, lower] })]
+        [
+          rule('email', ['email'], {
+            transforms: [
+              { edgeIndex: 0, ...lower },
+              { edgeIndex: 0, ...upper },
+            ],
+          }),
+        ],
+        [
+          rule('email', ['email'], {
+            transforms: [
+              { edgeIndex: 0, ...upper },
+              { edgeIndex: 0, ...lower },
+            ],
+          }),
+        ]
       )
     ).toEqual(changed);
     expect(
-      diff([rule('email', ['email'])], [rule('email', ['email'], { transforms: [lower] })])
+      diff(
+        [rule('email', ['email'])],
+        [rule('email', ['email'], { transforms: [{ edgeIndex: 0, ...lower }] })]
+      )
     ).toEqual(changed);
+    // A step on no edge (none named, or one the rule does not have) is released nowhere.
+    for (const step of [lower, { edgeIndex: 5, ...lower }]) {
+      expect(
+        diff([rule('email', ['email'])], [rule('email', ['email'], { transforms: [step] })])
+      ).toEqual([]);
+    }
     // The same steps with their parameters written in another order are the same.
     expect(
       diff(
-        [rule('a', ['a'], { transforms: [{ operation: 'x', parameters: { p: 1, q: 2 } }] })],
-        [rule('a', ['a'], { transforms: [{ operation: 'x', parameters: { q: 2, p: 1 } }] })]
+        [
+          rule('a', ['a'], {
+            transforms: [{ edgeIndex: 0, operation: 'x', parameters: { p: 1, q: 2 } }],
+          }),
+        ],
+        [
+          rule('a', ['a'], {
+            transforms: [{ edgeIndex: 0, operation: 'x', parameters: { q: 2, p: 1 } }],
+          }),
+        ]
       )
     ).toEqual([]);
   });
@@ -277,8 +311,13 @@ describe('the changes of a content', () => {
     const upper = { operation: 'case', parameters: { mode: 'upper' } };
     const lower = { operation: 'case', parameters: { mode: 'lower' } };
     const trim = { operation: 'trim' };
-    const a = rule('name', ['name'], { transforms: [upper, lower] });
-    const b = rule('name', ['name'], { transforms: [trim] });
+    const a = rule('name', ['name'], {
+      transforms: [
+        { edgeIndex: 0, ...upper },
+        { edgeIndex: 0, ...lower },
+      ],
+    });
+    const b = rule('name', ['name'], { transforms: [{ edgeIndex: 0, ...trim }] });
     // Same priority: upper, trim, lower. B later: upper, lower, trim.
     expect(diff([a, b], [a, { ...b, priority: 1 }])).toEqual([
       { kind: 'transform_changed', claim: 'name', profile_id: 'profile-1' },
@@ -317,7 +356,7 @@ describe('the changes of a content', () => {
       })
     ).toEqual([{ kind: 'source_changed', claim: 'who', profile_id: 'p' }]);
     expect(
-      claimShapes(content(byEntry('field.canonical.email')), canonical).get('who')?.sourceKeys
+      [...claimShapes(content(byEntry('field.canonical.email')), canonical).values()][0]?.sourceKeys
     ).toEqual(['authrim.canonical:email']);
   });
 
@@ -348,37 +387,93 @@ describe('the changes of a content', () => {
     ]);
   });
 
+  it('tell other attributes and other steps of one claim apart, both at once', () => {
+    const lower = { edgeIndex: 0, operation: 'case', parameters: { mode: 'lower' } };
+    const upper = { edgeIndex: 0, operation: 'case', parameters: { mode: 'upper' } };
+    expect(
+      diff(
+        [rule('name', ['name'], { transforms: [lower] })],
+        [rule('name', ['display_name'], { transforms: [upper] })]
+      ).map((change) => change.kind)
+    ).toEqual(['source_changed', 'transform_changed']);
+    // Another attribute under the same step is not a change of the step.
+    expect(
+      diff(
+        [rule('name', ['name'], { transforms: [lower] })],
+        [rule('name', ['display_name'], { transforms: [lower] })]
+      ).map((change) => change.kind)
+    ).toEqual(['source_changed']);
+  });
+
+  it('tell a claim written in another namespace, which the runtime does not release', () => {
+    const moved = rule('email', ['email']);
+    (moved.edges[0].targetRef as Record<string, unknown>).namespace = 'custom.claim';
+    expect(diff([rule('email', ['email'])], [moved])).toEqual([
+      {
+        kind: 'renamed',
+        claim: 'email',
+        previous_claim: 'email',
+        previous_namespace: 'oidc.claim',
+        namespace: 'custom.claim',
+        profile_id: 'profile-1',
+      },
+    ]);
+  });
+
   it('take every attribute a claim reads, across rules', () => {
     const shapes = claimShapes(
       content(rule('name', ['given']), rule('name', ['family'])),
       NO_CATALOG
     );
-    expect(shapes.get('name')).toMatchObject({
+    expect([...shapes.values()].find((shape) => shape.claim === 'name')).toMatchObject({
       sourceKeys: ['authrim.profile:family', 'authrim.profile:given'],
     });
   });
 });
 
 describe('where a change is released', () => {
-  it('is before and after, by claim and profile', () => {
-    expect(releasePoints({ kind: 'added', claim: 'a', profile_id: 'p' })).toEqual({
+  const at = (claim: string, profileId: string, namespace = 'oidc.claim') => ({
+    claim,
+    namespace,
+    profileId,
+  });
+  it('is before and after, by claim, namespace and profile', () => {
+    const base = { namespace: 'oidc.claim' };
+    expect(releasePoints({ kind: 'added', claim: 'a', profile_id: 'p', ...base })).toEqual({
       before: null,
-      after: { claim: 'a', profileId: 'p' },
+      after: at('a', 'p'),
     });
-    expect(releasePoints({ kind: 'removed', claim: 'a', profile_id: 'p' })).toEqual({
-      before: { claim: 'a', profileId: 'p' },
+    expect(releasePoints({ kind: 'removed', claim: 'a', profile_id: 'p', ...base })).toEqual({
+      before: at('a', 'p'),
       after: null,
     });
     expect(
-      releasePoints({ kind: 'renamed', claim: 'b', previous_claim: 'a', profile_id: 'p' })
-    ).toEqual({ before: { claim: 'a', profileId: 'p' }, after: { claim: 'b', profileId: 'p' } });
+      releasePoints({
+        kind: 'renamed',
+        claim: 'b',
+        previous_claim: 'a',
+        previous_namespace: 'x',
+        profile_id: 'p',
+        ...base,
+      })
+    ).toEqual({ before: at('a', 'p', 'x'), after: at('b', 'p') });
     expect(
       releasePoints({
         kind: 'profile_changed',
         claim: 'a',
         profile_id: 'q',
         previous_profile_id: 'p',
+        ...base,
       })
-    ).toEqual({ before: { claim: 'a', profileId: 'p' }, after: { claim: 'a', profileId: 'q' } });
+    ).toEqual({ before: at('a', 'p'), after: at('a', 'q') });
+    expect(
+      releasePoints({
+        kind: 'profile_field_removed',
+        claim: 'a',
+        profile_id: 'q',
+        previous_profile_id: 'p',
+        ...base,
+      })
+    ).toEqual({ before: at('a', 'p'), after: null });
   });
 });

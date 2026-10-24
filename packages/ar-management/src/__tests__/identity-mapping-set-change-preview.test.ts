@@ -5,6 +5,7 @@ import {
   ADMIN_PERMISSIONS,
   adminAuthMiddleware,
   requireAdminPermissions,
+  resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -202,13 +203,17 @@ async function setup() {
     entries: ['email', 'nickname', 'org'].map(entry) as never,
   });
   const catalogVersionId = (catalog as { activeVersion: { id: string } }).activeVersion.id;
-  const profile = async (owner: 'tenant' | 'platform') => {
+  const profile = async (
+    owner: 'tenant' | 'platform',
+    schema: typeof PROFILE_SCHEMA = PROFILE_SCHEMA,
+    key: string = owner
+  ) => {
     const created = await repository.createDestinationProfile(TENANT, {
       destinationType: 'oidc',
-      profileKey: `${owner}_profile`,
-      displayName: `${owner} profile`,
+      profileKey: `${key}_profile`,
+      displayName: `${key} profile`,
       ownerScopeType: owner,
-      schema: PROFILE_SCHEMA,
+      schema,
     } as never);
     const platform = owner === 'platform';
     await repository.reviewDestinationProfileVersion(
@@ -227,6 +232,12 @@ async function setup() {
   };
   const tenantProfile = await profile('tenant');
   const platformProfile = await profile('platform');
+  // The same, without email.
+  const withoutEmail = await profile(
+    'tenant',
+    { ...PROFILE_SCHEMA, claims: PROFILE_SCHEMA.claims.filter((c) => c.claimName !== 'email') },
+    'no_email'
+  );
 
   const cookie = (assignments: Assignment[] = TENANT_SUPER_ADMIN) =>
     signIn(context.db, assignments).cookie;
@@ -234,9 +245,9 @@ async function setup() {
   const operator = cookie(GLOBAL_SUPER_ADMIN);
   const call = (who: string, method: string, path: string, body?: unknown, headers = {}) =>
     context.call(who, method, path, body, headers);
-  const tenantContent = (claims: Array<[string, string]>) => ({
+  const tenantContent = (claims: Array<[string, string]>, profileId = tenantProfile) => ({
     catalogVersionId,
-    rules: claims.map(([claim, source]) => rule(claim, source, tenantProfile)),
+    rules: claims.map(([claim, source]) => rule(claim, source, profileId)),
   });
   const platformContent = (claims: Array<[string, string]>) => ({
     catalogVersionId: PLATFORM_CATALOG_VERSION,
@@ -283,6 +294,8 @@ async function setup() {
     cookie,
     call,
     tenantContent,
+    withoutEmail,
+    profile,
     platformContent,
     createSet,
     app,
@@ -323,11 +336,12 @@ describe('a change of a tenant’s set', () => {
 
     expect(status).toBe(200);
     expect(json.changes).toEqual([
-      { kind: 'added', claim: 'nickname', profile_id: expect.any(String) },
+      { kind: 'added', claim: 'nickname', namespace: 'oidc.claim', profile_id: expect.any(String) },
       {
         kind: 'renamed',
         claim: 'org',
         previous_claim: 'organization',
+        namespace: 'oidc.claim',
         profile_id: expect.any(String),
       },
     ]);
@@ -371,6 +385,147 @@ describe('a change of a tenant’s set', () => {
       changes: [expect.objectContaining({ kind: 'renamed' })],
       held_back: [],
     });
+  });
+
+  it('says what switching the profile does to a claim no edge writes', async () => {
+    const t = await setup();
+    const setId = await t.createSet(t.tenantContent([['nickname', 'nickname']]));
+    t.app(TENANT, 'email-only', { fieldMappingSetId: setId }, 'openid email');
+
+    // Only the profile changes: the new one does not list email, which the app had by its scope.
+    const { json } = await t.preview(setId, {
+      content: t.tenantContent([['nickname', 'nickname']], t.withoutEmail),
+    });
+
+    expect(json.changes).toContainEqual(
+      expect.objectContaining({ kind: 'profile_field_removed', claim: 'email' })
+    );
+    expect(appOf(json, 'email-only')?.changes).toContainEqual(
+      expect.objectContaining({ kind: 'profile_field_removed', claim: 'email' })
+    );
+  });
+
+  it('says a switched profile’s fields to an app whatever namespace it releases from', async () => {
+    const t = await setup();
+    const setId = await t.createSet(t.tenantContent([['nickname', 'nickname']]));
+    t.app(
+      TENANT,
+      'custom-namespace',
+      { fieldMappingSetId: setId, destinationNamespace: 'custom.claim' },
+      'openid email'
+    );
+
+    const { json } = await t.preview(setId, {
+      content: t.tenantContent([['nickname', 'nickname']], t.withoutEmail),
+    });
+
+    expect(appOf(json, 'custom-namespace')?.changes).toContainEqual(
+      expect.objectContaining({ kind: 'profile_field_removed', claim: 'email' })
+    );
+  });
+
+  it('says a switched profile’s field even where the mapping changes the claim too', async () => {
+    const t = await setup();
+    const strict = await t.profile(
+      'tenant',
+      {
+        ...PROFILE_SCHEMA,
+        claims: PROFILE_SCHEMA.claims.map((claim) =>
+          claim.claimName === 'email' ? { ...claim, allowedValues: ['a@example.test'] } : claim
+        ),
+      },
+      'strict_mapped'
+    );
+    const setId = await t.createSet(t.tenantContent([['email', 'email']]));
+    t.app(
+      TENANT,
+      'custom-namespace',
+      { fieldMappingSetId: setId, destinationNamespace: 'custom.claim' },
+      'openid email'
+    );
+
+    const { json } = await t.preview(setId, {
+      content: t.tenantContent([['email', 'email']], strict),
+    });
+
+    // The mapping's email moves profile; the app's standard email is held to the new values.
+    expect(json.changes.map((change: { kind: string }) => change.kind)).toEqual([
+      'profile_changed',
+      'profile_field_changed',
+    ]);
+    expect(appOf(json, 'custom-namespace')?.changes).toEqual([
+      expect.objectContaining({ kind: 'profile_field_changed', claim: 'email' }),
+    ]);
+  });
+
+  it('says a switched profile that accepts other values for a field', async () => {
+    const t = await setup();
+    const strict = await t.profile(
+      'tenant',
+      {
+        ...PROFILE_SCHEMA,
+        claims: PROFILE_SCHEMA.claims.map((claim) =>
+          claim.claimName === 'email' ? { ...claim, allowedValues: ['a@example.test'] } : claim
+        ),
+      },
+      'strict'
+    );
+    const setId = await t.createSet(t.tenantContent([['nickname', 'nickname']]));
+    t.app(TENANT, 'email-only', { fieldMappingSetId: setId }, 'openid email');
+
+    const { json } = await t.preview(setId, {
+      content: t.tenantContent([['nickname', 'nickname']], strict),
+    });
+
+    expect(appOf(json, 'email-only')?.changes).toContainEqual(
+      expect.objectContaining({ kind: 'profile_field_changed', claim: 'email' })
+    );
+  });
+
+  it('sees nothing for an app whose own choice releases from another namespace', async () => {
+    const t = await setup();
+    const setId = await t.createSet(t.tenantContent([['email', 'email']]));
+    t.app(TENANT, 'other-namespace', {
+      fieldMappingSetId: setId,
+      destinationNamespace: 'custom.claim',
+    });
+    t.app(TENANT, 'usual', { fieldMappingSetId: setId });
+
+    const { json } = await t.preview(setId, {
+      content: t.tenantContent([
+        ['email', 'email'],
+        ['nickname', 'nickname'],
+      ]),
+    });
+
+    expect(appOf(json, 'usual')?.changes).toHaveLength(1);
+    expect(appOf(json, 'other-namespace')).toMatchObject({
+      changes: [],
+      held_back: [{ claim: 'nickname', scope: null }],
+    });
+  });
+
+  it('still judges the apps that name the set when the defaults cannot be read', async () => {
+    const t = await setup();
+    const setId = await t.createSet(t.tenantContent([['email', 'email']]));
+    t.app(TENANT, 'own', { fieldMappingSetId: setId });
+    t.app(TENANT, 'follows');
+    t.saveDefault(TENANT, setId);
+    // The tenant's settings document cannot be read; the rest can.
+    const get = t.settings.namespace.get as unknown as ReturnType<typeof vi.fn>;
+    const readStore = get.getMockImplementation() as (key: string) => Promise<string | null>;
+    get.mockImplementation(async (key: string) => {
+      if (key === `settings:tenant:${TENANT}:identity-mapping`) throw new Error('KV is down');
+      return readStore(key);
+    });
+
+    const { status, json } = await t.preview(setId, {
+      content: t.tenantContent([['nickname', 'nickname']]),
+    });
+
+    expect(status).toBe(200);
+    expect(json.apps.map((line: { client_id: string }) => line.client_id)).toEqual(['own']);
+    expect(json.defaults_unavailable).toBe('settings_unreadable');
   });
 
   it('counts the references as the save does, so the count can be confirmed', async () => {
@@ -532,6 +687,18 @@ describe('a change of a platform set', () => {
       apps_changed: 0,
       apps_count_is_lower_bound: true,
     });
+  });
+
+  it('looks at the other tenants without leaving a trace', async () => {
+    const t = await platformSetup();
+    vi.mocked(resolveAuthCorePersistenceAdapterFromEnv).mockClear();
+
+    await t.preview(t.setId, t.body, t.operator);
+    await t.preview(t.setId, t.body, t.operator, `?tenant_id=${OTHER}`);
+
+    const calls = vi.mocked(resolveAuthCorePersistenceAdapterFromEnv).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call[2]).toMatchObject({ sideEffects: 'none' });
   });
 
   it('lists one tenant’s apps when asked for it', async () => {

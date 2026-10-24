@@ -8,12 +8,16 @@
  * `normalizeDestinationProfileReference`), the catalog entry of a source with the runtime's
  * `findCatalogEntry` (its ID first, then its place or one of the entry's aliases).
  *
- * A claim is what a rule's edge writes in the release namespace (the target's path). It is
- * `renamed` when one claim goes and another comes through the same Destination Profile from the
- * same attributes; otherwise a claim that goes is `removed` and one that comes is `added`. A claim
- * kept is `profile_changed` when another profile releases it, `source_changed` when it reads other
- * attributes (or the same ones in another order of rule priority and edges: the last one wins), `transform_changed` when the steps on its edges differ (their order counts), and
- * `type_changed` when what it reads has another type in the catalog.
+ * A claim is what a rule's edge writes: its name (the target's path) in its namespace (the
+ * runtime releases only what is written in the release namespace). It is `renamed` when one claim
+ * goes and another comes through the same Destination Profile from the same attributes;
+ * otherwise a claim that goes is `removed` and one that comes is `added`. A claim kept is
+ * `profile_changed` when another profile releases it, `source_changed` when it reads other
+ * attributes (or the same ones in another order of rule priority and edges: the last one wins),
+ * `transform_changed` when the steps on its edges differ (an operation, its parameters, the edge
+ * it is on, or their order), and `type_changed` when what it reads has another catalog type. A
+ * step on no edge of its rule (none named, or one the rule does not have) is released nowhere, as
+ * the runtime reads it, so it changes no claim.
  */
 import {
   mappingReferenceCatalogEntryId,
@@ -32,7 +36,11 @@ export type ClaimChangeKind =
   | 'profile_changed'
   | 'source_changed'
   | 'transform_changed'
-  | 'type_changed';
+  | 'type_changed'
+  /** The set's profile is switched: a claim the new one lists and the old did not, and so on. */
+  | 'profile_field_added'
+  | 'profile_field_removed'
+  | 'profile_field_changed';
 
 export interface ClaimChange {
   kind: ClaimChangeKind;
@@ -45,16 +53,21 @@ export interface ClaimChange {
   profile_id: string | null;
   /** The profile before, when another profile releases the claim now. */
   previous_profile_id?: string | null;
+  /** The namespace the claim is written in (after; before for `removed`). */
+  namespace: string;
+  /** `renamed`: the namespace before, when it differs. */
+  previous_namespace?: string;
 }
 
 interface ClaimShape {
   claim: string;
+  namespace: string;
   profileId: string | null;
   /** The attributes it reads, as `namespace:path` (what decides what is read). */
   sourceKeys: string[];
   /** The same in the order the runtime writes them (the last one wins). */
   sourceOrder: string;
-  /** The steps on the claim's edges, in order, as stable JSON. */
+  /** The steps on the claim's edges in order, each with the place of its edge, as stable JSON. */
   transforms: string;
   /** The catalog type of what it reads (`string`, `string[]`), when every source has one. */
   type: string | null;
@@ -113,7 +126,12 @@ function sourceKey(ref: Record<string, unknown>, catalog: CatalogTypes): string 
   return entry ? `${namespaceOf(ref) || entry.namespace}:${entry.path}` : `entry:${id}`;
 }
 
-/** The claims a content fills, keyed by claim name. */
+/** A claim's key: its namespace and name. */
+function claimKey(namespace: string, claim: string): string {
+  return `${namespace}\u0000${claim}`;
+}
+
+/** The claims a content fills, keyed by namespace and name. */
 export function claimShapes(
   content: Pick<MappingSetContent, 'rules'>,
   catalog: CatalogTypes
@@ -132,6 +150,8 @@ export function claimShapes(
   const shapes = new Map<
     string,
     {
+      claim: string;
+      namespace: string;
       profileId: string | null;
       sources: Set<string>;
       order: string[];
@@ -152,30 +172,36 @@ export function claimShapes(
       a.edgeIndex - b.edgeIndex ||
       a.ruleIndex - b.ruleIndex
   );
+  // Where each edge is among its claim's edges, so a step is told by the edge it is on.
+  const placeOf = new Map<unknown, { key: string; place: number }>();
   for (const { edge } of edges) {
     const claim = mappingReferencePath(edge.targetRef);
     if (!claim) continue;
+    const namespace = namespaceOf(edge.targetRef);
+    const key = claimKey(namespace, claim);
     const profile = mappingReferenceProfileId(edge.targetRef);
-    let shape = shapes.get(claim);
+    let shape = shapes.get(key);
     if (!shape) {
       shape = {
+        claim,
+        namespace,
         profileId: profile ? normalizeDestinationProfileReference(profile) : setProfile,
         sources: new Set(),
         order: [],
         transforms: [],
         types: new Set(),
       };
-      shapes.set(claim, shape);
+      shapes.set(key, shape);
     }
-    const key = sourceKey(edge.sourceRef, catalog);
-    if (key) shape.sources.add(key);
-    shape.order.push(key ?? '?');
+    const source = sourceKey(edge.sourceRef, catalog);
+    if (source) shape.sources.add(source);
+    placeOf.set(edge, { key, place: shape.order.length });
+    shape.order.push(source ?? '?');
     shape.types.add(typeOf(edge.sourceRef, catalog) ?? '');
   }
   // The steps in the order the runtime loads them: by rule priority, then by each step's place in
-  // its rule (so the steps of rules of one priority interleave), then as saved. Each is compared
-  // with the input it takes (its edge's source, or every edge for a step that names none) and is
-  // counted for each claim it reaches.
+  // its rule (so the steps of rules of one priority interleave), then as saved. A step on no edge
+  // of its rule is released nowhere.
   const steps = rules.flatMap((rule, ruleIndex) =>
     (rule.transforms ?? []).map((step, stepIndex) => ({ rule, ruleIndex, step, stepIndex }))
   );
@@ -186,37 +212,23 @@ export function claimShapes(
       a.ruleIndex - b.ruleIndex
   );
   for (const { rule, step } of steps) {
-    const edges = rule.edges ?? [];
-    const reached =
-      step.edgeIndex === undefined
-        ? edges.map((_, index) => index)
-        : edges[step.edgeIndex]
-          ? [step.edgeIndex]
-          : [];
-    const input =
-      step.edgeIndex === undefined
-        ? '*'
-        : edges[step.edgeIndex]
-          ? (sourceKey(edges[step.edgeIndex].sourceRef, catalog) ?? '?')
-          : '?';
-    const signature = stable({
-      input,
-      operation: step.operation,
-      parameters: step.parameters ?? {},
-    });
-    for (const claim of new Set(
-      reached.map((index) => mappingReferencePath(edges[index].targetRef))
-    )) {
-      if (claim) shapes.get(claim)?.transforms.push(signature);
-    }
+    const edge = step.edgeIndex === undefined ? undefined : (rule.edges ?? [])[step.edgeIndex];
+    const at = edge ? placeOf.get(edge) : undefined;
+    if (!at) continue;
+    shapes
+      .get(at.key)
+      ?.transforms.push(
+        stable({ at: at.place, operation: step.operation, parameters: step.parameters ?? {} })
+      );
   }
   return new Map(
-    [...shapes].map(([claim, shape]) => {
+    [...shapes].map(([key, shape]) => {
       const types = [...shape.types];
       return [
-        claim,
+        key,
         {
-          claim,
+          claim: shape.claim,
+          namespace: shape.namespace,
           profileId: shape.profileId,
           sourceKeys: [...shape.sources].sort(),
           sourceOrder: shape.order.join('\n'),
@@ -242,49 +254,56 @@ export function diffClaimShapes(
   after: ReadonlyMap<string, ClaimShape>
 ): ClaimChange[] {
   const changes: ClaimChange[] = [];
-  const removed = [...before.values()].filter((shape) => !after.has(shape.claim));
-  const added = [...after.values()].filter((shape) => !before.has(shape.claim));
-  const renamedFrom = new Map<string, ClaimShape>();
-  const taken = new Set<string>();
+  const removed = [...before].filter(([key]) => !after.has(key)).map(([, shape]) => shape);
+  const added = [...after].filter(([key]) => !before.has(key)).map(([, shape]) => shape);
+  const renamedFrom = new Map<ClaimShape, ClaimShape>();
+  const taken = new Set<ClaimShape>();
   for (const shape of added) {
     const match = removed.find(
       (old) =>
-        !taken.has(old.claim) &&
+        !taken.has(old) &&
         old.sourceKeys.length > 0 &&
         old.profileId === shape.profileId &&
         sameSources(old, shape)
     );
     if (match) {
-      renamedFrom.set(shape.claim, match);
-      taken.add(match.claim);
+      renamedFrom.set(shape, match);
+      taken.add(match);
     }
   }
 
   for (const shape of added) {
-    const old = renamedFrom.get(shape.claim);
+    const old = renamedFrom.get(shape);
+    const base = { claim: shape.claim, profile_id: shape.profileId, namespace: shape.namespace };
     changes.push(
       old
         ? {
             kind: 'renamed',
-            claim: shape.claim,
+            ...base,
             previous_claim: old.claim,
-            profile_id: shape.profileId,
+            ...(old.namespace !== shape.namespace ? { previous_namespace: old.namespace } : {}),
           }
-        : { kind: 'added', claim: shape.claim, profile_id: shape.profileId }
+        : { kind: 'added', ...base }
     );
   }
   for (const shape of removed) {
-    if (!taken.has(shape.claim)) {
-      changes.push({ kind: 'removed', claim: shape.claim, profile_id: shape.profileId });
+    if (!taken.has(shape)) {
+      changes.push({
+        kind: 'removed',
+        claim: shape.claim,
+        profile_id: shape.profileId,
+        namespace: shape.namespace,
+      });
     }
   }
-  for (const [claim, now] of after) {
-    const was = before.get(claim);
+  for (const [key, now] of after) {
+    const was = before.get(key);
     if (!was) continue;
     // When the profile changes too, every change of the claim says which profile it had.
     const base = {
-      claim,
+      claim: now.claim,
       profile_id: now.profileId,
+      namespace: now.namespace,
       ...(was.profileId !== now.profileId ? { previous_profile_id: was.profileId } : {}),
     };
     if (was.profileId !== now.profileId) {
@@ -293,34 +312,57 @@ export function diffClaimShapes(
     // Other attributes, or the same ones in another order (another one is written last).
     if (!sameSources(was, now) || was.sourceOrder !== now.sourceOrder) {
       changes.push({ kind: 'source_changed', ...base });
-    } else if (was.transforms !== now.transforms) {
+    }
+    if (was.transforms !== now.transforms) {
       changes.push({ kind: 'transform_changed', ...base });
     }
     if (was.type && now.type && was.type !== now.type) {
       changes.push({ kind: 'type_changed', ...base, type_before: was.type, type_after: now.type });
     }
   }
-  return changes.sort((a, b) => a.claim.localeCompare(b.claim) || a.kind.localeCompare(b.kind));
+  return changes.sort(
+    (a, b) =>
+      a.claim.localeCompare(b.claim) ||
+      a.namespace.localeCompare(b.namespace) ||
+      a.kind.localeCompare(b.kind)
+  );
+}
+
+/** A claim as it is released: its name, its namespace and its profile. */
+export interface ReleasePoint {
+  claim: string;
+  namespace: string;
+  profileId: string | null;
 }
 
 /** Where a change's claim is released before and after (null where it is not). */
 export function releasePoints(change: ClaimChange): {
-  before: { claim: string; profileId: string | null } | null;
-  after: { claim: string; profileId: string | null } | null;
+  before: ReleasePoint | null;
+  after: ReleasePoint | null;
 } {
   const after =
-    change.kind === 'removed' ? null : { claim: change.claim, profileId: change.profile_id };
+    change.kind === 'removed' || change.kind === 'profile_field_removed'
+      ? null
+      : { claim: change.claim, namespace: change.namespace, profileId: change.profile_id };
   const before =
-    change.kind === 'added'
+    change.kind === 'added' || change.kind === 'profile_field_added'
       ? null
       : {
           claim: change.previous_claim ?? change.claim,
+          namespace: change.previous_namespace ?? change.namespace,
           profileId:
             change.previous_profile_id !== undefined
               ? change.previous_profile_id
               : change.profile_id,
         };
   return { before, after };
+}
+
+/** The one profile a content's claims are released through, or null (none, or several). */
+export function contentProfile(shapes: ReadonlyMap<string, ClaimShape>): string | null {
+  const profiles = new Set([...shapes.values()].map((shape) => shape.profileId));
+  const [only] = [...profiles];
+  return profiles.size === 1 ? only : null;
 }
 
 interface CatalogEntryRow {

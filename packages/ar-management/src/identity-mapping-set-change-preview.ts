@@ -45,10 +45,12 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   claimShapes,
+  contentProfile,
   diffClaimShapes,
   readCatalogTypes,
   releasePoints,
   type ClaimChange,
+  type ReleasePoint,
 } from './identity-mapping-content-diff';
 import {
   badRequest,
@@ -85,6 +87,8 @@ const APP_ROWS_LIMIT = 2000;
 export const TENANTS_SUMMARY_LIMIT = 100;
 const TENANT_CONCURRENCY = 4;
 const TENANT_ID_PATTERN = /^[a-z0-9-]{1,63}$/;
+/** The namespace the runtime releases an app's claims from, unless its own choice names another. */
+const RELEASE_NAMESPACE = 'oidc.claim';
 
 interface AppLine {
   tenant_id: string;
@@ -99,8 +103,14 @@ interface AppLine {
 }
 
 type TenantApps =
-  | { ok: true; apps: AppLine[]; truncated: boolean }
-  | { ok: false; reason: 'core_database_unavailable' | 'query_failed' | 'settings_unreadable' };
+  | {
+      ok: true;
+      apps: AppLine[];
+      truncated: boolean;
+      /** The defaults could not be read: the apps that follow them are not among `apps`. */
+      defaultsUnreadable: boolean;
+    }
+  | { ok: false; reason: 'core_database_unavailable' | 'query_failed' };
 
 /** The scopes an app is registered for, with `openid`. */
 function registeredScopes(raw: string | null): Set<string> {
@@ -111,15 +121,16 @@ function registeredScopes(raw: string | null): Set<string> {
 
 type ProfileFields = Map<string, Map<string, DestinationProfileConsentField[]>>;
 
-/** The OIDC fields of each Destination Profile the changes go through, by claim. */
+/** The OIDC fields of each Destination Profile named, by claim. */
 async function readProfileFields(
   admin: DatabaseAdapter,
   ownerTenantId: string,
-  changes: readonly ClaimChange[]
+  profileIds: ReadonlyArray<string | null | undefined>
 ): Promise<ProfileFields> {
   const profiles: ProfileFields = new Map();
-  const ids = changes.flatMap((change) => [change.profile_id, change.previous_profile_id ?? null]);
-  for (const profileId of new Set(ids.filter((id): id is string => typeof id === 'string'))) {
+  for (const profileId of new Set(
+    profileIds.filter((id): id is string => typeof id === 'string')
+  )) {
     const descriptor = await loadDestinationProfileConsentDescriptor(
       admin,
       ownerTenantId,
@@ -134,11 +145,60 @@ async function readProfileFields(
   return profiles;
 }
 
+/**
+ * When the set's one profile is switched for another, the claims the profiles list differently:
+ * a claim is released only if the profile lists it, the standard claims the scopes bring too, so
+ * one the old profile let through and the new one does not (or the other way round, or with other
+ * scopes, surfaces or accepted values) changes for an app even though no edge writes it. A claim
+ * the mapping also changes keeps both: an app that does not release the mapping's namespace still
+ * sees what the profile does to its standard claim.
+ */
+function profileFieldChanges(
+  profiles: ProfileFields,
+  before: string | null,
+  after: string | null
+): ClaimChange[] {
+  if (!before || !after || before === after) return [];
+  const was = profiles.get(before) ?? new Map();
+  const now = profiles.get(after) ?? new Map();
+  const describe = (fields: DestinationProfileConsentField[] | undefined) =>
+    JSON.stringify(
+      // Everything the release judges a field by: when it is in play, and what it accepts.
+      (fields ?? []).map((field) => ({
+        scopes: resolveOidcFieldRequiredScopes(field),
+        surfaces: [...field.surfaces].sort(),
+        required: field.required,
+        nullable: field.nullable,
+        valueType: field.valueType,
+        valueMultiplicity: field.valueMultiplicity,
+        allowedValues: [...field.allowedValues].sort(),
+      }))
+    );
+  const fieldChanges: ClaimChange[] = [];
+  for (const claim of [...new Set([...was.keys(), ...now.keys()])].sort()) {
+    if (claim === 'sub') continue;
+    const base = {
+      claim,
+      namespace: RELEASE_NAMESPACE,
+      profile_id: after,
+      previous_profile_id: before,
+    };
+    if (!was.has(claim)) fieldChanges.push({ kind: 'profile_field_added', ...base });
+    else if (!now.has(claim)) fieldChanges.push({ kind: 'profile_field_removed', ...base });
+    else if (describe(was.get(claim)) !== describe(now.get(claim))) {
+      fieldChanges.push({ kind: 'profile_field_changed', ...base });
+    }
+  }
+  return fieldChanges;
+}
+
 /** Splits the set's changes into what an app with these scopes sees and what they hold back. */
 function changesFor(
   changes: readonly ClaimChange[],
   profiles: ProfileFields,
-  scopes: ReadonlySet<string>
+  scopes: ReadonlySet<string>,
+  /** The namespace the app's claims are released from (the runtime releases only that one). */
+  releaseNamespace: string
 ): Pick<AppLine, 'changes' | 'held_back'> {
   const seen: ClaimChange[] = [];
   const heldBack: AppLine['held_back'] = [];
@@ -146,8 +206,13 @@ function changesFor(
     // A change reaches the app when the claim reached it before, or reaches it after: a rename
     // into a claim its scopes do not release still takes away the claim it had.
     const points = releasePoints(change);
-    const fieldsAt = (point: { claim: string; profileId: string | null } | null) =>
-      point?.profileId ? (profiles.get(point.profileId)?.get(point.claim) ?? []) : [];
+    // A profile's own field is in play whatever the mapping writes (the standard claims pass the
+    // profile too); a claim the mapping writes is released only from the app's namespace.
+    const anyNamespace = change.kind.startsWith('profile_field_');
+    const fieldsAt = (point: ReleasePoint | null) =>
+      point?.profileId && (anyNamespace || point.namespace === releaseNamespace)
+        ? (profiles.get(point.profileId)?.get(point.claim) ?? [])
+        : [];
     const reaches = (fields: DestinationProfileConsentField[]) =>
       fields.some((field) => isOidcFieldApplicableToScopes(field, scopes));
     const before = fieldsAt(points.before);
@@ -177,6 +242,7 @@ async function tenantApps(
 ): Promise<TenantApps> {
   // Which level gives an app that names no set this set, as the runtime selects it.
   let defaultTier: IdentityMappingTier | null = null;
+  let defaultsUnreadable = false;
   try {
     const selection = await selectIdentityMapping({
       env: c.env,
@@ -187,9 +253,10 @@ async function tenantApps(
     });
     if (selection.kind === 'bound' && selection.setId === setId) defaultTier = selection.tier;
   } catch (error) {
-    // A default that is not a choice binds no app to this set; unreadable settings say nothing.
+    // A default that is not a choice binds no app to this set. Unreadable settings say nothing of
+    // the apps that follow the defaults; an app's own choice is still its own.
     if (!(error instanceof IdentityMappingSelectionError)) throw error;
-    if (error.code === 'settings_unreadable') return { ok: false, reason: 'settings_unreadable' };
+    if (error.code === 'settings_unreadable') defaultsUnreadable = true;
   }
 
   let core: DatabaseAdapter;
@@ -230,15 +297,19 @@ async function tenantApps(
       choice.kind === 'set' ? (choice.setId === setId ? 'client' : null) : null;
     const used = tier ?? (choice.kind === 'unset' ? defaultTier : null);
     if (!used) continue;
+    // An app's own choice may name the namespace its claims come from.
+    const releaseNamespace =
+      (choice.kind === 'set' ? choice.selector.destinationNamespace : undefined) ??
+      RELEASE_NAMESPACE;
     apps.push({
       tenant_id: tenantId,
       client_id: row.client_id,
       name: row.client_name ?? row.client_id,
       tier: used,
-      ...changesFor(changes, profiles, registeredScopes(row.scope)),
+      ...changesFor(changes, profiles, registeredScopes(row.scope), releaseNamespace),
     });
   }
-  return { ok: true, apps, truncated: rows.length > APP_ROWS_LIMIT };
+  return { ok: true, apps, truncated: rows.length > APP_ROWS_LIMIT, defaultsUnreadable };
 }
 
 async function listTenantIds(c: AdminContext, limit: number): Promise<string[]> {
@@ -326,16 +397,32 @@ export async function adminIdentityMappingSetChangePreviewHandler(c: AdminContex
       readCatalogTypes(admin, ownerTenantId, current?.catalogVersionId ?? null),
       readCatalogTypes(admin, ownerTenantId, draft.catalogVersionId),
     ]);
-    const changes = diffClaimShapes(
-      current ? claimShapes(current, typesBefore) : new Map(),
-      claimShapes(draft, typesAfter)
-    );
-    const profiles = await readProfileFields(admin, ownerTenantId, changes);
+    const shapesBefore = current ? claimShapes(current, typesBefore) : new Map();
+    const shapesAfter = claimShapes(draft, typesAfter);
+    const claimChanges = diffClaimShapes(shapesBefore, shapesAfter);
+    const profileBefore = contentProfile(shapesBefore);
+    const profileAfter = contentProfile(shapesAfter);
+    const profiles = await readProfileFields(admin, ownerTenantId, [
+      profileBefore,
+      profileAfter,
+      ...claimChanges.flatMap((change) => [change.profile_id, change.previous_profile_id]),
+    ]);
+    const changes = [
+      ...claimChanges,
+      ...profileFieldChanges(profiles, profileBefore, profileAfter),
+    ].sort((a, b) => a.claim.localeCompare(b.claim) || a.kind.localeCompare(b.kind));
 
-    // Counted as the save counts it (other tenants too, for a platform set).
+    // Counted as the save counts it (other tenants too, for a platform set: the count a save
+    // asks to confirm is the whole one, so it is counted even for one tenant's apps), and without
+    // a trace: a preview reports a tenant it cannot route, it does not repair it.
     const summary = summarizeForRequest(
       c,
-      await scanMappingSetReferences(c, { setId, ownerTenantId, purpose: 'change' })
+      await scanMappingSetReferences(c, {
+        setId,
+        ownerTenantId,
+        purpose: 'change',
+        sideEffects: 'none',
+      })
     );
 
     const requestCache: TenantDatabaseRequestCache = new Map();
@@ -359,7 +446,10 @@ export async function adminIdentityMappingSetChangePreviewHandler(c: AdminContex
               tenant_id: tenantId,
               apps_using: result.apps.length,
               apps_changed: result.apps.filter((app) => app.changes.length > 0).length,
-              ...(result.truncated ? { apps_count_is_lower_bound: true } : {}),
+              ...(result.truncated || result.defaultsUnreadable
+                ? { apps_count_is_lower_bound: true }
+                : {}),
+              ...(result.defaultsUnreadable ? { unavailable: 'settings_unreadable' as const } : {}),
             }
           : {
               tenant_id: tenantId,
@@ -402,6 +492,10 @@ export async function adminIdentityMappingSetChangePreviewHandler(c: AdminContex
       ...base,
       apps: result.apps.slice(0, APPS_LIMIT),
       apps_truncated: result.truncated || result.apps.length > APPS_LIMIT,
+      // The apps that follow the defaults are not listed when the defaults cannot be read.
+      ...(result.defaultsUnreadable
+        ? { defaults_unavailable: 'settings_unreadable' as const }
+        : {}),
       sample: null,
       ...sampleUnavailable,
     });
