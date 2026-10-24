@@ -46,7 +46,7 @@ export const ar = {
 	'nav.apps.webhooks': 'خطافات الويب',
 	'nav.auth.methods': 'طرق تسجيل الدخول',
 	'nav.auth.social': 'الاتصالات الاجتماعية',
-	'nav.auth.enterprise': 'الدخول الموحد للمؤسسات',
+	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'مصادقة الدليل',
 	'nav.auth.protection': 'الحماية من الهجمات',
 	'nav.custom.branding': 'السمات المرئية',

@@ -46,7 +46,7 @@ export const de = {
 	'nav.apps.webhooks': 'Webhooks',
 	'nav.auth.methods': 'Anmeldeverfahren',
 	'nav.auth.social': 'Soziale Verbindungen',
-	'nav.auth.enterprise': 'Unternehmens-SSO',
+	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'Verzeichnisauthentifizierung',
 	'nav.auth.protection': 'Angriffsschutz',
 	'nav.custom.branding': 'Designs',

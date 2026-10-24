@@ -27,16 +27,16 @@ export const jaMappingConsole = {
 	'mc.set.withState': '{set}（{state}）',
 	'mc.failed': '決められません（{tier}が使えない値です）',
 	'mc.source': '出所',
-	'mc.effective': '効いているもの',
+	'mc.effective': '有効なもの',
 	'mc.standardOnly': '標準のクレームだけ',
 
 	'mc.chain.title': '段階の内訳',
 	'mc.chain.desc':
-		'上の段から順に見て、最初に何かを言っている段が効きます。次の段に進むのは「未設定」の段だけです。',
+		'上の段から順に見て、最初に何かを言っている段が有効になります。次の段に進むのは「未設定」の段だけです。',
 	'mc.chain.col.level': '段',
 	'mc.chain.col.value': '値',
 	'mc.chain.col.status': '状態',
-	'mc.chain.applies': '効いている',
+	'mc.chain.applies': '有効',
 	'mc.chain.above': '上の段が優先',
 	'mc.chain.stops': 'ここで止まる',
 
@@ -47,7 +47,7 @@ export const jaMappingConsole = {
 	'mc.ro.setCard': '配るセット',
 	'mc.ro.setLabel': 'セット',
 	'mc.ro.setHint':
-		'プラットフォームのセットから選びます。テナントのアプリのうち、自分のセットを指定していないアプリに効きます。',
+		'プラットフォームのセットから選びます。テナントのアプリのうち、自分のセットを指定していないアプリで有効になります。',
 	'mc.ro.choose': '選んでください',
 	'mc.ro.existing': 'テナント既定がすでにあるテナント',
 	'mc.ro.existing.skip': 'そのままにする',
@@ -62,7 +62,7 @@ export const jaMappingConsole = {
 	'mc.ro.selected': '{count} テナントを選択中',
 	'mc.ro.check': '影響を確認',
 	'mc.ro.impact': '影響',
-	'mc.ro.impact.summary': '{tenants} テナント、アプリ {apps} 件に効きます。',
+	'mc.ro.impact.summary': '{tenants} テナント、アプリ {apps} 件で有効になります。',
 	'mc.ro.impact.unchanged':
 		'クライアント指定のアプリ {own} 件と、「使わない」のアプリ {optedOut} 件は変わりません。',
 	'mc.ro.impact.unusable':
@@ -156,7 +156,8 @@ export const jaMappingConsole = {
 	'mc.ex.reason.scope_not_granted': 'アプリに、このクレームのスコープが許可されていません。',
 	'mc.ex.reason.consent_missing': '利用者が、このクレームを送ることに同意していません。',
 	'mc.ex.reason.not_in_set': '使っているセットに、このクレームがありません。',
-	'mc.ex.reason.mapping_not_applied': 'このアプリにはマッピングが効いていません（出所: なし）。',
+	'mc.ex.reason.mapping_not_applied':
+		'このアプリではマッピングが有効になっていません（出所: なし）。',
 	'mc.ex.reason.issuance_stopped': 'マッピングが使えないので、トークンを発行しません。',
 	'mc.ex.fix.value_missing': '直す場所: 利用者の属性',
 	'mc.ex.fix.value_empty': '直す場所: 利用者の属性',
@@ -218,19 +219,19 @@ export const jaMappingConsole = {
 	'mc.app.title': '{app} の ID マッピング',
 	'mc.app.desc':
 		'このアプリの ID トークンと UserInfo に、どのマッピングを使うかです。何も指定しなければ、テナント既定に従います。',
-	'mc.app.current': '現在効いているもの',
+	'mc.app.current': '現在有効なもの',
 	'mc.app.choice': 'このアプリでの指定',
 	'mc.app.follow': 'テナント既定に従う',
 	'mc.app.follow.desc':
-		'このアプリでは指定しません（未設定）。テナント既定、なければプラットフォーム既定が効きます。既定が変わると、このアプリも変わります。',
+		'このアプリでは指定しません（未設定）。テナント既定、なければプラットフォーム既定が有効になります。既定が変わると、このアプリも変わります。',
 	'mc.app.own': 'このアプリだけ指定する',
-	'mc.app.own.desc': '選んだセットが効きます。既定が変わっても、このアプリは変わりません。',
+	'mc.app.own.desc': '選んだセットが有効になります。既定が変わっても、このアプリは変わりません。',
 	'mc.app.none': '使わない',
 	'mc.app.none.desc':
-		'マッピングを効かせず、標準のクレームだけを送ります。既定が変わっても、このアプリは変わりません。',
+		'マッピングを使わず、標準のクレームだけを送ります。既定が変わっても、このアプリは変わりません。',
 	'mc.app.set': 'このアプリのセット',
 	'mc.app.setRequired': 'セットを選んでください。',
-	'mc.app.would': 'この指定で効くもの',
+	'mc.app.would': 'この指定で有効になるもの',
 	'mc.app.save': '変更を保存',
 	'mc.app.saved': '保存しました。',
 

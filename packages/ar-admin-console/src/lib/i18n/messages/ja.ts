@@ -49,7 +49,7 @@ export const ja = {
 	'nav.apps.webhooks': 'Webhook',
 	'nav.auth.methods': 'ログイン方法',
 	'nav.auth.social': 'ソーシャル接続',
-	'nav.auth.enterprise': '企業 SSO (SAML)',
+	'nav.auth.enterprise': 'SAML',
 	'nav.auth.directory': 'ディレクトリ認証',
 	'nav.auth.protection': '攻撃対策',
 	'nav.custom.branding': 'テーマ',
