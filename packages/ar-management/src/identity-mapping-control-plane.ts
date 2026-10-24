@@ -9008,8 +9008,12 @@ function normalizeRegistryOwner(
   };
 }
 
+/** An attribute key and an OIDC claim name, as the control plane accepts them. */
+export const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_:.~-]{0,127}$/;
+export const OIDC_CLAIM_NAME_PATTERN = ATTRIBUTE_KEY_PATTERN;
+
 function validateOidcClaimName(value: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_:.~-]{0,127}$/.test(value)) {
+  if (!OIDC_CLAIM_NAME_PATTERN.test(value)) {
     throw badRequest('claimName must be a valid OIDC claim name');
   }
 }
@@ -9021,7 +9025,7 @@ function validateAttributeProtocol(value: string): void {
 }
 
 function validateAttributeKey(value: string, fieldName: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_:.~-]{0,127}$/.test(value)) {
+  if (!ATTRIBUTE_KEY_PATTERN.test(value)) {
     throw badRequest(`${fieldName} must be a valid attribute key`);
   }
 }

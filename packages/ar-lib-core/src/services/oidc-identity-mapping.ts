@@ -22,7 +22,10 @@ import {
   resolveOidcIdentityMappingBinding,
   type OidcIdentityMappingResolution,
 } from './identity-mapping-resolution';
-import { IdentityMappingSelectionError } from './identity-mapping-selection';
+import {
+  IdentityMappingSelectionError,
+  type IdentityMappingSelection,
+} from './identity-mapping-selection';
 import {
   IdentityMappingResolutionError,
   type IdentityMappingTier,
@@ -102,6 +105,11 @@ export interface ApplyOIDCIdentityMappingInput {
     | ((names: string[]) => Promise<Record<string, unknown> | null>);
   /** For an explanation: filled with what each step decided (see `OIDCReleaseTrace`). */
   trace?: OIDCReleaseTrace;
+  /**
+   * Read the settings that decide the Mapping Set past the cache (a view that must show a value
+   * just saved). An issuance leaves it unset.
+   */
+  fresh?: boolean;
   /** For an explanation for a test user (see `OIDCReleaseFixture`). Never set by an issuance. */
   fixture?: OIDCReleaseFixture;
 }
@@ -111,6 +119,8 @@ export interface ApplyOIDCIdentityMappingInput {
  * for an issuance. It holds names and decisions only: no value of a claim or an attribute.
  */
 export interface OIDCReleaseTrace {
+  /** The selection the release made (the one its claims follow). */
+  selection?: IdentityMappingSelection;
   /** The Mapping Set the selection named and how it was read; null for a selection of none. */
   binding?: {
     fieldMappingSetId: string;
@@ -184,6 +194,7 @@ export async function applyOIDCIdentityMapping(
       tenantId: input.tenantId,
       clientId: input.clientId,
       clientSelector: input.selector,
+      ...(input.fresh ? { fresh: true } : {}),
     });
   } catch (error) {
     if (
@@ -201,6 +212,7 @@ export async function applyOIDCIdentityMapping(
   }
   const { selection, binding } = resolution;
   if (input.trace) {
+    input.trace.selection = selection;
     input.trace.binding = binding
       ? {
           fieldMappingSetId: binding.fieldMappingSetId,

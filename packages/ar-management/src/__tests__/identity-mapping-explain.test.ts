@@ -238,6 +238,7 @@ async function setup() {
       entry('email', 'pii'),
       entry('nickname', 'internal'),
       entry('affiliation', 'internal'),
+      entry('display_name', 'pii'),
     ] as never,
   });
   const catalogVersionId = (catalog as { activeVersion: { id: string } }).activeVersion.id;
@@ -698,6 +699,89 @@ describe('an explanation', () => {
     }
     // No consent record, custom field or identifier is looked up by the test user's ID.
     expect(t.watch.reads).toEqual([]);
+  });
+});
+
+describe('what the explanation follows', () => {
+  it('follows a default just changed, in the selection and in the claims alike', async () => {
+    const t = await setup();
+    const first = await t.createSet(['email', 'affiliation']);
+    const second = await t.createSet(['nickname', 'affiliation']);
+    t.app('app-1');
+    const userId = await t.testUser(PERSON);
+    t.settings.store.set(TENANT_DOC, JSON.stringify({ [KEY]: first }));
+    const before = (await t.explain(ask(userId))).json;
+    expect(before.selection).toMatchObject({ tier: 'tenant_default', setId: first });
+
+    t.settings.store.set(TENANT_DOC, JSON.stringify({ [KEY]: second }));
+    const after = (await t.explain(ask(userId))).json;
+
+    expect(after.selection).toMatchObject({ tier: 'tenant_default', setId: second });
+    expect(t.claimOf(after, 'nickname')).toMatchObject({ origin: 'mapping', released: true });
+    expect(t.claimOf(after, 'email')).toMatchObject({ origin: 'standard' });
+  });
+
+  it('gives a standard claim from the attribute a catalog names by its neutral alias', async () => {
+    const t = await setup();
+    t.app('app-1');
+    const userId = await t.testUser({ display_name: 'Someone' });
+
+    const { json } = await t.explain(ask(userId));
+
+    expect(json.selection).toEqual({ kind: 'none', reason: 'no_default' });
+    expect(t.claimOf(json, 'name')).toMatchObject({
+      origin: 'standard',
+      value: 'present',
+      released: true,
+    });
+
+    // An empty alias is an empty value, as an empty standard attribute is.
+    for (const attributes of [{ display_name: '' }, { name: '' }]) {
+      const empty = await t.testUser(attributes);
+      const answer = (await t.explain(ask(empty))).json;
+      expect(t.claimOf(answer, 'name'), JSON.stringify(attributes)).toMatchObject({
+        value: 'empty',
+        released: false,
+        reason: 'value_empty',
+      });
+    }
+  });
+
+  it('says sub is released whatever scope an older profile entry lists for it', async () => {
+    const t = await setup();
+    const schema = structuredClone(PROFILE_SCHEMA);
+    Object.assign(schema.claims[0], { requiredScopes: ['legacy'] });
+    t.db
+      .prepare('UPDATE destination_profile_versions SET schema_json = ? WHERE profile_id = ?')
+      .run(JSON.stringify(schema), t.profileId);
+    const { userId } = await bound(t);
+
+    const { json } = await t.explain(ask(userId));
+
+    expect(t.claimOf(json, 'sub')).toMatchObject({
+      released: true,
+      scope: null,
+      scope_granted: true,
+    });
+  });
+
+  it('takes attribute keys and claim names the control plane takes', async () => {
+    const t = await setup();
+    t.db
+      .prepare(
+        `INSERT INTO custom_field_catalog_entries (id, tenant_id, custom_key, display_name, value_type, created_at, updated_at)
+         VALUES ('cf-1', ?, 'team~name', 'Team', 'string', 1, 1)`
+      )
+      .run(TENANT);
+    await bound(t);
+    const saved = await t.putTestUsers([
+      { label: 'X', attributes: { 'team~name': 'a', affiliation: 'staff' } },
+    ]);
+    expect(saved.status).toBe(200);
+    const userId = saved.json.test_users[0].user_id as string;
+    const { status, json } = await t.explain(ask(userId, { claims: ['team~name'] }));
+    expect(status).toBe(200);
+    expect(t.claimOf(json, 'team~name')).toMatchObject({ released: false, reason: 'not_in_set' });
   });
 });
 

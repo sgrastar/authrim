@@ -34,6 +34,7 @@ import {
   type Env,
   type IdentityMappingSelection,
   type OIDCReleaseTrace,
+  withStandardUserAttributeNames,
 } from '@authrim/ar-lib-core';
 import {
   describeChain,
@@ -42,6 +43,7 @@ import {
   readImplicitActivationWarnings,
   readSetFactsForTenants,
 } from './identity-mapping-effective';
+import { OIDC_CLAIM_NAME_PATTERN } from './identity-mapping-control-plane';
 import { findTestUser, type TestUser } from './identity-mapping-test-users';
 
 type ExplainContext = Context<{ Bindings: Env }>;
@@ -50,7 +52,8 @@ const PARTITION = 'identity-mapping-explain';
 const CLIENT_ID_MAX_LENGTH = 256;
 const MAX_SCOPES = 50;
 const MAX_ASKED_CLAIMS = 50;
-const NAME_PATTERN = /^[A-Za-z0-9_.:/-]{1,128}$/;
+/** A scope name: printable ASCII but space, quote and backslash (RFC 6749 3.3). */
+const SCOPE_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]{1,128}$/;
 
 /** Why a claim is not released. A fixed list; never a value. */
 export type ClaimDropReason =
@@ -78,9 +81,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readNames(value: unknown, max: number): string[] | null {
+function readNames(value: unknown, max: number, pattern: RegExp): string[] | null {
   if (!Array.isArray(value) || value.length > max) return null;
-  if (!value.every((item) => typeof item === 'string' && NAME_PATTERN.test(item))) return null;
+  if (!value.every((item) => typeof item === 'string' && pattern.test(item))) return null;
   return [...new Set(value as string[])];
 }
 
@@ -115,14 +118,14 @@ function parseRequest(body: unknown): ExplainRequest | string {
   }
   let scopes: string[] | null = null;
   if (body.scopes !== undefined) {
-    scopes = readNames(body.scopes, MAX_SCOPES);
+    scopes = readNames(body.scopes, MAX_SCOPES, SCOPE_PATTERN);
     if (!scopes) return `scopes must be at most ${MAX_SCOPES} scope names`;
   }
   const consent = body.consent ?? 'all';
   if (consent !== 'all' && consent !== 'none') return 'consent must be all or none';
   let askedClaims: string[] = [];
   if (body.claims !== undefined) {
-    const names = readNames(body.claims, MAX_ASKED_CLAIMS);
+    const names = readNames(body.claims, MAX_ASKED_CLAIMS, OIDC_CLAIM_NAME_PATTERN);
     if (!names) return `claims must be at most ${MAX_ASKED_CLAIMS} claim names`;
     askedClaims = names;
   }
@@ -198,6 +201,8 @@ function explainClaims(input: {
 }): ClaimLine[] {
   const { trace } = input;
   const granted = new Set(input.scopes);
+  // Under the standard names too, as the claims were built from them.
+  const attributes = withStandardUserAttributeNames(input.testUser.attributes);
   const mapping = new Map((trace.mapping ?? []).map((entry) => [entry.claim, entry]));
   // A profile may list a claim more than once; the release judges each entry. The entry that
   // decides is one in play on this call, else one this surface lists (the scopes held it), else
@@ -261,9 +266,7 @@ function explainClaims(input: {
     else if (claim === 'sub') value = 'present';
     else {
       value = sources.some(
-        (source) =>
-          Object.hasOwn(input.testUser.attributes, source) &&
-          isEmptyValue(input.testUser.attributes[source])
+        (source) => Object.hasOwn(attributes, source) && isEmptyValue(attributes[source])
       )
         ? 'empty'
         : 'missing';
@@ -374,9 +377,13 @@ export async function adminIdentityMappingExplainHandler(c: ExplainContext) {
     // The claims the endpoint starts from: the token endpoint's ID token carries the protocol
     // claims (no claims parameter here), UserInfo the scope claims.
     const sub = testUser.userId;
+    // The test user's attributes are named as the field catalog names them; the standard claims
+    // are built from them as the endpoints build them from an account's.
     const userData = {
       ...buildStandardUserClaims(
-        testUser.attributes as Parameters<typeof buildStandardUserClaims>[0]
+        withStandardUserAttributeNames(testUser.attributes) as Parameters<
+          typeof buildStandardUserClaims
+        >[0]
       ),
       sub,
     };
@@ -413,6 +420,8 @@ export async function adminIdentityMappingExplainHandler(c: ExplainContext) {
         sourceAttributes: { ...testUser.attributes, ...userData },
         trace,
         fixture: { consent: request.consent },
+        // The settings as just saved, as the selection shown is read.
+        fresh: true,
       });
       released = mapped.claims;
     } catch (error) {
@@ -428,9 +437,12 @@ export async function adminIdentityMappingExplainHandler(c: ExplainContext) {
       subject: { kind: 'test_user', user_id: testUser.userId },
       scopes,
       consent: request.consent,
-      selection: selectionFailure
-        ? describeSelectionFailure(selectionFailure)
-        : describeSelection(selection as IdentityMappingSelection, facts),
+      // The selection the release made, which the claims follow; the levels are the view's.
+      selection: trace.selection
+        ? describeSelection(trace.selection, facts)
+        : selectionFailure
+          ? describeSelectionFailure(selectionFailure)
+          : describeSelection(selection as IdentityMappingSelection, facts),
       chain: describeChain(chain, facts),
       ...warnings,
       outcome,

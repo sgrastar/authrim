@@ -394,7 +394,8 @@ export async function filterOidcClaimsByDestinationConsent(input: {
         return {
           claim: field.key,
           required: field.required,
-          requiredScopes: resolveOidcFieldRequiredScopes(field),
+          // `sub` is released whatever its entry says (see `exclusion`).
+          requiredScopes: field.key === 'sub' ? [] : resolveOidcFieldRequiredScopes(field),
           ...(excluded ? { excludedBy: excluded } : {}),
           consent: field.required
             ? ('not_required' as const)

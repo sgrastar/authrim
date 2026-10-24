@@ -25,6 +25,7 @@ import {
   type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
+import { ATTRIBUTE_KEY_PATTERN } from './identity-mapping-control-plane';
 
 type TestUsersContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
@@ -42,7 +43,7 @@ export const TEST_USER_LIMITS = {
 } as const;
 
 const TEST_USER_ID_PATTERN = /^tu_[A-Za-z0-9_-]{1,61}$/;
-const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+
 /** Never an attribute: the subject of an explanation is the test user's ID. */
 const RESERVED_ATTRIBUTE_KEYS = new Set(['sub']);
 
