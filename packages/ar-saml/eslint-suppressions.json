@@ -116,9 +116,6 @@
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 14
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
     "no-control-regex": {
       "count": 1
     }
@@ -186,11 +183,6 @@
     },
     "no-control-regex": {
       "count": 2
-    }
-  },
-  "src/common/signature.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "src/common/slo-messages.test.ts": {
@@ -373,11 +365,6 @@
   "src/idp/assertion.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 23
-    }
-  },
-  "src/idp/attributes.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "src/idp/authn-context.ts": {

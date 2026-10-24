@@ -66,11 +66,6 @@
       "count": 2
     }
   },
-  "src/durable-objects/AuthorizationCodeStore.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/durable-objects/CIBARequestStore.ts": {
     "@typescript-eslint/no-empty-object-type": {
       "count": 1
@@ -1668,9 +1663,6 @@
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     }
@@ -1925,9 +1917,6 @@
     }
   },
   "src/services/diagnostic/diagnostic-logger.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     }
@@ -1996,16 +1985,6 @@
     }
   },
   "src/services/lookup-directory/__tests__/publication.test.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "src/services/permission-change-notifier.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "src/services/policy-resolver.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
@@ -3101,9 +3080,6 @@
   "src/types/did.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "src/types/login-ui-languages.ts": {
@@ -3701,9 +3677,6 @@
   "src/utils/consent-statements.ts": {
     "@typescript-eslint/no-redundant-type-constituents": {
       "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "src/utils/custom-redirect.ts": {
@@ -3741,17 +3714,11 @@
   "src/utils/kv.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
     }
   },
   "src/utils/rar-validation.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
