@@ -251,8 +251,8 @@ export function toWebhookPayload<T extends Record<string, unknown>>(
     const idField = options?.idField ?? 'targetId';
     if (typeof event.data[typeField] === 'string' && typeof event.data[idField] === 'string') {
       target = {
-        type: event.data[typeField] as string,
-        id: event.data[idField] as string,
+        type: event.data[typeField],
+        id: event.data[idField],
       };
     }
   }

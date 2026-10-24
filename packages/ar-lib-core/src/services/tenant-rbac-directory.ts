@@ -147,7 +147,7 @@ async function newestFirstPage<T extends NewestFirst>(
   read: (adapter: DatabaseAdapter, limit: number, offset: number) => Promise<T[]>
 ): Promise<AccountStoreRow<T>[]> {
   if (dbs.length === 1) {
-    return (await read(dbs[0]!, page.limit, page.offset)).map((row) => ({ store: 0, row }));
+    return (await read(dbs[0], page.limit, page.offset)).map((row) => ({ store: 0, row }));
   }
   const window = page.offset + page.limit;
   if (window * dbs.length > MAX_MERGED_ROWS) throw new MergedPageTooDeepError();

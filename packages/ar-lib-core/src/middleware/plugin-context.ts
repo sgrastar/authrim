@@ -860,7 +860,7 @@ export interface PluginLoaderConfig {
   /**
    * The plugin to load
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   plugin: {
     id: string;
     version: string;

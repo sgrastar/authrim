@@ -201,7 +201,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     );
 
     if (!approveResponse.ok) {
-      const error = (await approveResponse.json()) as { error_description?: string };
+      const error = await approveResponse.json<{ error_description?: string }>();
       return c.redirect(`/device?error=${error.error_description || 'Approval failed'}`);
     }
 

@@ -313,7 +313,7 @@ export async function getCompositeRBACCache(
         }
         // Version mismatch → treat as cache miss (will be refreshed)
       }
-    } catch (error) {
+    } catch {
       // PII Protection: Don't log full error object
       log.warn('Composite RBAC cache read error');
     }
@@ -354,7 +354,7 @@ export async function getCompositeRBACCache(
       try {
         const ttl = env ? await getRBACCacheTTL(env) : DEFAULT_RBAC_CACHE_TTL;
         await cache.put(cacheKey, JSON.stringify(compositeCache), { expirationTtl: ttl });
-      } catch (err) {
+      } catch {
         // PII Protection: Don't log full error object
         log.warn('Composite RBAC cache write error');
       }
@@ -727,7 +727,7 @@ export async function getIDTokenRBACClaims(
       if (cached) {
         return JSON.parse(cached) as Partial<RBACTokenClaims>;
       }
-    } catch (error) {
+    } catch {
       // PII Protection: Don't log full error object
       log.warn('RBAC cache read error (ID token)');
     }
@@ -748,7 +748,7 @@ export async function getIDTokenRBACClaims(
       try {
         const ttl = options.env ? await getRBACCacheTTL(options.env) : DEFAULT_RBAC_CACHE_TTL;
         await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
-      } catch (err) {
+      } catch {
         // PII Protection: Don't log full error object
         log.warn('RBAC cache write error (ID token)');
       }
@@ -799,7 +799,7 @@ export async function getAccessTokenRBACClaims(
       if (cached) {
         return JSON.parse(cached) as Partial<RBACTokenClaims>;
       }
-    } catch (error) {
+    } catch {
       // PII Protection: Don't log full error object
       log.warn('RBAC cache read error (access token)');
     }
@@ -815,7 +815,7 @@ export async function getAccessTokenRBACClaims(
       try {
         const ttl = options.env ? await getRBACCacheTTL(options.env) : DEFAULT_RBAC_CACHE_TTL;
         await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
-      } catch (err) {
+      } catch {
         // PII Protection: Don't log full error object
         log.warn('RBAC cache write error (access token)');
       }

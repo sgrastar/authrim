@@ -43,7 +43,6 @@ function requireTenantId(tenantId: string, context: string): string {
   }
   return normalized;
 }
-import type { Env } from '../types/env';
 import {
   resolveEffectiveSettingsWithSources,
   resolvePlatformSettingsWithSources,
@@ -52,9 +51,7 @@ import {
 import type {
   ResourcePermission,
   ResourcePermissionRow,
-  PermissionEmbeddingResult,
   TokenEmbeddingLimits,
-  DEFAULT_TOKEN_EMBEDDING_LIMITS,
 } from '../types/token-claim-rules';
 
 // =============================================================================

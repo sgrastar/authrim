@@ -176,7 +176,7 @@ export function createAdminConfigurationResourceTemplates(
       const match =
         /^authrim:\/\/tenants\/([A-Za-z0-9._~-]{1,128})\/configuration-summary\/v1$/u.exec(uri);
       if (!match) return null;
-      return { ...context.resource, tenantId: match[1]!, domain: 'configuration', quantity: 1 };
+      return { ...context.resource, tenantId: match[1], domain: 'configuration', quantity: 1 };
     },
     async read(context, uri) {
       const resource = this.match(context, uri);
@@ -203,7 +203,7 @@ export function createAdminConfigurationResourceTemplates(
         ...context.resource,
         tenantId: context.grant.tenantId,
         domain: 'configuration',
-        resourceId: match[1]!,
+        resourceId: match[1],
         quantity: 1,
       };
     },

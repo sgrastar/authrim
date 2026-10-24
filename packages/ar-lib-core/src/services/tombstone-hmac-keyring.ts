@@ -53,7 +53,7 @@ export function parseGenerationalHmacKeyring(
     !keys ||
     typeof keys !== 'object' ||
     Array.isArray(keys) ||
-    Object.keys(parsed as object).some((key) => key !== 'current' && key !== 'keys')
+    Object.keys(parsed).some((key) => key !== 'current' && key !== 'keys')
   ) {
     throw new Error(invalidCode);
   }

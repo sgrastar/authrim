@@ -711,7 +711,7 @@ function parseJsonPath(path: string): Array<string | number> | null {
   }
   const segments: Array<string | number> = [];
   for (const part of path.trim().split('.')) {
-    const keyMatch = part.match(/^[^\[]+/u);
+    const keyMatch = part.match(/^[^[]+/u);
     if (keyMatch?.[0]) {
       segments.push(keyMatch[0]);
     }

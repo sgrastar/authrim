@@ -238,7 +238,7 @@ export async function verifyAggregateMetadata(
   const signedInfo = getSingleDirectDsigChild(signatureNode, 'SignedInfo');
   const references = getDirectDsigChildren(signedInfo, 'Reference');
   const referenceUris = references
-    .map((reference) => getAttribute(reference as Element, 'URI'))
+    .map((reference) => getAttribute(reference, 'URI'))
     .filter((uri): uri is string => Boolean(uri));
 
   if (
@@ -443,12 +443,12 @@ function getLocalizedText(parent: Element, localName: string): string | null {
     elements.find((element) => element.getAttribute('xml:lang') === 'en') ||
     elements.find((element) => element.getAttribute('xml:lang') === 'ja') ||
     elements[0];
-  return preferred ? getTextContent(preferred as Element) : null;
+  return preferred ? getTextContent(preferred) : null;
 }
 
 function getKeywords(parent: Element): string[] | undefined {
   const keywords = Array.from(parent.getElementsByTagNameNS('*', 'Keywords'))
-    .flatMap((element) => (getTextContent(element as Element) ?? '').split(/\s+/))
+    .flatMap((element) => (getTextContent(element) ?? '').split(/\s+/))
     .map((keyword) => keyword.trim())
     .filter(Boolean);
   const uniqueKeywords = Array.from(new Set(keywords));
@@ -458,7 +458,7 @@ function getKeywords(parent: Element): string[] | undefined {
 export function getLogoUrl(parent: Element): string | undefined {
   const logos = Array.from(parent.getElementsByTagNameNS('*', 'Logo'))
     .map((element) => {
-      const logo = element as Element;
+      const logo = element;
       return {
         url: getTextContent(logo)?.trim() ?? '',
         lang: logo.getAttribute('xml:lang') ?? '',
@@ -530,12 +530,12 @@ async function prepareAggregateSignature(
     throw new Error('Aggregate signature algorithm must be RSA-SHA256');
   }
 
-  const digestMethod = getSingleDirectDsigChild(references[0]!, 'DigestMethod');
+  const digestMethod = getSingleDirectDsigChild(references[0], 'DigestMethod');
   if (digestMethod.getAttribute('Algorithm') !== DIGEST_ALGORITHMS.SHA256) {
     throw new Error('Aggregate digest algorithm must be SHA-256');
   }
 
-  const transformsElement = getSingleDirectDsigChild(references[0]!, 'Transforms');
+  const transformsElement = getSingleDirectDsigChild(references[0], 'Transforms');
   const transforms = getDirectDsigChildren(transformsElement, 'Transform').map((transform) =>
     transform.getAttribute('Algorithm')
   );
@@ -554,7 +554,7 @@ async function prepareAggregateSignature(
   }
 
   const digestValue = getRequiredElementText(
-    getSingleDirectDsigChild(references[0]!, 'DigestValue'),
+    getSingleDirectDsigChild(references[0], 'DigestValue'),
     'DigestValue'
   );
   const signatureValue = decodeBase64(
@@ -734,7 +734,7 @@ function getSingleDirectDsigChild(parent: Element, localName: string): Element {
   if (children.length !== 1) {
     throw new Error(`Aggregate signature must contain exactly one direct ${localName}`);
   }
-  return children[0]!;
+  return children[0];
 }
 
 function getDirectDsigChildren(parent: Element, localName: string): Element[] {

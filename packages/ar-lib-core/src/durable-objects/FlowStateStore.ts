@@ -197,7 +197,7 @@ export class FlowStateStore {
    * POST /init - RuntimeState initialization
    */
   private async handleInit(request: Request): Promise<Response> {
-    const params = (await request.json()) as CreateRuntimeStateParams;
+    const params = await request.json<CreateRuntimeStateParams>();
     const validationError = this.validateInitRequest(request, params);
     if (validationError) {
       return validationError;
@@ -250,7 +250,7 @@ export class FlowStateStore {
    * idempotency: Detect duplicates with sessionId + requestId
    */
   private async handleSubmit(request: Request): Promise<Response> {
-    const body = (await request.json()) as {
+    const body = await request.json<{
       requestId: string;
       capabilityId: string;
       response: unknown;
@@ -258,7 +258,7 @@ export class FlowStateStore {
       result: FlowSubmitResult;
       nextNodeId: string;
       requestTimestamps?: number[];
-    };
+    }>();
 
     // State check
     if (!this.runtimeState) {
@@ -399,9 +399,9 @@ export class FlowStateStore {
    * This lets the Worker side avoid regenerating the UIContract.
    */
   private async handleCheckRequest(request: Request): Promise<Response> {
-    const body = (await request.json()) as {
+    const body = await request.json<{
       requestId: string;
-    };
+    }>();
 
     // State check
     if (!this.runtimeState) {

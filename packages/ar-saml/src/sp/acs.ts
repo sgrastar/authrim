@@ -1201,7 +1201,7 @@ async function consumeInResponseTo(
     if (!response.ok) {
       return null;
     }
-    return (await response.json()) as SAMLRequestData;
+    return await response.json<SAMLRequestData>();
   } catch {
     return null;
   }

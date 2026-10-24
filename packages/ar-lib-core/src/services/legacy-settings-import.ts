@@ -18,7 +18,7 @@ import {
   type LegacySettingsEnv,
 } from './legacy-settings';
 import { ALL_CATEGORY_META, type CategoryName } from '../types/settings/catalog';
-import { createSettingsManager, type CategoryMeta } from '../utils/settings-manager';
+import { createSettingsManager } from '../utils/settings-manager';
 import { LEGACY_UNSET } from '../utils/system-settings-fields';
 import {
   buildTenantSystemSettingsKey,
@@ -74,7 +74,7 @@ async function envAndDefaults(
     kv: null,
     cacheTTL: 0,
   });
-  manager.registerCategory(ALL_CATEGORY_META[category] as CategoryMeta);
+  manager.registerCategory(ALL_CATEGORY_META[category]);
   return (await manager.getAll(category, { type: 'platform' })).values;
 }
 

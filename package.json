@@ -72,6 +72,7 @@
     "control-plane:test": "pnpm --filter @authrim/ar-lib-core build && vitest run --config scripts/control-plane/vitest.config.ts",
     "control-plane:typecheck": "tsc --noEmit -p scripts/control-plane/tsconfig.json",
     "lint": "turbo run lint && pnpm lint:scale-out-phase1 && pnpm lint:repo-scripts && pnpm backup:lint && pnpm primary-key:lint",
+    "lint:prune-suppressions": "turbo run lint:prune-suppressions",
     "lint:repo-scripts": "eslint scripts/check-cloudflare-workers-types-resolution.mjs",
     "lint:scale-out-phase1": "eslint test/scale-out-correctness-phase1/*.ts",
     "typecheck": "pnpm workers-types:resolution:check && turbo run typecheck && pnpm conformance:typecheck && pnpm control-plane:typecheck && pnpm release:migrations:typecheck && pnpm test:security-matrices:typecheck && pnpm scale-out:phase1:typecheck && pnpm migrate:manifest:check && pnpm backup:typecheck && pnpm primary-key:typecheck",
