@@ -826,12 +826,12 @@ describe('createAuditLog', () => {
       expect.objectContaining({
         action: 'signing_keys.rotate.emergency',
         resource: 'signing_keys',
-        resourceId: 'key-compromised',
       })
     );
     // Verify userId is NOT in the output (PII protection)
     const loggedObject = mockLogger.warn.mock.calls[0][1];
     expect(loggedObject.userId).toBeUndefined();
+    expect(loggedObject.resourceId).toBeUndefined();
     expect(loggedObject.metadata).toBeUndefined();
   });
 
@@ -1196,7 +1196,8 @@ describe('createAuditLogFromContext', () => {
     // Should log error and not call DB
     expect(mockLogger.error).toHaveBeenCalledWith(
       'Cannot create audit log: adminAuth context not found',
-      { action: 'login.success', resource: 'resource', resourceId: 'id-1' }
+      // No resourceId: for a user resource it is the user's ID.
+      { action: 'login.success', resource: 'resource' }
     );
     expect(mockEnv.DB.prepare).not.toHaveBeenCalled();
   });

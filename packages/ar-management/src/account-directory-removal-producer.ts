@@ -2,6 +2,8 @@ import {
   createLookupBlindIndexes,
   CanonicalIdentityRepository,
   captureAccountDeletionSnapshot,
+  deleteAnonymizationMappingStatement,
+  forgetCachedAnonymizedUserId,
   insertPreparedAccountDirectoryRemovals,
   markAccountDirectoryRemovalReady,
   validateAccountDirectoryPublication,
@@ -316,11 +318,16 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
         WHERE tenant_id = ? AND subject_id = ?`,
       params: [input.tenantId, input.userId],
     },
+    // The user's audit pseudonym: without it the unified event log's records of the user no
+    // longer lead to the user. Deletion and anonymization write the tombstone before this, so a
+    // late audit write does not create the mapping again.
+    deleteAnonymizationMappingStatement(input.tenantId, input.userId),
   ];
   const results = await pii.batch(statements);
   if (results.length !== statements.length || results.some((result) => !result.success)) {
     throw new Error('account_pii_erasure_batch_failed');
   }
+  forgetCachedAnonymizedUserId(input.tenantId, input.userId);
 }
 
 export async function attemptImmediateAccountDirectoryRemovals(
