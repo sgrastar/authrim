@@ -1040,6 +1040,10 @@ import {
 } from './identity-mapping-preview-effective';
 import { adminIdentityMappingSetChangePreviewHandler } from './identity-mapping-set-change-preview';
 import {
+  adminIdentityMappingHistoryHandler,
+  adminIdentityMappingHistoryRestoreHandler,
+} from './identity-mapping-history';
+import {
   adminIdentityMappingTestUsersListHandler,
   adminIdentityMappingTestUsersReplaceHandler,
 } from './identity-mapping-test-users';
@@ -3198,6 +3202,36 @@ app.get(
   '/api/admin/identity-mapping/sets/compare',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingCompareSetsHandler
+);
+app.use(
+  '/api/admin/identity-mapping/history',
+  async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/admin/identity-mapping/history'],
+    })(c, next);
+  }
+);
+app.get(
+  '/api/admin/identity-mapping/history',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingHistoryHandler
+);
+app.use(
+  '/api/admin/identity-mapping/history/:id/restore',
+  async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/admin/identity-mapping/history/:id/restore'],
+    })(c, next);
+  }
+);
+// The handler checks the permission for the entry's exact level, including preview requests.
+app.post(
+  '/api/admin/identity-mapping/history/:id/restore',
+  adminIdentityMappingHistoryRestoreHandler
 );
 app.use('/api/admin/identity-mapping/explain', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');

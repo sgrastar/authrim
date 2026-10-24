@@ -4,6 +4,7 @@
  * it, so that nothing a PATCH checks can be skipped by the other path.
  */
 import type { Context } from 'hono';
+import type { IdentityMappingLevelHistoryVia } from '@authrim/ar-lib-core/services/identity-mapping-level-history';
 import {
   ALL_CATEGORY_META,
   ConflictError,
@@ -113,6 +114,12 @@ export interface ApplyTenantSettingsChangeInput {
   dryRun?: boolean;
   /** Keep the values of the change out of the audit records and the log (the bulk apply). */
   auditOmitValues?: boolean;
+  /** Provenance only; the actor and the atomic write stay in the normal settings writer. */
+  identityMappingHistory?: {
+    via: IdentityMappingLevelHistoryVia;
+    bulkId?: string;
+    expectedLatestHistoryId?: string;
+  };
   /**
    * Told what a refusal by a validation is about (see `ValidationKind`), for a caller that must not
    * repeat the text of a refusal that names what the tenant has saved. A refusal this does not
@@ -185,6 +192,7 @@ export async function applyTenantSettingsChange(
     const manager = getSettingsManager(c.env, c, true, false, input.auditMetadata, {
       readOnly: dryRun,
       omitAuditValues: input.auditOmitValues,
+      identityMappingHistory: input.identityMappingHistory,
     });
     const scope: SettingScope = { type: 'tenant', id: tenantId };
 

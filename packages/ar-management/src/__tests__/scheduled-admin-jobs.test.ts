@@ -14,6 +14,7 @@ const {
   mockProcessPendingTenantDiscoveryReindexJobs,
   mockProcessLoggingStorageMaintenanceJobs,
   mockProcessPendingGenericAdminJobs,
+  mockProcessPendingIdentityMappingHistory,
 } = vi.hoisted(() => ({
   mockProcessPendingTenantDeletionJobs: vi.fn(),
   mockProcessPendingUserImportJobs: vi.fn(),
@@ -28,6 +29,11 @@ const {
   mockProcessPendingTenantDiscoveryReindexJobs: vi.fn(),
   mockProcessLoggingStorageMaintenanceJobs: vi.fn(),
   mockProcessPendingGenericAdminJobs: vi.fn(),
+  mockProcessPendingIdentityMappingHistory: vi.fn(),
+}));
+
+vi.mock('../identity-mapping-history-maintenance', () => ({
+  processPendingIdentityMappingHistory: mockProcessPendingIdentityMappingHistory,
 }));
 
 vi.mock('../tenant-deletion-jobs', () => ({
@@ -91,6 +97,14 @@ describe('scheduled admin job queues', () => {
     warn: vi.fn(),
     error: vi.fn(),
   };
+
+  it('regularly reconciles history in both schedules and isolates an unavailable history store', async () => {
+    mockProcessPendingIdentityMappingHistory.mockRejectedValueOnce(new Error('unavailable'));
+    await processInteractiveAdminJobQueues(env as never, log);
+    expect(mockProcessPendingGenericAdminJobs).toHaveBeenCalled();
+    await processScheduledAdminJobQueues(env as never, log);
+    expect(mockProcessPendingIdentityMappingHistory).toHaveBeenCalledTimes(2);
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();

@@ -1689,8 +1689,28 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '409':
+          description: A concurrent update prevented saving the Mapping Set choice (conflict).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityMappingLevelRestoreConflict'
         '503':
-          $ref: '#/components/responses/Error'
+          description: >-
+            Storage is unavailable or the change history could not be confirmed. operation_id,
+            when present, identifies a choice update whose completion needs confirmation; read
+            current state before retrying rather than assume the client stayed unchanged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+                  operation_id:
+                    type: string
       description: >-
         Replace Client in the Clients area. The request body is JSON unless the detailed schema for
         this operation states otherwise. 404 also answers a client that does not exist.
@@ -1707,6 +1727,9 @@ paths:
         tenant (another tenant's set, and a platform-owned set, answer the same), 400 when it exists
         but cannot be used (not active, no active compiled snapshot, no single active OIDC
         Destination Profile), 503 when the Admin database cannot be read to check it.
+        A change to identity_mapping records the level's before and after choices in history.
+        A concurrent client edit returns 409; a history preparation or confirmation failure
+        returns 503. Other fields keep the ordinary client update validation.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -11591,6 +11614,161 @@ paths:
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/history:
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminIdentityMappingHistory
+      summary: List changes to the tenant's default and apps' Mapping Set choices.
+      description: >-
+        Lists committed changes to level choices, newest first, for the calling tenant only.
+        Includes settings PATCH, bulk apply, client update and restore operations. Set content
+        changes are not level history. Each entry describes the saved values before and after
+        the change; unset is distinct from an explicit opt-out. Whether the entry can now be
+        restored is evaluated against the current level and the current set, rather than saved
+        in the history row. An entry restores its before value. Requires settings read access;
+        client history (including an unfiltered list) also requires clients read access. A caller
+        with only settings read access can request tier=tenant_default.
+        Pages may end before limit after 20 distinct target choices; follow next_cursor.
+        Rate limited with the moderate profile.
+      parameters:
+        - name: tier
+          in: query
+          schema:
+            type: string
+            enum: [tenant_default, client]
+        - name: client_id
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Restrict app-level history to this client of the calling tenant.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            maxLength: 2048
+          description: The opaque next_cursor returned by the previous page.
+      responses:
+        '200':
+          description: One page of committed level changes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityMappingLevelHistoryResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/history/{id}/restore:
+    post:
+      tags:
+        - Field Mapping
+      operationId: postApiAdminIdentityMappingHistoryRestore
+      summary: Preview or restore the before value of one recorded level change.
+      description: >-
+        Restores only the tenant default or the named client's identity_mapping choice, through
+        the same validation and write path as a normal save. It does not restore set contents.
+        Both preview and execution require the permission for the entry's level: tenant settings
+        edit authority for a tenant default, or clients update access for an app. Agents cannot
+        use this operation. An entry of another tenant is not found. Previewing a tenant default
+        also needs clients read access because it lists affected apps.
+        Preview writes nothing and returns the current choice, the target choice, later changes
+        to the same level, affected apps and the version to submit. Later changes produce a
+        warning and do not prevent a confirmed restore. Execution rechecks the version and set
+        availability (a change away and back still invalidates the preview); conflicts require a
+        new preview. The restore itself creates a new history
+        entry with via restore. Only the exact body {"preview":true} remains available while
+        release mutations are paused or rollout status is unavailable. The apps preview is bounded
+        to 200 rows, 20 distinct selections and 20 resolved content versions across both sides,
+        and later changes to
+        100 rows and 20 distinct target choices; truncation flags identify incomplete lists.
+        Rate limited with the strict profile.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9_-]{8,128}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityMappingLevelRestoreRequest'
+      responses:
+        '200':
+          description: A read-only preview, or confirmation that the choice was restored.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/IdentityMappingLevelRestorePreview'
+                  - type: object
+                    additionalProperties: false
+                    required: [success, restored_from]
+                    properties:
+                      success:
+                        type: boolean
+                        const: true
+                      restored_from:
+                        type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          description: The version or restoration target has changed; obtain a fresh preview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityMappingLevelRestoreConflict'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          description: >-
+            Storage or rollout state is unavailable. A temporarily_unavailable response may
+            include operation_id when the client update has committed but its history still
+            needs confirmation. A retry must first read current state rather than assume the
+            choice was unchanged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  error_description:
+                    type: string
+                  operation_id:
+                    type: string
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -57827,6 +58005,205 @@ components:
           type: string
           enum:
             - draft_not_compiled
+    IdentityMappingLevelChoice:
+      description: A value saved at one level, without inherited defaults.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [state]
+          properties:
+            state:
+              type: string
+              enum: [unset, none, invalid]
+        - type: object
+          additionalProperties: false
+          required: [state, setId]
+          properties:
+            state:
+              type: string
+              const: set
+            setId:
+              type: string
+            selector:
+              $ref: '#/components/schemas/OIDCIdentityMappingSelector'
+    IdentityMappingLevelHistoryEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tier
+        - client_id
+        - before
+        - after
+        - actor_id
+        - actor_type
+        - via
+        - bulk_id
+        - created_at
+        - source_version
+        - restorable
+      properties:
+        id:
+          type: string
+        tier:
+          type: string
+          enum: [tenant_default, client]
+        client_id:
+          type: [string, 'null']
+        before:
+          $ref: '#/components/schemas/IdentityMappingLevelChoice'
+        after:
+          $ref: '#/components/schemas/IdentityMappingLevelChoice'
+        actor_id:
+          type: string
+        actor_type:
+          type: string
+        via:
+          type: string
+          enum: [settings, client, bulk_apply, restore]
+        bulk_id:
+          type: [string, 'null']
+        created_at:
+          type: integer
+          description: Unix time in milliseconds.
+        source_version:
+          type: string
+          description: The version of the level after this change.
+        restorable:
+          type: boolean
+        not_restorable_reason:
+          type: string
+          enum: [set_deleted, set_inactive, is_current, client_deleted, invalid_history]
+    IdentityMappingLevelHistoryResponse:
+      type: object
+      additionalProperties: false
+      required: [entries, next_cursor]
+      properties:
+        entries:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/IdentityMappingLevelHistoryEntry'
+        next_cursor:
+          type: [string, 'null']
+    IdentityMappingLevelRestoreRequest:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [preview]
+          properties:
+            preview:
+              type: boolean
+              const: true
+        - type: object
+          additionalProperties: false
+          required: [expected_version]
+          properties:
+            expected_version:
+              type: string
+              minLength: 1
+              maxLength: 128
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 500
+    IdentityMappingLevelRestorePreview:
+      type: object
+      additionalProperties: false
+      required:
+        - entry
+        - current
+        - restores
+        - later_changes
+        - later_changes_truncated
+        - apps
+        - apps_truncated
+        - expected_version
+      properties:
+        entry:
+          $ref: '#/components/schemas/IdentityMappingLevelHistoryEntry'
+        current:
+          $ref: '#/components/schemas/IdentityMappingLevelChoice'
+        restores:
+          $ref: '#/components/schemas/IdentityMappingLevelChoice'
+        later_changes:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/IdentityMappingLevelHistoryEntry'
+        later_changes_truncated:
+          type: boolean
+        apps:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            additionalProperties: false
+            required: [tenant_id, client_id, name, tier, changes, held_back, before, after]
+            properties:
+              tenant_id:
+                type: string
+              client_id:
+                type: string
+              name:
+                type: string
+              tier:
+                type: string
+                enum: [client, tenant_default, platform_default, none]
+              changes:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IdentityMappingClaimChange'
+              held_back:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [claim, scope]
+                  properties:
+                    claim:
+                      type: string
+                    scope:
+                      type: [string, 'null']
+              before:
+                $ref: '#/components/schemas/IdentityMappingEffectiveResponse'
+              after:
+                $ref: '#/components/schemas/IdentityMappingEffectiveResponse'
+              before_unavailable:
+                type: string
+                enum: [set_missing, set_inactive, destination_profile_invalid]
+                description: >-
+                  The current choice cannot issue mapped claims. The preview uses an empty
+                  mapping as the before side of the claim comparison so a usable earlier choice
+                  can still be restored. Database failures are not treated as an empty mapping,
+                  and the restored choice must still resolve successfully.
+        apps_truncated:
+          type: boolean
+        expected_version:
+          type: string
+        warning:
+          type: string
+          const: later_changes_will_be_overwritten
+    IdentityMappingLevelRestoreConflict:
+      type: object
+      required: [error, reason]
+      properties:
+        error:
+          type: string
+          const: conflict
+        reason:
+          type: string
+          enum:
+            [
+              version_conflict,
+              set_deleted,
+              set_inactive,
+              is_current,
+              client_deleted,
+              invalid_history,
+            ]
+        error_description:
+          type: string
     IdentityMappingPreviewEffectiveRequest:
       type: object
       additionalProperties: false

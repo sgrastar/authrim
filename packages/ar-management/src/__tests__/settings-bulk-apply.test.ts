@@ -1002,6 +1002,33 @@ describe('an apply', () => {
     expect(await t.own('tenant-b', 'oauth', 'oauth.access_token_expiry')).toBe(900);
     expect(await t.own('tenant-b', 'oauth', 'oauth.refresh_token_rotation')).toBe(false);
     expect(await t.own('tenant-b', 'identity-mapping', MAPPING_KEY)).toBe('set-plat');
+    const history = t.db
+      .prepare(
+        'SELECT tenant_id,tier,before_json,after_json,via,bulk_id,status FROM identity_mapping_level_history ORDER BY tenant_id'
+      )
+      .all();
+    expect(history).toEqual(
+      ['tenant-a', 'tenant-b'].map((tenant_id) => ({
+        tenant_id,
+        tier: 'tenant_default',
+        before_json: 'null',
+        after_json: '"set-plat"',
+        via: 'bulk_apply',
+        bulk_id: response.json.bulk_id as unknown,
+        status: 'committed',
+      }))
+    );
+    const audits = vi
+      .mocked(createAuditLogFromContext)
+      .mock.calls.filter(
+        ([, action, , , details]) =>
+          action === 'settings.settings.updated' && details.category === 'identity-mapping'
+      );
+    expect(audits).toHaveLength(2);
+    for (const [, , , , details] of audits) {
+      expect(details).not.toHaveProperty('diff');
+      expect(details.changed_keys).toEqual([MAPPING_KEY]);
+    }
   });
 
   it('refuses a value the setting does not take, for that key only', async () => {

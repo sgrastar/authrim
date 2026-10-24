@@ -3,8 +3,9 @@
  * documents), for tests of code that saves settings.
  */
 import { readFileSync } from 'node:fs';
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync, type StatementSync } from 'node:sqlite';
+import { DatabaseSync, type SQLiteDatabase } from '../test-sqlite';
+
+type StatementSync = ReturnType<SQLiteDatabase['prepare']>;
 
 type SqlValue = string | number | null | Uint8Array;
 
@@ -13,6 +14,7 @@ const MIGRATIONS = [
   '038_tenant_settings_reconciled_at.sql',
   '039_platform_settings_documents.sql',
   '040_settings_legacy_import_state.sql',
+  '050_identity_mapping_level_history.sql',
 ];
 
 class BoundStatement {
@@ -26,13 +28,19 @@ class BoundStatement {
   async all<T>() {
     return { success: true, results: this.statement.all(...this.values) as T[], meta: {} };
   }
-  async run<T>() {
+  runSync<T>() {
     const result = this.statement.run(...this.values);
     return {
       success: true,
       results: [] as T[],
-      meta: { changes: Number(result.changes), last_row_id: Number(result.lastInsertRowid) },
+      meta: {
+        changes: Number(result.changes),
+        last_row_id: Number('lastInsertRowid' in result ? result.lastInsertRowid : 0),
+      },
     };
+  }
+  async run<T>() {
+    return this.runSync<T>();
   }
 }
 
@@ -52,7 +60,18 @@ export function createSettingsCanonicalD1(): D1Database {
   return {
     ...session,
     withSession: () => session,
-    batch: async (statements: BoundStatement[]) => Promise.all(statements.map((s) => s.run())),
+    batch: async (statements: BoundStatement[]) => {
+      database.exec('BEGIN');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(statement.runSync());
+        database.exec('COMMIT');
+        return results;
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    },
     dump: async () => new ArrayBuffer(0),
     exec: async (sql: string) => {
       database.exec(sql);

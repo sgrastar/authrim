@@ -59,7 +59,7 @@ describe('Phase 8 restored work holds', () => {
   });
 
   it('keeps a finite reviewed rule registry and rejects malformed discriminator fields', () => {
-    expect(Object.keys(PHASE8_RESTORE_HOLD_RULES)).toHaveLength(42);
+    expect(Object.keys(PHASE8_RESTORE_HOLD_RULES)).toHaveLength(43);
     expect(
       phase8RestoreHoldReason(
         'core.account_lifecycle_event_outbox',
@@ -69,5 +69,52 @@ describe('Phase 8 restored work holds', () => {
     expect(() =>
       phase8RestoreHoldReason('core.plugin_hook_outbox', JSON.stringify({ id: text('row-a') }))
     ).toThrow('backup_phase8_restore_hold_invalid');
+  });
+
+  it('never restores internal source receipts or uncommitted mapping intents as live work', () => {
+    for (const status of ['pending', 'aborted'])
+      expect(
+        phase8RestoreHoldReason(
+          'admin.identity_mapping_level_history',
+          JSON.stringify({
+            status: text(status),
+          })
+        )
+      ).toBe('source_pending_mapping_history');
+    expect(
+      phase8RestoreHoldReason(
+        'admin.identity_mapping_level_history',
+        JSON.stringify({
+          status: text('committed'),
+        })
+      )
+    ).toBeNull();
+    expect(
+      phase8RestoreHoldReason(
+        'core.idempotency_keys',
+        JSON.stringify({
+          id: text('__authrim_internal_identity_mapping_history_v1__:history-a'),
+          method: text('PUT'),
+        })
+      )
+    ).toBe('source_mapping_history_receipt');
+    expect(
+      phase8RestoreHoldReason(
+        'core.idempotency_keys',
+        JSON.stringify({
+          id: text('http-id'),
+          method: text('INTERNAL_IDENTITY_MAPPING_HISTORY'),
+        })
+      )
+    ).toBe('source_mapping_history_receipt');
+    expect(
+      phase8RestoreHoldReason(
+        'core.idempotency_keys',
+        JSON.stringify({
+          id: text('http-id'),
+          method: text('PUT'),
+        })
+      )
+    ).toBeNull();
   });
 });

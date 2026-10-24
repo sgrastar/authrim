@@ -35,6 +35,8 @@ function createHarness(permissions: string[], roles: string[] = []) {
   registerDeclaredAdminRouteAccessMiddleware(app);
 
   app.get('/api/admin/users', (c) => c.json({ ok: true }));
+  app.get('/api/admin/identity-mapping/history', (c) => c.json({ ok: true }));
+  app.post('/api/admin/identity-mapping/history/history-1/restore', (c) => c.json({ ok: true }));
   app.get('/api/admin/investigations/subjects/subject-1/status', (c) => c.json({ ok: true }));
   app.get('/api/admin/email-deliveries', (c) => c.json({ ok: true }));
   app.get('/api/admin/users/user-1/email-deliveries', (c) => c.json({ ok: true }));
@@ -114,6 +116,18 @@ function createHarness(permissions: string[], roles: string[] = []) {
 }
 
 describe('declared admin route access', () => {
+  it('declares history reads and lets the restore handler select the exact write permission', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.SETTINGS_READ]);
+    const settingsWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
+    const clientWriter = createHarness([ADMIN_PERMISSIONS.CLIENTS_UPDATE]);
+    const path = '/api/admin/identity-mapping/history/history-1/restore';
+    expect((await reader.request('/api/admin/identity-mapping/history')).status).toBe(200);
+    expect((await reader.request(path, { method: 'POST' })).status).toBe(403);
+    expect((await settingsWriter.request(path, { method: 'POST' })).status).toBe(200);
+    expect((await clientWriter.request(path, { method: 'POST' })).status).toBe(200);
+    expect((await clientWriter.request('/api/admin/identity-mapping/history')).status).toBe(403);
+  });
+
   it('requires backup read access for inspection and backup management access for mutations', async () => {
     const reader = createHarness([ADMIN_PERMISSIONS.BACKUPS_READ]);
     const manager = createHarness([ADMIN_PERMISSIONS.BACKUPS_MANAGE]);

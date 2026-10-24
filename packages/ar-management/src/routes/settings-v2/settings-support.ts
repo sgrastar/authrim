@@ -20,6 +20,7 @@ import {
   type SettingsPatchRequest,
 } from '@authrim/ar-lib-core';
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
+import type { IdentityMappingLevelHistoryVia } from '@authrim/ar-lib-core/services/identity-mapping-level-history';
 import { BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS } from '../../human-verification-provider-projection';
 import { markGlobalProviderDesiredRevision } from '../../provider-reprojection-jobs';
 
@@ -82,8 +83,17 @@ export function getSettingsManager(
      * done to each (`bulk_operations` of `auditMetadata` says set or clear), not before and after.
      */
     omitAuditValues?: boolean;
+    identityMappingHistory?: {
+      via: IdentityMappingLevelHistoryVia;
+      bulkId?: string;
+      expectedLatestHistoryId?: string;
+    };
   } = {}
 ): SettingsManager {
+  const actor = auditContext?.get('adminAuth');
+  const bulkId =
+    options.identityMappingHistory?.bulkId ??
+    (typeof auditMetadata?.bulk_id === 'string' ? auditMetadata.bulk_id : undefined);
   const manager = createSettingsManager({
     env: env as unknown as Record<string, string | undefined>,
     kv: env.SETTINGS ?? null,
@@ -97,6 +107,17 @@ export function getSettingsManager(
       : null,
     cacheTTL: 5000, // 5 seconds (as per plan)
     readOnly: options.readOnly === true,
+    ...(canonicalSettings && actor?.userId
+      ? {
+          identityMappingHistory: {
+            actorId: actor.userId,
+            actorType: actor.actorType ?? 'human',
+            via: options.identityMappingHistory?.via ?? (bulkId ? 'bulk_apply' : 'settings'),
+            ...(bulkId ? { bulkId } : {}),
+            expectedLatestHistoryId: options.identityMappingHistory?.expectedLatestHistoryId,
+          },
+        }
+      : {}),
     auditCallback: async (event) => {
       const changedKeys = Object.keys(event.diff);
       const operations = (auditMetadata?.bulk_operations ?? {}) as Record<string, unknown>;

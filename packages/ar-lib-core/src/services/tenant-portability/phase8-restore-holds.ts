@@ -1,5 +1,9 @@
 import type { CaptureSchema } from './sqlite-snapshot';
 import type { PortableSqliteRow } from './sqlite-dataset-inspector';
+import {
+  IDENTITY_MAPPING_CLIENT_HISTORY_RECEIPT_PREFIX,
+  IDENTITY_MAPPING_CLIENT_HISTORY_RECEIPT_METHOD,
+} from '../identity-mapping-client-history-receipt';
 
 type HoldRule =
   | { reason: string; all: true }
@@ -12,6 +16,11 @@ type HoldRule =
  * with parent/child execution state are held as a unit so no child can become runnable by itself.
  */
 export const PHASE8_RESTORE_HOLD_RULES: Readonly<Record<string, HoldRule>> = {
+  'admin.identity_mapping_level_history': {
+    reason: 'source_pending_mapping_history',
+    column: 'status',
+    holdValues: ['pending', 'aborted'],
+  },
   'core.account_creation_operations': {
     reason: 'source_account_workflow',
     column: 'status',
@@ -147,6 +156,18 @@ function parsed(rowJson: string): PortableSqliteRow {
 
 /** Return a stable reason only when this row must stay outside the live target table. */
 export function phase8RestoreHoldReason(datasetId: string, rowJson: string): string | null {
+  if (datasetId === 'core.idempotency_keys') {
+    const row = parsed(rowJson);
+    const id = row.id;
+    const method = row.method;
+    if (id?.[0] !== 'text' || !id[1] || method?.[0] !== 'text' || !method[1])
+      throw new Error('backup_phase8_restore_hold_invalid');
+    if (
+      id[1].startsWith(IDENTITY_MAPPING_CLIENT_HISTORY_RECEIPT_PREFIX) ||
+      method[1] === IDENTITY_MAPPING_CLIENT_HISTORY_RECEIPT_METHOD
+    )
+      return 'source_mapping_history_receipt';
+  }
   const rule = PHASE8_RESTORE_HOLD_RULES[datasetId];
   if (!rule) return null;
   if ('all' in rule) return rule.reason;

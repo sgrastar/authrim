@@ -68,6 +68,44 @@ describe('Phase 8 row transform', () => {
     );
   });
 
+  it('exports only committed mapping history and excludes internal receipts even with users selected', async () => {
+    const boundary = 100 * 86_400_000;
+    for (const status of ['pending', 'aborted', 'committed']) {
+      await expect(
+        filter(
+          context(
+            'admin.identity_mapping_level_history',
+            JSON.stringify({
+              id: ['text', 'history-a'],
+              status: ['text', status],
+              created_at: ['integer', String(boundary)],
+            }),
+            boundary
+          )
+        )
+      ).resolves.toBe(status === 'committed');
+    }
+    const row = (id: string, method: string) =>
+      JSON.stringify({
+        id: ['text', id],
+        method: ['text', method],
+      });
+    await expect(
+      filter(
+        context(
+          'core.idempotency_keys',
+          row('__authrim_internal_identity_mapping_history_v1__:history-a', 'PUT')
+        )
+      )
+    ).resolves.toBe(false);
+    await expect(
+      filter(context('core.idempotency_keys', row('other', 'INTERNAL_IDENTITY_MAPPING_HISTORY')))
+    ).resolves.toBe(false);
+    await expect(filter(context('core.idempotency_keys', row('http-id', 'PUT')))).resolves.toBe(
+      true
+    );
+  });
+
   it('filters mixed log dependency catalogs by category, sensitive permission, and window', async () => {
     const boundary = 100 * 86_400_000;
     const row = (logType: string, plane: string, createdAt: number) =>
@@ -217,7 +255,7 @@ describe('Phase 8 row transform', () => {
     expect(new Set(PHASE8_TRANSFORMED_SQLITE_DATASETS).size).toBe(
       PHASE8_TRANSFORMED_SQLITE_DATASETS.length
     );
-    expect(PHASE8_FILTERED_LOG_DATASETS).toHaveLength(43);
+    expect(PHASE8_FILTERED_LOG_DATASETS).toHaveLength(44);
     for (const dataset of PHASE8_SENSITIVE_SQLITE_DATASETS)
       if (dataset !== 'pii.identity_identifier_replacement_challenges')
         expect(PHASE8_TRANSFORMED_SQLITE_DATASETS).toContain(dataset);

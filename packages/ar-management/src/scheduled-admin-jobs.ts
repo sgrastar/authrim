@@ -1,4 +1,5 @@
 import type { Env } from '@authrim/ar-lib-core';
+import { processPendingIdentityMappingHistory } from './identity-mapping-history-maintenance';
 import { processPendingGenericAdminJobs } from './admin-job-executor';
 import { processPendingDataExportRequests } from './data-export';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
@@ -34,6 +35,11 @@ export async function processInteractiveAdminJobQueues(
   env: Env,
   log: ScheduledJobLogger
 ): Promise<void> {
+  try {
+    await processPendingIdentityMappingHistory(env, log);
+  } catch (jobsError) {
+    log.error('Identity mapping history reconciliation failed', {}, jobsError as Error);
+  }
   try {
     await processPendingTenantDeletionJobs(env, log);
   } catch (jobsError) {
@@ -88,6 +94,11 @@ export async function processScheduledAdminJobQueues(
   log: ScheduledJobLogger,
   options: { skipLoggingStorageMaintenance?: boolean } = {}
 ): Promise<void> {
+  try {
+    await processPendingIdentityMappingHistory(env, log);
+  } catch (jobsError) {
+    log.error('Identity mapping history reconciliation failed', {}, jobsError as Error);
+  }
   try {
     await processPendingTenantDeletionJobs(env, log);
   } catch (jobsError) {

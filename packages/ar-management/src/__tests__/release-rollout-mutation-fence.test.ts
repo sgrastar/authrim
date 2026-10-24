@@ -28,6 +28,68 @@ function app(control?: Env['CONTROL'], adminAuth?: AdminAuthContext) {
 
 describe('release rollout mutation fence', () => {
   it.each(['read_only', 'unavailable', 'missing'] as const)(
+    'allows only the exact history restore preview body when rollout status is %s',
+    async (state) => {
+      const getReleaseMigrationRolloutStatus = vi.fn(async () => {
+        if (state === 'unavailable') throw new Error('unavailable');
+        return {
+          operationId: 'release-1',
+          targetVersion: '1.1.0',
+          phase: 'database_rollout',
+          adminMutationMode: 'read_only',
+        };
+      });
+      const control = state === 'missing' ? undefined : { getReleaseMigrationRolloutStatus };
+      const { router, env } = app(control as Env['CONTROL']);
+      const reached = vi.fn();
+      router.all('/api/admin/*', async (c) => {
+        reached();
+        return c.json({ body: await c.req.json() });
+      });
+      const path = '/api/admin/identity-mapping/history/history-1/restore';
+      const request = (body: unknown) => ({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const preview = await router.request(path, request({ preview: true }), env);
+      expect(preview.status).toBe(200);
+      await expect(preview.json()).resolves.toEqual({ body: { preview: true } });
+      expect(getReleaseMigrationRolloutStatus).not.toHaveBeenCalled();
+
+      for (const body of [
+        { expected_version: 'version-1' },
+        { preview: false },
+        { preview: true, expected_version: 'version-1' },
+        { preview: true, reason: 'restore' },
+        { preview: 'true' },
+        null,
+        [],
+      ]) {
+        expect((await router.request(path, request(body), env)).status).toBe(
+          state === 'read_only' ? 409 : 503
+        );
+      }
+      for (const invalidPath of [
+        `${path}/extra`,
+        `${path}/`,
+        path.replace('/history/', '/sets/'),
+      ]) {
+        expect((await router.request(invalidPath, request({ preview: true }), env)).status).toBe(
+          state === 'read_only' ? 409 : 503
+        );
+      }
+      expect((await router.request(path, { method: 'POST', body: '{' }, env)).status).toBe(
+        state === 'read_only' ? 409 : 503
+      );
+      expect(
+        (await router.request(path, { ...request({ preview: true }), method: 'PUT' }, env)).status
+      ).toBe(state === 'read_only' ? 409 : 503);
+      expect(reached).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['read_only', 'unavailable', 'missing'] as const)(
     'exempts only the exact choice inspection POST when rollout status is %s',
     async (state) => {
       const getReleaseMigrationRolloutStatus = vi.fn(async () => {

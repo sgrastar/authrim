@@ -1,5 +1,8 @@
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type SQLiteDatabase } from './test-sqlite';
+
+const sqlitePrototype = DatabaseSync.prototype as {
+  prepare: (this: SQLiteDatabase, sql: string) => ReturnType<SQLiteDatabase['prepare']>;
+};
 import { gunzipSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,7 +51,7 @@ function d1Sized<T>(rows: T[]): T[] {
   return rows;
 }
 
-function adapter(db: DatabaseSync): DatabaseAdapter {
+function adapter(db: SQLiteDatabase): DatabaseAdapter {
   const run = (sql: string, params: unknown[] = []) => {
     const result = db.prepare(sql).run(...(params as SqlValue[]));
     return { rowsAffected: Number(result.changes), success: true };
@@ -99,7 +102,7 @@ function bucket() {
   };
 }
 
-function coreDb(): DatabaseSync {
+function coreDb(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE tenants (id TEXT NOT NULL PRIMARY KEY, tenant_key TEXT);
@@ -129,7 +132,7 @@ function coreDb(): DatabaseSync {
   return db;
 }
 
-function adminDb(): DatabaseSync {
+function adminDb(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE log_object_catalog (id TEXT PRIMARY KEY, tenant_key TEXT NOT NULL,
@@ -144,6 +147,9 @@ function adminDb(): DatabaseSync {
       lease_token TEXT NOT NULL, lease_until INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE admin_audit_log (id TEXT NOT NULL PRIMARY KEY, tenant_id TEXT NOT NULL,
       action TEXT NOT NULL, admin_email TEXT, created_at INTEGER NOT NULL);
+    CREATE TABLE identity_mapping_level_history (id TEXT NOT NULL PRIMARY KEY,
+      tenant_id TEXT NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL,before_json TEXT,
+      tier TEXT NOT NULL DEFAULT 'tenant_default',receipt_acknowledged_at INTEGER);
   `);
   for (const table of [
     'federation_selected_entity_import_events',
@@ -160,8 +166,8 @@ function adminDb(): DatabaseSync {
 }
 
 describe('log row archive', () => {
-  let core: DatabaseSync;
-  let admin: DatabaseSync;
+  let core: SQLiteDatabase;
+  let admin: SQLiteDatabase;
   let archive: ReturnType<typeof bucket>;
   let clock: number;
   let kv: Map<string, string>;
@@ -187,7 +193,7 @@ describe('log row archive', () => {
       [{ tenantId: 'tenant-a', adapters: [] }],
       budgetMs
     );
-  const ids = (db: DatabaseSync, table: string) =>
+  const ids = (db: SQLiteDatabase, table: string) =>
     (db.prepare(`SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map(
       ({ id }) => id
     );
@@ -237,6 +243,44 @@ describe('log row archive', () => {
   it('archives only tables whose event time is an integer in milliseconds or seconds', () => {
     for (const table of LOG_ROW_ARCHIVE_TABLES)
       expect(['ms', 's']).toContain(PHASE8_LOG_TIMESTAMP_COLUMNS[table.datasetId]?.unit);
+  });
+
+  it('archives and deletes only committed mapping history, preserving pending intents', async () => {
+    const insert = admin.prepare(`INSERT INTO identity_mapping_level_history
+      (id,tenant_id,status,created_at,before_json) VALUES (?,?,?,?,?)`);
+    for (const status of ['pending', 'aborted', 'committed'])
+      insert.run(`history-${status}`, 'tenant-a', status, NOW - 8 * DAY, '{"setId":"set-a"}');
+    insert.run('history-other', 'tenant-b', 'committed', NOW - 8 * DAY, '{}');
+    insert.run('history-unacknowledged', 'tenant-a', 'committed', NOW - 8 * DAY, '{}');
+    admin
+      .prepare("UPDATE identity_mapping_level_history SET tier='client' WHERE id=?")
+      .run('history-unacknowledged');
+
+    const result = await run();
+    expect(result).toMatchObject({ moved: 1, batches: 1, complete: true });
+    expect(ids(admin, 'identity_mapping_level_history')).toEqual([
+      'history-aborted',
+      'history-other',
+      'history-pending',
+      'history-unacknowledged',
+    ]);
+    const [chunk] = catalog();
+    expect(chunk).toMatchObject({
+      source_table: 'admin.identity_mapping_level_history',
+      log_type: 'admin_audit',
+    });
+    const archived = await records(chunk);
+    expect(archived).toHaveLength(1);
+    expect(archived[0]).toMatchObject({ row: { status: ['text', 'committed'] } });
+    admin
+      .prepare('UPDATE identity_mapping_level_history SET receipt_acknowledged_at=? WHERE id=?')
+      .run(NOW, 'history-unacknowledged');
+    expect(await run()).toMatchObject({ moved: 1, batches: 1, complete: true });
+    expect(ids(admin, 'identity_mapping_level_history')).toEqual([
+      'history-aborted',
+      'history-other',
+      'history-pending',
+    ]);
   });
 
   it('moves whole rows older than the D1 retention to one chunk per table, in each unit', async () => {
@@ -366,9 +410,9 @@ describe('log row archive', () => {
       .prepare('INSERT INTO audit_log VALUES (?, ?, ?, ?, ?, ?)')
       .run('a1', 'tenant-a', null, 'x', null, Math.floor((NOW - 9 * DAY) / 1000));
     // The first run stops right after the chunk is committed.
-    const original = DatabaseSync.prototype.prepare;
-    const failing = vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (
-      this: DatabaseSync,
+    const original = sqlitePrototype.prepare;
+    const failing = vi.spyOn(sqlitePrototype, 'prepare').mockImplementation(function (
+      this: SQLiteDatabase,
       sql: string
     ) {
       if (sql.startsWith('DELETE FROM "audit_log"')) throw new Error('lost');
@@ -588,9 +632,9 @@ describe('log row archive', () => {
       .prepare('INSERT INTO admin_audit_log VALUES (?, ?, ?, ?, ?)')
       .run('m1', 'tenant-a', 'x', null, NOW - 9 * DAY);
     // Each scan takes 2 s here: a run scans 3 tables, then moves what they found.
-    const original = DatabaseSync.prototype.prepare;
-    const slow = vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (
-      this: DatabaseSync,
+    const original = sqlitePrototype.prepare;
+    const slow = vi.spyOn(sqlitePrototype, 'prepare').mockImplementation(function (
+      this: SQLiteDatabase,
       sql: string
     ) {
       if (sql.includes('SELECT DISTINCT tenant_id')) clock += 2_000;
@@ -737,9 +781,9 @@ describe('log row archive', () => {
         insert.run(`${tenantId}-${String(index).padStart(4, '0')}`, tenantId, 'x', at, null);
     core.exec('COMMIT');
     // Scans take 2 s and chunks 2 s: a run scans 3 tables and moves 2 or 3 batches.
-    const original = DatabaseSync.prototype.prepare;
-    const slow = vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (
-      this: DatabaseSync,
+    const original = sqlitePrototype.prepare;
+    const slow = vi.spyOn(sqlitePrototype, 'prepare').mockImplementation(function (
+      this: SQLiteDatabase,
       sql: string
     ) {
       if (sql.includes('SELECT DISTINCT tenant_id')) clock += 2_000;
@@ -794,9 +838,9 @@ describe('log row archive', () => {
     core
       .prepare('INSERT INTO event_log VALUES (?, ?, ?, ?, ?)')
       .run('e1', 'tenant-a', 'x', NOW - 100 * DAY, NOW - DAY);
-    const original = DatabaseSync.prototype.prepare;
-    const failing = vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (
-      this: DatabaseSync,
+    const original = sqlitePrototype.prepare;
+    const failing = vi.spyOn(sqlitePrototype, 'prepare').mockImplementation(function (
+      this: SQLiteDatabase,
       sql: string
     ) {
       if (sql.startsWith('DELETE FROM "event_log"')) throw new Error('lost');
@@ -839,10 +883,10 @@ describe('log row archive', () => {
       .prepare('INSERT INTO event_log VALUES (?, ?, ?, ?, ?)')
       .run('e1', 'tenant-a', 'x', NOW - 100 * DAY, NOW - DAY);
     // A rewrap commits a new object for the chunk between its selection and its retirement.
-    const original = DatabaseSync.prototype.prepare;
+    const original = sqlitePrototype.prepare;
     let moved = false;
-    const racing = vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (
-      this: DatabaseSync,
+    const racing = vi.spyOn(sqlitePrototype, 'prepare').mockImplementation(function (
+      this: SQLiteDatabase,
       sql: string
     ) {
       if (!moved && sql.includes('INSERT INTO tenant_backup_r2_retired_generations')) {

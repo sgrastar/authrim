@@ -1,4 +1,8 @@
 import type { Env } from '@authrim/ar-lib-core';
+import {
+  IDENTITY_MAPPING_CLIENT_HISTORY_RECEIPT_PREFIX,
+  IDENTITY_MAPPING_CLIENT_HISTORY_RECEIPT_METHOD,
+} from '@authrim/ar-lib-core/services/identity-mapping-client-history-receipt';
 import { TENANT_DATASET_POLICIES } from '@authrim/ar-lib-core/services/tenant-portability/dataset-registry';
 import {
   phase8LogDependencyRowInSelection,
@@ -90,6 +94,18 @@ export function createPhase8TenantBackupRowFilter(input?: {
   return async (rowInput) => {
     const kind = kinds.get(rowInput.datasetId);
     if (!kind) throw new Error('backup_phase8_row_transform_dataset');
+    if (rowInput.datasetId === 'admin.identity_mapping_level_history') {
+      const row = parsePhase8PortableSqliteRow(rowInput.rowJson);
+      if (row.status?.[0] !== 'text' || row.status[1] !== 'committed') return false;
+    }
+    if (rowInput.datasetId === 'core.idempotency_keys') {
+      const row = parsePhase8PortableSqliteRow(rowInput.rowJson);
+      if (
+        referenceText(row, 'id').startsWith(IDENTITY_MAPPING_CLIENT_HISTORY_RECEIPT_PREFIX) ||
+        referenceText(row, 'method') === IDENTITY_MAPPING_CLIENT_HISTORY_RECEIPT_METHOD
+      )
+        return false;
+    }
     if (['audit', 'history', 'sensitive_logs'].includes(kind)) {
       if (!Number.isSafeInteger(rowInput.boundaryUnixMs) || (rowInput.boundaryUnixMs ?? -1) < 0)
         throw new Error('backup_phase8_log_boundary');

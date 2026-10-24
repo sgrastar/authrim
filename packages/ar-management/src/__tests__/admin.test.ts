@@ -8,9 +8,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { openAdminDatabase, sqliteAdapter } from './helpers/admin-authority-fixture';
+import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
+import {
+  ACK_TTL_SECONDS,
+  UNACKNOWLEDGED_EXPIRES_AT,
+  readIdentityMappingClientHistoryReceipt,
+} from '@authrim/ar-lib-core/services/identity-mapping-client-history-receipt';
+import type { IdentityMappingLevelHistoryRow } from '@authrim/ar-lib-core/services/identity-mapping-level-history';
 
 const {
   mockPostgresAdapterFactory,
@@ -792,11 +799,11 @@ function createMockContext(options: {
   query?: Record<string, string>;
   params?: Record<string, string>;
   body?: Record<string, unknown>;
-  db?: D1Database;
+  db?: D1Database | DatabaseAdapter;
   dbPII?: D1Database;
   headers?: Record<string, string>;
   jsonError?: Error;
-  envOverrides?: Partial<Env>;
+  envOverrides?: Omit<Partial<Env>, 'DB_ADMIN'> & { DB_ADMIN?: D1Database | DatabaseAdapter };
   tenantId?: string;
   runtimeUserStoreSources?: unknown;
   tenantMetadataContext?: unknown;
@@ -909,6 +916,88 @@ function createMockContext(options: {
   };
 
   return c;
+}
+
+// Mapping updates cross two real databases: an Admin intent and an atomic Core CAS + receipt.
+const mappingUpdateDatabases: Array<ReturnType<typeof openCoreDatabase>> = [];
+function createMappingUpdateFixture(clientId: string, suppliedAdmin?: DatabaseAdapter) {
+  const core = openCoreDatabase();
+  mappingUpdateDatabases.push(core);
+  insertTenant(core, 'default');
+  insertOAuthClient(core, { tenantId: 'default', clientId });
+  const coreAdapter = sqliteAdapter(core);
+  let admin = suppliedAdmin;
+  if (!admin) {
+    const adminDatabase = openAdminDatabase();
+    mappingUpdateDatabases.push(adminDatabase);
+    admin = sqliteAdapter(adminDatabase);
+  }
+  const batch = vi.spyOn(coreAdapter, 'batch');
+  return { core, coreAdapter, admin, clientId, batch };
+}
+
+async function expectCommittedMappingUpdate(
+  fixture: ReturnType<typeof createMappingUpdateFixture>,
+  selector: Record<string, unknown>
+) {
+  const json = JSON.stringify(selector);
+  const stored = fixture.core
+    .prepare(
+      'SELECT identity_mapping,updated_at FROM oauth_clients WHERE tenant_id=? AND client_id=?'
+    )
+    .get('default', fixture.clientId) as { identity_mapping: string; updated_at: number };
+  expect(stored.identity_mapping).toBe(json);
+  expect(stored.updated_at).toBeGreaterThan(1);
+  expect(
+    fixture.batch.mock.calls.flatMap(([statements]) =>
+      statements.flatMap((statement) => statement.params ?? [])
+    )
+  ).toContainEqual(json);
+  const rows = await fixture.admin.query<IdentityMappingLevelHistoryRow>(
+    'SELECT * FROM identity_mapping_level_history WHERE tenant_id=? AND client_id=?',
+    ['default', fixture.clientId]
+  );
+  expect(rows).toHaveLength(1);
+  const history = rows[0];
+  expect(history).toMatchObject({
+    tenant_id: 'default',
+    tier: 'client',
+    client_id: fixture.clientId,
+    before_json: 'null',
+    after_json: json,
+    status: 'committed',
+    via: 'client',
+    actor_id: 'admin-user',
+    actor_type: 'human',
+    source_version: String(stored.updated_at),
+  });
+  expect(history.receipt_acknowledged_at).toEqual(expect.any(Number));
+  const receipt = await readIdentityMappingClientHistoryReceipt(
+    fixture.coreAdapter,
+    'default',
+    history.id
+  );
+  expect(receipt).toMatchObject({
+    historyId: history.id,
+    tenantId: 'default',
+    clientId: fixture.clientId,
+    beforeJson: 'null',
+    afterJson: json,
+    expectedUpdatedAt: 1,
+    sourceVersion: String(stored.updated_at),
+    actorId: 'admin-user',
+    actorType: 'human',
+    via: 'client',
+    createdAt: history.created_at,
+  });
+  const expiry = fixture.core
+    .prepare('SELECT expires_at FROM idempotency_keys WHERE tenant_id=? AND idempotency_key=?')
+    .get('default', history.id) as { expires_at: number };
+  expect(expiry.expires_at).toBeLessThan(UNACKNOWLEDGED_EXPIRES_AT);
+  expect(expiry.expires_at).toBeGreaterThanOrEqual(
+    Math.floor(history.created_at / 1000) + ACK_TTL_SECONDS
+  );
+  expect(expiry.expires_at).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + ACK_TTL_SECONDS);
 }
 
 /**
@@ -1150,6 +1239,7 @@ describe('Admin API Handlers', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    for (const database of mappingUpdateDatabases.splice(0)) database.close();
   });
 
   describe('adminTestEmailCodeHandler tenant D1 routing', () => {
@@ -5541,15 +5631,13 @@ describe('Admin API Handlers', () => {
       });
 
       it('is saved on update', async () => {
-        const mockDB = createMockDB({
-          firstResult: createOAuthClientRow('mapped-client'),
-          runResult: { success: true, meta: { changes: 1 } },
-        });
+        const fixture = createMappingUpdateFixture('mapped-client');
         const c = createMockContext({
           method: 'PUT',
           params: { id: 'mapped-client' },
           body: { identity_mapping: { mode: 'none' } },
-          db: mockDB,
+          db: fixture.coreAdapter,
+          envOverrides: { DB_ADMIN: fixture.admin },
         });
         validateMappingSetReference.mockClear();
 
@@ -5557,9 +5645,7 @@ describe('Admin API Handlers', () => {
 
         expect(response.status).toBe(200);
         expect(validateMappingSetReference).not.toHaveBeenCalled();
-        expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
-          JSON.stringify({ mode: 'none' })
-        );
+        await expectCommittedMappingUpdate(fixture, { mode: 'none' });
       });
 
       it.each([
@@ -5746,17 +5832,28 @@ describe('Admin API Handlers', () => {
           firstResult: createOAuthClientRow('mapped-client'),
           runResult: { success: true, meta: { changes: 1 } },
         });
+        const fixture =
+          status === 200 ? createMappingUpdateFixture('mapped-client', DB_ADMIN) : null;
         const c = createMockContext({
           method: 'PUT',
           params: { id: 'mapped-client' },
           body: { identity_mapping: { fieldMappingSetId: setId } },
-          db: mockDB,
+          db: fixture?.coreAdapter ?? mockDB,
           envOverrides: { DB_ADMIN } as never,
         });
         const response = await adminClientUpdateHandler(c);
         expect(response.status).toBe(status);
         if (status === 404) {
           expect(mockDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
+        } else if (fixture) {
+          expect(validateMappingSetReference).toHaveBeenCalledWith(
+            expect.objectContaining({
+              contextTenantId: 'default',
+              scope: 'client',
+              setId,
+            })
+          );
+          await expectCommittedMappingUpdate(fixture, { fieldMappingSetId: setId });
         }
       });
     });
@@ -6792,10 +6889,7 @@ describe('Admin API Handlers', () => {
 
     it('validates and persists the selected OIDC Mapping Set on update', async () => {
       const clientId = 'mapped-client';
-      const mockDB = createMockDB({
-        firstResult: createOAuthClientRow(clientId),
-        runResult: { success: true, meta: { changes: 1 } },
-      });
+      const fixture = createMappingUpdateFixture(clientId);
       const c = createMockContext({
         method: 'PUT',
         params: { id: clientId },
@@ -6805,7 +6899,8 @@ describe('Admin API Handlers', () => {
             fieldMappingVersionId: 'mapping_version_2',
           },
         },
-        db: mockDB,
+        db: fixture.coreAdapter,
+        envOverrides: { DB_ADMIN: fixture.admin },
       });
 
       const response = await adminClientUpdateHandler(c);
@@ -6819,12 +6914,10 @@ describe('Admin API Handlers', () => {
           versionId: 'mapping_version_2',
         })
       );
-      expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
-        JSON.stringify({
-          fieldMappingSetId: 'mapping_set_2',
-          fieldMappingVersionId: 'mapping_version_2',
-        })
-      );
+      await expectCommittedMappingUpdate(fixture, {
+        fieldMappingSetId: 'mapping_set_2',
+        fieldMappingVersionId: 'mapping_version_2',
+      });
     });
 
     it('should update token exchange and downstream grant fields', async () => {

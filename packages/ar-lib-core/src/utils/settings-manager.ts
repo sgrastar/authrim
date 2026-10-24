@@ -19,6 +19,12 @@
 import { createHash } from 'node:crypto';
 import { createLogger } from './logger';
 import { sanitizeObject } from './security';
+import {
+  identityMappingLevelHistoryChoicesEqual,
+  normalizeIdentityMappingLevelHistoryChoice,
+  type IdentityMappingLevelHistoryInput,
+  type IdentityMappingLevelHistoryMetadata,
+} from '../services/identity-mapping-level-history';
 
 const log = createLogger().module('SETTINGS_MANAGER');
 
@@ -267,7 +273,8 @@ export interface SettingsCanonicalStore {
     category: string,
     scope: SettingScope,
     expectedVersion: string,
-    document: CanonicalSettingsDocument
+    document: CanonicalSettingsDocument,
+    history?: IdentityMappingLevelHistoryInput
   ): Promise<boolean>;
   markProjected(category: string, scope: SettingScope, version: string): Promise<void>;
   /**
@@ -485,6 +492,7 @@ export class SettingsManager {
   private canonicalStore: SettingsCanonicalStore | null;
   private legacyKv: KVNamespace | null;
   private readOnly: boolean;
+  private identityMappingHistory?: IdentityMappingLevelHistoryMetadata;
 
   // In-memory cache for runtime performance
   private cache: Map<string, { data: Record<string, unknown>; expiresAt: number }> = new Map();
@@ -509,6 +517,8 @@ export class SettingsManager {
      * tenant, the creation-time copy) without creating it, and saves are refused. For previews.
      */
     readOnly?: boolean;
+    /** Required actor/provenance for the tenant Mapping Set choice's atomic history. */
+    identityMappingHistory?: IdentityMappingLevelHistoryMetadata;
   }) {
     this.env = options.env;
     this.kv = options.kv ?? null;
@@ -518,6 +528,7 @@ export class SettingsManager {
     this.canonicalStore = options.canonicalStore ?? null;
     this.legacyKv = options.legacyKv ?? null;
     this.readOnly = options.readOnly ?? false;
+    this.identityMappingHistory = options.identityMappingHistory;
   }
 
   /**
@@ -769,7 +780,25 @@ export class SettingsManager {
     const hasChanges = applied.length > 0 || cleared.length > 0 || disabled.length > 0;
     let projection: 'applied' | 'pending' = 'applied';
     if (hasChanges) {
-      projection = await this.saveKVData(category, scope, kvData, currentVersion);
+      const key = 'identity_mapping.oidc_default_set_id';
+      const recordsChoice =
+        category === 'identity-mapping' &&
+        scope.type === 'tenant' &&
+        this.identityMappingHistory &&
+        !identityMappingLevelHistoryChoicesEqual('tenant_default', original[key], kvData[key]);
+      const history: IdentityMappingLevelHistoryInput | undefined =
+        recordsChoice && scope.type === 'tenant' && this.identityMappingHistory
+          ? {
+              ...this.identityMappingHistory,
+              id: crypto.randomUUID(),
+              tenantId: scope.id,
+              tier: 'tenant_default',
+              before: normalizeIdentityMappingLevelHistoryChoice('tenant_default', original[key]),
+              after: normalizeIdentityMappingLevelHistoryChoice('tenant_default', kvData[key]),
+              sourceVersion: generateVersion(kvData),
+            }
+          : undefined;
+      projection = await this.saveKVData(category, scope, kvData, currentVersion, history);
 
       // Invalidate cache
       this.invalidateCache(category, scope);
@@ -948,17 +977,24 @@ export class SettingsManager {
     category: string,
     scope: SettingScope,
     data: Record<string, unknown>,
-    expectedVersion: string
+    expectedVersion: string,
+    history?: IdentityMappingLevelHistoryInput
   ): Promise<'applied' | 'pending'> {
     const key = getKVKey(category, scope);
     const version = generateVersion(data);
     if (this.readOnly) throw new Error('Settings manager is read-only');
     if (this.canonicalStore) {
       if (
-        !(await this.canonicalStore.compareAndSet(category, scope, expectedVersion, {
-          data,
-          version,
-        }))
+        !(await this.canonicalStore.compareAndSet(
+          category,
+          scope,
+          expectedVersion,
+          {
+            data,
+            version,
+          },
+          history
+        ))
       ) {
         const latest = await this.canonicalStore.load(category, scope);
         throw new ConflictError('Settings were updated by someone else. Please refresh.', {
@@ -967,6 +1003,7 @@ export class SettingsManager {
       }
       return this.projectLatest(category, scope, key);
     }
+    if (history) throw new Error('identity_mapping_history_canonical_required');
     if (!this.kv) throw new Error('KV not configured');
     await this.kv.put(key, JSON.stringify(data));
     return 'applied';
