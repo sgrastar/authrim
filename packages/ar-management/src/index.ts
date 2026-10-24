@@ -1034,6 +1034,7 @@ import {
 import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
 import { adminPlatformIdentityMappingTenantsHandler } from './identity-mapping-tenants';
 import { adminIdentityMappingExplainHandler } from './identity-mapping-explain';
+import { adminIdentityMappingSetChangePreviewHandler } from './identity-mapping-set-change-preview';
 import {
   adminIdentityMappingTestUsersListHandler,
   adminIdentityMappingTestUsersReplaceHandler,
@@ -3231,6 +3232,11 @@ app.put(
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   mappingSetSaveIdempotency,
   adminIdentityMappingSetPutHandler
+);
+app.post(
+  '/api/admin/identity-mapping/sets/:id/preview-change',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.CLIENTS_READ]),
+  adminIdentityMappingSetChangePreviewHandler
 );
 app.delete(
   '/api/admin/identity-mapping/sets/:id',

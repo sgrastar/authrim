@@ -70,6 +70,11 @@ export async function scanMappingSetReferences(
     purpose: MappingSetReferencePurpose;
     /** For a platform set: read the other tenants' Core databases too (default yes). */
     scanOtherTenants?: boolean;
+    /**
+     * `none`: a read that leaves no trace (a preview): a tenant whose database cannot be routed is
+     * reported as not looked at, with no notification and no repair job.
+     */
+    sideEffects?: 'none';
   }
 ): Promise<MappingSetReferenceScan> {
   const contextTenantId = getTenantIdFromContext(c);
@@ -90,7 +95,11 @@ export async function scanMappingSetReferences(
     contextTenantId,
     contextCoreAdapter,
     resolveCoreAdapter: (tenantId) =>
-      resolveAuthCorePersistenceAdapterFromEnv(c.env, PARTITION, { tenantId, requestCache }),
+      resolveAuthCorePersistenceAdapterFromEnv(c.env, PARTITION, {
+        tenantId,
+        requestCache,
+        ...(input.sideEffects ? { sideEffects: input.sideEffects } : {}),
+      }),
     listTenantIds: async (limit) => {
       if (!c.env.DB) throw new Error('database_not_configured');
       // A tenant whose deletion is complete has no database left to read. One that is being

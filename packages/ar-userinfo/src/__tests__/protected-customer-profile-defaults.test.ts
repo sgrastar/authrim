@@ -21,7 +21,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     verifyToken: mocks.verifyToken,
     introspectTokenFromContext: mocks.introspectTokenFromContext,
     resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
-    createAuthContextFromHono: () => ({ coreAdapter: {} }),
+    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
     createPIIContextFromHono: () => ({ defaultPiiAdapter: {} }),
     CanonicalRuntimeUserStore: class {
       findById = mocks.findById;
