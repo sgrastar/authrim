@@ -929,6 +929,29 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_READ,
     'identity mapping effective selection'
   ),
+  ...byMethod(
+    '/api/admin/identity-mapping/test-users',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping test users'
+  ).filter((accessRule) => !accessRule.methods.includes('DELETE')),
+  // Reads the app and the settings, writes nothing: both read permissions.
+  rule({
+    pattern: '/api/admin/identity-mapping/explain',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.CLIENTS_READ],
+    description: 'identity mapping claim explanation',
+  }),
+  // Every tenant's source and app counts: platform authority (the handler asks for the settings
+  // read permission held for every tenant).
+  rule({
+    pattern: '/api/admin/platform/identity-mapping/tenants',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'identity mapping sources of every tenant',
+  }),
   readOnly(
     '/api/admin/credential-profiles',
     ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,

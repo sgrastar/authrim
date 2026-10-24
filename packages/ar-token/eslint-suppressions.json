@@ -1,0 +1,224 @@
+{
+  "src/__tests__/admin-agent-token.test.ts": {
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 13
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 11
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    }
+  },
+  "src/__tests__/client-auth.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 21
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 14
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 6
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 9
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 2
+    },
+    "@typescript-eslint/unbound-method": {
+      "count": 3
+    }
+  },
+  "src/__tests__/client-credentials.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 4
+    }
+  },
+  "src/__tests__/cors-config.test.ts": {
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 1
+    }
+  },
+  "src/__tests__/downstream-grant-token-exchange.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 2
+    },
+    "@typescript-eslint/unbound-method": {
+      "count": 4
+    }
+  },
+  "src/__tests__/external-id-jag-verifier.test.ts": {
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 4
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 4
+    }
+  },
+  "src/__tests__/helpers/effective-settings.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
+  "src/__tests__/helpers/fixtures.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/__tests__/helpers/mocks.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 2
+    }
+  },
+  "src/__tests__/jwe-integration.test.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 4
+    }
+  },
+  "src/__tests__/native-sso.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/__tests__/security-critical.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 6
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 8
+    }
+  },
+  "src/__tests__/token-exchange.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 3
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 5
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/admin-agent-token.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    }
+  },
+  "src/entrypoints/__tests__/AgentDownscopeEntrypoint.test.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    }
+  },
+  "src/index.ts": {
+    "@typescript-eslint/no-unsafe-argument": {
+      "count": 4
+    },
+    "no-unsafe-finally": {
+      "count": 1
+    }
+  },
+  "src/issuer.ts": {
+    "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/token.ts": {
+    "@typescript-eslint/no-unsafe-assignment": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-call": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unsafe-member-access": {
+      "count": 1
+    },
+    "@typescript-eslint/only-throw-error": {
+      "count": 1
+    }
+  }
+}

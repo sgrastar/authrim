@@ -20,7 +20,6 @@ import type {
   AfterHookConfig,
   BeforeHooksResult,
   BeforeHookExecutionResult,
-  BeforeHookResult,
 } from '../types/events/hooks';
 import type { EventHandlerContext } from '../types/events/handler';
 import type { UnifiedEvent } from '../types/events/unified-event';

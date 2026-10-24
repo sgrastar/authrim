@@ -264,7 +264,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for one-time code consumption guarantee
-    this.actorCtx.blockConcurrencyWhile(async () => {
+    void this.actorCtx.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }
@@ -873,7 +873,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     try {
       // POST /code - Store authorization code
       if (path === '/code' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<StoreCodeRequest>;
+        const body = await request.json<Partial<StoreCodeRequest>>();
 
         // Validate required fields
         if (!body.code || !body.clientId || !body.redirectUri || !body.userId || !body.scope) {
@@ -899,7 +899,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
       // POST /code/consume - Consume authorization code
       if (path === '/code/consume' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<ConsumeCodeRequest>;
+        const body = await request.json<Partial<ConsumeCodeRequest>>();
 
         // Validate required fields
         if (!body.code || !body.clientId) {
@@ -989,10 +989,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       // POST /code/:code/tokens - Register issued token JTIs for replay attack revocation
       if (path.startsWith('/code/') && path.endsWith('/tokens') && request.method === 'POST') {
         const code = path.substring(6, path.length - 7); // Remove '/code/' and '/tokens'
-        const body = (await request.json()) as {
+        const body = await request.json<{
           accessTokenJti?: string;
           refreshTokenJti?: string;
-        };
+        }>();
 
         if (!body.accessTokenJti) {
           return new Response(

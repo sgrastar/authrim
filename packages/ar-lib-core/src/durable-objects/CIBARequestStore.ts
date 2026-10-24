@@ -177,7 +177,7 @@ export class CIBARequestStore {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for CIBA request verification and one-time token issuance
-    state.blockConcurrencyWhile(async () => {
+    void state.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }
@@ -424,7 +424,7 @@ export class CIBARequestStore {
 
       // Get CIBA request by auth_req_id
       if (path === '/get-by-auth-req-id' && request.method === 'POST') {
-        const { auth_req_id } = (await request.json()) as { auth_req_id: string };
+        const { auth_req_id } = await request.json<{ auth_req_id: string }>();
         const metadata = await this.getByAuthReqId(auth_req_id);
         return new Response(JSON.stringify(metadata), {
           headers: { 'Content-Type': 'application/json' },
@@ -433,7 +433,7 @@ export class CIBARequestStore {
 
       // Get CIBA request by user_code
       if (path === '/get-by-user-code' && request.method === 'POST') {
-        const { user_code } = (await request.json()) as { user_code: string };
+        const { user_code } = await request.json<{ user_code: string }>();
         const metadata = await this.getByUserCode(user_code);
         return new Response(JSON.stringify(metadata), {
           headers: { 'Content-Type': 'application/json' },
@@ -442,10 +442,10 @@ export class CIBARequestStore {
 
       // Get CIBA request by login_hint
       if (path === '/get-by-login-hint' && request.method === 'POST') {
-        const { login_hint, client_id } = (await request.json()) as {
+        const { login_hint, client_id } = await request.json<{
           login_hint: string;
           client_id: string;
-        };
+        }>();
         const metadata = await this.getByLoginHint(login_hint, client_id);
         return new Response(JSON.stringify(metadata), {
           headers: { 'Content-Type': 'application/json' },
@@ -454,10 +454,10 @@ export class CIBARequestStore {
 
       // List the pending requests addressed to one end user (the CIBA approval page)
       if (path === '/list-pending-for-user' && request.method === 'POST') {
-        const body = (await request.json()) as {
+        const body = await request.json<{
           subject_ids?: unknown;
           login_hints?: unknown;
-        };
+        }>();
         let requests: CIBARequestV2[];
         try {
           requests = await this.listPendingForUser({
@@ -480,14 +480,14 @@ export class CIBARequestStore {
       // Approve CIBA request (user approved the request)
       if (path === '/approve' && request.method === 'POST') {
         const { auth_req_id, user_id, sub, nonce, authenticated_acr, consent_generation } =
-          (await request.json()) as {
+          await request.json<{
             auth_req_id: string;
             user_id: string;
             sub: string;
             nonce?: string;
             authenticated_acr?: string;
             consent_generation?: number;
-          };
+          }>();
         await this.approveCIBARequest(
           auth_req_id,
           user_id,
@@ -503,7 +503,7 @@ export class CIBARequestStore {
 
       // Deny CIBA request (user denied the request)
       if (path === '/deny' && request.method === 'POST') {
-        const { auth_req_id } = (await request.json()) as { auth_req_id: string };
+        const { auth_req_id } = await request.json<{ auth_req_id: string }>();
         await this.denyCIBARequest(auth_req_id);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -512,10 +512,10 @@ export class CIBARequestStore {
 
       // One poll of the token endpoint: evaluate against the previous poll, then record it.
       if (path === '/poll' && request.method === 'POST') {
-        const { auth_req_id, client_id } = (await request.json()) as {
+        const { auth_req_id, client_id } = await request.json<{
           auth_req_id?: unknown;
           client_id?: unknown;
-        };
+        }>();
         const result =
           typeof auth_req_id === 'string' && typeof client_id === 'string'
             ? await this.pollRequest(auth_req_id, client_id)
@@ -530,7 +530,7 @@ export class CIBARequestStore {
       // afterwards sees its own write. The token endpoint uses /poll; this stays for callers
       // deployed before it existed.
       if (path === '/update-poll' && request.method === 'POST') {
-        const { auth_req_id } = (await request.json()) as { auth_req_id: string };
+        const { auth_req_id } = await request.json<{ auth_req_id: string }>();
         await this.updatePollTime(auth_req_id);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -539,7 +539,7 @@ export class CIBARequestStore {
 
       // Mark tokens as issued (one-time use)
       if (path === '/mark-token-issued' && request.method === 'POST') {
-        const { auth_req_id } = (await request.json()) as { auth_req_id: string };
+        const { auth_req_id } = await request.json<{ auth_req_id: string }>();
         await this.markTokenIssued(auth_req_id);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -548,7 +548,7 @@ export class CIBARequestStore {
 
       // Delete CIBA request (consumed or expired)
       if (path === '/delete' && request.method === 'POST') {
-        const { auth_req_id } = (await request.json()) as { auth_req_id: string };
+        const { auth_req_id } = await request.json<{ auth_req_id: string }>();
         await this.deleteCIBARequest(auth_req_id);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },

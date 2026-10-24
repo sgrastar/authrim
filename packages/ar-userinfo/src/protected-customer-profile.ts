@@ -883,7 +883,7 @@ export function createProtectedCustomerProfileRouter(
     if (c.req.method !== 'PATCH') {
       return next();
     }
-    const subjectUserId = c.req.param('userId')!;
+    const subjectUserId = c.req.param('userId');
     const validator = options.validateDelegatedWriteActor ?? validateDelegatedWriteActorFromContext;
     const actorResult = await validator({
       c,
@@ -927,7 +927,7 @@ export function createProtectedCustomerProfileRouter(
         );
       }
 
-      const subjectUserId = c.req.param('userId')!;
+      const subjectUserId = c.req.param('userId');
       const subjectRejection = authorizeCustomerProfileWriteSubject(actor, subjectUserId);
       if (subjectRejection) {
         return subjectRejection;

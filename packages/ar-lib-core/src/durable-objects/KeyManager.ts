@@ -2211,7 +2211,7 @@ export class KeyManager extends DurableObject<Env> {
           request,
           MAX_KEY_MANAGER_JSON_BODY_BYTES
         );
-        await this.updateConfig(body as Partial<KeyRotationConfig>);
+        await this.updateConfig(body);
 
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },

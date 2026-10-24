@@ -797,12 +797,7 @@ export function processNestedDisclosures(
         let value = matchingDisclosure.claimValue;
 
         // Recursively process if value is an object with _sd
-        if (
-          value &&
-          typeof value === 'object' &&
-          !Array.isArray(value) &&
-          '_sd' in (value as object)
-        ) {
+        if (value && typeof value === 'object' && !Array.isArray(value) && '_sd' in value) {
           const nested = processNestedDisclosures(value as Record<string, unknown>, disclosureMap);
           value = nested.result;
           totalUndisclosed += nested.undisclosedCount;
@@ -1010,8 +1005,8 @@ export async function verifyAdvancedSDJWT(
   );
 
   // Remove SD-JWT metadata from result
-  delete (disclosedClaims as Record<string, unknown>)._sd;
-  delete (disclosedClaims as Record<string, unknown>)._sd_alg;
+  delete disclosedClaims._sd;
+  delete disclosedClaims._sd_alg;
 
   return {
     payload: sdPayload,

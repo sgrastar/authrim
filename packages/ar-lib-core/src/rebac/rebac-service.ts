@@ -17,7 +17,6 @@
 import type {
   IReBACService,
   IReBACCacheManager,
-  IRelationDefinitionStore,
   IClosureManager,
   IRelationParser,
 } from './interfaces';
@@ -288,7 +287,7 @@ export class ReBACService implements IReBACService {
     tenantId: string,
     objectType: string,
     objectId: string,
-    relation?: string
+    _relation?: string
   ): Promise<void> {
     await this.cacheManager.invalidateObject(tenantId, objectType, objectId);
 

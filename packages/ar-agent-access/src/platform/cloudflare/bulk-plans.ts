@@ -135,7 +135,7 @@ function expectedFields(step: AgentConfigurationPlanStepDefinition): JsonObject 
 function matchesExpected(body: JsonValue, step: AgentConfigurationPlanStepDefinition): boolean {
   const response = object(body);
   if (step.operation === 'admin.write.clients.metadata') {
-    const client = object(response?.client as JsonValue | undefined);
+    const client = object(response?.client);
     return (
       client !== null &&
       Object.entries(expectedFields(step)).every(
@@ -144,7 +144,7 @@ function matchesExpected(body: JsonValue, step: AgentConfigurationPlanStepDefini
     );
   }
   if (step.operation === 'admin.write.login-ui.update') {
-    const values = object(object(response?.snapshot)?.values as JsonValue | undefined);
+    const values = object(object(response?.snapshot)?.values);
     return (
       values !== null &&
       Object.entries(expectedFields(step)).every(([key, value]) => {

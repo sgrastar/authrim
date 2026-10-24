@@ -166,7 +166,8 @@ const TABLE_GROUPS: Partial<
       federation_entity_statements federation_metadata_documents federation_metadata_entity_summaries federation_saml_runtime_entities
       federation_trust_anchors federation_trust_chains federation_trust_context_snapshots federation_trust_scope_bindings federation_trust_sources
       field_catalog_entries field_catalog_versions field_catalogs field_mapping_activations
-      field_mapping_sets field_mapping_versions internal_notification_delivery_routes key_material_refs
+      field_mapping_sets field_mapping_versions identity_mapping_test_users
+      internal_notification_delivery_routes key_material_refs
       key_registries key_versions logging_destination_overrides logging_fallback_policies
       logging_key_material_bodies logging_key_registry logging_key_versions logging_policy_snapshots
       logging_quota_policies mapping_conflict_rules mapping_release_rules mapping_rule_edges

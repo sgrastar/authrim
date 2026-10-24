@@ -232,7 +232,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       );
 
       if (!approveResponse.ok) {
-        const error = (await approveResponse.json()) as { error_description?: string };
+        const error = await approveResponse.json<{ error_description?: string }>();
         return c.json(
           {
             success: false,
@@ -266,7 +266,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       );
 
       if (!denyResponse.ok) {
-        const error = (await denyResponse.json()) as { error_description?: string };
+        const error = await denyResponse.json<{ error_description?: string }>();
         return c.json(
           {
             success: false,

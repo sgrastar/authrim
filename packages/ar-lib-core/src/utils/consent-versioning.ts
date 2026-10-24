@@ -8,7 +8,7 @@
  */
 
 import type { DatabaseAdapter } from '../db';
-import type { PolicyVersion, CurrentPolicyVersions, ConsentHistoryAction } from '../types/consent';
+import type { CurrentPolicyVersions, ConsentHistoryAction } from '../types/consent';
 
 /**
  * Get the current active policy versions for a tenant

@@ -319,7 +319,7 @@ export class ScimFilterParser {
     if (this.currentToken?.type === 'DOT') {
       this.advance();
       this.expect('ATTRIBUTE');
-      subAttribute = this.currentToken!.value;
+      subAttribute = this.currentToken.value;
       this.advance();
     }
 

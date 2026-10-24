@@ -1031,6 +1031,12 @@ import {
   sweepExpiredMappingSetSaveRecords,
 } from './identity-mapping-set-facade';
 import { adminIdentityMappingUsageHandler } from './identity-mapping-usage';
+import { adminPlatformIdentityMappingTenantsHandler } from './identity-mapping-tenants';
+import { adminIdentityMappingExplainHandler } from './identity-mapping-explain';
+import {
+  adminIdentityMappingTestUsersListHandler,
+  adminIdentityMappingTestUsersReplaceHandler,
+} from './identity-mapping-test-users';
 import {
   getLoggingConfig,
   updateLoggingConfig,
@@ -3147,6 +3153,51 @@ app.get(
   '/api/admin/identity-mapping/effective',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingEffectiveHandler
+);
+// The test users and the explanation of the release for one of them. The explanation runs the
+// release (settings, the app, the set and its profile), so the strict profile.
+app.use('/api/admin/identity-mapping/test-users', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/identity-mapping/test-users'],
+  })(c, next);
+});
+app.get(
+  '/api/admin/identity-mapping/test-users',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingTestUsersListHandler
+);
+app.put(
+  '/api/admin/identity-mapping/test-users',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminIdentityMappingTestUsersReplaceHandler
+);
+app.use('/api/admin/identity-mapping/explain', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/identity-mapping/explain'],
+  })(c, next);
+});
+app.post(
+  '/api/admin/identity-mapping/explain',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.CLIENTS_READ]),
+  adminIdentityMappingExplainHandler
+);
+// Every tenant's source and app counts: a settings read and a Core database query per tenant of
+// the page, so the strict profile, as the usage search's fan-out.
+app.use('/api/admin/platform/identity-mapping/tenants', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/platform/identity-mapping/tenants'],
+  })(c, next);
+});
+app.get(
+  '/api/admin/platform/identity-mapping/tenants',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminPlatformIdentityMappingTenantsHandler
 );
 // The Mapping Set facade. A save runs the validation of the content, the compile and the checks
 // of what names the set, and one of the references search per call, so every route is rate

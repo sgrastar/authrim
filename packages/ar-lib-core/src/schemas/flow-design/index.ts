@@ -20,7 +20,7 @@ import type {
 } from '../flow-ui';
 
 import type { FlowTemplateId } from '../../types/contracts';
-import type { FlowNodePalette, FlowNodeDisplayState } from '../../types/contracts/ui-display';
+import type { FlowNodePalette } from '../../types/contracts/ui-display';
 
 // =============================================================================
 // Flow Design Types

@@ -14,7 +14,6 @@ import {
   ensureDatabaseAdapter,
   type JITProvisioningConfig,
   type RuleEvaluationContext,
-  type RuleEvaluationResult,
   type DenyErrorCode,
   DEFAULT_JIT_CONFIG,
   createRuleEvaluator,
@@ -50,7 +49,6 @@ import {
   type HandleIdentityParams,
   type HandleIdentityResult,
   type StitchingConfig,
-  type UpstreamProvider,
   type UserInfo,
   type TokenResponse,
 } from '../types';

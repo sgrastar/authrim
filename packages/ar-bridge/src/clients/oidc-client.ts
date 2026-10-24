@@ -178,7 +178,7 @@ export class OIDCRPClient {
       useRequestObject: provider.useRequestObject,
       requestObjectSigningAlg: provider.requestObjectSigningAlg,
       privateKeyJwk,
-      keyId: privateKeyJwk?.kid as string | undefined,
+      keyId: privateKeyJwk?.kid,
       userinfoSignedResponseAlg,
     });
   }
@@ -1151,16 +1151,12 @@ export class OIDCRPClient {
     }
 
     // Validate sub claim is present (OIDC Core Section 5.3.2 - REQUIRED)
-    if (
-      !userInfo.sub ||
-      typeof userInfo.sub !== 'string' ||
-      (userInfo.sub as string).trim() === ''
-    ) {
+    if (!userInfo.sub || typeof userInfo.sub !== 'string' || userInfo.sub.trim() === '') {
       throw new Error('Userinfo response missing required sub claim');
     }
 
     const normalized: UserInfo = {
-      sub: userInfo.sub as string,
+      sub: userInfo.sub,
       email: userInfo.email as string | undefined,
       email_verified: userInfo.email_verified as boolean | undefined,
       name: userInfo.name as string | undefined,

@@ -14,7 +14,6 @@ import {
 } from '../types/settings/catalog';
 import {
   createSettingsManager,
-  type CategoryMeta,
   type SettingScope,
   type SettingSource,
   type SettingsManager,
@@ -55,7 +54,7 @@ function managerFor(env: EffectiveSettingsEnv, fresh = false): SettingsManager {
       strictReads: true,
     });
     for (const meta of Object.values(ALL_CATEGORY_META)) {
-      manager.registerCategory(meta as CategoryMeta);
+      manager.registerCategory(meta);
     }
     cache.set(key, manager);
   }
