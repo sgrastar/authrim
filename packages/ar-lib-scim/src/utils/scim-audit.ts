@@ -9,7 +9,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { createAuditLog } from '@authrim/ar-lib-core';
+import { createAuditLog, getWaitUntilFromContext } from '@authrim/ar-lib-core';
 
 /**
  * SCIM resource types for audit logging
@@ -72,17 +72,21 @@ export async function createScimAuditLog(
   // Extract user agent
   const userAgent = c.req.header('User-Agent') || 'unknown';
 
-  await createAuditLog(c.env, {
-    tenantId,
-    userId: 'scim-service', // Machine-to-machine operation identifier
-    action,
-    resource,
-    resourceId,
-    ipAddress,
-    userAgent,
-    metadata: JSON.stringify(metadata),
-    severity,
-  });
+  await createAuditLog(
+    c.env,
+    {
+      tenantId,
+      userId: 'scim-service', // Machine-to-machine operation identifier
+      action,
+      resource,
+      resourceId,
+      ipAddress,
+      userAgent,
+      metadata: JSON.stringify(metadata),
+      severity,
+    },
+    { waitUntil: getWaitUntilFromContext(c as Context<{ Bindings: Env }>) }
+  );
 }
 
 /**
@@ -105,7 +109,11 @@ export function logScimAudit(
   metadata: Record<string, unknown>,
   severity: 'info' | 'warning' | 'critical' = 'info'
 ): void {
-  createScimAuditLog(c, action, resource, resourceId, metadata, severity).catch(() => {
-    // Silently ignore errors - audit log failures should not affect SCIM operations
-  });
+  const audit = createScimAuditLog(c, action, resource, resourceId, metadata, severity).catch(
+    () => {
+      // Silently ignore errors - audit log failures should not affect SCIM operations
+    }
+  );
+  // Kept alive after the response where the request has a waitUntil; else it runs detached.
+  getWaitUntilFromContext(c)?.(audit);
 }

@@ -5,8 +5,12 @@ import { SCIM_EVENTS } from '@authrim/ar-lib-core/types/events/event-types';
 
 // Mock createAuditLog before importing scim-audit
 const mockCreateAuditLog = vi.fn().mockResolvedValue(undefined);
+const mockWaitUntil = vi.fn();
 vi.mock('@authrim/ar-lib-core', () => ({
   createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
+  // The request's waitUntil (a context without one gives undefined).
+  getWaitUntilFromContext: (c: { waitUntilForTest?: boolean }) =>
+    c.waitUntilForTest ? mockWaitUntil : undefined,
   DEFAULT_TENANT_ID: 'default',
 }));
 
@@ -97,7 +101,8 @@ describe('createScimAuditLog', () => {
         resource: 'scim_user',
         resourceId: 'user-123',
         severity: 'info',
-      })
+      }),
+      { waitUntil: undefined }
     );
   });
 
@@ -110,7 +115,8 @@ describe('createScimAuditLog', () => {
       context.env,
       expect.objectContaining({
         tenantId: 'tenant-abc',
-      })
+      }),
+      { waitUntil: undefined }
     );
   });
 
@@ -134,7 +140,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           ipAddress: '203.0.113.50',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -152,7 +159,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           ipAddress: '10.0.0.1', // First IP from X-Forwarded-For
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -171,7 +179,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           ipAddress: '172.16.0.100',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -190,7 +199,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           ipAddress: 'unknown',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
   });
@@ -207,7 +217,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           userAgent: 'Azure AD SCIM Client/1.0',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -222,7 +233,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           userAgent: 'unknown',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
   });
@@ -237,7 +249,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           severity: 'info',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -250,7 +263,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           severity: 'warning',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -263,7 +277,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           severity: 'critical',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
   });
@@ -282,7 +297,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           metadata: JSON.stringify(metadata),
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -295,7 +311,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           metadata: '{}',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
   });
@@ -310,7 +327,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           resource: 'scim_user',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -323,7 +341,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           resource: 'scim_group',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
 
@@ -336,7 +355,8 @@ describe('createScimAuditLog', () => {
         context.env,
         expect.objectContaining({
           resource: 'scim_token',
-        })
+        }),
+        { waitUntil: undefined }
       );
     });
   });
@@ -370,7 +390,8 @@ describe('logScimAudit (non-blocking wrapper)', () => {
         action: 'scim.user.create',
         resource: 'scim_user',
         resourceId: 'user-123',
-      })
+      }),
+      { waitUntil: undefined }
     );
   });
 
@@ -400,6 +421,27 @@ describe('logScimAudit (non-blocking wrapper)', () => {
     expect(mockCreateAuditLog).toHaveBeenCalledOnce();
   });
 
+  it('keeps the pending audit write alive with the request waitUntil', async () => {
+    let finish!: () => void;
+    mockCreateAuditLog.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (finish = resolve))
+    );
+    const context = Object.assign(createMockContext({}), { waitUntilForTest: true });
+
+    logScimAudit(context, 'scim.user.patch', 'scim_user', 'user-123', {});
+
+    // Registered while the write is still pending, not only once a later step starts.
+    expect(mockWaitUntil).toHaveBeenCalledTimes(1);
+    const registered = mockWaitUntil.mock.calls[0]![0] as Promise<unknown>;
+    let settled = false;
+    void registered.then(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish();
+    await registered;
+    expect(settled).toBe(true);
+  });
+
   it('should support warning severity for delete operations', async () => {
     const context = createMockContext({});
 
@@ -413,7 +455,8 @@ describe('logScimAudit (non-blocking wrapper)', () => {
       context.env,
       expect.objectContaining({
         severity: 'warning',
-      })
+      }),
+      { waitUntil: undefined }
     );
   });
 });

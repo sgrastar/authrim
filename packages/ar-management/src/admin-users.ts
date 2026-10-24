@@ -40,6 +40,8 @@ import {
   type InitialAssuranceEvidence,
   checkEmailRegistration,
   type PiiAccessLog,
+  deleteAnonymizationMappingStatement,
+  forgetCachedAnonymizedUserId,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import {
@@ -2039,6 +2041,10 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
               timestamp: new Date().toISOString(),
             },
           });
+          // The audit pseudonym, after the tombstone: a late audit write does not create it again.
+          const pseudonym = deleteAnonymizationMappingStatement(tenantId, userId);
+          await piiAdapter.execute(pseudonym.sql, pseudonym.params);
+          forgetCachedAnonymizedUserId(tenantId, userId);
         }
 
         await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
