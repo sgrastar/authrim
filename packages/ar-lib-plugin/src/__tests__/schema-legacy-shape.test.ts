@@ -69,7 +69,104 @@ describe('zodToJSONSchema legacy shape', () => {
   });
 });
 
+describe('zodToJSONSchema legacy collections and unions', () => {
+  const root = (properties: Record<string, unknown>, required: string[]) => ({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    type: 'object',
+    properties,
+    required,
+    additionalProperties: false,
+  });
+
+  it('converts maps to bounded arrays of key/value pairs', () => {
+    expect(zodToJSONSchema(z.object({ m: z.map(z.string(), z.number()) }))).toEqual(
+      root(
+        {
+          m: {
+            type: 'array',
+            maxItems: 125,
+            items: {
+              type: 'array',
+              items: [{ type: 'string' }, { type: 'number' }],
+              minItems: 2,
+              maxItems: 2,
+            },
+          },
+        },
+        ['m']
+      )
+    );
+  });
+
+  it('keeps the exact size of a set', () => {
+    expect(zodToJSONSchema(z.object({ s: z.set(z.string()).size(2) }))).toEqual(
+      root(
+        {
+          s: {
+            type: 'array',
+            uniqueItems: true,
+            items: { type: 'string' },
+            minItems: 2,
+            maxItems: 2,
+          },
+        },
+        ['s']
+      )
+    );
+  });
+
+  it('does not overflow on a set of recursive elements', () => {
+    type Node = { children: Set<Node> };
+    const node: z.ZodType<Node> = z.lazy(() => z.object({ children: z.set(node) }));
+    expect(() => zodToJSONSchema(z.object({ tree: node }))).not.toThrow();
+  });
+
+  it.each([
+    [
+      'union of enums',
+      z.union([z.enum(['a', 'b']), z.enum(['c', 'd'])]),
+      { type: 'string', enum: ['a', 'b', 'c', 'd'] },
+    ],
+    [
+      'literals of different types',
+      z.union([z.literal('auto'), z.literal(0)]),
+      { type: ['string', 'number'], enum: ['auto', 0] },
+    ],
+    [
+      'nullable literal',
+      z.union([z.literal('a'), z.literal(null)]),
+      { type: ['string', 'null'], enum: ['a', null] },
+    ],
+    [
+      'boolean literals',
+      z.union([z.literal(true), z.literal(false)]),
+      { type: 'boolean', enum: [true, false] },
+    ],
+    [
+      'enum with a literal',
+      z.union([z.enum(['a', 'b']), z.literal('c')]),
+      {
+        anyOf: [
+          { type: 'string', enum: ['a', 'b'] },
+          { type: 'string', const: 'c' },
+        ],
+      },
+    ],
+  ])('flattens %s like zod-to-json-schema', (_name, union, expected) => {
+    expect(zodToJSONSchema(z.object({ u: union }))).toEqual(root({ u: expected }, ['u']));
+  });
+});
+
 describe('validatePluginConfig legacy errors', () => {
+  it('reports invalid dates with the zod 3 code and message', () => {
+    expect(
+      validatePluginConfig(z.object({ when: z.coerce.date() }), { when: 'not-a-date' })
+    ).toEqual({
+      success: false,
+      errors: [{ path: 'when', message: 'Invalid date', code: 'invalid_date' }],
+    });
+  });
+
   it('reports record-key failures at the key path with zod 3 codes', () => {
     const schema = z.object({ headers: z.record(z.string().regex(/^[A-Z]+$/), z.string()) });
     expect(validatePluginConfig(schema, { headers: { 'bad-key': 'v', GOOD: 'v' } })).toEqual({

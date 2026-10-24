@@ -14,6 +14,18 @@
  *
  * Only issues without an explicit schema message reach the error map, so
  * `z.string().min(1, 'custom')` keeps its own message.
+ *
+ * Differences this layer cannot hide (the input is rejected either way; only the
+ * wording, the number of issues, or a boundary changes):
+ * - zod 4 counts string length in code points, zod 3 in UTF-16 units, so strings with
+ *   astral characters (emoji) cross `min`/`max`/`length` limits at different sizes.
+ * - zod 4's `.int()` stops at a non-integer, so the range issue zod 3 added is gone.
+ * - A record key that fails skips the value check, so zod 3's second (value) issue
+ *   is gone.
+ * - Length checks on a string schema also run on array input, so a string field given
+ *   an array reports an extra "Array must contain ..." issue next to the type issue.
+ * - An enum or literal with a schema-level custom message bypasses this map; a
+ *   single-value enum then projects as a literal.
  */
 
 /** The parts of a zod 4 (raw or finalized) issue the legacy formatting reads. */
@@ -292,6 +304,7 @@ function isDiscriminatorIssue(issue: LegacyZodIssueSource): boolean {
 export function legacyZodErrorMessage(issue: LegacyZodIssueSource): string | undefined {
   switch (issue.code) {
     case 'invalid_type': {
+      if (issue.received === 'Invalid Date') return 'Invalid date';
       if (issue.input === undefined) return 'Required';
       if (
         issue.expected === 'number' &&
@@ -376,6 +389,9 @@ export function toLegacyZodIssue(issue: LegacyZodIssueSource): LegacyZodIssue {
   };
   switch (issue.code) {
     case 'invalid_type':
+      if (issue.received === 'Invalid Date') {
+        return { code: 'invalid_date', ...base };
+      }
       return {
         code: 'invalid_type',
         expected: legacyExpected(issue),

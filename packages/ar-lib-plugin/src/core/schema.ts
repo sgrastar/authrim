@@ -115,9 +115,9 @@ const MAX_SAFE_INTEGER_BOUND = Number.MAX_SAFE_INTEGER;
  * for the same schema: strip objects keep `additionalProperties: false` in the input
  * view, loose objects keep `true`, records drop the implied string `propertyNames`,
  * built-in string formats do not repeat their regex as `pattern`, unions of literals
- * stay a typed `enum`, integers do not spell out the safe-integer range, and dates,
- * bigints and sets keep the types zod-to-json-schema gave them (zod 4 treats them as
- * unrepresentable and would emit `{}`).
+ * (and unions of enums) stay one `enum`, integers do not spell out the safe-integer
+ * range, and dates, bigints, sets and maps keep the types zod-to-json-schema gave them
+ * (zod 4 treats them as unrepresentable and would emit `{}`).
  */
 function keepLegacyJSONSchemaShape(
   zodSchema: z.core.$ZodType,
@@ -153,11 +153,11 @@ function keepLegacyJSONSchemaShape(
   }
 
   if (def.type === 'union' && Array.isArray(jsonSchema.anyOf)) {
-    const literals = literalUnionValues(def as z.core.$ZodUnionDef);
-    if (literals) {
+    const flattened = flattenLiteralUnion(def as z.core.$ZodUnionDef, jsonSchema.anyOf);
+    if (flattened) {
       delete jsonSchema.anyOf;
-      jsonSchema.type = literals.type;
-      jsonSchema.enum = literals.values;
+      jsonSchema.type = flattened.type;
+      jsonSchema.enum = flattened.values;
     }
   }
 
@@ -169,15 +169,34 @@ function keepLegacyJSONSchemaShape(
     jsonSchema.format = 'int64';
   } else if (def.type === 'set') {
     const setDef = def as z.core.$ZodSetDef;
-    const { $schema: _schema, ...items } = toLegacyJSONSchema(setDef.valueType);
     jsonSchema.type = 'array';
     jsonSchema.uniqueItems = true;
-    jsonSchema.items = items as z.core.JSONSchema.BaseSchema;
+    jsonSchema.items = convertNested(setDef.valueType);
     for (const check of setDef.checks ?? []) {
-      const checkDef = check._zod.def as { check?: string; minimum?: number; maximum?: number };
+      const checkDef = check._zod.def as {
+        check?: string;
+        minimum?: number;
+        maximum?: number;
+        size?: number;
+      };
       if (checkDef.check === 'min_size') jsonSchema.minItems = checkDef.minimum;
       if (checkDef.check === 'max_size') jsonSchema.maxItems = checkDef.maximum;
+      if (checkDef.check === 'size_equals') {
+        jsonSchema.minItems = checkDef.size;
+        jsonSchema.maxItems = checkDef.size;
+      }
     }
+  } else if (def.type === 'map') {
+    const mapDef = def as z.core.$ZodMapDef;
+    // zod-to-json-schema described a Map as a bounded array of [key, value] pairs.
+    jsonSchema.type = 'array';
+    jsonSchema.maxItems = 125;
+    jsonSchema.items = {
+      type: 'array',
+      items: [convertNested(mapDef.keyType), convertNested(mapDef.valueType)],
+      minItems: 2,
+      maxItems: 2,
+    } as z.core.JSONSchema.BaseSchema;
   }
 
   if (jsonSchema.type === 'integer') {
@@ -186,27 +205,79 @@ function keepLegacyJSONSchemaShape(
   }
 }
 
-/** `{ type, enum }` for a union of same-typed primitive literals (`z.literal(6).or(z.literal(8))`). */
-function literalUnionValues(
-  def: z.core.$ZodUnionDef
-): { type: 'string' | 'number' | 'boolean'; values: Array<string | number | boolean> } | undefined {
-  const values: Array<string | number | boolean> = [];
-  for (const option of def.options) {
-    const optionDef = option._zod.def;
-    if (optionDef.type !== 'literal') return undefined;
-    for (const value of (optionDef as z.core.$ZodLiteralDef<z.core.util.Literal>).values) {
-      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+type PrimitiveLiteral = string | number | boolean | null;
+type LiteralTypeName = 'string' | 'number' | 'boolean' | 'null';
+
+const LITERAL_TYPE_NAMES: Record<string, LiteralTypeName> = {
+  string: 'string',
+  number: 'number',
+  boolean: 'boolean',
+};
+
+function literalTypeName(value: PrimitiveLiteral): LiteralTypeName {
+  return value === null ? 'null' : LITERAL_TYPE_NAMES[typeof value];
+}
+
+/**
+ * zod-to-json-schema flattened a union of literals into one `{ type, enum }` (`type` is
+ * an array when the literals differ in type) and a union of enums into one string
+ * `enum`; the Admin UI renders those as a select. zod 4 emits `anyOf` for both. A
+ * described member keeps `anyOf`, as before.
+ */
+function flattenLiteralUnion(
+  def: z.core.$ZodUnionDef,
+  alternatives: Array<z.core.JSONSchema.BaseSchema>
+): { type: LiteralTypeName | LiteralTypeName[]; values: PrimitiveLiteral[] } | undefined {
+  if (alternatives.some((alternative) => 'description' in alternative)) return undefined;
+
+  const options = def.options.map((option) => option._zod.def);
+  if (options.every((option) => option.type === 'enum')) {
+    const values = options.flatMap((option) =>
+      Object.values((option as z.core.$ZodEnumDef).entries)
+    ) as string[];
+    return { type: 'string', values: [...new Set(values)] };
+  }
+
+  if (!options.every((option) => option.type === 'literal')) return undefined;
+  const values: PrimitiveLiteral[] = [];
+  for (const option of options) {
+    for (const value of (option as z.core.$ZodLiteralDef<z.core.util.Literal>).values) {
+      if (
+        value !== null &&
+        typeof value !== 'string' &&
+        typeof value !== 'number' &&
+        typeof value !== 'boolean'
+      ) {
         return undefined;
       }
       values.push(value);
     }
   }
-  const types = new Set(values.map((value) => typeof value));
-  const [type] = [...types];
-  if (types.size !== 1 || (type !== 'string' && type !== 'number' && type !== 'boolean')) {
-    return undefined;
+  const types = [...new Set(values.map(literalTypeName))];
+  return { type: types.length === 1 ? types[0] : types, values };
+}
+
+/** Nesting limit for Set/Map element conversion (recursive element schemas). */
+const MAX_NESTED_CONVERSION_DEPTH = 8;
+let nestedConversionDepth = 0;
+
+/**
+ * Convert the element schema of a Set or Map. zod 4 cannot represent those types, so
+ * the element is converted in its own pass; recursive element schemas (a lazy schema
+ * that contains the same Set) stop at the depth limit with an unconstrained `{}`
+ * instead of overflowing the stack.
+ */
+function convertNested(schema: z.core.$ZodType): z.core.JSONSchema.BaseSchema {
+  if (nestedConversionDepth >= MAX_NESTED_CONVERSION_DEPTH) return {};
+  nestedConversionDepth += 1;
+  try {
+    const { $schema: _schema, ...converted } = toLegacyJSONSchema(schema);
+    return converted as z.core.JSONSchema.BaseSchema;
+  } catch {
+    return {};
+  } finally {
+    nestedConversionDepth -= 1;
   }
-  return { type, values };
 }
 
 /** Regex sources of the built-in string formats (email, uuid, ...) on a schema. */
