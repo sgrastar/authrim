@@ -6,7 +6,7 @@ import {
   buildOtpAuthUri,
   CanonicalRuntimeUserStore,
   consumeTotpAuthenticationState,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   decryptValue,
   encryptValue,
@@ -179,7 +179,7 @@ async function currentUserDisplayName(
   accountSession: AccountSession,
   tenantId: string
 ): Promise<string> {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -217,7 +217,7 @@ async function verifyTotpCredentialCode(
   const verifiedTimeStep = verification.timeStep;
   const proofVerifiedAtMs = Date.now();
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -264,7 +264,7 @@ async function verifyAnyActiveTotpCode(
   code: string
 ): Promise<{ credential: TotpCredential; verifiedAtMs: number } | null> {
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const credentials = await authCtx.repositories.totp.findActiveByUserId(userId);
   for (const credential of credentials) {
     const verifiedAtMs = await verifyTotpCredentialCode(c, credential, code);
@@ -285,7 +285,7 @@ async function consumeBackupCode(
     return false;
   }
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const codeHash = await hashTotpBackupCode({
     tenantId,
     userId,
@@ -301,7 +301,7 @@ async function isTotpRemovalSafe(
   deletingCredentialId: string
 ): Promise<boolean> {
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   return isLoginMethodRemovalSafe(c.env, {
     tenantId,
     userId: accountSession.userId,
@@ -324,7 +324,7 @@ async function createBackupCodes(
     );
   }
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const generated = await generateTotpBackupCodes({
     tenantId,
     userId,
@@ -389,7 +389,7 @@ export async function listAccountTotpCredentialsHandler(
   }
 
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const [credentials, backupCodes] = await Promise.all([
     authCtx.repositories.totp.findByUserId(accountSession.userId),
     authCtx.repositories.totp.listBackupCodes(accountSession.userId),
@@ -448,7 +448,7 @@ export async function createAccountTotpOptionsHandler(
     encryptionKeyVersion(c.env)
   );
   const accountName = await currentUserDisplayName(c, accountSession, tenantId);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const credential = await authCtx.repositories.totp.create({
     user_id: accountSession.userId,
     secret_encrypted: encrypted.encrypted,
@@ -517,7 +517,7 @@ export async function activateAccountTotpCredentialHandler(
       403
     );
   }
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const credential = await authCtx.repositories.totp.findById(body.credential_id);
   if (
     !credential ||
@@ -619,7 +619,7 @@ export async function updateAccountTotpCredentialHandler(
 
   const credentialId = c.req.param('id');
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const credential = credentialId ? await authCtx.repositories.totp.findById(credentialId) : null;
   if (!credential || credential.user_id !== accountSession.userId) {
     return c.json({ error: 'not_found', error_description: 'TOTP credential was not found' }, 404);
@@ -653,7 +653,7 @@ export async function deleteAccountTotpCredentialHandler(
 
   const credentialId = c.req.param('id');
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const credential = credentialId ? await authCtx.repositories.totp.findById(credentialId) : null;
   if (!credential || credential.user_id !== accountSession.userId) {
     return c.json({ error: 'not_found', error_description: 'TOTP credential was not found' }, 404);
@@ -810,7 +810,7 @@ export async function regenerateAccountTotpBackupCodesHandler(
   }
 
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const activeCredentials = await authCtx.repositories.totp.findActiveByUserId(
     accountSession.userId
   );

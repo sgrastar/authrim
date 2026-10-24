@@ -5,7 +5,7 @@ const {
   mockSessionStore,
   mockGetSessionStoreBySessionId,
   mockGetTenantIdFromContext,
-  mockCreateAuthContextFromHono,
+  mockCreateAccountAuthContextFromHono,
   mockCreatePIIContextFromHono,
   mockCoreAdapter,
   mockPiiAdapter,
@@ -45,7 +45,7 @@ const {
     mockSessionStore: sessionStore,
     mockGetSessionStoreBySessionId: vi.fn().mockReturnValue({ stub: sessionStore }),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
-    mockCreateAuthContextFromHono: vi.fn().mockReturnValue({
+    mockCreateAccountAuthContextFromHono: vi.fn().mockReturnValue({
       coreAdapter,
       repositories: {
         totp: totpRepo,
@@ -79,7 +79,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
-    createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     consumeTotpAuthenticationState: mockConsumeTotpAuthenticationState,
