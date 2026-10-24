@@ -1,3 +1,4 @@
+import { processPendingSupportOpsExecuteJobs } from './support-ops-execute-job';
 import type { Env } from '@authrim/ar-lib-core';
 import { processPendingIdentityMappingHistory } from './identity-mapping-history-maintenance';
 import { processPendingGenericAdminJobs } from './admin-job-executor';
@@ -58,10 +59,21 @@ export async function processInteractiveAdminJobQueues(
     log.error('Data export job processing failed', {}, jobsError as Error);
   }
 
+  const supportOpsBudget = { remaining: 600 };
   try {
-    await processPendingSupportOpsSnapshotJobs(env, log);
+    await processPendingSupportOpsSnapshotJobs(
+      env,
+      log,
+      { maxQueriesPerRun: 200 },
+      supportOpsBudget
+    );
   } catch (jobsError) {
     log.error('Support Ops snapshot job processing failed', {}, jobsError as Error);
+  }
+  try {
+    await processPendingSupportOpsExecuteJobs(env, log, { maxCallsPerRun: 400 }, supportOpsBudget);
+  } catch (jobsError) {
+    log.error('Support Ops execute job processing failed', {}, jobsError as Error);
   }
 
   try {
@@ -117,10 +129,21 @@ export async function processScheduledAdminJobQueues(
     log.error('Data export job processing failed', {}, jobsError as Error);
   }
 
+  const supportOpsBudget = { remaining: 600 };
   try {
-    await processPendingSupportOpsSnapshotJobs(env, log);
+    await processPendingSupportOpsSnapshotJobs(
+      env,
+      log,
+      { maxQueriesPerRun: 200 },
+      supportOpsBudget
+    );
   } catch (jobsError) {
     log.error('Support Ops snapshot job processing failed', {}, jobsError as Error);
+  }
+  try {
+    await processPendingSupportOpsExecuteJobs(env, log, { maxCallsPerRun: 400 }, supportOpsBudget);
+  } catch (jobsError) {
+    log.error('Support Ops execute job processing failed', {}, jobsError as Error);
   }
 
   try {

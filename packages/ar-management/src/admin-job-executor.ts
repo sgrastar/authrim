@@ -1,3 +1,4 @@
+import { SUPPORT_OPS_LOGOUT_JOB_TYPE } from './support-ops-job-evidence';
 import type {
   AccountAuthenticationLifecycle,
   DatabaseAdapter,
@@ -200,6 +201,7 @@ const GENERIC_ADMIN_JOB_TYPES = [
   'reports/generate',
   'organizations/bulk-members',
   SESSION_END_LOGOUT_JOB_TYPE,
+  SUPPORT_OPS_LOGOUT_JOB_TYPE,
 ] as const;
 
 type GenericAdminJobType = (typeof GENERIC_ADMIN_JOB_TYPES)[number];
@@ -232,7 +234,8 @@ export function isAdminJobAllowedForTenantLifecycle(
   if (lifecycleState === 'active') return true;
   // Telling relying parties that sessions ended goes on whatever the tenant's state; a tenant
   // whose state could not be read is retried (see processGenericAdminJob).
-  if (jobType === SESSION_END_LOGOUT_JOB_TYPE) return lifecycleState !== 'missing';
+  if (jobType === SESSION_END_LOGOUT_JOB_TYPE || jobType === SUPPORT_OPS_LOGOUT_JOB_TYPE)
+    return lifecycleState !== 'missing';
   if (lifecycleState === 'deleting') {
     return jobType === 'tenant-database/export';
   }
@@ -2200,6 +2203,7 @@ const ADMIN_JOB_PROCESSORS: Record<GenericAdminJobType, AdminJobProcessor> = {
   'tenant-database/purge-backup': processTenantDatabasePurgeBackupJob,
   'users/bulk-update': processBulkUserUpdateJob,
   [SESSION_END_LOGOUT_JOB_TYPE]: processSessionEndLogoutJob,
+  [SUPPORT_OPS_LOGOUT_JOB_TYPE]: processSessionEndLogoutJob,
   'reports/generate': processReportGenerateJob,
   'organizations/bulk-members': processOrganizationBulkMembersJob,
 };
@@ -2349,7 +2353,7 @@ function buildFailureResult(job: AdminJobRow, error: unknown, attemptCount: numb
 
 /** The job types the scheduled admin job run handles (logout jobs have their own, every minute). */
 const SCHEDULED_GENERIC_ADMIN_JOB_TYPES = GENERIC_ADMIN_JOB_TYPES.filter(
-  (jobType) => jobType !== SESSION_END_LOGOUT_JOB_TYPE
+  (jobType) => jobType !== SESSION_END_LOGOUT_JOB_TYPE && jobType !== SUPPORT_OPS_LOGOUT_JOB_TYPE
 );
 
 export async function processPendingGenericAdminJobs(
@@ -2404,7 +2408,7 @@ export async function processPendingSessionEndLogoutJobs(
   logger: AdminJobLogger
 ): Promise<void> {
   await processPendingGenericAdminJobs(env, logger, {
-    jobTypes: [SESSION_END_LOGOUT_JOB_TYPE],
+    jobTypes: [SESSION_END_LOGOUT_JOB_TYPE, SUPPORT_OPS_LOGOUT_JOB_TYPE],
     limit: SESSION_END_LOGOUT_JOBS_PER_RUN,
     deadlineMs: Date.now() + SESSION_END_LOGOUT_RUN_BUDGET_MS,
   });
@@ -2644,7 +2648,10 @@ async function processGenericAdminJob(
       },
       error as Error
     );
-    if (exhausted && job.job_type === SESSION_END_LOGOUT_JOB_TYPE) {
+    if (
+      exhausted &&
+      (job.job_type === SESSION_END_LOGOUT_JOB_TYPE || job.job_type === SUPPORT_OPS_LOGOUT_JOB_TYPE)
+    ) {
       // Its relying parties may not have been told: the audit says so, with the job.
       await auditSessionEndLogoutFailed(env, job, error);
     }

@@ -1,5 +1,16 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
+import {
+  acknowledgeSupportOpsReceipt,
+  capturePendingSupportOpsSession,
+  createSupportOpsReceipt,
+  completeSupportOpsReceipt,
+  replaySupportOpsReceipt,
+  stepSupportOpsReceipt,
+  type ReceiptRequest,
+  type SupportOpsSessionReceiptLease,
+  type SupportOpsSessionReceiptPage,
+} from './support-ops-session-receipt';
 
 const IDENTITY_KEY = 'identity';
 const STATE_KEY = 'state';
@@ -15,18 +26,6 @@ const MAX_SESSION_INDEX_ENTRIES = 1_000;
 const SESSION_INDEX_SCAN_LIMIT = MAX_SESSION_INDEX_ENTRIES + 1;
 /** Index entries read per page when finding the sessions a revocation ended. */
 const REVOCATION_SCAN_PAGE_SIZE = 500;
-/** Keys one storage delete call takes at most. */
-const MAX_DELETE_KEYS = 128;
-
-async function deleteKeysInBatches(
-  storage: { delete(keys: string[]): Promise<number> },
-  keys: string[]
-): Promise<void> {
-  for (let offset = 0; offset < keys.length; offset += MAX_DELETE_KEYS) {
-    await storage.delete(keys.slice(offset, offset + MAX_DELETE_KEYS));
-  }
-}
-
 export type AccountAuthenticationLifecycle =
   | 'active'
   | 'suspended'
@@ -266,6 +265,11 @@ export class SessionRevocationStore extends DurableObject<Env> {
         ...state,
         lastLoginAtMs: Math.max(state.lastLoginAtMs ?? 0, revocationBoundAtMs),
       } satisfies SessionRevocationState);
+      await capturePendingSupportOpsSession(
+        storage,
+        await storage.get<UserSessionIndexEntry>(`${SESSION_INDEX_PREFIX}${validatedSessionId}`),
+        (id) => this.validateSessionId(id)
+      );
       await storage.put(`${SESSION_INDEX_PREFIX}${validatedSessionId}`, {
         sessionId: validatedSessionId,
         tenantId,
@@ -291,6 +295,11 @@ export class SessionRevocationStore extends DurableObject<Env> {
     const validatedSessionId = this.validateSessionId(sessionId);
     return this.ctx.storage.transaction(async (storage) => {
       await this.ensureIdentity(storage, identity);
+      await capturePendingSupportOpsSession(
+        storage,
+        await storage.get<UserSessionIndexEntry>(`${SESSION_INDEX_PREFIX}${validatedSessionId}`),
+        (id) => this.validateSessionId(id)
+      );
       return storage.delete(`${SESSION_INDEX_PREFIX}${validatedSessionId}`);
     });
   }
@@ -318,6 +327,7 @@ export class SessionRevocationStore extends DurableObject<Env> {
       ) {
         throw new Error('session_registration_identity_mismatch');
       }
+      await capturePendingSupportOpsSession(storage, existing, (id) => this.validateSessionId(id));
       await storage.put(key, { ...existing, expiresAtMs: expiresAt });
       return true;
     });
@@ -354,7 +364,9 @@ export class SessionRevocationStore extends DurableObject<Env> {
         active.push(entry);
       }
     }
-    await deleteKeysInBatches(this.ctx.storage, expiredKeys);
+    await this.ctx.storage.transaction(async (storage) => {
+      await this.deleteExpiredSessionIndexEntries(storage, expiredKeys, now);
+    });
     return active.sort((left, right) => right.createdAtMs - left.createdAtMs);
   }
 
@@ -548,6 +560,113 @@ export class SessionRevocationStore extends DurableObject<Env> {
     );
   }
 
+  /** Support Ops alone opts into a replayable, bounded session transfer. Legacy RPCs are unchanged. */
+  async beginSupportOpsSuspensionRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    sourceVersionMs: number,
+    operationId: string,
+    owner: string,
+    nowMs: number
+  ): Promise<SupportOpsSessionReceiptLease & { currentState: AccountAuthenticationSnapshot }> {
+    if (!SAFE_CREDENTIAL_ID.test(owner)) throw new Error('support_ops_receipt_owner_invalid');
+    const result = await this.applyAccountLifecycle(
+      tenantId,
+      userId,
+      accountId,
+      'suspended',
+      sourceVersionMs,
+      operationId,
+      true,
+      nowMs,
+      { sourceVersionMs, operationId, owner, nowMs }
+    );
+    if (!result.receipt) throw new Error('support_ops_receipt_missing');
+    return { ...result.receipt, currentState: result.state };
+  }
+
+  async readSupportOpsSuspensionReceiptRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    operationId: string,
+    owner: string,
+    fence: number,
+    nowMs: number
+  ): Promise<SupportOpsSessionReceiptPage> {
+    const identity = this.validateIdentity(tenantId, userId, accountId);
+    if (!SAFE_CREDENTIAL_ID.test(operationId) || !SAFE_CREDENTIAL_ID.test(owner))
+      throw new Error('support_ops_receipt_identity_invalid');
+    return this.ctx.storage.transaction(async (storage) => {
+      await this.ensureIdentity(storage, identity);
+      return stepSupportOpsReceipt(storage, operationId, owner, fence, nowMs, (id) =>
+        this.validateSessionId(id)
+      );
+    });
+  }
+
+  async acknowledgeSupportOpsSuspensionReceiptRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    operationId: string,
+    owner: string,
+    fence: number,
+    sequence: number,
+    nowMs: number
+  ): Promise<void> {
+    const identity = this.validateIdentity(tenantId, userId, accountId);
+    if (!SAFE_CREDENTIAL_ID.test(operationId) || !SAFE_CREDENTIAL_ID.test(owner))
+      throw new Error('support_ops_receipt_identity_invalid');
+    await this.ctx.storage.transaction(async (storage) => {
+      await this.ensureIdentity(storage, identity);
+      await acknowledgeSupportOpsReceipt(storage, operationId, owner, fence, sequence, nowMs);
+    });
+  }
+
+  async completeSupportOpsSuspensionReceiptRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    sourceVersionMs: number,
+    operationId: string,
+    owner: string,
+    fence: number,
+    sequence: number,
+    nowMs: number
+  ): Promise<void> {
+    const identity = this.validateIdentity(tenantId, userId, accountId);
+    if (!SAFE_CREDENTIAL_ID.test(operationId) || !SAFE_CREDENTIAL_ID.test(owner))
+      throw new Error('support_ops_receipt_identity_invalid');
+    await this.ctx.storage.transaction(async (storage) => {
+      await this.ensureIdentity(storage, identity);
+      await completeSupportOpsReceipt(
+        storage,
+        operationId,
+        sourceVersionMs,
+        owner,
+        fence,
+        sequence,
+        nowMs
+      );
+    });
+  }
+
+  private async deleteExpiredSessionIndexEntries(
+    storage: SessionRevocationTransactionStorage,
+    keys: string[],
+    now: number
+  ): Promise<void> {
+    // A concurrent renewal must not be deleted from an earlier read's expired-key list.
+    for (const key of keys) {
+      const entry = await storage.get<UserSessionIndexEntry>(key);
+      if (!entry || entry.expiresAtMs > now) continue;
+      await capturePendingSupportOpsSession(storage, entry, (id) => this.validateSessionId(id));
+      await storage.delete(key);
+    }
+  }
+
   private async applyAccountLifecycle(
     tenantId: string,
     userId: string,
@@ -557,8 +676,13 @@ export class SessionRevocationStore extends DurableObject<Env> {
     operationId: string,
     revokeSessions: boolean,
     /** When to read the sessions it ended against; null: not read (none returned). */
-    nowMs: number | null
-  ): Promise<{ state: AccountAuthenticationSnapshot; endedSessions: UserSessionIndexEntry[] }> {
+    nowMs: number | null,
+    receiptRequest?: ReceiptRequest
+  ): Promise<{
+    state: AccountAuthenticationSnapshot;
+    endedSessions: UserSessionIndexEntry[];
+    receipt?: SupportOpsSessionReceiptLease;
+  }> {
     const identity = this.validateIdentity(tenantId, userId, accountId);
     const validatedLifecycle = this.validateLifecycle(lifecycle);
     const version = this.validateTimestamp(sourceVersionMs, 'account_auth_state');
@@ -568,11 +692,16 @@ export class SessionRevocationStore extends DurableObject<Env> {
     return this.ctx.storage.transaction(async (storage) => {
       await this.ensureIdentity(storage, identity);
       const state = this.normalizeState(await storage.get<SessionRevocationState>(STATE_KEY));
+      if (receiptRequest) {
+        const replay = await replaySupportOpsReceipt(storage, receiptRequest);
+        if (replay) return { state, endedSessions: [], receipt: replay };
+      }
       if (state.lifecycleVersionMs !== null && version < state.lifecycleVersionMs) {
         throw new Error('account_authentication_lifecycle_stale');
       }
       if (state.lifecycleVersionMs === version) {
         if (state.lifecycle === validatedLifecycle && state.lifecycleOperationId === operationId) {
+          if (receiptRequest) throw new Error('support_ops_receipt_missing');
           return { state, endedSessions: [] };
         }
         throw new Error('account_authentication_lifecycle_conflict');
@@ -601,6 +730,15 @@ export class SessionRevocationStore extends DurableObject<Env> {
           : state.revokedAfterMs,
       } satisfies AccountAuthenticationSnapshot;
       await storage.put(STATE_KEY, next);
+      if (receiptRequest) {
+        const receipt = await createSupportOpsReceipt(
+          storage,
+          receiptRequest,
+          state.revokedAfterMs,
+          next.revokedAfterMs
+        );
+        return { state: next, endedSessions: [], receipt };
+      }
       return {
         state: next,
         endedSessions: await this.sessionsRevokedBetween(
@@ -647,7 +785,7 @@ export class SessionRevocationStore extends DurableObject<Env> {
           ended.push(entry);
         }
       }
-      await deleteKeysInBatches(storage, expiredKeys);
+      await this.deleteExpiredSessionIndexEntries(storage, expiredKeys, nowMs);
       if (page.size < REVOCATION_SCAN_PAGE_SIZE) return ended;
     }
   }

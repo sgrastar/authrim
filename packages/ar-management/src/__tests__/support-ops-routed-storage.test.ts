@@ -20,7 +20,14 @@ const mockTransition = vi.hoisted(() => vi.fn());
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
-  const route = { allocationScope: 'shared_pool', bindingRef: 'TENANT_METADATA' };
+  const route = {
+    allocationScope: 'shared_pool',
+    bindingRef: 'TENANT_METADATA',
+    registryRow: { database_id: 'metadata-db' },
+    bindingRouteGeneration: 1,
+    assignmentGeneration: 1,
+    shardId: 'metadata-shard',
+  };
   return {
     ...actual,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: state.metadata.adapter })),
@@ -35,6 +42,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       state.accounts.map((account, index) => ({
         bindingRef: `USERS_${index}`,
         source: account.adapter,
+        registryRow: { database_id: `account-db-${index}` },
+        bindingRouteGeneration: 1,
+        assignmentGeneration: 1,
+        shardId: `account-shard-${index}`,
       }))
     ),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
@@ -46,13 +57,44 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         : resource;
     }),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => state.admin),
+    // The SQL/topology tests have no sessions. Actual receipt/lease behavior is covered by
+    // support-ops-execute-job.test.ts and Core's actual-DO SQLite regression suite.
+    getSessionRevocationStore: vi.fn((_env: Env, _tenant: string, userId: string) => ({
+      beginSupportOpsSuspensionRpc: async (
+        _t: string,
+        _u: string,
+        _a: string,
+        version: number,
+        operation: string
+      ) => {
+        await mockTransition({}, { userId });
+        return {
+          fence: 1,
+          currentState: {
+            lifecycle: 'suspended',
+            lifecycleVersionMs: version,
+            lifecycleOperationId: operation,
+          },
+        };
+      },
+      readSupportOpsSuspensionReceiptRpc: async () => ({
+        stage: 'drained',
+        sequence: 0,
+        sessionIds: [],
+      }),
+      completeSupportOpsSuspensionReceiptRpc: async () => undefined,
+    })),
     transitionAccountAuthenticationStateEndingSessions: mockTransition,
   };
 });
-vi.mock('../admin-shared', () => ({ writeAdminAuditLog: vi.fn() }));
+vi.mock('../admin-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../admin-shared')>()),
+  writeAdminAuditLog: vi.fn(),
+}));
 vi.mock('../admin-session-end', () => ({ startAdminSessionEndLogout: vi.fn() }));
 
 import { processPendingSupportOpsSnapshotJobs, supportOpsRouter } from '../support-ops';
+import { processSupportOpsExecuteJobInline } from '../support-ops-execute-job';
 
 const ADMIN_MIGRATIONS = new URL('../../../../migrations/admin/d1/', import.meta.url);
 
@@ -142,7 +184,11 @@ function seed() {
 function app() {
   const router = new Hono<{ Bindings: Env; Variables: { adminAuth?: unknown } }>();
   router.use('/api/admin/support-ops/*', async (c, next) => {
-    c.set('adminAuth', { userId: 'admin-1', permissions: ['admin:support_ops:*'] });
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'machine_access_token',
+      permissions: ['admin:support_ops:*'],
+    });
     await next();
   });
   router.route('/api/admin/support-ops', supportOpsRouter);
@@ -160,6 +206,38 @@ async function post(path: string, body: unknown) {
     {} as Env
   );
   return { status: response.status, body: (await response.json()) as Record<string, any> };
+}
+
+/** Drive the same durable job after a 202; SQL ownership/routing remains real here. */
+async function finishExecution(response: Awaited<ReturnType<typeof post>>) {
+  if (response.status !== 202) return response;
+  const jobId = response.body.job_id as string;
+  for (let run = 0; run < 200; run++) {
+    await state.admin.execute('UPDATE admin_jobs SET next_run_at=NULL WHERE id=?', [jobId]);
+    await processSupportOpsExecuteJobInline({} as Env, 'tenant-a', jobId, {
+      maxCallsPerRun: 600,
+      maxTargetsPerRun: 1000,
+    });
+    const status = await state.admin.queryOne<{ status: string }>(
+      'SELECT status FROM admin_jobs WHERE id=?',
+      [jobId]
+    );
+    if (status?.status === 'completed' || status?.status === 'failed') {
+      const action = metadata.db
+        .prepare(
+          "SELECT status,result_summary_json FROM support_operation_actions WHERE id='action-1'"
+        )
+        .get() as { status: string; result_summary_json: string };
+      return {
+        status: status.status === 'completed' ? 200 : 409,
+        body: {
+          status: action.status,
+          ...(JSON.parse(action.result_summary_json) as Record<string, unknown>),
+        },
+      };
+    }
+  }
+  throw new Error('execution_did_not_finish');
 }
 
 function targets(cohortId: string) {
@@ -461,7 +539,7 @@ describe('Support Ops under routed account storage', () => {
     expect(created.status).toBe(201);
     approveSuspend(created.body.cohort_id);
 
-    const executed = await post('/actions/action-1/execute', {});
+    const executed = await finishExecution(await post('/actions/action-1/execute', {}));
 
     expect(executed.status).toBe(200);
     expect(executed.body).toMatchObject({
@@ -483,44 +561,32 @@ describe('Support Ops under routed account storage', () => {
         { lifecycle_state: 'suspended', count: actionable },
       ]);
     }
-    expect(mockTransition).toHaveBeenCalledTimes(20);
+    expect(
+      new Set(mockTransition.mock.calls.map(([, input]) => (input as { userId: string }).userId))
+        .size
+    ).toBe(20);
   });
 
-  it('reports the accounts suspended in the other databases when one fails', async () => {
+  it('reports durable skip outcomes below the privacy minimum after a newer lifecycle', async () => {
     const created = await post('/cohorts', { resource: 'User', intent: { action: 'suspend' } });
     approveSuspend(created.body.cohort_id);
-    state.accounts[1] = {
-      adapter: {
-        ...second.adapter,
-        batch: async () => {
-          throw new Error('database unavailable');
-        },
-      } as DatabaseAdapter,
-    };
-
-    const executed = await post('/actions/action-1/execute', {});
-
-    expect(executed.status).toBe(409);
-    expect(
-      JSON.parse(
-        (
-          metadata.db
-            .prepare(`SELECT status, result_summary_json FROM support_operation_actions`)
-            .get() as { result_summary_json: string }
-        ).result_summary_json
-      )
-    ).toMatchObject({ succeeded_count: 12, failed_count: 8, error: 'execution_failed' });
+    // These eight accounts changed after the snapshot. The per-account CAS must not suspend them.
+    second.db.exec(
+      "UPDATE identity_accounts SET lifecycle_state='locked' WHERE metadata_json IS NULL"
+    );
+    const executed = await finishExecution(await post('/actions/action-1/execute', {}));
+    expect(executed.status).toBe(200);
+    expect(executed.body).toMatchObject({ succeeded_count: 12, failed_count: 8 });
     expect(lifecycles(first, 'identity_accounts')).toEqual([
       { lifecycle_state: 'active', count: 5 },
       { lifecycle_state: 'suspended', count: 12 },
     ]);
     expect(lifecycles(second, 'identity_accounts')).toEqual([
-      { lifecycle_state: 'active', count: 13 },
+      { lifecycle_state: 'active', count: 5 },
+      { lifecycle_state: 'locked', count: 8 },
     ]);
-    // The eight that failed are below the minimum: neither count is shown (one is the other
-    // subtracted from the attempted count).
     expect(await readAction()).toMatchObject({
-      status: 'failed',
+      status: 'completed',
       result_summary: {
         attempted_count: 20,
         succeeded_count: null,
@@ -551,7 +617,10 @@ describe('Support Ops under routed account storage', () => {
       expect(created.status).toBe(201);
       approveSuspend(created.body.cohort_id);
 
-      const executed = await post('/actions/action-1/execute', {});
+      const accepted = await post('/actions/action-1/execute', {});
+      expect(accepted.status).toBe(202);
+      expect(mockTransition).not.toHaveBeenCalled();
+      const executed = await finishExecution(accepted);
 
       expect(executed.status).toBe(200);
       expect(executed.body).toMatchObject({ succeeded_count: 1030, failed_count: 0 });
@@ -561,7 +630,7 @@ describe('Support Ops under routed account storage', () => {
       ]);
     });
 
-    it('suspends none of a database whose later statement fails', async () => {
+    it('keeps each failed account and result atomic while preserving earlier completed accounts', async () => {
       const created = await post('/cohorts', { resource: 'User', intent: { action: 'suspend' } });
       approveSuspend(created.body.cohort_id);
       // The first database's second chunk of accounts fails.
@@ -580,8 +649,18 @@ describe('Support Ops under routed account storage', () => {
       };
 
       const executed = await post('/actions/action-1/execute', {});
+      await processSupportOpsExecuteJobInline(
+        {} as Env,
+        'tenant-a',
+        executed.body.job_id as string,
+        { maxCallsPerRun: 600 }
+      );
 
-      expect(executed.status).toBe(409);
+      expect(executed.status).toBe(202);
+      expect((await job(executed.body.job_id as string))?.status).toBe('pending');
+      expect(first.db.prepare('SELECT * FROM support_ops_account_result_receipts').all()).toEqual(
+        []
+      );
       expect(lifecycles(first, 'identity_accounts')).toEqual([
         { lifecycle_state: 'active', count: 1027 },
       ]);
@@ -716,14 +795,19 @@ describe('Support Ops under routed account storage', () => {
       // A copy that is not active is a copy all the same.
       addAccount(second, 'user-p-01', { status: 'locked' });
 
-      const executed = await post('/actions/action-1/execute', {});
+      const executed = await finishExecution(await post('/actions/action-1/execute', {}));
 
-      expect([executed.status, executed.body.error]).toEqual([409, 'account_store_ambiguous']);
+      expect(executed.status).toBe(409);
+      expect(executed.body.error).toBe('execution_failed');
+      const summary = metadata.db
+        .prepare('SELECT result_summary_json FROM support_operation_actions')
+        .get() as { result_summary_json: string };
+      expect(summary.result_summary_json).toContain('account_store_ambiguous');
       expect(mockTransition).not.toHaveBeenCalled();
       expect(lifecycles(first, 'identity_accounts')).toEqual([
         { lifecycle_state: 'active', count: 17 },
       ]);
-      expect((await readAction()).status).toBe('approved');
+      expect((await readAction()).status).toBe('failed');
     });
   });
 

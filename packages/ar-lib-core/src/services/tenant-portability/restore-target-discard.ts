@@ -95,6 +95,7 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
     flow_interactions: byTenantId,
     password_reset_tokens: byTenantId,
     sessions: byTenantId,
+    support_ops_account_result_receipts: byTenantId,
     user_token_families: byTenantId,
     vp_requests: byTenantId,
   },

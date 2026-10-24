@@ -31388,11 +31388,38 @@ paths:
         - Support Operations
       operationId: postApiAdminSupportOpsActionsByActionIdExecute
       summary: Execute a support operation action
-      description: Execute an approved support operation action. Currently only User suspend is implemented.
-      x-authrim-route-coverage: inferred-from-source
+      description: >-
+        Execute an approved User suspend operation. At most maxSyncExecuteCount targets are eligible
+        for bounded inline execution; a large target count, session count, or exhausted request
+        budget returns 202 with the same durable operation. Closing the page does not cancel work.
+        A completed action has durably retained its downstream logout work; remote relying-party
+        delivery can still be pending or retrying. Inspect GET actions/{actionId} or the returned
+        Admin job to observe progress. Private selectors, target IDs, session IDs, and execution
+        receipts are never included in job status responses.
       responses:
         '200':
           $ref: '#/components/responses/SupportOpsActionExecute'
+        '202':
+          description: Durable execution accepted or continuing after the inline budget.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportOpsActionExecuteAcceptedResponse'
+        '409':
+          description: The action is not executable or its completed execution failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: >-
+            Execution stores are unsupported or unavailable, or execution state could not be
+            confirmed. Store preflight fails before enqueueing or changing the action. An uncertain
+            action-state write instead retains its durable queued intent for reconciliation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         default:
           $ref: '#/components/responses/Error'
       parameters:
@@ -74482,24 +74509,34 @@ components:
           type: string
           example: cohort_123
         matched_count:
-          type: integer
-          format: int64
+          anyOf:
+            - type: integer
+              format: int64
+            - type: 'null'
           example: 120
         attempted_count:
-          type: integer
-          format: int64
+          anyOf:
+            - type: integer
+              format: int64
+            - type: 'null'
           example: 118
         succeeded_count:
-          type: integer
-          format: int64
+          anyOf:
+            - type: integer
+              format: int64
+            - type: 'null'
           example: 118
         failed_count:
-          type: integer
-          format: int64
+          anyOf:
+            - type: integer
+              format: int64
+            - type: 'null'
           example: 0
         blocked_count:
-          type: integer
-          format: int64
+          anyOf:
+            - type: integer
+              format: int64
+            - type: 'null'
           example: 2
         privacy:
           $ref: '#/components/schemas/SupportOpsPrivacy'
@@ -74509,6 +74546,26 @@ components:
         - resource
         - action
         - cohort_id
+    SupportOpsActionExecuteAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required: [action_id, status, resource, action, cohort_id, job_id]
+      properties:
+        action_id:
+          type: string
+        status:
+          type: string
+          enum: [running]
+        resource:
+          type: string
+          enum: [User]
+        action:
+          type: string
+          enum: [suspend]
+        cohort_id:
+          type: string
+        job_id:
+          type: string
     ApprovalArtifactCompletionAssertion:
       type: object
       properties:

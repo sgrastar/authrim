@@ -48,6 +48,7 @@ const adminSupportOps = {
 	admin_support_ops_action_approved: 'Actionをapproveしました',
 	admin_support_ops_action_approval_failed: 'Action approvalに失敗しました',
 	admin_support_ops_action_completed: 'Actionが完了しました',
+	admin_support_ops_action_running: 'バックグラウンドで処理を実行しています',
 	admin_support_ops_action_execution_failed: 'Action executionに失敗しました',
 	admin_support_ops_load_failed: 'Support operationsの読み込みに失敗しました'
 } as const;

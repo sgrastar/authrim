@@ -17,9 +17,20 @@ const mockTransition = vi.hoisted(() => vi.fn());
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  const route = {
+    registryRow: { database_id: 'core-db' },
+    bindingRouteGeneration: 1,
+    assignmentGeneration: 1,
+    shardId: 'core-shard',
+  };
   return {
     ...actual,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: stores.core })),
+    getTenantMetadataContextFromHono: vi.fn(() => ({
+      tenantId: 'tenant-a',
+      coreDb: stores.core,
+      route,
+    })),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getTenantSettingsDocument: vi.fn(async () => null),
     // A lower snapshot limit sends a cohort of this size through the snapshot job.
@@ -33,14 +44,46 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveTenantMetadataContext: vi.fn(async () => ({
       tenantId: 'tenant-a',
       coreDb: stores.core,
+      route,
+    })),
+    // The SQL/topology tests have no sessions. Actual receipt/lease behavior is covered by
+    // support-ops-execute-job.test.ts and Core's actual-DO SQLite regression suite.
+    getSessionRevocationStore: vi.fn((_env: Env, _tenant: string, userId: string) => ({
+      beginSupportOpsSuspensionRpc: async (
+        _t: string,
+        _u: string,
+        _a: string,
+        version: number,
+        operation: string
+      ) => {
+        await mockTransition({}, { userId });
+        return {
+          fence: 1,
+          currentState: {
+            lifecycle: 'suspended',
+            lifecycleVersionMs: version,
+            lifecycleOperationId: operation,
+          },
+        };
+      },
+      readSupportOpsSuspensionReceiptRpc: async () => ({
+        stage: 'drained',
+        sequence: 0,
+        sessionIds: [],
+      }),
+      completeSupportOpsSuspensionReceiptRpc: async () => undefined,
     })),
     transitionAccountAuthenticationStateEndingSessions: mockTransition,
   };
 });
-vi.mock('../admin-shared', () => ({ writeAdminAuditLog: vi.fn() }));
+vi.mock('../admin-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../admin-shared')>()),
+  writeAdminAuditLog: vi.fn(),
+}));
 vi.mock('../admin-session-end', () => ({ startAdminSessionEndLogout: vi.fn() }));
 
 import { processPendingSupportOpsSnapshotJobs, supportOpsRouter } from '../support-ops';
+import { processSupportOpsExecuteJobInline } from '../support-ops-execute-job';
 
 const ADMIN_MIGRATIONS = new URL('../../../../migrations/admin/d1/', import.meta.url);
 
@@ -132,7 +175,11 @@ function seedAccounts() {
 function app() {
   const router = new Hono<{ Bindings: Env; Variables: { adminAuth?: unknown } }>();
   router.use('/api/admin/support-ops/*', async (c, next) => {
-    c.set('adminAuth', { userId: 'admin-1', permissions: ['admin:support_ops:*'] });
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'machine_access_token',
+      permissions: ['admin:support_ops:*'],
+    });
     await next();
   });
   router.route('/api/admin/support-ops', supportOpsRouter);
@@ -171,7 +218,27 @@ async function executeSuspend(cohortId: string) {
          'admin-3', 1, 1, 1)`
     )
     .run(cohortId);
-  return post('/actions/action-1/execute', {});
+  const response = await post('/actions/action-1/execute', {});
+  if (response.status !== 202) return response;
+  for (let run = 0; run < 100; run++) {
+    await processSupportOpsExecuteJobInline({} as Env, 'tenant-a', response.body.job_id as string, {
+      maxCallsPerRun: 600,
+    });
+    const action = core
+      .prepare(
+        "SELECT status,result_summary_json FROM support_operation_actions WHERE id='action-1'"
+      )
+      .get() as { status: string; result_summary_json: string };
+    if (action.status === 'completed' || action.status === 'failed')
+      return {
+        status: action.status === 'completed' ? 200 : 409,
+        body: {
+          status: action.status,
+          ...(JSON.parse(action.result_summary_json) as Record<string, unknown>),
+        },
+      };
+  }
+  throw new Error('execution_did_not_finish');
 }
 
 function lifecycles(table: 'identity_accounts' | 'identity_subjects') {
@@ -329,7 +396,10 @@ describe('Support Ops on the Core schema', () => {
     ];
     expect(lifecycles('identity_accounts')).toEqual(expected);
     expect(lifecycles('identity_subjects')).toEqual(expected);
-    expect(mockTransition).toHaveBeenCalledTimes(20);
+    expect(
+      new Set(mockTransition.mock.calls.map(([, input]) => (input as { userId: string }).userId))
+        .size
+    ).toBe(20);
     expect(
       mockTransition.mock.calls.map(([, input]) => (input as { userId: string }).userId)
     ).not.toContain('user-blocked-0');

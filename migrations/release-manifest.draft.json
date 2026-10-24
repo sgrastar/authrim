@@ -131,6 +131,14 @@
             {
               "path": "029_flow_audit_sign_in_attempts.sql",
               "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
+            },
+            {
+              "path": "030_external_idp_auth_state_attempt_interaction.sql",
+              "checksum": "0a3744f73596cca948e0a3a638355b6f8114cd43a27455596e7d2e4e99205168"
+            },
+            {
+              "path": "031_support_ops_account_result_receipts.sql",
+              "checksum": "e0bb286affe5b6960b7a3fab1814f29c05388d2801888b74fe90aaee1b46f0ec"
             }
           ]
         },
@@ -732,6 +740,14 @@
         {
           "path": "029_flow_audit_sign_in_attempts.sql",
           "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
+        },
+        {
+          "path": "030_external_idp_auth_state_attempt_interaction.sql",
+          "checksum": "0a3744f73596cca948e0a3a638355b6f8114cd43a27455596e7d2e4e99205168"
+        },
+        {
+          "path": "031_support_ops_account_result_receipts.sql",
+          "checksum": "e0bb286affe5b6960b7a3fab1814f29c05388d2801888b74fe90aaee1b46f0ec"
         }
       ]
     },

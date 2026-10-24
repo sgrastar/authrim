@@ -113,7 +113,7 @@ const TABLE_GROUPS: Partial<
       authrim_runtime_probes
       ciba_requests credential_offers device_codes external_idp_auth_states
       flow_interaction_steps flow_interactions password_reset_tokens sessions
-      user_token_families vp_requests
+      user_token_families vp_requests support_ops_account_result_receipts
     `,
   },
   pii: {

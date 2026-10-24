@@ -176,7 +176,7 @@ function getAdminProxyAuditMetadata(c: Context<any, any, any>): Record<string, u
   };
 }
 
-function getAdminActorAuditMetadata(
+export function getAdminActorAuditMetadata(
   adminAuth: AdminAuthContext | undefined
 ): Record<string, unknown> {
   if (!adminAuth) {
