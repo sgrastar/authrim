@@ -37169,14 +37169,14 @@ components:
                 type: array
                 items:
                   type: string
-                  example: status
+                  example: lifecycle_state
             required:
               - resource
               - group_by
           example:
             resource: User
             group_by:
-              - status
+              - lifecycle_state
             selector:
               field: status
               op: eq

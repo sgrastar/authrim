@@ -1155,7 +1155,7 @@ describe('Admin API Handlers', () => {
   describe('adminTestEmailCodeHandler tenant D1 routing', () => {
     const tenantMetadataContext = {
       tenantId: 'default',
-      storageProfileId: 'builtin:storage:tenant-d1',
+      route: { allocationScope: 'tenant_exclusive' },
     };
 
     it('uses the route-bound Core projection without reading tenant-D1 PII data', async () => {
@@ -1953,7 +1953,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -2016,7 +2016,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -2542,7 +2542,7 @@ describe('Admin API Handlers', () => {
         params: { id: userId },
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
         },
       });
       resolveAccountDataContext.mockImplementationOnce(async (context, accountId) => {
@@ -3034,7 +3034,7 @@ describe('Admin API Handlers', () => {
         },
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: mockDB,
         },
       });
@@ -4504,7 +4504,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -4576,7 +4576,7 @@ describe('Admin API Handlers', () => {
         envOverrides: { SETTINGS: settings as unknown as KVNamespace },
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -4615,7 +4615,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });
@@ -4657,7 +4657,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
+          route: { allocationScope: 'tenant_exclusive' },
           coreDb: core,
         },
       });

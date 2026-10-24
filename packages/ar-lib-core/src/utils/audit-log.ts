@@ -25,6 +25,7 @@ import {
   resolveAuditPersistenceSourcesFromEnv,
   resolveLegacyAuditLogAdapterFromEnv,
   type EventCategory,
+  type EventResult,
   type EventSeverity,
   type IAuditService,
   type IAuditStorageAdapter,
@@ -238,6 +239,34 @@ function parseLegacyMetadata(metadata: string): Record<string, unknown> {
   }
 
   return { raw_metadata: metadata };
+}
+
+const EVENT_RESULTS: ReadonlySet<string> = new Set<EventResult>(['success', 'failure', 'partial']);
+// error_code is a column outside the details sanitizer, so only a code-shaped value goes there.
+const AUDIT_ERROR_CODE_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u;
+
+/**
+ * The outcome of a legacy audit entry: a `result` its data states, else a failure for a failed
+ * action (`auth.passkey.failed`, `auth.email_code.send_failed`), else a success.
+ */
+function mapLegacyAuditResult(action: string, metadata: Record<string, unknown>): EventResult {
+  if (typeof metadata.result === 'string' && EVENT_RESULTS.has(metadata.result)) {
+    return metadata.result as EventResult;
+  }
+  // Mapping Set saves state their outcome as 'saved' / 'failed'.
+  if (metadata.result === 'failed') return 'failure';
+  const outcome = action.split('.').pop() ?? '';
+  return outcome === 'failed' || outcome.endsWith('_failed') ? 'failure' : 'success';
+}
+
+/** The error code an unsuccessful entry carries (`errorCode`, or `error_code` in snake_case data). */
+function mapLegacyAuditErrorCode(
+  result: EventResult,
+  metadata: Record<string, unknown>
+): string | undefined {
+  if (result === 'success') return undefined;
+  const code = metadata.errorCode ?? metadata.error_code;
+  return typeof code === 'string' && AUDIT_ERROR_CODE_PATTERN.test(code) ? code : undefined;
 }
 
 async function resolveLegacyAuditLogPolicy(
@@ -1076,14 +1105,19 @@ async function mirrorLegacyAuditLogToUnifiedService(
     return;
   }
   const metadata = parseLegacyMetadata(entry.metadata);
+  const result = mapLegacyAuditResult(entry.action, metadata);
+  const errorCode = mapLegacyAuditErrorCode(result, metadata);
   const auditService = getUnifiedAuditService(env);
 
+  // anonymized_user_id stays empty: the mapping lives in the PII store (user_anonymization_map,
+  // get-or-create), and the mirror runs on every audited request, sign-ins included.
   await auditService.logEvent(tenantId, {
     id: entry.id,
     createdAt: entry.createdAt,
     eventType: entry.action,
     eventCategory: mapLegacyAuditCategory(entry.action, entry.resource),
-    result: 'success',
+    result,
+    ...(errorCode ? { errorCode } : {}),
     severity: mapLegacySeverity(entry.severity),
     ...(entry.requireDurableFanout ? { requireDurableFanout: true } : {}),
     details: {

@@ -68,6 +68,7 @@ export async function handleScheduled(
             severity: 'warning',
             metadata: JSON.stringify({
               protocol: 'saml',
+              result: 'failure',
               transaction_id: transaction.transactionId,
               session_index: transaction.sessionIndex,
               target_count: transaction.targets.length,
