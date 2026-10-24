@@ -56,7 +56,7 @@ import {
   isDeletedDestinationRouteError,
   provisionTenantD1EmailAccount,
   resolveTenantD1EmailAccountRoute,
-  usesTenantD1AccountStorage,
+  usesRoutedAccountStorage,
 } from './account-provisioning';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import { invitationHolderForEmail } from '@authrim/ar-lib-core/services/invitation-auth-core';
@@ -647,7 +647,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     }
     const blocked = registration === 'blocked';
     activationStage = 'account_route';
-    const tenantD1 = usesTenantD1AccountStorage(c);
+    const tenantD1 = usesRoutedAccountStorage(c);
     const accountRoute = await resolveTenantD1EmailAccountRoute(c, signupEmail).catch(
       (error: unknown) => {
         if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
@@ -1045,7 +1045,7 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
       if (rateLimited) return rateLimited;
 
       let accountRouteAvailable = true;
-      if (usesTenantD1AccountStorage(c)) {
+      if (usesRoutedAccountStorage(c)) {
         if (boundUserId) {
           try {
             await resolveAccountDataContextFromHono(c, boundUserId);
@@ -1210,7 +1210,7 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      if (usesTenantD1AccountStorage(c)) {
+      if (usesRoutedAccountStorage(c)) {
         try {
           await resolveAccountDataContextFromHono(c, userId);
         } catch (error) {

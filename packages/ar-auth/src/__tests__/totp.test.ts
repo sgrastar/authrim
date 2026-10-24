@@ -23,7 +23,7 @@ const {
   mockTotpLogWarn,
   mockResolveAccountDataContextFromHono,
   mockResolveTenantD1EmailAccountRoute,
-  mockUsesTenantD1AccountStorage,
+  mockUsesRoutedAccountStorage,
   mockEnsureAccountAuthenticationState,
   mockConsumeTotpTimeStepRpc,
   mockStartSignupInvitation,
@@ -91,7 +91,7 @@ const {
     mockTotpLogWarn: vi.fn(),
     mockResolveAccountDataContextFromHono: vi.fn(),
     mockResolveTenantD1EmailAccountRoute: vi.fn(),
-    mockUsesTenantD1AccountStorage: vi.fn(),
+    mockUsesRoutedAccountStorage: vi.fn(),
     mockEnsureAccountAuthenticationState: vi.fn(),
     mockConsumeTotpTimeStepRpc: vi.fn(),
     mockStartSignupInvitation: vi.fn(),
@@ -182,7 +182,7 @@ vi.mock('../account-provisioning', async (importOriginal) => {
   return {
     ...actual,
     resolveTenantD1EmailAccountRoute: mockResolveTenantD1EmailAccountRoute,
-    usesTenantD1AccountStorage: mockUsesTenantD1AccountStorage,
+    usesRoutedAccountStorage: mockUsesRoutedAccountStorage,
   };
 });
 
@@ -299,7 +299,7 @@ describe('TOTP login handlers', () => {
       legacyUserId: 'user-001',
     });
     mockResolveTenantD1EmailAccountRoute.mockResolvedValue('not_required');
-    mockUsesTenantD1AccountStorage.mockReturnValue(false);
+    mockUsesRoutedAccountStorage.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -753,7 +753,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('starts a login challenge without exposing unknown identifiers', async () => {
-    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockUsesRoutedAccountStorage.mockReturnValue(true);
     mockResolveTenantD1EmailAccountRoute.mockResolvedValueOnce('not_found');
     const app = createApp();
     const responsePromise = app.request(
@@ -791,7 +791,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('starts reauthentication from the bound OAuth challenge without exposing an identifier', async () => {
-    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockUsesRoutedAccountStorage.mockReturnValue(true);
     mockChallengeStore.getChallengeRpc.mockResolvedValueOnce({
       tenantId: 'default',
       type: 'reauth',
@@ -870,7 +870,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('verifies a TOTP code and creates an otp/totp session', async () => {
-    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockUsesRoutedAccountStorage.mockReturnValue(true);
     const app = createApp();
     const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
     const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
@@ -958,7 +958,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('fails closed before reading credentials when the account route is missing', async () => {
-    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockUsesRoutedAccountStorage.mockReturnValue(true);
     mockResolveAccountDataContextFromHono.mockRejectedValueOnce(
       new Error('account_data_route_not_found')
     );
