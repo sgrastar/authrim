@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => {
     readAuthorizationChallengeFreshness: vi.fn(),
     getFeatureFlag: vi.fn(),
     resolveAccountCoreDataContext: vi.fn(),
+    resolveAccountDataContextFromHono: vi.fn(async () => undefined),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -77,6 +78,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: mocks.coreAdapter,
     })),
+    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
+    resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
     CanonicalRuntimeUserStore: class {
       findById(...args: unknown[]) {
@@ -870,6 +873,7 @@ function resetAdapter() {
   mocks.challengeStore.getChallengeRpc.mockReset();
   mocks.challengeStore.storeChallengeRpc.mockReset();
   mocks.runtimeUsers.findById.mockReset();
+  mocks.resolveAccountDataContextFromHono.mockReset().mockResolvedValue(undefined);
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
   mocks.readAuthorizationChallengeFreshness.mockReset();
   mocks.readAuthorizationChallengeFreshness.mockResolvedValue(null);
@@ -1479,6 +1483,74 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(mocks.runtimeUsers.findById).toHaveBeenCalledWith('user_1', {
       includeInactive: true,
     });
+    expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user_1'
+    );
+  });
+
+  it('retains the email-verification rejection and metadata audit for a known inactive owner', async () => {
+    const { data: startData } = await startInteraction(
+      { flow_kind: 'login' },
+      explicitEmailVerificationRuntime,
+      explicitEmailVerificationEditor
+    );
+    const interaction = startData.interaction as Record<string, unknown>;
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      expiresAt: Number(interaction.expires_at),
+      currentNodeId: 'email-verify',
+      currentStepId: 'email-verify:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: explicitEmailVerificationRuntime,
+      editorSnapshot: explicitEmailVerificationEditor,
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: 'sess_runtime_1',
+      userId: 'user_1',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      data: {
+        amr: ['email_verification_protocol'],
+        authTime: Math.floor(Date.now() / 1000),
+        runtime_interaction_id: 'interaction_1',
+      },
+    });
+    mocks.resolveAccountDataContextFromHono.mockRejectedValueOnce(
+      new Error('lookup_destination_revalidation_failed', { cause: 'account_inactive' })
+    );
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'email-verify:step',
+          node_id: 'email-verify',
+          selected_handle: 'verified',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(403);
+    expect(data).toMatchObject({
+      error: 'email_verification_required',
+      error_code: 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
+    });
+    expect(mocks.runtimeUsers.findById).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO flow_audit_events'),
+      expect.arrayContaining(['flow.interaction.failed', 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED'])
+    );
+    expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user_1'
+    );
   });
 
   it('rejects start when the runtime feature flag is disabled', async () => {

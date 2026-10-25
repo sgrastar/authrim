@@ -20,7 +20,8 @@ import {
   getSessionClientMetadata,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
+  resolveAccountDataContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
   getTenantIdFromContext,
@@ -395,7 +396,8 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
     if (includeProfile) {
       try {
         const tenantId = getTenantIdFromContext(c);
-        const authCtx = createAuthContextFromHono(c, tenantId);
+        await resolveAccountDataContextFromHono(c, session.userId);
+        const authCtx = createAccountAuthContextFromHono(c, tenantId);
         const piiCtx = createPIIContextFromHono(c, tenantId);
         const runtimeUsers = new CanonicalRuntimeUserStore({
           coreAdapter: authCtx.coreAdapter,

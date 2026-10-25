@@ -17,6 +17,8 @@ import {
   FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
   FLOW_RUNTIME_INTERACTION_TTL_SECONDS,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
+  resolveAccountDataContextFromHono,
   createPIIContextFromHono,
   evaluateFlowConditionRows,
   generateId,
@@ -3232,7 +3234,8 @@ async function getCurrentSession(c: AuthContext, tenantId: string): Promise<Sess
   return session;
 }
 
-async function getRecentVerifiedEmailSessionUserId(
+/** Verify the session proof against its owning account; Flow state remains tenant metadata. */
+export async function getRecentVerifiedEmailSessionUserId(
   c: AuthContext,
   tenantId: string,
   notBefore: number,
@@ -3258,7 +3261,19 @@ async function getRecentVerifiedEmailSessionUserId(
     return null;
   }
 
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  try {
+    await resolveAccountDataContextFromHono(c, session.userId);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'lookup_destination_revalidation_failed' &&
+      error.cause === 'account_inactive'
+    ) {
+      return null;
+    }
+    throw error;
+  }
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
