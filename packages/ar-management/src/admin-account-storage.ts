@@ -21,11 +21,14 @@ import { AdminContactReadBatch } from './admin-contact-read-batch';
 export async function adminAccountCoreAdapter(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
-  userId: string
+  userId: string,
+  options: {
+    /** Core audit views only; this never permits contact PII. */ includeDeleted?: boolean;
+  } = {}
 ): Promise<DatabaseAdapter | null> {
   const metadata = createAuthContextFromHono(c, tenantId).coreAdapter;
   return usesRoutedAccountStorage(getTenantMetadataContextFromHono(c))
-    ? accountStoreHolding(c.env, tenantId, userId)
+    ? accountStoreHolding(c.env, tenantId, userId, options)
     : metadata;
 }
 

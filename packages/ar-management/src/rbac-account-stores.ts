@@ -61,12 +61,14 @@ export async function tenantRBACStores(
 /**
  * The one user store of the tenant that holds the account (in any state but deleted), found by
  * reading each of them: for an account its route refuses (suspended, locked, being deleted),
- * whatever its type. Null when none holds it.
+ * whatever its type. Null when none holds it. Core audit views may explicitly include deleted
+ * identities; ordinary callers keep the same non-deleted lookup.
  */
 export async function accountStoreHolding(
   env: Env,
   tenantId: string,
-  userId: string
+  userId: string,
+  options: { includeDeleted?: boolean } = {}
 ): Promise<DatabaseAdapter | null> {
   const stores = await tenantCoreStores(env, tenantId, {
     accountsOfRoutedTenant: true,
@@ -77,7 +79,7 @@ export async function accountStoreHolding(
       stores.map(async ({ adapter }) =>
         (await adapter.queryOne<{ id: string }>(
           `SELECT id FROM identity_accounts
-            WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state <> 'deleted'
+            WHERE tenant_id = ? AND legacy_user_id = ?${options.includeDeleted ? '' : " AND lifecycle_state <> 'deleted'"}
             LIMIT 1`,
           [tenantId, userId]
         ))

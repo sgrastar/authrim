@@ -7023,7 +7023,9 @@ paths:
       summary: List user attributes.
       description: >-
         Lists verified user attributes with pagination and filters for user, attribute name, source
-        type, expiration state, and text search.
+        type, expiration state, and text search. User contact summaries come from each user's account
+        storage. Unavailable contact ownership is represented by null email and name; another user's
+        or tenant's personal data is never used as a fallback.
       responses:
         '200':
           $ref: '#/components/responses/UserAttributeList'
@@ -7032,6 +7034,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '500':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -7092,7 +7096,9 @@ paths:
       summary: Create or replace a user attribute.
       description: >-
         Creates a manual verified attribute for an active user, or replaces the existing attribute
-        value for the same user and attribute name.
+        value for the same user and attribute name. The account, its subject, and its directory
+        publication must be active. Missing contact data does not make an otherwise active account
+        ineligible. Inactive or missing users are rejected with 404.
       responses:
         '201':
           $ref: '#/components/responses/UserAttribute'
@@ -7103,6 +7109,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '404':
+          $ref: '#/components/responses/Error'
+        '500':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/UserAttributeCreate'
@@ -7238,8 +7246,12 @@ paths:
       operationId: getApiAdminAttributesUsersByUserId
       summary: List attributes for a user.
       description: >-
-        Returns a user summary and that user’s verified attributes, optionally including expired
-        attributes.
+        Returns a user summary and that user's verified attributes, optionally including expired
+        attributes. Inactive accounts remain identifiable. A proven account whose contact data cannot
+        be read safely, including a deleting or deleted account, has its id with null email and name.
+        The user field is null only when no canonical account and subject can be established for the
+        current tenant. Personal data is never read from an unverified fallback store. Storage read
+        failures return an error rather than a successful response with incomplete data.
       responses:
         '200':
           $ref: '#/components/responses/UserAttributeUserList'
@@ -7248,6 +7260,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '500':
           $ref: '#/components/responses/Error'
       parameters:
         - name: userId
@@ -53587,6 +53601,9 @@ components:
               count:
                 type: integer
     UserAttributeUserListResponse:
+      description: >-
+        The user summary distinguishes a proven canonical identity with unavailable contact data
+        from a missing identity. Contact values remain null when their owner cannot be established.
       type: object
       additionalProperties: false
       required:
