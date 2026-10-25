@@ -24,6 +24,8 @@ import {
   resolveEffectiveSettings,
   falRequiresSignedPushedRequest,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
+  resolveAccountDataContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
   createErrorResponse,
@@ -444,10 +446,24 @@ async function createHandoffSession(
   // Use explicit type annotation after null check
   const asSession: Session = asSessionResult;
 
-  // 7. Get user information
+  // 7. Read the verified artifact user from the account that owns its Core and PII.
+  // Client definitions above remain in tenant metadata.
+  try {
+    await resolveAccountDataContextFromHono(c, handoffData.userId);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'lookup_destination_revalidation_failed' &&
+      error.cause === 'account_inactive'
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    }
+    throw error;
+  }
+  const accountAuth = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
-    coreAdapter: authCtx.coreAdapter,
+    coreAdapter: accountAuth.coreAdapter,
     piiAdapter: piiCtx.defaultPiiAdapter,
     tenantId,
   });
