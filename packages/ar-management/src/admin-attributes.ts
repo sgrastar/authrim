@@ -15,8 +15,7 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
   createAuthContextFromHono,
-  createPIIContextFromHono,
-  CanonicalRuntimeUserStore,
+  findCanonicalAccountAuthenticationState,
   type DatabaseAdapter,
   escapeLikePattern,
   createErrorResponse,
@@ -24,6 +23,11 @@ import {
   generateId,
   createAuditLogFromContext,
 } from '@authrim/ar-lib-core';
+import {
+  adminAccountContact,
+  adminAccountContacts,
+  adminAccountCoreAdapter,
+} from './admin-account-storage';
 
 /**
  * Hono context type with admin auth variable
@@ -50,82 +54,6 @@ function createAdapterFromContext(c: AdminContext): DatabaseAdapter {
   return createAuthContextFromHono(asBaseContext(c), tenantId).coreAdapter;
 }
 
-function createCanonicalUserStore(c: AdminContext, tenantId: string): CanonicalRuntimeUserStore {
-  const authContext = createAuthContextFromHono(asBaseContext(c), tenantId);
-  const piiContext = createPIIContextFromHono(asBaseContext(c), tenantId);
-  return new CanonicalRuntimeUserStore({
-    coreAdapter: authContext.coreAdapter,
-    piiAdapter: piiContext.defaultPiiAdapter,
-    tenantId,
-  });
-}
-
-interface CanonicalAttributeUserSummary {
-  id: string;
-  email: string | null;
-  name: string | null;
-}
-
-function parseCanonicalString(value: string | null): string | null {
-  if (value === null) return null;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return typeof parsed === 'string' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-async function resolveCanonicalAttributeUsers(
-  c: AdminContext,
-  tenantId: string,
-  userIds: readonly string[]
-): Promise<Map<string, CanonicalAttributeUserSummary>> {
-  const uniqueUserIds = Array.from(new Set(userIds));
-  if (uniqueUserIds.length === 0) return new Map();
-
-  const authContext = createAuthContextFromHono(asBaseContext(c), tenantId);
-  const piiContext = createPIIContextFromHono(asBaseContext(c), tenantId);
-  const placeholders = uniqueUserIds.map(() => '?').join(', ');
-  const accounts = await authContext.coreAdapter.query<{ legacy_user_id: string }>(
-    `SELECT legacy_user_id
-       FROM identity_accounts
-      WHERE tenant_id = ?
-        AND legacy_user_id IN (${placeholders})`,
-    [tenantId, ...uniqueUserIds]
-  );
-  const existingUserIds = accounts.map(({ legacy_user_id }) => legacy_user_id);
-  if (existingUserIds.length === 0) return new Map();
-
-  const valuePlaceholders = existingUserIds.map(() => '?').join(', ');
-  const values = await piiContext.defaultPiiAdapter.query<{
-    owner_id: string;
-    value_key: string;
-    value_json: string | null;
-  }>(
-    `SELECT owner_id, value_key, value_json
-       FROM identity_sensitive_values
-      WHERE tenant_id = ?
-        AND owner_type = 'runtime_user'
-        AND owner_id IN (${valuePlaceholders})
-        AND value_key IN ('email', 'name')
-        AND lifecycle_state = 'active'`,
-    [tenantId, ...existingUserIds]
-  );
-  const summaries = new Map<string, CanonicalAttributeUserSummary>();
-  for (const id of existingUserIds) {
-    summaries.set(id, { id, email: null, name: null });
-  }
-  for (const value of values) {
-    const summary = summaries.get(value.owner_id);
-    if (!summary) continue;
-    const parsed = parseCanonicalString(value.value_json);
-    if (value.value_key === 'email') summary.email = parsed;
-    if (value.value_key === 'name') summary.name = parsed;
-  }
-  return summaries;
-}
-
 function isUniqueConstraintError(error: unknown): boolean {
   return String(error).includes('UNIQUE constraint');
 }
@@ -149,7 +77,7 @@ export async function adminAttributesListHandler(c: AdminContext) {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const page = parsePositiveInteger(c.req.query('page'), 1);
-    // Keep both the result set and the two canonical-user lookup batches below D1's bind limit.
+    // Bound the page and its independent account-owner contact lookups.
     const limit = Math.min(parsePositiveInteger(c.req.query('limit'), 50), 100);
     const offset = (page - 1) * limit;
 
@@ -226,8 +154,8 @@ export async function adminAttributesListHandler(c: AdminContext) {
        LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
-    const users = await resolveCanonicalAttributeUsers(
-      c,
+    const users = await adminAccountContacts(
+      asBaseContext(c),
       tenantId,
       attributeRows.map(({ user_id }) => user_id)
     );
@@ -294,11 +222,20 @@ export async function adminUserAttributesHandler(c: AdminContext) {
       expires_at: number | null;
     }>(query, params);
 
-    const canonicalUser = await createCanonicalUserStore(c, tenantId).findById(userId, {
-      includeInactive: true,
+    const accountAdapter = await adminAccountCoreAdapter(asBaseContext(c), tenantId, userId, {
+      includeDeleted: true,
     });
+    const canonicalUser = accountAdapter
+      ? await findCanonicalAccountAuthenticationState(accountAdapter, tenantId, userId)
+      : null;
+    // Core identity and readable contact are separate facts. A missing PII owner must not turn
+    // an existing (including inactive) account into a missing user or select metadata PII.
+    const contact =
+      canonicalUser && !['deleting', 'deleted'].includes(canonicalUser.lifecycle)
+        ? await adminAccountContact(asBaseContext(c), tenantId, userId)
+        : null;
     const user = canonicalUser
-      ? { id: canonicalUser.id, email: canonicalUser.email, name: canonicalUser.name }
+      ? { id: canonicalUser.userId, email: contact?.email ?? null, name: contact?.name ?? null }
       : null;
 
     return c.json({
@@ -333,8 +270,12 @@ export async function adminAttributeCreateHandler(c: AdminContext) {
       });
     }
 
-    const user = await createCanonicalUserStore(c, tenantId).findById(body.user_id);
-    if (!user) {
+    const accountAdapter = await adminAccountCoreAdapter(asBaseContext(c), tenantId, body.user_id);
+    const user = accountAdapter
+      ? await findCanonicalAccountAuthenticationState(accountAdapter, tenantId, body.user_id)
+      : null;
+    // Attribute eligibility is a Core fact; assigning an attribute never needs contact PII.
+    if (!user || user.lifecycle !== 'active') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
