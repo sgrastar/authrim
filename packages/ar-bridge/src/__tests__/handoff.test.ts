@@ -75,6 +75,8 @@ vi.mock('@authrim/ar-lib-core', async () => ({
       },
     },
   })),
+  resolveAccountDataContextFromHono: vi.fn(async () => undefined),
+  createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
   createPIIContextFromHono: vi.fn(() => ({
     defaultPiiAdapter: {},
     piiRepositories: {
