@@ -54,7 +54,7 @@
 	let policy = $state<'skip' | 'overwrite'>('skip');
 	let selected = $state<string[]>([]);
 	let editing = $state(false);
-	let editor: HTMLDivElement | undefined;
+	let editor = $state<HTMLDivElement>();
 	async function openEditor() {
 		editing = true;
 		await tick();
