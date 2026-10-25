@@ -29,6 +29,7 @@
 			await userEvent.click(canvas.getByRole('checkbox', { name: t('table.selectRow', { name }) }));
 		}
 		await userEvent.click(canvas.getByRole('button', { name: t('mc.nav.changeDefault') }));
+		await expect(canvas.getByRole('combobox', { name: t('mc.ro.setLabel') })).toHaveFocus();
 		await userEvent.selectOptions(
 			canvas.getByRole('combobox', { name: t('mc.ro.setLabel') }),
 			'fms_affil'

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import {
 		IDENTITY_MAPPING_CATEGORY,
 		OIDC_DEFAULT_SET_KEY,
@@ -54,6 +54,12 @@
 	let policy = $state<'skip' | 'overwrite'>('skip');
 	let selected = $state<string[]>([]);
 	let editing = $state(false);
+	let editor: HTMLDivElement | undefined;
+	async function openEditor() {
+		editing = true;
+		await tick();
+		editor?.querySelector('select')?.focus();
+	}
 	let search = $state('');
 
 	/** What one check or run is about: fixed when it is sent, so later edits do not change it. */
@@ -353,93 +359,9 @@
 	{:else}
 		<TextField label={t('mc.nav.searchTenants')} bind:value={search} />
 
-		<Card title={t('mc.ro.tenants')} flush>
-			<DataTable
-				caption={t('mc.ro.tenants')}
-				selectable
-				bind:selected
-				rowLabel={(row) => row.display_name}
-				columns={[
-					{ key: 'tenant', label: t('mc.ro.col.tenant'), width: '14%' },
-					{ key: 'default', label: t('mc.ro.col.default'), width: '18%' },
-					{ key: 'source', label: t('mc.ro.col.source'), width: '24%' },
-					{ key: 'apps', label: t('mc.ro.col.apps'), width: '8%', align: 'end' },
-					{ key: 'plan', label: t('mc.ro.col.plan') },
-					{ key: 'result', label: t('mc.ro.col.result'), width: '16%' }
-				]}
-				rows={overview.tenants.filter((row) =>
-					row.display_name.toLowerCase().includes(search.toLowerCase())
-				)}
-				rowKey={(row) => row.tenant_id}
-			>
-				{#snippet bulkActions()}
-					<Button
-						size="sm"
-						variant="secondary"
-						disabled={running || retrying}
-						onclick={() => (editing = true)}>{t('mc.nav.changeDefault')}</Button
-					>
-				{/snippet}
-				{#snippet cell(row, column)}
-					{#if column.key === 'tenant'}
-						{#if ontenant}<Button
-								size="sm"
-								variant="ghost"
-								disabled={running || retrying}
-								onclick={() => ontenant?.(row.tenant_id, row.display_name)}
-								>{row.display_name}</Button
-							>{:else}<strong>{row.display_name}</strong>{/if}
-					{:else if column.key === 'default'}
-						{#if row.tenant_default}
-							<span class:muted={row.tenant_default.state === 'unset'}>
-								{chainValueText(row.tenant_default)}
-							</span>
-						{:else}
-							<span class="muted">—</span>
-						{/if}
-					{:else if column.key === 'source'}
-						<SourceLabel selection={row.effective} />
-					{:else if column.key === 'apps'}
-						{#if row.apps}
-							{num(row.apps.total)}
-						{:else}
-							<span class="muted">—</span>
-						{/if}
-					{:else if column.key === 'plan'}
-						{@const plan = stale ? undefined : planOf.get(row.tenant_id)}
-						{#if plan?.status === 'ready' && impact(plan) === null}
-							{t('mc.ro.plan.uncounted')}
-						{:else if plan?.status === 'ready'}
-							{t('mc.ro.plan.apply', { count: impact(plan)?.apps_following_default ?? 0 })}
-						{:else if plan}
-							<span class="muted">
-								{label('mc.ro.reason.', plan.changes[0]?.reason ?? plan.reason ?? '')}
-							</span>
-						{/if}
-					{:else}
-						{@const outcome = resultOf.get(row.tenant_id)}
-						{#if unsent.includes(row.tenant_id)}
-							<Badge tone="warning">{t('mc.ro.status.unsent')}</Badge>
-						{:else if outcome}
-							<span class="stack">
-								<Badge tone={statusTone(outcome.status)}>
-									{label('mc.ro.status.', outcome.status)}
-								</Badge>
-								{#if !succeeded(outcome.status)}
-									<span class="muted">
-										{label('mc.ro.reason.', outcome.changes[0]?.reason ?? outcome.reason ?? '')}
-									</span>
-								{/if}
-							</span>
-						{/if}
-					{/if}
-				{/snippet}
-			</DataTable>
-		</Card>
-
 		{#if editing && selected.length > 0}
 			<Card title={t('mc.ro.setCard')}>
-				<div class="form">
+				<div class="form" bind:this={editor}>
 					<p class="muted">
 						{t('mc.ro.platformDefault', { value: chainValueText(overview.platform_default) })}
 					</p>
@@ -562,6 +484,86 @@
 				</div>
 			</Card>
 		{/if}
+		<Card title={t('mc.ro.tenants')} flush>
+			<DataTable
+				caption={t('mc.ro.tenants')}
+				selectable
+				bind:selected
+				rowLabel={(row) => row.display_name}
+				columns={[
+					{ key: 'tenant', label: t('mc.ro.col.tenant'), width: '14%' },
+					{ key: 'default', label: t('mc.ro.col.default'), width: '18%' },
+					{ key: 'source', label: t('mc.ro.col.source'), width: '24%' },
+					{ key: 'apps', label: t('mc.ro.col.apps'), width: '8%', align: 'end' },
+					{ key: 'plan', label: t('mc.ro.col.plan') },
+					{ key: 'result', label: t('mc.ro.col.result'), width: '16%' }
+				]}
+				rows={overview.tenants.filter((row) =>
+					row.display_name.toLowerCase().includes(search.toLowerCase())
+				)}
+				rowKey={(row) => row.tenant_id}
+			>
+				{#snippet bulkActions()}
+					<Button size="sm" variant="secondary" disabled={running || retrying} onclick={openEditor}
+						>{t('mc.nav.changeDefault')}</Button
+					>
+				{/snippet}
+				{#snippet cell(row, column)}
+					{#if column.key === 'tenant'}
+						{#if ontenant}<Button
+								size="sm"
+								variant="ghost"
+								disabled={running || retrying}
+								onclick={() => ontenant?.(row.tenant_id, row.display_name)}
+								>{row.display_name}</Button
+							>{:else}<strong>{row.display_name}</strong>{/if}
+					{:else if column.key === 'default'}
+						{#if row.tenant_default}
+							<span class:muted={row.tenant_default.state === 'unset'}>
+								{chainValueText(row.tenant_default)}
+							</span>
+						{:else}
+							<span class="muted">—</span>
+						{/if}
+					{:else if column.key === 'source'}
+						<SourceLabel selection={row.effective} />
+					{:else if column.key === 'apps'}
+						{#if row.apps}
+							{num(row.apps.total)}
+						{:else}
+							<span class="muted">—</span>
+						{/if}
+					{:else if column.key === 'plan'}
+						{@const plan = stale ? undefined : planOf.get(row.tenant_id)}
+						{#if plan?.status === 'ready' && impact(plan) === null}
+							{t('mc.ro.plan.uncounted')}
+						{:else if plan?.status === 'ready'}
+							{t('mc.ro.plan.apply', { count: impact(plan)?.apps_following_default ?? 0 })}
+						{:else if plan}
+							<span class="muted">
+								{label('mc.ro.reason.', plan.changes[0]?.reason ?? plan.reason ?? '')}
+							</span>
+						{/if}
+					{:else}
+						{@const outcome = resultOf.get(row.tenant_id)}
+						{#if unsent.includes(row.tenant_id)}
+							<Badge tone="warning">{t('mc.ro.status.unsent')}</Badge>
+						{:else if outcome}
+							<span class="stack">
+								<Badge tone={statusTone(outcome.status)}>
+									{label('mc.ro.status.', outcome.status)}
+								</Badge>
+								{#if !succeeded(outcome.status)}
+									<span class="muted">
+										{label('mc.ro.reason.', outcome.changes[0]?.reason ?? outcome.reason ?? '')}
+									</span>
+								{/if}
+							</span>
+						{/if}
+					{/if}
+				{/snippet}
+			</DataTable>
+		</Card>
 	{/if}
 </MappingSection>
 
