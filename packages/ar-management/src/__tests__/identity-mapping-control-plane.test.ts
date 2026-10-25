@@ -3842,57 +3842,50 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     });
   });
 
-  it('records SCIM active:false lifecycle signal as an account suspension decision', async () => {
-    const adapter = createAdapter({
-      queryOneRows: [null],
+  it('delegates account signals to the explicitly separated suspension service', async () => {
+    const adapter = createAdapter({});
+    const record = vi.fn(async () => ({
+      signalEventId: 'event-1',
+      decision: 'suspend_account' as const,
+      reasonCodes: [],
+    }));
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, undefined, {
+      record,
     });
-    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
-
-    const result = await repository.recordExternalLifecycleSignal('tenant_a', {
+    const input = {
       sourceType: 'scim',
       sourceId: 'directory-1',
       sourceEventId: 'event-1',
-      signalType: 'scim_active_false',
+      signalType: 'scim_active_false' as const,
       accountId: 'account-1',
-      targetType: 'account',
+      targetType: 'account' as const,
       targetId: 'account-1',
-    });
-
-    expect(result).toMatchObject({
-      decision: 'suspend_account',
-    });
-    expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
-      expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
-      expect.stringContaining('UPDATE identity_accounts'),
-      expect.stringContaining('INSERT INTO provisioning_revocation_events'),
-      expect.stringContaining('UPDATE external_lifecycle_signal_events'),
-    ]);
+    };
+    await expect(
+      repository.recordExternalLifecycleSignal('tenant_a', input)
+    ).resolves.toMatchObject({ decision: 'suspend_account' });
+    expect(record).toHaveBeenCalledWith(
+      'tenant_a',
+      input,
+      expect.stringMatching(/^[a-f0-9]{64}$/u)
+    );
+    expect(adapter.executes).toHaveLength(0);
   });
 
-  it('invokes the account suspension fence before applying a SCIM account signal', async () => {
-    const adapter = createAdapter({ queryOneRows: [null] });
-    const fence = vi.fn(async () => {
-      expect(adapter.executes).toHaveLength(0);
-    });
-    const repository = new IdentityMappingControlPlaneRepository(
-      adapter,
-      () => 1000,
-      undefined,
-      fence
-    );
-
-    await repository.recordExternalLifecycleSignal('tenant_a', {
-      sourceType: 'scim',
-      sourceId: 'directory-1',
-      sourceEventId: 'event-1',
-      signalType: 'scim_active_false',
-      accountId: 'account-1',
-      targetType: 'account',
-      targetId: 'account-1',
-    });
-
-    expect(fence).toHaveBeenCalledWith('tenant_a', 'account-1', 1000, expect.any(String));
+  it('refuses account signals without the explicitly configured owner/metadata service', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    await expect(
+      repository.recordExternalLifecycleSignal('tenant_a', {
+        sourceType: 'scim',
+        sourceId: 'directory-1',
+        sourceEventId: 'event-1',
+        signalType: 'scim_active_false',
+        targetType: 'account',
+        targetId: 'account-1',
+      })
+    ).rejects.toThrow('lifecycle_signal_account_service_unavailable');
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('routes protected SCIM group removal, CSV diff, and claim disappearance to review instead of silent revoke', async () => {

@@ -1649,6 +1649,24 @@ The Admin database-connection inventory may show Control Plane-managed D1 resour
 assignment metadata. Those rows are operational inventory, not selectable storage modes. R2 and audit
 destination inventory remains separate from identity-data placement.
 
+Admin status changes and account-wide session revocation resolve the account's owning Core
+store even while it is suspended or locked. Status changes retain DO-first disabling and
+Core-first activation; operational reason details remain in the tenant's operational log store.
+Session profile reads use each account's own Core/PII pair and record field-name-only PII access
+audit in that same PII store. A session returned by SessionStore must match the requested tenant
+and session ID before any profile disclosure or individual invalidation.
+
+Individual admin revocation supports a live SessionStore session without a synchronous SQL mirror.
+It starts downstream logout for the session it ended even if later legacy-row cleanup fails.
+Single-session revocation uses `users/session-end-logout-v2` with the precise
+`trigger.action=session.revoke`; all existing actions retain `users/session-end-logout`.
+The payload fields, tenant-scoped Admin Jobs visibility and permissions are unchanged. Older
+scheduled consumers ignore the versioned type and leave it pending without consuming retry
+attempts; a capable consumer resumes it after an upgrade or rollback recovery. Bounded logout
+pages, RP-specific `sid`/`sub`, retries, lifecycle handling and audit retain the existing shared
+logout contract. Job persistence remains best effort: if enqueue fails, the existing helper
+records failure and attempts one fanout when a request execution context is available.
+
 ### 14.4 Custom Schema Validation
 
 | Field                   | Meaning                                    | Default                            |

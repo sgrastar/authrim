@@ -71,6 +71,16 @@ Generic Admin Jobs track retry state in `admin_jobs`:
 
 When a processor fails before `max_attempts`, the job is returned to `pending` and scheduled with backoff. When attempts are exhausted, the job is marked `failed`, `dead_lettered_at` is set, and the final processor error is written into `admin_jobs.result` as an error log entry.
 
+Individual session revocation uses `users/session-end-logout-v2` with the exact
+`trigger.action` value `session.revoke`. Existing account-wide actions retain
+`users/session-end-logout`. The versioned jobs use the same payload fields, tenant-scoped Jobs
+visibility, permissions, minute-run budget, lifecycle handling and best-effort enqueue behavior
+as the existing logout jobs. Older scheduled consumers ignore the new type without claiming it
+or consuming retry attempts; outstanding jobs resume when a capable consumer is available.
+Changing the enum inside the old job type would instead exhaust old consumers' retry budgets
+after a rollback. Source Admin workflows, including both logout job types, remain held during
+tenant backup restoration rather than replayed in the target environment.
+
 ## Chunked bulk updates
 
 `users/bulk-update` runs in resumable chunks. The processor records progress in `admin_jobs.progress`, including:

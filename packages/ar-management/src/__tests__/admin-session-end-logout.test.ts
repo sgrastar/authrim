@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   tenantAdapter: { queryOne: vi.fn(), execute: vi.fn(), query: vi.fn(), batch: vi.fn() },
   backchannelFanout: vi.fn(),
   purgeEndedSessions: vi.fn(),
+  sessionStore: { getSessionRpc: vi.fn(), invalidateSessionRpc: vi.fn() },
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -46,6 +47,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
+    getSessionStoreBySessionId: vi.fn(() => ({ stub: mocks.sessionStore })),
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: mocks.adapter,
       repositories: { sessionClient: {} },
@@ -93,7 +95,10 @@ import {
   SessionRevocationStore,
 } from '@authrim/ar-lib-core';
 import { adminUserActivateHandler, adminUserLockHandler, adminUserSuspendHandler } from '../admin';
-import { adminUserRevokeAllSessionsHandler } from '../admin-user-sessions';
+import {
+  adminSessionRevokeHandler,
+  adminUserRevokeAllSessionsHandler,
+} from '../admin-user-sessions';
 import { processGenericAdminJobNow } from '../admin-job-executor';
 
 // ---------------------------------------------------------------------------
@@ -251,7 +256,13 @@ type TestEnv = ReturnType<typeof createEnv>;
 
 function context(
   env: TestEnv,
-  options: { body?: unknown; executionCtx?: boolean; adminId?: string; host?: string } = {}
+  options: {
+    body?: unknown;
+    executionCtx?: boolean;
+    adminId?: string;
+    host?: string;
+    id?: string;
+  } = {}
 ) {
   const pending: Promise<unknown>[] = [];
   const c = {
@@ -259,7 +270,7 @@ function context(
       name === 'adminAuth' ? { userId: options.adminId ?? 'admin-1' } : undefined
     ),
     req: {
-      param: vi.fn(() => 'user-1'),
+      param: vi.fn(() => options.id ?? 'user-1'),
       json: vi.fn().mockResolvedValue(options.body ?? { reason_code: 'security_incident' }),
       header: vi.fn(() => undefined),
       raw: new Request(`${options.host ?? OP_ISSUER}/api/admin/users/user-1`),
@@ -394,7 +405,16 @@ describe('admin actions that end sessions notify downstream relying parties', ()
     const actualCore =
       await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
     mocks.backchannelFanout.mockReset().mockImplementation(actualCore.sendBackchannelLogoutFanout);
-    mocks.adapter.queryOne.mockReset().mockResolvedValue(null);
+    mocks.adapter.queryOne
+      .mockReset()
+      .mockImplementation(async (sql: string) =>
+        sql ===
+        'SELECT id, lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?'
+          ? { id: 'account-1', lifecycle_state: 'active', metadata_json: '{}' }
+          : null
+      );
+    mocks.sessionStore.getSessionRpc.mockReset().mockResolvedValue(null);
+    mocks.sessionStore.invalidateSessionRpc.mockReset().mockResolvedValue(true);
     mocks.adapter.query.mockReset().mockResolvedValue([]);
     mocks.adapter.execute.mockReset().mockResolvedValue({ success: true, rowsAffected: 0 });
     mocks.adapter.batch
@@ -478,6 +498,41 @@ describe('admin actions that end sessions notify downstream relying parties', ()
       });
     }
   );
+
+  it('revoking a tenant-owned DO-only session persists and sends its relying-party logout', async () => {
+    const env = createEnv();
+    const sessionId = 'g1:apac:3:session_single';
+    await signIn(env, sessionId, [['client-a', RP_A]]);
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      id: sessionId,
+      tenantId: 'tenant-a',
+      userId: 'user-1',
+      accountId: 'account:user-1',
+      createdAt: Date.now() - 1000,
+      expiresAt: Date.now() + 60000,
+    });
+    const sent = captureDownstream();
+    const { c, pending } = context(env, { id: sessionId });
+
+    const response = await adminSessionRevokeHandler(c);
+    expect(response.status).toBe(200);
+    await settle(pending);
+
+    expect(mocks.sessionStore.invalidateSessionRpc).toHaveBeenCalledWith(sessionId);
+    expect(sent).toHaveLength(1);
+    expect(await verified(sent[0].token)).toMatchObject({
+      aud: 'client-a',
+      sid: `sid-${sessionId}-client-a`,
+      sub: 'sub-for-client-a',
+    });
+    expect(mocks.scheduleAdminAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      'user.downstream_logout',
+      'user-1',
+      'success',
+      expect.objectContaining({ trigger_action: 'session.revoke' })
+    );
+  });
 
   it('revoking all sessions of a user tells their relying parties', async () => {
     const env = createEnv();

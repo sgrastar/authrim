@@ -24,7 +24,6 @@ import {
   resolveSourceClassification,
   sensitiveClassificationRank,
   toMappingSourceReference,
-  transitionAccountAuthenticationState,
   validateExternalUrl,
 } from '@authrim/ar-lib-core';
 import {
@@ -57,6 +56,13 @@ import {
   checkMappingVersionSwap,
   type MappingSetConflict,
 } from './identity-mapping-set-reference-guard';
+
+import {
+  createAccountSuspensionSignalService,
+  LifecycleSignalConflictError,
+  LifecycleSignalInputError,
+  type AccountSuspensionSignalService,
+} from './identity-mapping-lifecycle-signal';
 
 export type AdminContext = Context<{ Bindings: Env }>;
 
@@ -1724,12 +1730,7 @@ export class IdentityMappingControlPlaneRepository {
     private readonly adapter: DatabaseAdapter,
     private readonly now: () => number = () => Date.now(),
     private readonly coreAdapter?: DatabaseAdapter,
-    private readonly beforeAccountSuspension?: (
-      tenantId: string,
-      accountId: string,
-      sourceVersionMs: number,
-      operationId: string
-    ) => Promise<void>
+    private readonly accountSuspensionSignals?: AccountSuspensionSignalService
   ) {}
 
   async listSchemaReadiness() {
@@ -6060,6 +6061,22 @@ export class IdentityMappingControlPlaneRepository {
     ) {
       throw badRequest('targetType is not supported for lifecycle signals');
     }
+    if (input.signalType === 'scim_active_false' && input.targetType === 'account') {
+      if (!this.accountSuspensionSignals) {
+        throw new Error('lifecycle_signal_account_service_unavailable');
+      }
+      try {
+        return await this.accountSuspensionSignals.record(
+          tenantId,
+          { ...input, signalType: 'scim_active_false', targetType: 'account' },
+          await hashStableJson(input)
+        );
+      } catch (error) {
+        if (error instanceof LifecycleSignalConflictError) throw conflict(error.message);
+        if (error instanceof LifecycleSignalInputError) throw badRequest(error.message);
+        throw error;
+      }
+    }
     const now = this.now();
     const dedupeKey = [
       input.sourceType,
@@ -6100,13 +6117,6 @@ export class IdentityMappingControlPlaneRepository {
 
     const eventId = existingEvent?.id ?? createId('external_lifecycle_signal_event');
     const signalEventId = eventId;
-    if (
-      input.signalType === 'scim_active_false' &&
-      input.targetType === 'account' &&
-      this.beforeAccountSuspension
-    ) {
-      await this.beforeAccountSuspension(tenantId, input.targetId, now, signalEventId);
-    }
     const lifecycleDecision = await this.adapter.transaction(async (tx) => {
       if (!existingEvent) {
         await tx.execute(
@@ -7270,12 +7280,7 @@ export class IdentityMappingControlPlaneRepository {
       }
     }
     if (decision.decision === 'suspend_account') {
-      await executor.execute(
-        `UPDATE identity_accounts
-            SET lifecycle_state = ?, updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
-        ['suspended', this.now(), tenantId, input.targetId]
-      );
+      throw new Error('lifecycle_signal_account_service_required');
     }
     await executor.execute(
       `INSERT INTO provisioning_revocation_events (
@@ -7319,7 +7324,76 @@ export class IdentityMappingControlPlaneRepository {
         throw conflict('Idempotency-Key was already used for a different request');
       }
       if (existing.status === 'complete' && existing.response_ref) {
-        return { result: JSON.parse(existing.response_ref) as T };
+        const result: unknown = JSON.parse(existing.response_ref);
+        if (
+          operationKey === 'lifecycle-signal.record' &&
+          isRecord(requestBody) &&
+          requestBody.signalType === 'scim_active_false' &&
+          requestBody.targetType === 'account'
+        ) {
+          if (
+            !isRecord(result) ||
+            typeof result.signalEventId !== 'string' ||
+            result.decision !== 'suspend_account' ||
+            stableJson(result.reasonCodes) !== stableJson(['lifecycle_signal.scim_active_false'])
+          ) {
+            throw conflict('Cached lifecycle signal result cannot be confirmed');
+          }
+          const {
+            sourceType,
+            sourceId,
+            sourceEventId,
+            targetId,
+            sourceTimestamp,
+            bindingVersion,
+            payloadRef,
+            accountId,
+            subjectId,
+          } = requestBody;
+          if (
+            !this.accountSuspensionSignals ||
+            typeof sourceType !== 'string' ||
+            typeof sourceId !== 'string' ||
+            typeof sourceEventId !== 'string' ||
+            typeof targetId !== 'string' ||
+            (sourceTimestamp != null && typeof sourceTimestamp !== 'number') ||
+            (bindingVersion != null && typeof bindingVersion !== 'string') ||
+            (payloadRef != null && typeof payloadRef !== 'string') ||
+            (accountId != null && typeof accountId !== 'string') ||
+            (subjectId != null && typeof subjectId !== 'string')
+          ) {
+            throw conflict('Cached lifecycle signal result cannot be confirmed');
+          }
+          try {
+            await this.accountSuspensionSignals.record(
+              tenantId,
+              {
+                sourceType,
+                sourceId,
+                sourceEventId,
+                targetId,
+                signalType: 'scim_active_false',
+                targetType: 'account',
+                sourceTimestamp: sourceTimestamp ?? null,
+                bindingVersion: bindingVersion ?? null,
+                payloadRef: payloadRef ?? null,
+                accountId: accountId ?? null,
+                subjectId: subjectId ?? null,
+              },
+              requestHash,
+              { eventId: result.signalEventId }
+            );
+          } catch (error) {
+            if (
+              error instanceof LifecycleSignalConflictError ||
+              error instanceof LifecycleSignalInputError
+            ) {
+              throw conflict('Cached lifecycle signal result cannot be confirmed');
+            }
+            throw error;
+          }
+        }
+        return { result: result as T };
       }
       if (existing.status === 'in_progress') {
         throw conflict('Idempotent operation is already in progress');
@@ -8748,23 +8822,7 @@ export function createRepository(c: AdminContext): IdentityMappingControlPlaneRe
     requireDedicatedAdminDatabaseAdapter(c.env, 'identity-mapping-control-plane'),
     () => Date.now(),
     coreAdapter,
-    async (targetTenantId, accountId, sourceVersionMs, operationId) => {
-      const account = await coreAdapter.queryOne<{ legacy_user_id: string | null }>(
-        'SELECT legacy_user_id FROM identity_accounts WHERE tenant_id = ? AND id = ?',
-        [targetTenantId, accountId]
-      );
-      if (!account?.legacy_user_id) {
-        throw new Error('account_authentication_subject_unavailable');
-      }
-      await transitionAccountAuthenticationState(c.env, {
-        tenantId: targetTenantId,
-        userId: account.legacy_user_id,
-        lifecycle: 'suspended',
-        sourceVersionMs,
-        operationId,
-        revokeSessions: true,
-      });
-    }
+    createAccountSuspensionSignalService(c, coreAdapter)
   );
 }
 

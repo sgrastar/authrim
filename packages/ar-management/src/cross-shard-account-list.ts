@@ -15,6 +15,7 @@ import {
   type ResolvedTenantDatabaseSource,
 } from '@authrim/ar-lib-core';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
+import { AdminContactReadBatch } from './admin-contact-read-batch';
 
 const MAX_SHARDS = 32;
 const MAX_LIMIT = 100;
@@ -1061,6 +1062,153 @@ async function findAccountLifecycleAcrossBoundShards(input: {
 
 export class CrossShardAccountExactSearchService {
   constructor(private readonly env: Env) {}
+
+  /** Current signed inventory only: unknown owners are absent, never guessed from other bindings. */
+  async findAdminContacts(input: {
+    tenantId: string;
+    userIds: readonly string[];
+  }): Promise<Map<string, CrossShardAccountListItem>> {
+    const userIds = [...new Set(input.userIds)];
+    if (
+      !SAFE_ID.test(input.tenantId) ||
+      userIds.length > 500 ||
+      userIds.some((id) => !isValidPersistedUserId(id))
+    ) {
+      throw new Error('invalid_cross_shard_account_search');
+    }
+    if (!userIds.length) return new Map();
+    const registry = this.env.TENANT_RUNTIME_REGISTRY;
+    if (!registry || !this.env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS) {
+      throw new Error('cross_shard_account_lookup_registry_unavailable');
+    }
+    // All role/shard resolutions see exactly the same signed snapshot and generation bytes.
+    // Only get(text) is used by the canonical resolver; no global cache or KV writes are added.
+    const pinned = new Map<string, Promise<string | null>>();
+    const registryView = {
+      get: (key: string) => {
+        let read = pinned.get(key);
+        if (!read) {
+          read = registry.get(key);
+          pinned.set(key, read);
+        }
+        return read;
+      },
+    };
+    const env = new Proxy(this.env, {
+      get: (target, key, receiver): unknown =>
+        key === 'TENANT_RUNTIME_REGISTRY' ? registryView : Reflect.get(target, key, receiver),
+    });
+    const sources = await activeRouteSources(env, input.tenantId);
+    const reads = new AdminContactReadBatch();
+    const candidates = new Map<
+      string,
+      Array<{ row: ExactAccountRow; shard: ActiveAccountShard }>
+    >();
+    await Promise.all(
+      [...sources.core.values()].flatMap((shard) => {
+        const tasks: Promise<void>[] = [];
+        // tenant + 2 * 49 IDs stays below D1's 100 bound parameters per statement.
+        for (let offset = 0; offset < userIds.length; offset += 49) {
+          const ids = userIds.slice(offset, offset + 49);
+          const placeholders = ids.map(() => '?').join(',');
+          tasks.push(
+            reads
+              .adapter(shard.source)
+              .query<ExactAccountRow>(
+                `SELECT account.id, account.legacy_user_id, account.tenant_id, account.account_type,
+                  account.lifecycle_state, account.display_label, account.created_at,
+                  account.account_route_generation, account.directory_publication_state,
+                  outbox.payload_json
+             FROM identity_accounts account
+             JOIN account_routing_outbox outbox
+               ON outbox.tenant_id = account.tenant_id AND outbox.account_id = account.id
+              AND outbox.event_kind = 'account_created'
+              AND outbox.route_generation = account.account_route_generation
+              AND outbox.status = 'succeeded'
+            WHERE account.tenant_id = ?
+              AND (account.id IN (${placeholders}) OR account.legacy_user_id IN (${placeholders}))
+              ${exactAccountStateClause('admin_view')}`,
+                [
+                  input.tenantId,
+                  ...ids.map((id) => (id.startsWith('account:') ? id : `account:${id}`)),
+                  ...ids,
+                ]
+              )
+              .then((rows) => {
+                for (const row of rows) {
+                  for (const id of ids) {
+                    if (
+                      row.id !== (id.startsWith('account:') ? id : `account:${id}`) &&
+                      row.legacy_user_id !== id
+                    )
+                      continue;
+                    const matches = candidates.get(id) ?? [];
+                    matches.push({ row, shard });
+                    candidates.set(id, matches);
+                  }
+                }
+              })
+          );
+        }
+        return tasks;
+      })
+    );
+    const routes = new Map<string, CrossShardAccountListItem>();
+    for (const [id, matches] of candidates) {
+      if (matches.length !== 1) throw new Error('cross_shard_account_search_ambiguous');
+      const { row, shard } = matches[0];
+      if (row.tenant_id !== input.tenantId) throw new Error('cross_shard_account_route_invalid');
+      if (
+        row.account_type !== 'user' ||
+        row.legacy_user_id !== id ||
+        !isValidPersistedUserId(row.legacy_user_id)
+      )
+        continue;
+      const route = await validatedAccountRoute({
+        row,
+        tenantId: input.tenantId,
+        coreShard: shard,
+        piiShards: sources.pii,
+      });
+      routes.set(id, {
+        id: row.id,
+        legacyUserId: row.legacy_user_id,
+        tenantId: row.tenant_id,
+        accountType: row.account_type,
+        lifecycleState: row.lifecycle_state,
+        displayLabel: row.display_label,
+        createdAt: row.created_at,
+        ...route,
+      });
+    }
+    await Promise.all(
+      [...sources.pii.values()].flatMap((shard) => {
+        const ids = [...routes]
+          .filter(([, route]) => route.piiBindingRef === shard.bindingRef)
+          .map(([id]) => id);
+        const tasks: Promise<void>[] = [];
+        for (let offset = 0; offset < ids.length; offset += 99) {
+          const chunk = ids.slice(offset, offset + 99);
+          tasks.push(
+            reads
+              .adapter(shard.source)
+              .query<{ owner_id: string }>(
+                `SELECT DISTINCT owner_id FROM identity_sensitive_values
+            WHERE tenant_id = ? AND owner_type = 'runtime_user'
+              AND owner_id IN (${chunk.map(() => '?').join(',')})`,
+                [input.tenantId, ...chunk]
+              )
+              .then((rows) => {
+                const present = new Set(rows.map((row) => row.owner_id));
+                for (const id of chunk) if (!present.has(id)) routes.delete(id);
+              })
+          );
+        }
+        return tasks;
+      })
+    );
+    return routes;
+  }
 
   async find(input: {
     tenantId: string;
