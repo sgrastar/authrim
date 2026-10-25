@@ -1,6 +1,23 @@
 import type { jaMappingConsole } from './ja';
 
 export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
+	'mc.nav.back': 'Zurück',
+	'mc.nav.editSet': 'Set bearbeiten',
+	'mc.nav.tenants': 'Mandanten',
+	'mc.nav.apps': 'Anwendungen',
+	'mc.nav.sets': 'Mapping-Sets',
+	'mc.nav.mapping': 'Mapping',
+	'mc.nav.test': 'Test',
+	'mc.nav.history': 'Änderungsverlauf',
+	'mc.nav.navigation': 'Verwaltung',
+	'mc.nav.platform': 'Plattform',
+	'mc.nav.searchTenants': 'Mandanten suchen',
+	'mc.nav.searchApps': 'Anwendungen suchen',
+	'mc.nav.searchSets': 'Sets suchen',
+	'mc.nav.changeDefault': 'Mapping-Standard ändern',
+	'mc.nav.tenantsDescription':
+		'Prüfen Sie die aktuellen Einstellungen. Wählen Sie Mandanten aus, um deren Mapping-Standard gemeinsam zu ändern.',
+
 	'mc.loading': 'Wird geladen',
 	'mc.loadFailed': 'Konnte nicht geladen werden. Bitte versuchen Sie es erneut.',
 	'mc.retry': 'Erneut laden',
@@ -131,7 +148,7 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ex.run': 'Untersuchen',
 	'mc.ex.stale': 'Die Auswahl wurde geändert. Wählen Sie erneut „Untersuchen“.',
 	'mc.ex.resultFor': 'Ergebnis für {app} · {user}',
-	'mc.ex.prompt': 'Wählen Sie eine App und einen Testbenutzer und dann „Untersuchen“.',
+	'mc.ex.prompt': 'Wählen Sie einen Testnutzer und starten Sie den Test für diese Anwendung.',
 	'mc.ex.stage.selection': '1. Verwendetes Mapping',
 	'mc.ex.stage.values': '2. Ob Werte vorhanden sind',
 	'mc.ex.stage.filter': '3. Eingegrenzt durch Scopes und Zustimmung',

@@ -1,6 +1,23 @@
 import type { jaMappingConsole } from './ja';
 
 export const arMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
+	'mc.nav.back': 'رجوع',
+	'mc.nav.editSet': 'تعديل المجموعة',
+	'mc.nav.tenants': 'المستأجرون',
+	'mc.nav.apps': 'التطبيقات',
+	'mc.nav.sets': 'مجموعات التعيين',
+	'mc.nav.mapping': 'التعيين',
+	'mc.nav.test': 'اختبار',
+	'mc.nav.history': 'سجل التغييرات',
+	'mc.nav.navigation': 'إدارة',
+	'mc.nav.platform': 'المنصة',
+	'mc.nav.searchTenants': 'البحث عن مستأجر',
+	'mc.nav.searchApps': 'البحث عن تطبيق',
+	'mc.nav.searchSets': 'البحث عن مجموعة',
+	'mc.nav.changeDefault': 'تغيير التعيين الافتراضي',
+	'mc.nav.tenantsDescription':
+		'راجع الإعدادات الحالية. حدد المستأجرين لتغيير التعيين الافتراضي لهم معًا.',
+
 	'mc.loading': 'جارٍ التحميل',
 	'mc.loadFailed': 'تعذّر التحميل. يُرجى المحاولة مرة أخرى.',
 	'mc.retry': 'إعادة التحميل',
@@ -126,7 +143,7 @@ export const arMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ex.run': 'فحص',
 	'mc.ex.stale': 'تغيّر التحديد. اختر «فحص» مرة أخرى.',
 	'mc.ex.resultFor': 'النتيجة لـ {app} · {user}',
-	'mc.ex.prompt': 'اختر تطبيقًا ومستخدمًا تجريبيًا، ثم اختر «فحص».',
+	'mc.ex.prompt': 'اختر مستخدم اختبار وشغّل الاختبار لهذا التطبيق.',
 	'mc.ex.stage.selection': '1. الربط المستخدم',
 	'mc.ex.stage.values': '2. وجود القيم',
 	'mc.ex.stage.filter': '3. التضييق بالنطاقات والموافقة',

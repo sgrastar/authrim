@@ -14,6 +14,16 @@ function request(mode: 'preview' | 'apply', tenantIds: string[]): BulkApplyReque
 }
 
 describe('fake identity mapping', () => {
+	it('keeps demo app records and history out of other tenant pages', async () => {
+		const api = createFakeIdentityMapping();
+		expect(await api.apps(DEMO_TENANT)).not.toHaveLength(0);
+		expect(await api.history(DEMO_TENANT)).not.toHaveLength(0);
+		for (const tenant of ['birch', 'platform']) {
+			expect(await api.apps(tenant)).toEqual([]);
+			expect(await api.history(tenant)).toEqual([]);
+			expect((await api.sets(tenant)).sets.every((set) => set.owner === 'platform')).toBe(true);
+		}
+	});
 	it('selects app → tenant default → platform default, and opt-outs stop there', async () => {
 		const api = createFakeIdentityMapping({ platformDefault: 'fms_groups' });
 		expect((await api.effective(DEMO_TENANT, 'app_library')).selection).toMatchObject({

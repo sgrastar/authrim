@@ -3,16 +3,13 @@
 	import { userEvent, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import MappingHistory from './MappingHistory.svelte';
+	import MappingWorkspace from './MappingWorkspace.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Mapping/History and restore (MAP-08)',
-		component: MappingHistory,
-		// draft: not wired to a route. api-pending: a history of the mapping levels with their
-		// values before and after (GET /api/admin/identity-mapping/history) and restoring one
-		// (POST …/history/{id}/restore) do not exist yet; the settings history does not cover the
-		// `identity-mapping` category.
-		tags: ['autodocs', 'draft', 'api-pending'],
+		title: 'Pages/Mapping/Tenants/History',
+		component: MappingWorkspace,
+		// UI prototype: in-memory data, not connected to the deployed Admin API.
+		tags: ['autodocs', 'draft'],
 		parameters: {
 			layout: 'fullscreen',
 			docs: {
@@ -27,7 +24,12 @@
 
 <Story name="History">
 	{#snippet template()}
-		<MappingHistory client={createFakeIdentityMapping()} tenantId={DEMO_TENANT} />
+		<MappingWorkspace
+			page="tenant"
+			tab="history"
+			client={createFakeIdentityMapping()}
+			tenantId={DEMO_TENANT}
+		/>
 	{/snippet}
 </Story>
 
@@ -44,6 +46,11 @@
 	}}
 >
 	{#snippet template()}
-		<MappingHistory client={createFakeIdentityMapping()} tenantId={DEMO_TENANT} />
+		<MappingWorkspace
+			page="tenant"
+			tab="history"
+			client={createFakeIdentityMapping()}
+			tenantId={DEMO_TENANT}
+		/>
 	{/snippet}
 </Story>

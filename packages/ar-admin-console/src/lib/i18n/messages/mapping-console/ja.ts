@@ -4,6 +4,23 @@
  * are fixed and used the same on every page. Spread into `../ja.ts`.
  */
 export const jaMappingConsole = {
+	'mc.nav.back': '戻る',
+	'mc.nav.editSet': 'セットを編集',
+	'mc.nav.tenants': 'テナント',
+	'mc.nav.apps': 'アプリ',
+	'mc.nav.sets': 'マッピングセット',
+	'mc.nav.mapping': 'マッピング',
+	'mc.nav.test': 'テスト',
+	'mc.nav.history': '変更履歴',
+	'mc.nav.navigation': '管理対象',
+	'mc.nav.platform': 'プラットフォーム',
+	'mc.nav.searchTenants': 'テナントを検索',
+	'mc.nav.searchApps': 'アプリを検索',
+	'mc.nav.searchSets': 'セットを検索',
+	'mc.nav.changeDefault': 'マッピング既定を変更',
+	'mc.nav.tenantsDescription':
+		'現在の設定を確認できます。複数のテナントを選択すると、マッピングの既定をまとめて変更できます。',
+
 	'mc.loading': '読み込み中',
 	'mc.loadFailed': '読み込めませんでした。もう一度お試しください。',
 	'mc.retry': 'もう一度読み込む',
@@ -130,7 +147,8 @@ export const jaMappingConsole = {
 	'mc.ex.run': '調べる',
 	'mc.ex.stale': '選び直したので、もう一度「調べる」を押してください。',
 	'mc.ex.resultFor': '{app}・{user} の結果',
-	'mc.ex.prompt': 'アプリとテスト用の利用者を選んで「調べる」を押してください。',
+	'mc.ex.prompt':
+		'テスト用の利用者を選んで「調べる」を押してください。対象は、現在開いているアプリです。',
 	'mc.ex.stage.selection': '1. 使うマッピング',
 	'mc.ex.stage.values': '2. 元の値の有無',
 	'mc.ex.stage.filter': '3. スコープと同意による絞り込み',

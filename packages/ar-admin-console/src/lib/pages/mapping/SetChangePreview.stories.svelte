@@ -3,14 +3,13 @@
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import SetChangePreview from './SetChangePreview.svelte';
+	import MappingWorkspace from './MappingWorkspace.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Mapping/See claim changes before saving (MAP-05)',
-		component: SetChangePreview,
-		// draft: not wired to a route. api-pending: the per-app before/after of a set's draft
-		// (POST /api/admin/identity-mapping/sets/{id}/preview-change) does not exist yet.
-		tags: ['autodocs', 'draft', 'api-pending'],
+		title: 'Pages/Mapping/Mapping sets/Details',
+		component: MappingWorkspace,
+		// UI prototype: in-memory data, not connected to the deployed Admin API.
+		tags: ['autodocs', 'draft'],
 		parameters: {
 			layout: 'fullscreen',
 			docs: {
@@ -34,7 +33,8 @@
 
 <Story name="Saved set">
 	{#snippet template()}
-		<SetChangePreview
+		<MappingWorkspace
+			page="set"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			setId="fms_aster"
@@ -57,7 +57,8 @@
 	}}
 >
 	{#snippet template()}
-		<SetChangePreview
+		<MappingWorkspace
+			page="set"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			setId="fms_aster"
@@ -83,7 +84,8 @@
 	}}
 >
 	{#snippet template()}
-		<SetChangePreview
+		<MappingWorkspace
+			page="set"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			setId="fms_aster"
@@ -101,7 +103,8 @@
 	}}
 >
 	{#snippet template()}
-		<SetChangePreview
+		<MappingWorkspace
+			page="set"
 			client={createFakeIdentityMapping({ platformDefault: 'fms_affil' })}
 			tenantId="platform"
 			setId="fms_affil"

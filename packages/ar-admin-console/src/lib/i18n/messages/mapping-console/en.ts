@@ -1,6 +1,23 @@
 import type { jaMappingConsole } from './ja';
 
 export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
+	'mc.nav.back': 'Back',
+	'mc.nav.editSet': 'Edit set',
+	'mc.nav.tenants': 'Tenants',
+	'mc.nav.apps': 'Applications',
+	'mc.nav.sets': 'Mapping sets',
+	'mc.nav.mapping': 'Mapping',
+	'mc.nav.test': 'Test',
+	'mc.nav.history': 'Change history',
+	'mc.nav.navigation': 'Manage',
+	'mc.nav.platform': 'Platform',
+	'mc.nav.searchTenants': 'Search tenants',
+	'mc.nav.searchApps': 'Search applications',
+	'mc.nav.searchSets': 'Search sets',
+	'mc.nav.changeDefault': 'Change mapping default',
+	'mc.nav.tenantsDescription':
+		'Review current settings. Select tenants to change their mapping default together.',
+
 	'mc.loading': 'Loading',
 	'mc.loadFailed': 'This could not be loaded. Please try again.',
 	'mc.retry': 'Load again',
@@ -127,7 +144,7 @@ export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ex.run': 'Investigate',
 	'mc.ex.stale': 'The selection changed. Select Investigate again.',
 	'mc.ex.resultFor': 'Result for {app} · {user}',
-	'mc.ex.prompt': 'Choose an app and a test user, then select Investigate.',
+	'mc.ex.prompt': 'Choose a test user and run the test for this application.',
 	'mc.ex.stage.selection': '1. Mapping used',
 	'mc.ex.stage.values': '2. Whether there are values',
 	'mc.ex.stage.filter': '3. Narrowed by scopes and consent',

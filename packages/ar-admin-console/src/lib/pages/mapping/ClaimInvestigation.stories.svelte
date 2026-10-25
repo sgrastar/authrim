@@ -3,16 +3,13 @@
 	import { userEvent, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import ClaimInvestigation from './ClaimInvestigation.svelte';
+	import MappingWorkspace from './MappingWorkspace.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Mapping/Why a claim is missing (MAP-04)',
-		component: ClaimInvestigation,
-		// draft: not wired to a route. api-pending: the explanation by stage with reason codes
-		// (POST /api/admin/identity-mapping/explain) and the test users it runs on
-		// (GET /api/admin/identity-mapping/test-users) are in review (#595); the fake answers in
-		// their shape.
-		tags: ['autodocs', 'draft', 'api-pending'],
+		title: 'Pages/Mapping/Applications/Test',
+		component: MappingWorkspace,
+		// UI prototype: in-memory data, not connected to the deployed Admin API.
+		tags: ['autodocs', 'draft'],
 		parameters: {
 			layout: 'fullscreen',
 			docs: {
@@ -27,9 +24,15 @@
 	const fake = (options = {}) => createFakeIdentityMapping(options);
 </script>
 
-<Story name="Choose what to investigate">
+<Story name="Application test tab (MAP-04)">
 	{#snippet template()}
-		<ClaimInvestigation client={fake()} tenantId={DEMO_TENANT} />
+		<MappingWorkspace
+			page="app"
+			tab="test"
+			client={fake()}
+			tenantId={DEMO_TENANT}
+			clientId="app_printing"
+		/>
 	{/snippet}
 </Story>
 
@@ -42,7 +45,9 @@
 	}}
 >
 	{#snippet template()}
-		<ClaimInvestigation
+		<MappingWorkspace
+			page="app"
+			tab="test"
 			client={fake()}
 			tenantId={DEMO_TENANT}
 			clientId="app_library"
@@ -61,7 +66,9 @@
 	}}
 >
 	{#snippet template()}
-		<ClaimInvestigation
+		<MappingWorkspace
+			page="app"
+			tab="test"
 			client={fake()}
 			tenantId={DEMO_TENANT}
 			clientId="app_timetable"
@@ -73,7 +80,9 @@
 
 <Story name="Consent missing">
 	{#snippet template()}
-		<ClaimInvestigation
+		<MappingWorkspace
+			page="app"
+			tab="test"
 			client={fake()}
 			tenantId={DEMO_TENANT}
 			clientId="app_events"
@@ -92,7 +101,9 @@
 	}}
 >
 	{#snippet template()}
-		<ClaimInvestigation
+		<MappingWorkspace
+			page="app"
+			tab="test"
 			client={fake()}
 			tenantId={DEMO_TENANT}
 			clientId="app_conformance"
@@ -104,7 +115,9 @@
 
 <Story name="Set switched off: no token (MAP-06)">
 	{#snippet template()}
-		<ClaimInvestigation
+		<MappingWorkspace
+			page="app"
+			tab="test"
 			client={fake({ inactiveTenantSet: true })}
 			tenantId={DEMO_TENANT}
 			clientId="app_library"
@@ -118,12 +131,9 @@
 	name="Investigate"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+
 		await userEvent.selectOptions(
-			await canvas.findByRole('combobox', { name: t('mc.ex.app') }),
-			'app_printing'
-		);
-		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: t('mc.ex.user') }),
+			await canvas.findByRole('combobox', { name: t('mc.ex.user') }),
 			'test_empty_department'
 		);
 		await userEvent.click(canvas.getByRole('button', { name: t('mc.ex.run') }));
@@ -131,6 +141,12 @@
 	}}
 >
 	{#snippet template()}
-		<ClaimInvestigation client={fake()} tenantId={DEMO_TENANT} />
+		<MappingWorkspace
+			page="app"
+			tab="test"
+			client={fake()}
+			tenantId={DEMO_TENANT}
+			clientId="app_printing"
+		/>
 	{/snippet}
 </Story>
