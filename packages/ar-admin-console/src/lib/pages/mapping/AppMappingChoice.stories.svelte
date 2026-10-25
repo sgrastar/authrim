@@ -3,11 +3,11 @@
 	import { userEvent, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import MappingWorkspace from './MappingWorkspace.svelte';
+	import MappingPageContent from './MappingPageContent.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Pages/Mapping/Applications/Mapping',
-		component: MappingWorkspace,
+		component: MappingPageContent,
 		// UI prototype: in-memory data, not connected to the deployed Admin API.
 		tags: ['autodocs', 'draft'],
 		parameters: {
@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'An app → Identity mapping (tenant admins, app developers). What applies now and how each level decided it; then the app’s choice — follow the tenant default (Not set), a set for this app only (App-specific), or no mapping (Not used) — with what each choice would give, from the API.'
+						'Service flows → selected app → user information. Content for the existing Shell; integration into the full service-flow detail is pending. What applies now and how each level decided it; then the app’s choice — follow the tenant default (Not set), a set for this app only (App-specific), or no mapping (Not used) — with what each choice would give, from the API.'
 				}
 			}
 		}
@@ -24,7 +24,7 @@
 
 <Story name="Follows the tenant default">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
@@ -35,7 +35,7 @@
 
 <Story name="App-specific set">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
@@ -46,7 +46,7 @@
 
 <Story name="Not used">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
@@ -69,7 +69,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}

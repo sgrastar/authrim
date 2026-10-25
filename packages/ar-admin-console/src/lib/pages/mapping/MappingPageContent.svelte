@@ -1,5 +1,5 @@
 <script module lang="ts">
-	export type MappingPage = 'tenants' | 'tenant' | 'apps' | 'app' | 'sets' | 'set';
+	export type MappingPage = 'tenants' | 'tenant' | 'app' | 'sets' | 'set';
 </script>
 
 <script lang="ts">
@@ -29,7 +29,11 @@
 	import MappingRollout from './MappingRollout.svelte';
 	import SetChangePreview from './SetChangePreview.svelte';
 
-	/** Shared record pages. Stories choose starting state, never a scenario-specific workflow. */
+	/**
+	 * Page contents for existing Shell destinations. The Shell owns category and scope navigation.
+	 * Only list/detail transitions within a destination and tabs within one app are demonstrated here.
+	 * Service-flow integration and links across Shell destinations are designed separately.
+	 */
 	interface Props {
 		client: IdentityMappingClient;
 		tenantId?: string;
@@ -49,9 +53,9 @@
 		client,
 		tenantId = 'aster',
 		tenantName,
-		page = 'apps',
+		page = 'app',
 		tab = 'mapping',
-		clientId = '',
+		clientId = 'app_library',
 		setId = '',
 		userId = '',
 		surface,
@@ -79,7 +83,6 @@
 	let sets = $state<MappingSetSummary[]>([]);
 	let loading = $state(false);
 	let failed = $state(false);
-	let appSearch = $state('');
 	let setSearch = $state('');
 	let dirty = $state(false);
 	let busy = $state(false);
@@ -94,10 +97,13 @@
 		loading = true;
 		failed = false;
 		try {
-			const [nextApps, nextSets] = await Promise.all([client.apps(owner), client.sets(owner)]);
-			if (mine !== generation) return;
-			apps = nextApps;
-			sets = nextSets.sets;
+			if (location.page === 'app') {
+				const nextApps = await client.apps(owner);
+				if (mine === generation) apps = nextApps;
+			} else {
+				const nextSets = await client.sets(owner);
+				if (mine === generation) sets = nextSets.sets;
+			}
 		} catch {
 			if (mine === generation) failed = true;
 		} finally {
@@ -123,7 +129,7 @@
 			return;
 		}
 		if (back) trail = trail.slice(0, -1);
-		else trail = [...trail, { ...location }];
+		else if (next.page !== location.page) trail = [...trail, { ...location }];
 		if (location.page === 'set') seededEdits = undefined;
 		if (next.tenantId !== location.tenantId) sample = '';
 		if (next.page === 'tenants') visitedTenants = true;
@@ -145,19 +151,34 @@
 	const app = $derived(apps.find((row) => row.client_id === location.clientId));
 	const set = $derived(sets.find((row) => row.id === location.setId));
 	const heading = $derived(
-		location.page === 'app'
-			? (app?.name ?? location.clientId)
-			: location.page === 'set'
-				? (set?.display_name ?? location.setId)
-				: location.page === 'tenant'
-					? location.tenantName
-					: t(
-							location.page === 'tenants'
-								? 'mc.nav.tenants'
-								: location.page === 'sets'
-									? 'mc.nav.sets'
-									: 'mc.nav.apps'
-						)
+		t(
+			location.page === 'app'
+				? 'mc.page.appTitle'
+				: location.page === 'set'
+					? 'mc.page.setTitle'
+					: location.page === 'tenant'
+						? 'mc.hist.title'
+						: location.page === 'tenants'
+							? 'nav.pt.list'
+							: 'nav.data.mappingSets'
+		)
+	);
+	const description = $derived(
+		t(
+			location.page === 'app'
+				? location.tab === 'test'
+					? 'mc.ex.desc'
+					: location.tab === 'history'
+						? 'mc.hist.appDesc'
+						: 'mc.app.desc'
+				: location.page === 'set'
+					? 'mc.ch.desc'
+					: location.page === 'tenant'
+						? 'mc.hist.desc'
+						: location.page === 'tenants'
+							? 'mc.nav.tenantsDescription'
+							: 'mc.page.setsDesc'
+		)
 	);
 	function goBack() {
 		const previous = trail.at(-1);
@@ -167,44 +188,30 @@
 	const owner = $derived(
 		location.tenantId === 'platform' ? t('mc.nav.platform') : location.tenantName
 	);
+	const context = $derived(
+		location.page === 'tenants'
+			? t('mc.nav.platform')
+			: location.page === 'tenant'
+				? `${t('nav.platArea.tenants')} / ${owner}`
+				: location.page === 'app'
+					? `${t('nav.applications')} / ${owner} / ${app?.name ?? location.clientId}`
+					: [
+							t('nav.access'),
+							t('nav.data.mappingSets'),
+							owner,
+							location.page === 'set' ? (set?.display_name ?? location.setId) : ''
+						]
+							.filter(Boolean)
+							.join(' / ')
+	);
 </script>
 
 <Page width="wide">
-	<nav class="navigation" aria-label={t('mc.nav.navigation')}>
-		<Button
-			variant="ghost"
-			disabled={busy}
-			aria-current={location.page === 'tenants' || location.page === 'tenant' ? 'page' : undefined}
-			onclick={() => navigate({ page: 'tenants' })}>{t('mc.nav.tenants')}</Button
-		>
-		<Button
-			variant="ghost"
-			disabled={busy}
-			aria-current={location.page === 'apps' || location.page === 'app' ? 'page' : undefined}
-			onclick={() => navigate({ page: 'apps' })}>{t('mc.nav.apps')}</Button
-		>
-		<Button
-			variant="ghost"
-			disabled={busy}
-			aria-current={location.page === 'sets' || location.page === 'set' ? 'page' : undefined}
-			onclick={() => navigate({ page: 'sets' })}>{t('mc.nav.sets')}</Button
-		>
-	</nav>
 	{#if trail.length > 0}<div>
 			<Button variant="ghost" disabled={busy} onclick={goBack}>{t('mc.nav.back')}</Button>
 		</div>{/if}
-	<PageHeader
-		title={heading}
-		description={location.page === 'tenants' ? t('mc.nav.tenantsDescription') : undefined}
-	>
-		{#snippet eyebrow()}{location.page === 'tenants' ? t('mc.nav.platform') : owner}{/snippet}
-		{#snippet actions()}
-			{#if location.page === 'tenant'}
-				<Button disabled={busy} onclick={() => navigate({ page: 'apps' })}
-					>{t('mc.nav.apps')}</Button
-				>
-			{/if}
-		{/snippet}
+	<PageHeader title={heading} {description}>
+		{#snippet eyebrow()}{context}{/snippet}
 	</PageHeader>
 	{#if visitedTenants}
 		<div hidden={location.page !== 'tenants'}>
@@ -215,8 +222,6 @@
 				onbusy={(value) => (busy = value)}
 				ontenant={(id, name) =>
 					navigate({ page: 'tenant', tenantId: id, tenantName: name, tab: 'history' })}
-				onpreview={(id) =>
-					navigate({ page: 'set', tenantId: 'platform', tenantName: '', setId: id })}
 			/>
 		</div>
 	{/if}
@@ -226,43 +231,13 @@
 		>
 	{:else if loading && location.page !== 'tenant'}
 		<LoadingState label={t('mc.loading')} />
-	{:else if location.page === 'apps'}
-		<TextField label={t('mc.nav.searchApps')} bind:value={appSearch} />
-		<Card title={t('mc.nav.apps')} flush>
-			<DataTable
-				caption={t('mc.nav.apps')}
-				columns={[
-					{ key: 'name', label: t('mc.ex.app') },
-					{ key: 'choice', label: t('mc.app.choice') }
-				]}
-				rows={apps.filter((row) => row.name.toLowerCase().includes(appSearch.toLowerCase()))}
-				rowKey={(row) => row.client_id}
-			>
-				{#snippet cell(row, column)}
-					{#if column.key === 'name'}<Button
-							variant="ghost"
-							onclick={() => navigate({ page: 'app', clientId: row.client_id, tab: 'mapping' })}
-							>{row.name}</Button
-						>
-					{:else if row.identity_mapping === null}{t('mc.app.follow')}
-					{:else if 'mode' in row.identity_mapping}{t('mc.app.none')}
-					{:else}{sets.find(
-							(item) =>
-								item.id ===
-								('fieldMappingSetId' in (row.identity_mapping ?? {})
-									? (row.identity_mapping as { fieldMappingSetId: string }).fieldMappingSetId
-									: '')
-						)?.display_name ?? t('mc.app.own')}{/if}
-				{/snippet}
-			</DataTable>
-		</Card>
 	{:else if location.page === 'sets'}
 		<TextField label={t('mc.nav.searchSets')} bind:value={setSearch} />
 		<Card title={t('mc.nav.sets')} flush>
 			<DataTable
 				caption={t('mc.nav.sets')}
 				columns={[
-					{ key: 'name', label: t('mc.app.set') },
+					{ key: 'name', label: t('mc.ro.setLabel') },
 					{ key: 'owner', label: t('mc.source') }
 				]}
 				rows={sets.filter((row) =>
@@ -290,6 +265,13 @@
 			{sampleUserId}
 			onstate={receiveFormState}
 		/>
+	{:else if location.page === 'tenant'}
+		<MappingHistory
+			{client}
+			onchanged={() => ++rolloutRevision}
+			tenantId={location.tenantId}
+			onbusy={(value) => (busy = value)}
+		/>
 	{:else}
 		<Tabs
 			label={heading}
@@ -300,13 +282,11 @@
 				navigate({ tab: value });
 				return allowed;
 			}}
-			items={location.page === 'app'
-				? [
-						{ id: 'mapping', label: t('mc.nav.mapping') },
-						{ id: 'test', label: t('mc.nav.test') },
-						{ id: 'history', label: t('mc.nav.history') }
-					]
-				: [{ id: 'history', label: t('mc.nav.history') }]}
+			items={[
+				{ id: 'mapping', label: t('mc.nav.mapping') },
+				{ id: 'test', label: t('mc.nav.test') },
+				{ id: 'history', label: t('mc.nav.history') }
+			]}
 		>
 			{#snippet panel()}
 				<div
@@ -326,7 +306,6 @@
 							tenantId={location.tenantId}
 							clientId={location.clientId}
 							onstate={receiveFormState}
-							onset={(id) => navigate({ page: 'set', setId: id })}
 						/>
 					{:else if location.page === 'app' && location.tab === 'test'}
 						<ClaimInvestigation
@@ -344,7 +323,7 @@
 							{client}
 							onchanged={() => ++rolloutRevision}
 							tenantId={location.tenantId}
-							clientId={location.page === 'app' ? location.clientId : undefined}
+							clientId={location.clientId}
 							onbusy={(value) => (busy = value)}
 						/>
 					{/if}
@@ -356,17 +335,6 @@
 <LeaveConfirm open={pending !== null} onleave={leave} onstay={() => (pending = null)} />
 
 <style>
-	.navigation {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-related);
-		border-bottom: 1px solid var(--border);
-		padding-bottom: var(--space-related);
-	}
-	.navigation :global([aria-current='page']) {
-		background: var(--bg-hover);
-		color: var(--text-primary);
-	}
 	.content {
 		min-width: 0;
 	}

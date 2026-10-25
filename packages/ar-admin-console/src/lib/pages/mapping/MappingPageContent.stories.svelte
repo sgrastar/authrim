@@ -3,7 +3,7 @@
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import MappingWorkspace from './MappingWorkspace.svelte';
+	import MappingPageContent from './MappingPageContent.svelte';
 
 	const previewSettled = fn();
 	const slowPreview = () => {
@@ -20,23 +20,38 @@
 	};
 
 	const { Story } = defineMeta({
-		title: 'Pages/Mapping/Navigation',
-		component: MappingWorkspace,
+		title: 'Pages/Mapping/Page contents',
+		component: MappingPageContent,
 		tags: ['autodocs', 'draft'],
 		parameters: {
 			layout: 'fullscreen',
 			docs: {
 				description: {
 					component:
-						'Shared tenant lists, application details and mapping-set details. MAP-01 uses selection and bulk actions on the tenant list; MAP-03, MAP-04 and MAP-08 share application tabs; MAP-05 uses the set editor and its optional preview. Every story uses the same navigation and in-memory client. These are UI prototypes, not deployed API integrations.'
+						'Content for existing Shell destinations: Tenants → All tenants, Service flows → selected app, and Access Control → Mapping sets. There is no page-owned category or scope navigation. Tabs only change the content for one app; list/detail actions stay within one destination. Integrating the app panel into Service flows and linking across Shell destinations remain separate work. These prototypes use an in-memory client, not the deployed API.'
 				}
 			}
 		}
 	});
 </script>
 
-<Story name="Applications">
-	{#snippet template()}<MappingWorkspace
+<Story
+	name="App information settings without a second navigation"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('radio', { name: new RegExp(`^${t('mc.app.follow')}`) });
+		expect(canvas.queryByRole('navigation')).toBeNull();
+		await expect(canvas.getByRole('heading', { level: 1 })).toHaveTextContent(
+			t('mc.page.appTitle')
+		);
+		await expect(canvas.getByText(t('mc.app.desc'))).toBeVisible();
+		await userEvent.click(canvas.getByRole('tab', { name: t('mc.nav.test') }));
+		await expect(canvas.getByText(t('mc.ex.desc'))).toBeVisible();
+		await userEvent.click(canvas.getByRole('tab', { name: t('mc.nav.history') }));
+		await expect(canvas.getByText(t('mc.hist.appDesc'))).toBeVisible();
+	}}
+>
+	{#snippet template()}<MappingPageContent
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			tenantName="Aster"
@@ -65,7 +80,7 @@
 		await expect(canvas.getByRole('button', { name: t('mc.ro.check') })).toBeEnabled();
 	}}
 >
-	{#snippet template()}<MappingWorkspace page="tenants" client={slowPreview()} />{/snippet}
+	{#snippet template()}<MappingPageContent page="tenants" client={slowPreview()} />{/snippet}
 </Story>
 
 <Story
@@ -87,23 +102,23 @@
 		});
 	}}
 >
-	{#snippet template()}<MappingWorkspace
+	{#snippet template()}<MappingPageContent
 			page="tenants"
 			client={createFakeIdentityMapping()}
 		/>{/snippet}
 </Story>
 
 <Story
-	name="Tenant history remains available while an app list is pending"
+	name="Tenant history does not require loading apps"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(await canvas.findByRole('button', { name: t('mc.nav.tenants') }));
-		await userEvent.click(await canvas.findByRole('button', { name: 'Aster' }));
 		await canvas.findByRole('table', { name: t('mc.hist.title') });
-		await expect(canvas.getByRole('heading', { level: 1 })).toHaveTextContent('Aster');
+		await expect(canvas.getByRole('heading', { level: 1 })).toHaveTextContent(t('mc.hist.title'));
+		await expect(canvas.getByText(t('mc.hist.desc'))).toBeVisible();
 	}}
 >
-	{#snippet template()}<MappingWorkspace
+	{#snippet template()}<MappingPageContent
+			page="tenant"
 			client={{ ...createFakeIdentityMapping(), apps: () => new Promise(() => {}) }}
 			tenantId={DEMO_TENANT}
 		/>{/snippet}
@@ -120,12 +135,11 @@
 			await within(document.body).findByRole('button', { name: t('common.save') })
 		);
 		await waitFor(() => expect(canvas.getByRole('tab', { name: t('mc.nav.test') })).toBeDisabled());
-		await expect(canvas.getByRole('button', { name: t('mc.nav.tenants') })).toBeDisabled();
 		await canvas.findAllByText(t('mc.none.client_opt_out'), {}, { timeout: 5000 });
 		await waitFor(() => expect(canvas.getByRole('tab', { name: t('mc.nav.test') })).toBeEnabled());
 	}}
 >
-	{#snippet template()}<MappingWorkspace
+	{#snippet template()}<MappingPageContent
 			page="app"
 			clientId="app_library"
 			client={createFakeIdentityMapping({ delay: 400 })}
@@ -134,7 +148,7 @@
 </Story>
 
 <Story name="Mapping sets">
-	{#snippet template()}<MappingWorkspace
+	{#snippet template()}<MappingPageContent
 			page="sets"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
@@ -146,11 +160,6 @@
 	name="App context across mapping and test (MAP-03, MAP-04)"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.type(
-			await canvas.findByRole('textbox', { name: t('mc.nav.searchApps') }),
-			'Library'
-		);
-		await userEvent.click(canvas.getByRole('button', { name: 'Library portal' }));
 		await userEvent.click(await canvas.findByRole('tab', { name: t('mc.nav.test') }));
 		expect(canvas.queryByRole('combobox', { name: t('mc.ex.app') })).toBeNull();
 		await userEvent.selectOptions(
@@ -174,10 +183,12 @@
 			'userinfo'
 		);
 		await expect(canvas.getByRole('radio', { name: t('mc.ex.consentChoice.none') })).toBeChecked();
-		await expect(canvas.getByRole('heading', { level: 1 })).toHaveTextContent('Library portal');
+		await expect(
+			canvas.getByText(`${t('nav.applications')} / Aster / Library portal`)
+		).toBeVisible();
 	}}
 >
-	{#snippet template()}<MappingWorkspace
+	{#snippet template()}<MappingPageContent
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			tenantName="Aster"
@@ -214,7 +225,7 @@
 		).toBeChecked();
 	}}
 >
-	{#snippet template()}<MappingWorkspace
+	{#snippet template()}<MappingPageContent
 			page="app"
 			clientId="app_library"
 			client={createFakeIdentityMapping()}
@@ -251,7 +262,7 @@
 		).toBeChecked();
 	}}
 >
-	{#snippet template()}<MappingWorkspace
+	{#snippet template()}<MappingPageContent
 			page="app"
 			clientId="app_library"
 			client={createFakeIdentityMapping()}
@@ -261,7 +272,7 @@
 </Story>
 
 <Story
-	name="Tenant selection survives opening a set (MAP-01, MAP-05)"
+	name="Tenant selection survives opening its history (MAP-01, MAP-08)"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await userEvent.click(
@@ -273,8 +284,9 @@
 			'fms_affil'
 		);
 		await userEvent.click(canvas.getByRole('button', { name: t('mc.ro.check') }));
-		await userEvent.click(await canvas.findByRole('button', { name: t('mc.ro.impact.preview') }));
-		await canvas.findByRole('button', { name: t('mc.ch.check') });
+		await canvas.findByRole('button', { name: t('mc.ro.run', { count: 1 }) });
+		await userEvent.click(canvas.getByRole('button', { name: 'Aster' }));
+		await canvas.findByRole('table', { name: t('mc.hist.title') });
 		await userEvent.click(canvas.getByRole('button', { name: t('mc.nav.back') }));
 		await expect(
 			canvas.getByRole('checkbox', { name: t('table.selectRow', { name: 'Birch' }) })
@@ -285,8 +297,32 @@
 		await canvas.findByRole('button', { name: t('mc.ro.run', { count: 1 }) });
 	}}
 >
-	{#snippet template()}<MappingWorkspace
+	{#snippet template()}<MappingPageContent
 			page="tenants"
 			client={createFakeIdentityMapping()}
+		/>{/snippet}
+</Story>
+
+<Story
+	name="Set details stay inside the mapping sets destination (MAP-05)"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await waitFor(() => expect(canvas.getByText(t('mc.page.setsDesc'))).toBeVisible());
+		await userEvent.click(await canvas.findByRole('button', { name: 'Aster campus claims' }));
+		await canvas.findByRole('button', { name: t('mc.ch.check') });
+		expect(canvas.queryByRole('navigation')).toBeNull();
+		await expect(canvas.getByRole('heading', { level: 1 })).toHaveTextContent(
+			t('mc.page.setTitle')
+		);
+		await waitFor(() => expect(canvas.getByText(t('mc.ch.desc'))).toBeVisible());
+		await userEvent.click(canvas.getByRole('button', { name: t('mc.nav.back') }));
+		await canvas.findByRole('textbox', { name: t('mc.nav.searchSets') });
+	}}
+>
+	{#snippet template()}<MappingPageContent
+			page="sets"
+			client={createFakeIdentityMapping()}
+			tenantId={DEMO_TENANT}
+			tenantName="Aster"
 		/>{/snippet}
 </Story>

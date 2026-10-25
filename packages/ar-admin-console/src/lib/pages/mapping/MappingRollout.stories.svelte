@@ -3,11 +3,11 @@
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeIdentityMapping } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import MappingWorkspace from './MappingWorkspace.svelte';
+	import MappingPageContent from './MappingPageContent.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Pages/Mapping/Tenants/List',
-		component: MappingWorkspace,
+		component: MappingPageContent,
 		// UI prototype: in-memory data, not connected to the deployed Admin API.
 		tags: ['autodocs', 'draft'],
 		parameters: {
@@ -51,7 +51,7 @@
 
 <Story name="Tenants">
 	{#snippet template()}
-		<MappingWorkspace page="tenants" client={createFakeIdentityMapping()} />
+		<MappingPageContent page="tenants" client={createFakeIdentityMapping()} />
 	{/snippet}
 </Story>
 
@@ -76,7 +76,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace page="tenants" client={createFakeIdentityMapping()} />
+		<MappingPageContent page="tenants" client={createFakeIdentityMapping()} />
 	{/snippet}
 </Story>
 
@@ -91,7 +91,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace page="tenants" client={createFakeIdentityMapping({ bulkLimit: 8 })} />
+		<MappingPageContent page="tenants" client={createFakeIdentityMapping({ bulkLimit: 8 })} />
 	{/snippet}
 </Story>
 
@@ -109,7 +109,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="tenants"
 			client={createFakeIdentityMapping({ bulkLimit: 8, failApplyRequest: 2 })}
 		/>
@@ -132,7 +132,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="tenants"
 			client={createFakeIdentityMapping({ failOnce: ['rowan', 'sage'] })}
 		/>
@@ -148,7 +148,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="tenants"
 			client={createFakeIdentityMapping({ impactUnavailable: ['kelp'] })}
 		/>
@@ -165,7 +165,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="tenants"
 			client={createFakeIdentityMapping({ pageSize: 8, settingsUnreadable: ['nettle'] })}
 		/>
@@ -174,7 +174,7 @@
 
 <Story name="With a platform default">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="tenants"
 			client={createFakeIdentityMapping({ platformDefault: 'fms_groups' })}
 		/>
@@ -183,6 +183,6 @@
 
 <Story name="Loading">
 	{#snippet template()}
-		<MappingWorkspace page="tenants" client={createFakeIdentityMapping({ delay: 60_000 })} />
+		<MappingPageContent page="tenants" client={createFakeIdentityMapping({ delay: 60_000 })} />
 	{/snippet}
 </Story>

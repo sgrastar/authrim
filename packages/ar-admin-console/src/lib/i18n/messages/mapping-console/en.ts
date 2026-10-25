@@ -1,22 +1,25 @@
 import type { jaMappingConsole } from './ja';
 
 export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
+	'mc.page.appTitle': 'User information sent to this app',
+	'mc.page.setTitle': 'Edit user information mapping rules',
+	'mc.page.setsDesc':
+		'Manage rules that map user attributes to the fields an app receives. For example, send a user’s department as a field named department. A collection of these rules is a mapping set.',
+	'mc.hist.appDesc':
+		'Review who changed this app’s mapping choice and its before and after settings. Check the impact before restoring the setting from before a selected change. Edits to the rules within a set are not included.',
 	'mc.nav.back': 'Back',
 	'mc.nav.editSet': 'Edit set',
 	'mc.nav.tenants': 'Tenants',
-	'mc.nav.apps': 'Applications',
 	'mc.nav.sets': 'Mapping sets',
-	'mc.nav.mapping': 'Mapping',
-	'mc.nav.test': 'Test',
+	'mc.nav.mapping': 'Choose rules',
+	'mc.nav.test': 'Test sent information',
 	'mc.nav.history': 'Change history',
-	'mc.nav.navigation': 'Manage',
 	'mc.nav.platform': 'Platform',
 	'mc.nav.searchTenants': 'Search tenants',
-	'mc.nav.searchApps': 'Search applications',
 	'mc.nav.searchSets': 'Search sets',
 	'mc.nav.changeDefault': 'Change mapping default',
 	'mc.nav.tenantsDescription':
-		'Review current settings. Select tenants to change their mapping default together.',
+		'Review the default user information mapping rules for each tenant’s apps. Select tenants to change their default together. App-specific choices stay unchanged.',
 
 	'mc.loading': 'Loading',
 	'mc.loadFailed': 'This could not be loaded. Please try again.',
@@ -126,8 +129,8 @@ export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 
 	'mc.ex.title': 'Investigate claims',
 	'mc.ex.desc':
-		'Which claims the ID token holds when a test user signs in to this app, and why the others are left out, step by step. Values are never shown; only whether there is one.',
-	'mc.ex.form': 'What to investigate',
+		'Use a test user to check which fields this app receives and why others are omitted. Compare destinations and consent conditions. Values are not displayed, and settings are not changed.',
+	'mc.ex.form': 'Test conditions',
 	'mc.ex.app': 'App',
 	'mc.ex.user': 'Test user',
 	'mc.ex.userHint':
@@ -141,10 +144,11 @@ export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ex.stoppedOther': 'No token is issued to this app. Reason code: {code}',
 	'mc.ex.stoppedClaim': 'Claim whose value was refused: {claim}',
 	'mc.ex.implicit': 'Mappings that used to apply implicitly no longer do: {sets}',
-	'mc.ex.run': 'Investigate',
-	'mc.ex.stale': 'The selection changed. Select Investigate again.',
+	'mc.ex.run': 'Check sent information',
+	'mc.ex.stale': 'Conditions changed. Check the sent information again.',
 	'mc.ex.resultFor': 'Result for {app} · {user}',
-	'mc.ex.prompt': 'Choose a test user and run the test for this application.',
+	'mc.ex.prompt':
+		'Choose a test user and conditions, then check the information sent to the app you have open.',
 	'mc.ex.stage.selection': '1. Mapping used',
 	'mc.ex.stage.values': '2. Whether there are values',
 	'mc.ex.stage.filter': '3. Narrowed by scopes and consent',
@@ -198,7 +202,7 @@ export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 
 	'mc.ch.title': 'Edit mapping set',
 	'mc.ch.desc':
-		'Before saving, see how the claims each app receives would change, for every app that uses this set.',
+		'Edit which user attributes are sent to an app and under which field names, such as department → department. Saving affects apps that use this set. You can check the impact before saving.',
 	'mc.ch.usedBy': 'Apps using this set: {count}',
 	'mc.ch.mapping': 'Claim mapping',
 	'mc.ch.claim': 'Claim sent',
@@ -248,8 +252,8 @@ export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 
 	'mc.app.title': 'Identity mapping of {app}',
 	'mc.app.desc':
-		'Which mapping this app’s ID token and UserInfo use. Without a choice it follows the tenant default.',
-	'mc.app.current': 'In effect now',
+		'Choose the rules for sending user information, such as affiliation and department, to this app. Follow the tenant default, choose a set for this app, or use no additional mapping.',
+	'mc.app.current': 'Rules used by the saved settings',
 	'mc.app.choice': 'This app’s choice',
 	'mc.app.follow': 'Follow the tenant default',
 	'mc.app.follow.desc':
@@ -261,13 +265,13 @@ export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 		'No mapping applies; only the standard claims are sent. This app does not change when the defaults do.',
 	'mc.app.set': 'Set for this app',
 	'mc.app.setRequired': 'Choose a set.',
-	'mc.app.would': 'In effect with this choice',
+	'mc.app.would': 'Rules used for each choice',
 	'mc.app.save': 'Save changes',
 	'mc.app.saved': 'Saved.',
 
-	'mc.hist.title': 'Mapping default history',
+	'mc.hist.title': 'Mapping settings change history',
 	'mc.hist.desc':
-		'Changes to the tenant default and to apps’ choices. Pick one to go back to the state before it.',
+		'Review changes to this tenant’s default and its apps’ choices. Check the previous and current settings and their impact before restoring the setting from before a selected change. Edits to the rules within a set are not included.',
 	'mc.hist.col.when': 'When',
 	'mc.hist.col.who': 'Changed by',
 	'mc.hist.col.level': 'Level changed',

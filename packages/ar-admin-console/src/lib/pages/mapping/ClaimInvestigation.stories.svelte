@@ -3,11 +3,11 @@
 	import { userEvent, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import MappingWorkspace from './MappingWorkspace.svelte';
+	import MappingPageContent from './MappingPageContent.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Pages/Mapping/Applications/Test',
-		component: MappingWorkspace,
+		component: MappingPageContent,
 		// UI prototype: in-memory data, not connected to the deployed Admin API.
 		tags: ['autodocs', 'draft'],
 		parameters: {
@@ -26,7 +26,7 @@
 
 <Story name="Application test tab (MAP-04)">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			tab="test"
 			client={fake()}
@@ -45,7 +45,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			tab="test"
 			client={fake()}
@@ -66,7 +66,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			tab="test"
 			client={fake()}
@@ -80,7 +80,7 @@
 
 <Story name="Consent missing">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			tab="test"
 			client={fake()}
@@ -101,7 +101,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			tab="test"
 			client={fake()}
@@ -115,7 +115,7 @@
 
 <Story name="Set switched off: no token (MAP-06)">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			tab="test"
 			client={fake({ inactiveTenantSet: true })}
@@ -141,7 +141,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="app"
 			tab="test"
 			client={fake()}

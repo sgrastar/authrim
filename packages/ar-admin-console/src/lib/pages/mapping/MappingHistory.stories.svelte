@@ -3,11 +3,11 @@
 	import { userEvent, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import MappingWorkspace from './MappingWorkspace.svelte';
+	import MappingPageContent from './MappingPageContent.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Pages/Mapping/Tenants/History',
-		component: MappingWorkspace,
+		component: MappingPageContent,
 		// UI prototype: in-memory data, not connected to the deployed Admin API.
 		tags: ['autodocs', 'draft'],
 		parameters: {
@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Mapping defaults → History (tenant admins, operators). Who changed which level, when, from what to what. Restoring one writes back the value before it, for that level only: the preview says how apps’ tokens change and which later changes to the same level it also undoes, and the restore is refused if the level changed since. A change whose earlier set is gone or switched off says why it cannot be restored.'
+						'Tenants → All tenants → selected tenant → mapping settings history. Content for the existing Shell. Who changed which level, when, from what to what. Restoring one writes back the value before it, for that level only: the preview says how apps’ tokens change and which later changes to the same level it also undoes, and the restore is refused if the level changed since. A change whose earlier set is gone or switched off says why it cannot be restored.'
 				}
 			}
 		}
@@ -24,7 +24,7 @@
 
 <Story name="History">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="tenant"
 			tab="history"
 			client={createFakeIdentityMapping()}
@@ -46,7 +46,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="tenant"
 			tab="history"
 			client={createFakeIdentityMapping()}

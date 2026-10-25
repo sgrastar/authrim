@@ -3,11 +3,11 @@
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import MappingWorkspace from './MappingWorkspace.svelte';
+	import MappingPageContent from './MappingPageContent.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Pages/Mapping/Mapping sets/Details',
-		component: MappingWorkspace,
+		component: MappingPageContent,
 		// UI prototype: in-memory data, not connected to the deployed Admin API.
 		tags: ['autodocs', 'draft'],
 		parameters: {
@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'A set → edit (tenant admins, operators). Before saving, “See the changes” sends the draft to the API’s preview, which answers for every app that uses the set: what changes in its tokens (added, removed, renamed, from another attribute, type), what does not reach it for lack of a scope, and where the app takes the set from. A test user’s made-up values can be compared; real users’ never are. The preview is optional: Save works without it.'
+						'Access Control → Mapping sets → selected set. Content for the existing Shell. Before saving, “See the changes” sends the draft to the API’s preview, which answers for every app that uses the set: what changes in its tokens (added, removed, renamed, from another attribute, type), what does not reach it for lack of a scope, and where the app takes the set from. A test user’s made-up values can be compared; real users’ never are. The preview is optional: Save works without it.'
 				}
 			}
 		}
@@ -33,7 +33,7 @@
 
 <Story name="Saved set">
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="set"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
@@ -57,7 +57,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="set"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
@@ -84,7 +84,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="set"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
@@ -103,7 +103,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingWorkspace
+		<MappingPageContent
 			page="set"
 			client={createFakeIdentityMapping({ platformDefault: 'fms_affil' })}
 			tenantId="platform"
