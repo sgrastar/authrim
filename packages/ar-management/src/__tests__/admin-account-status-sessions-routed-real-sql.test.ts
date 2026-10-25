@@ -47,6 +47,21 @@ const state = vi.hoisted(() => ({
 vi.mock('../cross-shard-account-list', async (original) => ({
   ...(await original<typeof import('../cross-shard-account-list')>()),
   CrossShardAccountExactSearchService: class {
+    async findAdminContacts(input: { tenantId: string; userIds: readonly string[] }) {
+      const entries = await Promise.all(
+        input.userIds.map(async (identifier) => {
+          const matches = await this.find({
+            tenantId: input.tenantId,
+            identifier,
+            purpose: 'admin_view',
+            indexKind: 'account_id',
+          });
+          if (matches.length > 1) throw new Error('cross_shard_account_search_ambiguous');
+          return matches[0] ? ([identifier, matches[0]] as const) : null;
+        })
+      );
+      return new Map(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
+    }
     find(input: { tenantId: string; identifier: string; purpose: string; indexKind: string }) {
       state.find(input);
       if (input.purpose !== 'admin_view' || input.indexKind !== 'account_id') {

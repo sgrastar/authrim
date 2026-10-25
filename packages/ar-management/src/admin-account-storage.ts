@@ -2,6 +2,8 @@
 import type { Context } from 'hono';
 import {
   CanonicalRuntimeUserStore,
+  CanonicalRuntimeUserProjectionRepository,
+  CanonicalSensitiveValueResolver,
   createAuthContextFromHono,
   ensureDatabaseAdapter,
   getTenantMetadataContextFromHono,
@@ -13,6 +15,7 @@ import {
 import { accountStoreHolding } from './rbac-account-stores';
 import { CrossShardAccountExactSearchService } from './cross-shard-account-list';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
+import { AdminContactReadBatch } from './admin-contact-read-batch';
 
 /** Core-only operations must remain available when an account has no readable PII. */
 export async function adminAccountCoreAdapter(
@@ -113,13 +116,51 @@ export async function adminAccountContacts(
   userIds: readonly string[]
 ): Promise<Map<string, AdminAccountContact>> {
   const contacts = new Map<string, AdminAccountContact>();
-  const pending = [...new Set(userIds.filter(Boolean))];
-  const worker = async () => {
-    for (let userId = pending.shift(); userId !== undefined; userId = pending.shift()) {
-      const contact = await adminAccountContact(c, tenantId, userId);
-      if (contact) contacts.set(userId, contact);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, worker));
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length > 500) throw new Error('admin_account_contacts_limit_exceeded');
+  if (!ids.length) return contacts;
+  const reads = new AdminContactReadBatch();
+  const metadata = createAuthContextFromHono(c, tenantId).coreAdapter;
+  const routed = usesRoutedAccountStorage(getTenantMetadataContextFromHono(c));
+  const routes = routed
+    ? await new CrossShardAccountExactSearchService(c.env).findAdminContacts({
+        tenantId,
+        userIds: ids,
+      })
+    : null;
+  await Promise.all(
+    ids.map(async (userId) => {
+      const route = routes?.get(userId);
+      if (routed && !route) return;
+      const core = route
+        ? sourceAt(c.env, route.coreBindingRef)
+        : (getTenantMetadataContextFromHono(c)?.coreDb ??
+          (isDatabaseSource(c.env.DB) ? c.env.DB : metadata));
+      if (!route) {
+        const account = await reads.adapter(core).queryOne<{ id: string }>(
+          `SELECT id FROM identity_accounts
+          WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state NOT IN ('deleting', 'deleted')`,
+          [tenantId, userId]
+        );
+        if (!account) return;
+      }
+      const pii = route ? sourceAt(c.env, route.piiBindingRef) : c.env.DB_PII;
+      if (!isDatabaseSource(pii)) throw new Error('admin_account_pii_unavailable');
+      const user = await new CanonicalRuntimeUserProjectionRepository(
+        reads.adapter(core),
+        tenantId,
+        new CanonicalSensitiveValueResolver(reads.adapter(pii))
+      ).findByLegacyUserId(userId, { includeInactive: true, claimNames: ['email', 'name'] });
+      if (user)
+        contacts.set(userId, {
+          email: user.email,
+          name: user.name,
+          store: {
+            key: route?.piiBindingRef ?? 'tenant-default',
+            adapter: ensureDatabaseAdapter(pii, 'admin-contact-pii'),
+          },
+        });
+    })
+  );
   return contacts;
 }

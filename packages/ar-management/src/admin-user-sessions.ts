@@ -354,8 +354,25 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const page = parseInt(c.req.query('page') || '1');
-    const limit = parseInt(c.req.query('limit') || '20');
+    const pageValue = c.req.query('page') ?? '1';
+    const limitValue = c.req.query('limit') ?? '20';
+    const page = Number(pageValue);
+    const limit = Number(limitValue);
+    if (
+      !/^\d+$/u.test(pageValue) ||
+      !/^\d+$/u.test(limitValue) ||
+      !Number.isSafeInteger(page) ||
+      page < 1 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 500 ||
+      !Number.isSafeInteger((page - 1) * limit)
+    ) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Invalid session pagination' },
+        400
+      );
+    }
     const userId = c.req.query('user_id') || c.req.query('userId');
     const status = c.req.query('status');
     const active = c.req.query('active');

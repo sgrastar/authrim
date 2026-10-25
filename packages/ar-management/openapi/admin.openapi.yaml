@@ -662,6 +662,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/AdminSessionList'
+        '400':
+          $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
       description: >-
@@ -669,6 +671,11 @@ paths:
         or expired status. User contact information is read from each account's owning data store,
         including suspended and locked accounts. If the owner required to audit disclosed personal
         session fields cannot be verified, the request returns an error without disclosing those fields.
+        Page must be a positive safe integer and limit an integer from 1 to 500; malformed values or
+        an unsafe pagination offset return 400 invalid_request. Contacts are resolved from the current
+        verified tenant inventory only. Accounts outside that inventory, or without verified personal
+        data ownership, have null contact fields; unrelated default stores are never used. A database
+        read failure fails the entire request rather than returning a partial successful page.
       security:
         - adminBearer: []
         - adminSessionCookie: []
