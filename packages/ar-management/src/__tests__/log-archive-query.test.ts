@@ -254,6 +254,67 @@ describe('whole-row log archives', () => {
     expect(view.pagination()?.next_cursor).toEqual(expect.any(String));
   });
 
+  it('rejects large current owners before fetching any full bodies', async () => {
+    const ids = Array.from({ length: 6 }, (_, i) => `large-owner-${i}`);
+    await archive(
+      'core.event_log',
+      ids.map((id) => event(id))
+    );
+    const insert = core.prepare(
+      `INSERT INTO event_log(id,tenant_id,event_type,event_category,result,created_at,details_json) VALUES(?,'tenant-a','other','auth','success',?,?)`
+    );
+    for (const id of ids) insert.run(id, OLD, JSON.stringify({ data: 'x'.repeat(800_000) }));
+    const base = sqliteAdapter(core);
+    const query = vi.spyOn(base, 'query');
+    const view = createLogReadAdapter({
+      env,
+      tenantId: 'tenant-a',
+      adapter: base,
+      dataset: 'core.event_log',
+    });
+    await expect(
+      view.adapter.query('SELECT id FROM event_log WHERE tenant_id=? AND event_type=?', [
+        'tenant-a',
+        'auth.login',
+      ])
+    ).rejects.toBeInstanceOf(LogQueryIncompleteError);
+    expect(
+      query.mock.calls.filter(([statement]) => statement.startsWith('SELECT "id","tenant_id"'))
+    ).toHaveLength(0);
+  });
+
+  it.each(['snapshot', 'current-owner'] as const)(
+    'rejects growth between %s heads and body reads',
+    async (mode) => {
+      await archive('core.event_log', [event('growing')]);
+      core
+        .prepare(
+          `INSERT INTO event_log(id,tenant_id,event_type,event_category,result,created_at,details_json) VALUES('growing','tenant-a',?,'auth','success',?,'{}')`
+        )
+        .run(mode === 'snapshot' ? 'auth.login' : 'other', OLD);
+      hooks.beforeQuery = {
+        match: /^SELECT "id","tenant_id"/,
+        run: async () => {
+          core
+            .prepare(`UPDATE event_log SET details_json=? WHERE id='growing'`)
+            .run(JSON.stringify({ data: 'x'.repeat(500_000) }));
+        },
+      };
+      const view = createLogReadAdapter({
+        env,
+        tenantId: 'tenant-a',
+        adapter: sqliteAdapter(core, hooks),
+        dataset: 'core.event_log',
+      });
+      await expect(
+        view.adapter.query('SELECT id FROM event_log WHERE tenant_id=? AND event_type=?', [
+          'tenant-a',
+          'auth.login',
+        ])
+      ).rejects.toBeInstanceOf(LogQueryIncompleteError);
+    }
+  );
+
   it('includes archived grant audit through the real grant repository and keeps its tenant/grant filter', async () => {
     await archive('admin.admin_audit_log', [
       {

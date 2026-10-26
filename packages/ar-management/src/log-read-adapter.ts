@@ -391,6 +391,56 @@ export function createLogReadAdapter(input: {
         )
       );
     }
+    function reserveHeads(heads: Array<{ id: string; bytes: number }>) {
+      if (hot.size + heads.length > MAX_ROWS) fail();
+      for (const head of heads) {
+        head.bytes = Number(head.bytes);
+        if (
+          typeof head.id !== 'string' ||
+          !head.id ||
+          !Number.isSafeInteger(head.bytes) ||
+          head.bytes < 1 ||
+          head.bytes > MAX_BIND_BYTES
+        )
+          fail();
+        totalBytes += head.bytes;
+        if (totalBytes > MAX_VIEW_BYTES) fail();
+      }
+    }
+    async function readBodies(heads: Array<{ id: string; bytes: number }>): Promise<LogSqlRow[]> {
+      const result: LogSqlRow[] = [];
+      for (let start = 0; start < heads.length; ) {
+        if (Date.now() > deadline) fail();
+        let end = start,
+          bytes = 0;
+        // Two binds per head, below D1's bind limit and one MiB of response bodies.
+        while (end < heads.length && end - start < 32 && bytes + heads[end].bytes <= 1024 * 1024)
+          bytes += heads[end++].bytes;
+        if (end === start) fail();
+        const group = heads.slice(start, end);
+        const rows = normalizeNumericRows(
+          await adapter.query<LogSqlRow>(
+            `SELECT ${columns.map(quote).join(',')} FROM ${quote(table)} ${alias}
+           WHERE ${alias}.tenant_id = ? AND (${group.map(() => `(${alias}.id = ? AND ${size} <= ?)`).join(' OR ')})`,
+            [tenantId, ...group.flatMap(({ id, bytes }) => [id, bytes])]
+          )
+        );
+        const received = new Set(rows.map((row) => String(row.id)));
+        for (const head of group)
+          if (!received.has(head.id)) {
+            // A committed archive may legitimately delete the hot row between these reads.
+            // A still-present row that outgrew its head must fail before its body is fetched.
+            const current = await adapter.queryOne<{ id: string }>(
+              `SELECT id FROM ${quote(table)} WHERE tenant_id = ? AND id = ?`,
+              [tenantId, head.id]
+            );
+            if (current) fail();
+          }
+        result.push(...rows);
+        start = end;
+      }
+      return result;
+    }
     // Read small heads first so a page of large details cannot exhaust Worker memory.
     for (;;) {
       if (Date.now() > deadline) fail();
@@ -407,48 +457,14 @@ export function createLogReadAdapter(input: {
       if (!heads.length) break;
       for (const head of heads) {
         head.at = Number(head.at);
-        head.bytes = Number(head.bytes);
-        if (!Number.isSafeInteger(head.at) || head.at < 0 || typeof head.id !== 'string') fail();
-        totalBytes += Number(head.bytes);
-        if (
-          !Number.isSafeInteger(head.bytes) ||
-          head.bytes < 1 ||
-          head.bytes > MAX_BIND_BYTES ||
-          totalBytes > MAX_VIEW_BYTES ||
-          hot.size + heads.length > MAX_ROWS
-        )
-          fail();
+        if (!Number.isSafeInteger(head.at) || head.at < 0) fail();
       }
-      // At most one MiB of bodies per read, encoded as ID arrays below the bind limit.
-      for (let start = 0; start < heads.length; ) {
-        let end = start,
-          bytes = 0;
-        while (end < heads.length && bytes + heads[end].bytes <= 1024 * 1024)
-          bytes += heads[end++].bytes;
-        const ids = heads.slice(start, end).map(({ id }) => id);
-        const placeholders = ids.map(() => '?').join(',');
-        // Keep well under D1's bind limit even when every log row is small.
-        for (let i = 0; i < ids.length; i += 64) {
-          const group = ids.slice(i, i + 64);
-          const rows = await adapter.query<LogSqlRow>(
-            `SELECT ${columns.map(quote).join(',')} FROM ${quote(table)}
-             WHERE tenant_id = ? AND id IN (${placeholders.split(',').slice(0, group.length).join(',')})`,
-            [tenantId, ...group]
-          );
-          for (const row of rows) {
-            for (const name of NUMERIC)
-              if (typeof row[name] === 'string') {
-                const value = Number(row[name]);
-                if (!Number.isSafeInteger(value)) fail();
-                row[name] = value;
-              }
-            if (row.tenant_id !== tenantId || typeof row.id !== 'string') fail();
-            hotIds.add(String(row.id));
-            checkedIds.add(String(row.id));
-            if (inWindow(row)) hot.set(String(row.id), row);
-          }
-        }
-        start = end;
+      reserveHeads(heads);
+      for (const row of await readBodies(heads)) {
+        if (row.tenant_id !== tenantId || typeof row.id !== 'string') fail();
+        hotIds.add(row.id);
+        checkedIds.add(row.id);
+        if (inWindow(row)) hot.set(row.id, row);
       }
       const last = heads[heads.length - 1];
       cursor = { at: last.at, id: last.id };
@@ -464,10 +480,13 @@ export function createLogReadAdapter(input: {
       for (let index = 0; index < unseen.length; index += 64) {
         if (Date.now() > deadline) fail();
         const ids = unseen.slice(index, index + 64);
-        const current = await adapter.query<LogSqlRow>(
-          `SELECT ${columns.map(quote).join(',')} FROM ${quote(table)} WHERE tenant_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+        const heads = await adapter.query<{ id: string; bytes: number }>(
+          `SELECT ${alias}.id, ${size} AS bytes FROM ${quote(table)} ${alias}
+           WHERE ${alias}.tenant_id = ? AND ${alias}.id IN (${ids.map(() => '?').join(',')})`,
           [tenantId, ...ids]
         );
+        reserveHeads(heads);
+        const current = await readBodies(heads);
         for (const id of ids) checkedIds.add(id);
         for (const row of current) {
           for (const name of NUMERIC)
