@@ -68,7 +68,12 @@ function testDb(
     }
     if (sql.includes('FROM oauth_clients')) {
       return options.client === undefined
-        ? { client_id: 'login-ui', application_type: 'web', allowed_channels: '["browser"]' }
+        ? {
+            client_id: 'login-ui',
+            application_type: 'web',
+            allowed_channels: '["browser"]',
+            client_secret_hash: null,
+          }
         : options.client;
     }
     if (sql.includes('FROM web_origin_registry')) {
@@ -122,14 +127,34 @@ describe('AWS SAML passkey Flow admission', () => {
     ]);
     expect(db.calls).toHaveBeenCalledWith(expect.stringContaining('FROM oauth_clients'), [
       'tenant-a',
+      'login-ui',
     ]);
     expect(db.calls).toHaveBeenCalledWith(expect.stringContaining('FROM web_origin_registry'), [
       'tenant-a',
+      'login-ui',
       'https://login.example.test',
     ]);
   });
 
-  it('rejects an unsupported branch and a non-browser client', async () => {
+  it('rejects a confidential browser client before checking its origin', async () => {
+    const db = testDb({
+      client: {
+        client_id: 'login-ui',
+        application_type: 'web',
+        allowed_channels: '["browser"]',
+        client_secret_hash: 'synthetic-confidential-client-hash',
+      },
+    });
+    await expect(
+      assertPasskeyOnlySamlFlowReady(db, 'tenant-a', ['sp-a'], 'https://login.example.test')
+    ).rejects.toThrow('aws_login_client_unavailable');
+    expect(db.calls).not.toHaveBeenCalledWith(
+      expect.stringContaining('FROM web_origin_registry'),
+      expect.anything()
+    );
+  });
+
+  it('rejects an unsupported branch and a non-web client', async () => {
     const branch = structuredClone(editor);
     branch.edges[1].source_handle = 'mail_otp';
     await expect(
@@ -152,7 +177,12 @@ describe('AWS SAML passkey Flow admission', () => {
     await expect(
       assertPasskeyOnlySamlFlowReady(
         testDb({
-          client: { client_id: 'login-ui', application_type: 'native', allowed_channels: null },
+          client: {
+            client_id: 'login-ui',
+            application_type: 'native',
+            allowed_channels: '["browser"]',
+            client_secret_hash: null,
+          },
         }),
         'tenant-a',
         ['sp-a'],

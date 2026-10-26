@@ -44,7 +44,9 @@ export interface SamlDrPersistentNameId {
 }
 
 export interface SamlDrSnapshotPayload {
-  sourceLoginUi: { client: PortableSqliteRow; origins: readonly PortableSqliteRow[] };
+  sourceLoginUi:
+    | { client: PortableSqliteRow; origins: readonly PortableSqliteRow[] }
+    | { mode: 'disabled' };
   platformDestinationProfiles: {
     profiles: readonly PortableSqliteRow[];
     versions: readonly PortableSqliteRow[];

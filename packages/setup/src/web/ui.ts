@@ -18,6 +18,7 @@ import {
 } from '../core/wildcard-dns-manual-action.js';
 import { SETUP_WEB_FONT_FACE } from './ui-fonts.js';
 import { SETUP_WEB_UI_STYLE } from './ui-style.js';
+import { AWS_SETUP_SCRIPT, getAwsSetupMarkup } from './aws-setup-ui.js';
 
 const CLOUDFLARE_DNS_ADD_RECORD_IMAGE_DATA_URI = `data:image/png;base64,${readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'cloudflare-dns-add-record-example.png')
@@ -5044,6 +5045,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (typeof refreshSetupStaticCopy === 'function') {
         refreshSetupStaticCopy();
       }
+      if (typeof refreshAwsSetupCopy === 'function') {
+        refreshAwsSetupCopy();
+      }
       if (typeof refreshDynamicLocaleContent === 'function') {
         refreshDynamicLocaleContent();
       }
@@ -5202,14 +5206,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     </div>
 
     <div id="section-aws-setup" class="setup-start-section hidden">
-      <div class="aws-setup-guide">
-        <p class="aws-setup-scope"><span class="platform-badge" data-i18n="web.platform.development">In development</span> <strong data-i18n="web.platform.awsScope">Currently supports SAML DR only</strong></p>
-        <p data-i18n="web.platform.awsGuide">AWS setup commands currently support prerequisite checks and planning. Browser-based deployment is in development.</p>
-        <p data-i18n="web.platform.awsPrerequisites">Prepare your AWS account, region, and a profile signed in to the dedicated operator role.</p>
-        <h2 data-i18n="web.platform.awsCommand">Prerequisite check command</h2>
-        <pre><code>pnpm run setup aws check --account-id YOUR_AWS_ACCOUNT_ID --region ap-northeast-1 --profile YOUR_AWS_PROFILE</code></pre>
-        <p class="f-help" data-i18n="web.platform.awsCommandNote">Replace the account ID and profile name with your AWS settings.</p>
-      </div>
+      ${getAwsSetupMarkup(locale)}
       <div class="actions">
         <button type="button" class="btn btn-back" id="btn-aws-platform-back" data-i18n="web.platform.back">Back to platform selection</button>
       </div>
@@ -7258,6 +7255,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function showPlatformSelection() {
+      if (typeof stopAwsSetupPolling === 'function') stopAwsSetupPolling();
       selectedSetupPlatform = null;
       showSection('platform');
       document.getElementById('setup-hero-title')?.focus();
@@ -7268,6 +7266,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       selectedSetupPlatform = platform;
       if (platform === 'aws') {
         showSection('awsSetup');
+        if (typeof initializeAwsSetup === 'function') initializeAwsSetup();
       } else {
         currentStep = 1;
         showSection('prerequisites');
@@ -15415,6 +15414,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         });
       await Promise.allSettled([runtimeContextPromise, loadEnvironments()]);
     }
+
+    ${AWS_SETUP_SCRIPT}
 
     function initializeSetupEntry() {
       if (MANAGE_ONLY) {

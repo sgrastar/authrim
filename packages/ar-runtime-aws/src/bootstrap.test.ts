@@ -114,6 +114,61 @@ async function input(): Promise<CreateAwsSamlTenantInput> {
 describe('AWS SAML tenant bootstrap', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('keeps API-only readiness independent of captured Login UI and passkey UI policy', async () => {
+    const options = await input();
+    options.destinationUi = {
+      components: { loginUi: false, adminUi: false },
+      ui: {
+        login: { mode: 'disabled' },
+        admin: { mode: 'external', baseUrl: 'https://admin.example.test' },
+      },
+    };
+    const previous = options.settings.get.bind(options.settings);
+    options.settings.get = async (key) =>
+      key.endsWith(':tenant')
+        ? JSON.stringify({ 'tenant.ui_base_url': ORIGIN, 'tenant.ui_login_path': '/source-login' })
+        : key.endsWith(':authentication-methods')
+          ? null
+          : previous(key);
+    const runtime = createAwsSamlTenant(options);
+    expect(runtime.env.UI_URL).toBeUndefined();
+    expect(runtime.env.LOGIN_UI_ENABLED).toBe('false');
+    await expect(runtime.assertReady()).resolves.toBeUndefined();
+    expect(assertPasskeyOnlySamlFlowReady).not.toHaveBeenCalled();
+    expect(assertSAMLIdPProviderReadiness).toHaveBeenCalledOnce();
+  });
+
+  it('uses the declared external UI without weakening the existing authentication policy', async () => {
+    const options = await input();
+    options.destinationUi = {
+      components: { loginUi: false, adminUi: false },
+      ui: {
+        login: {
+          mode: 'external',
+          baseUrl: 'https://login.example.test',
+          clientId: 'custom-login',
+          paths: { login: '/sign-in', reauth: '/prove-again' },
+        },
+        admin: { mode: 'disabled' },
+      },
+    };
+    const runtime = createAwsSamlTenant(options);
+    expect(runtime.env.ALLOWED_ORIGINS).toBe(`${ORIGIN},https://login.example.test`);
+    expect(runtime.env.LOGIN_UI_EXECUTION_HOST_MODE).toBe('dedicated');
+    await expect(runtime.assertReady()).resolves.toBeUndefined();
+    expect(assertPasskeyOnlySamlFlowReady).toHaveBeenCalledWith(
+      options.inventory.metadataCoreDb,
+      TENANT_ID,
+      [SP],
+      'https://login.example.test',
+      'custom-login'
+    );
+    vi.mocked(assertPasskeyOnlySamlFlowReady).mockRejectedValueOnce(
+      new Error('aws_login_origin_unavailable')
+    );
+    await expect(runtime.assertReady()).rejects.toThrow('aws_login_origin_unavailable');
+  });
+
   it('connects narrow ports and checks every imported capability before serving', async () => {
     const options = await input();
     const tenant = createAwsSamlTenant(options);

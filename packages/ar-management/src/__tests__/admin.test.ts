@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { openAdminDatabase, sqliteAdapter } from './helpers/admin-authority-fixture';
+import { installGroupBoundaryFixture } from './helpers/group-boundary-fixture';
 import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
 import {
@@ -606,6 +607,8 @@ import {
   adminUserConsentRevokeHandler,
 } from '../admin';
 
+const groupBoundaryDatabases: Array<ReturnType<typeof installGroupBoundaryFixture>> = [];
+
 // Helper to create mock D1Database
 function createMockDB(options: {
   prepareResults?: Record<string, any>;
@@ -641,7 +644,7 @@ function createMockDB(options: {
     run: vi.fn().mockResolvedValue(options.runResult ?? { success: true }),
   };
 
-  return {
+  const binding = {
     prepare: vi.fn((sql: string) => {
       currentSql = sql;
       return mockStatement;
@@ -659,6 +662,8 @@ function createMockDB(options: {
     _mockStatement: typeof mockStatement;
     _mockOptions: typeof options;
   };
+  groupBoundaryDatabases.push(installGroupBoundaryFixture(binding));
+  return binding;
 }
 
 function createOAuthClientRow(
@@ -1241,6 +1246,7 @@ describe('Admin API Handlers', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     for (const database of mappingUpdateDatabases.splice(0)) database.close();
+    for (const database of groupBoundaryDatabases.splice(0)) database.close();
   });
 
   describe('adminTestEmailCodeHandler tenant D1 routing', () => {

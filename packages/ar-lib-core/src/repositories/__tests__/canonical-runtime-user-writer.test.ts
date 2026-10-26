@@ -1,3 +1,4 @@
+import type { AccountGovernanceMutationCapability } from '../../db/adapter';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CanonicalIdentityRepository,
@@ -30,6 +31,31 @@ describe('CanonicalRuntimeUserWriter', () => {
 
   beforeEach(() => {
     adapter = new MockDatabaseAdapter();
+    const governance: AccountGovernanceMutationCapability = {
+      putSupportContext: async () => {
+        throw new Error('unused');
+      },
+      createLegalHold: async () => {
+        throw new Error('unused');
+      },
+      releaseLegalHold: async () => {
+        throw new Error('unused');
+      },
+      async transitionAccountDeletion(input) {
+        const account = adapter.getById('identity_accounts', input.accountId);
+        if (!account || account.tenant_id !== input.tenantId) return false;
+        adapter.seed('identity_accounts', [
+          {
+            ...account,
+            lifecycle_state: input.state,
+            deleted_at: account.deleted_at ?? input.now,
+            updated_at: input.now,
+          },
+        ]);
+        return true;
+      },
+    };
+    Object.assign(adapter, { accountGovernanceMutations: governance });
     for (const tableName of CANONICAL_TABLES) {
       adapter.initTable(tableName, 'id');
     }

@@ -1,12 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { PostgresQueryClient } from './postgres-transient-state';
 
-export interface CheckRateLimitInput {
-  tenantId?: string;
-  key: string;
-  windowSeconds: number;
-  maxRequests: number;
-}
+import type { CheckRateLimitInput } from './state-ports';
+export type { CheckRateLimitInput } from './state-ports';
 
 const TABLE = 'authrim_aws_rate_limit_counters';
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/u;

@@ -147,7 +147,7 @@ export async function executeSetupStack({
   try {
     change = await aws('cloudformation', 'describe-change-set', {
       StackName: record.stackId ?? spec.name,
-      ChangeSetName: record.changeSetName,
+      ChangeSetName: record.changeSetId ?? record.changeSetName,
     });
   } catch (error) {
     if (error.code !== 'aws_setup_not_found') throw error;
@@ -178,6 +178,7 @@ export async function executeSetupStack({
   // then verify the stack's service role after execution; never invent a response field.
   if (
     change.ChangeSetName !== record.changeSetName ||
+    (record.changeSetId && change.ChangeSetId !== record.changeSetId) ||
     change.Description !== `Authrim ${stage}; pinned input ${inputHash}`
   )
     fail('change_set_identity_mismatch');
@@ -204,6 +205,9 @@ export async function executeSetupStack({
     });
     if (templateBody(template.TemplateBody) !== body) fail('change_set_template_mismatch');
     if (change.ExecutionStatus === 'AVAILABLE') {
+      // An accepted execution can briefly still appear AVAILABLE. Never resend an
+      // execution that may already have reached AWS, including after a lost response.
+      if (record.status === 'executing') return { ...record, status: 'inProgress' };
       record.status = 'executing';
       await save();
       await aws('cloudformation', 'execute-change-set', {

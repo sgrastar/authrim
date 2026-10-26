@@ -16,77 +16,26 @@ export interface PostgresQueryClient {
   ): Promise<{ rows: Row[]; rowCount: number | null }>;
 }
 
-export interface TransientSession {
-  tenantId: string;
-  sessionId: string;
-  userId: string;
-  createdAt: number;
-  expiresAt: number;
-  revocationBoundAtMs: number;
-  data?: Record<string, unknown>;
-}
-
-export interface StoreSessionInput {
-  tenantId: string;
-  sessionId: string;
-  userId: string;
-  ttlMs: number;
-  data?: Record<string, unknown>;
-}
-
-export interface StoreChallengeInput {
-  tenantId: string;
-  id: string;
-  type: string;
-  userId: string;
-  challenge: string;
-  ttlMs: number;
-  /** Absolute upper bound in milliseconds, for a parent interaction's deadline. */
-  notAfterMs?: number;
-  email?: string;
-  redirectUri?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ConsumeChallengeInput {
-  tenantId: string;
-  id: string;
-  type: string;
-  /** Omit only when `id` itself is a high-entropy bearer secret. */
-  challenge?: string;
-}
-
-export interface TransientChallenge {
-  id: string;
-  tenantId: string;
-  type: string;
-  userId: string;
-  challenge: string;
-  createdAt: number;
-  expiresAt: number;
-  email?: string;
-  redirectUri?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface StoreSamlRequestInput {
-  tenantId: string;
-  spEntityId: string;
-  request: SAMLRequestData;
-}
-
-export interface ConsumeSamlRequestInput {
-  tenantId: string;
-  spEntityId: string;
-  requestId: string;
-}
-
-export interface PutTransientKeyInput {
-  tenantId: string;
-  key: string;
-  value: string;
-  ttlMs: number;
-}
+import type {
+  TransientSession,
+  StoreSessionInput,
+  StoreChallengeInput,
+  ConsumeChallengeInput,
+  TransientChallenge,
+  StoreSamlRequestInput,
+  ConsumeSamlRequestInput,
+  PutTransientKeyInput,
+} from './state-ports';
+export type {
+  TransientSession,
+  StoreSessionInput,
+  StoreChallengeInput,
+  ConsumeChallengeInput,
+  TransientChallenge,
+  StoreSamlRequestInput,
+  ConsumeSamlRequestInput,
+  PutTransientKeyInput,
+} from './state-ports';
 
 type StoredRow = {
   payload: unknown;

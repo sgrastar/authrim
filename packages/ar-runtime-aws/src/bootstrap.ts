@@ -21,19 +21,14 @@ import {
   type SAMLRuntimeSigningBundle,
 } from './saml-runtime';
 import { assertAwsRuntimeSchemaReady } from './import/aws-schema-bootstrap';
-import { PostgresAccountAuthStateStore } from './storage/postgres-account-auth-state';
-import { PostgresAuthorizationCodeStore } from './storage/postgres-authorization-code';
-import {
-  createSAMLPersistentNameIDRegistryKV,
-  PostgresPersistentNameIDRegistry,
-} from './storage/postgres-persistent-nameid';
-import { PostgresRateLimitStore } from './storage/postgres-rate-limit';
-import {
-  PostgresTransientStateStore,
-  type PostgresQueryClient,
-} from './storage/postgres-transient-state';
+import { createSAMLPersistentNameIDRegistryKV } from './storage/postgres-persistent-nameid';
+import type { PostgresQueryClient } from './storage/postgres-transient-state';
+import { createAwsStateStores } from './storage/create-state-stores';
+import type { AwsBoundAuthState } from './import/selected-auth-state';
+import type { PersistentNameIDStore } from './storage/state-ports';
 import { assertPasskeyOnlySamlFlowReady } from './ui/passkey-flow-profile';
 import { assertAwsEventPolicyReady, createAwsEventRuntimePorts } from './event-runtime';
+import { normalizeAwsRuntimeUiConfig, type AwsRuntimeUiConfig } from './ui/runtime-ui-config';
 
 /** Read-only copies of the operator-verified Settings and legacy configuration KV keys. */
 export interface AwsSnapshotKeyReader {
@@ -46,9 +41,12 @@ export interface CreateAwsSamlTenantInput {
   origin: string;
   /** A stable identifier used for runtime logging and cache separation. */
   environmentName: string;
+  destinationUi?: AwsRuntimeUiConfig;
   inventory: AwsDataTenantInventory;
-  /** Already provisioned PostgreSQL database containing all AWS-only state tables. */
+  /** Already provisioned SQL audit/activation store; also legacy authentication state. */
   stateDb: PostgresQueryClient;
+  /** Explicit selected state backend, already restored and pinned by the caller. */
+  authenticationState?: AwsBoundAuthState;
   /** The durable, local-only audit writer. External fanout is outside this profile. */
   auditPorts: AuditRuntimePorts;
   settings: AwsSnapshotKeyReader;
@@ -135,10 +133,17 @@ function assertPasskeyOnlyAuthenticationMethods(methods: Record<string, unknown>
 
 async function assertRuntimeSettingsReady(
   input: CreateAwsSamlTenantInput,
-  env: Env
+  env: Env,
+  uiConfig: AwsRuntimeUiConfig
 ): Promise<void> {
   if (!(await resolveSamlEnabled(env, input.tenantId, { fresh: true }))) {
     throw new Error('aws_saml_tenant_disabled');
+  }
+  if (uiConfig.ui.login.mode === 'disabled') {
+    if (await getUIConfig(env, input.tenantId, { strict: true })) {
+      throw new Error('aws_login_ui_profile_unsupported');
+    }
+    return;
   }
   const raw = await input.settings.get(`settings:tenant:${input.tenantId}:authentication-methods`);
   const methods = parseSettingsDocument(raw);
@@ -163,23 +168,50 @@ async function assertRuntimeSettingsReady(
     throw new Error('aws_login_flow_feature_disabled');
   }
   const ui = await getUIConfig(env, input.tenantId, { strict: true });
+  const login = uiConfig.ui.login;
   if (
-    ui?.baseUrl !== input.origin ||
-    ui.paths.login !== '/login' ||
-    ui.paths.reauth !== '/reauth'
+    ui?.baseUrl !== (login.mode === 'external' ? login.baseUrl : input.origin) ||
+    ui.paths.login !== (login.mode === 'external' ? login.paths.login : '/login') ||
+    ui.paths.reauth !== (login.mode === 'external' ? login.paths.reauth : '/reauth')
   ) {
     throw new Error('aws_login_ui_profile_unsupported');
   }
+}
+
+/** Only destination UI fields override captured settings; authentication policy remains intact. */
+function destinationSettings(
+  source: AwsSnapshotKeyReader,
+  tenantId: string,
+  config: AwsRuntimeUiConfig
+): AwsSnapshotKeyReader {
+  return {
+    async get(key) {
+      const raw = await source.get(key);
+      if (key !== 'settings:platform:tenant' && key !== `settings:tenant:${tenantId}:tenant`)
+        return raw;
+      const document = raw === null ? {} : parseSettingsDocument(raw);
+      delete document['tenant.ui_base_url'];
+      delete document['tenant.ui_login_path'];
+      delete document['tenant.ui_reauth_path'];
+      if (key === `settings:tenant:${tenantId}:tenant` && config.ui.login.mode === 'external') {
+        document['tenant.ui_base_url'] = config.ui.login.baseUrl;
+        document['tenant.ui_login_path'] = config.ui.login.paths.login;
+        document['tenant.ui_reauth_path'] = config.ui.login.paths.reauth;
+      }
+      return JSON.stringify(document);
+    },
+  };
 }
 
 /**
  * Only two persistent KV families are supported by this profile. A new caller must add an
  * explicit durable adapter instead of accidentally sharing SAML NameID state with other keys.
  */
-function createPersistentRuntimeKV(input: CreateAwsSamlTenantInput) {
-  const nameIds = createSAMLPersistentNameIDRegistryKV(
-    new PostgresPersistentNameIDRegistry(input.stateDb)
-  );
+function createPersistentRuntimeKV(
+  input: CreateAwsSamlTenantInput,
+  registry: PersistentNameIDStore
+) {
+  const nameIds = createSAMLPersistentNameIDRegistryKV(registry);
   const consentSaltKey = `consent:ip_salt:${input.tenantId}`;
   return {
     get(key: string) {
@@ -197,6 +229,7 @@ function createPersistentRuntimeKV(input: CreateAwsSamlTenantInput) {
  * and deliberately contains no fabricated D1, Durable Object, queue, or service bindings.
  */
 export function createAwsSamlTenant(input: CreateAwsSamlTenantInput): AwsTenantRuntime {
+  const uiConfig = normalizeAwsRuntimeUiConfig(input.destinationUi);
   if (
     !validTenant(input.tenantId) ||
     input.inventory.tenantId !== input.tenantId ||
@@ -215,12 +248,16 @@ export function createAwsSamlTenant(input: CreateAwsSamlTenantInput): AwsTenantR
     throw new Error('aws_saml_tenant_input_invalid');
   }
 
-  const state = new PostgresTransientStateStore(input.stateDb);
+  const stores =
+    input.authenticationState === undefined
+      ? createAwsStateStores({ backend: 'postgresql', db: input.stateDb })
+      : input.authenticationState.stores;
+  const state = stores.state;
   const auth = createAuthRuntimePorts({
     state,
-    accountAuthentication: new PostgresAccountAuthStateStore(input.stateDb),
-    authorizationCodes: new PostgresAuthorizationCodeStore(input.stateDb),
-    rateLimit: new PostgresRateLimitStore(input.stateDb),
+    accountAuthentication: stores.accountAuthentication,
+    authorizationCodes: stores.authorizationCodes,
+    rateLimit: stores.rateLimit,
   });
   const saml = createSAMLRuntimePorts({
     state,
@@ -231,14 +268,16 @@ export function createAwsSamlTenant(input: CreateAwsSamlTenantInput): AwsTenantR
     serviceProviderReleases: input.identityMappings,
   });
   const data = createAwsRuntimeDataPorts([input.inventory]);
+  const login = uiConfig.ui.login;
+  const loginOrigin = login.mode === 'external' ? login.baseUrl : input.origin;
   const env = {
     DEFAULT_TENANT_ID: input.tenantId,
     ISSUER_URL: input.origin,
-    UI_URL: input.origin,
-    ALLOWED_ORIGINS: input.origin,
-    LOGIN_UI_ENABLED: 'true',
-    LOGIN_UI_EXECUTION_HOST_MODE: 'issuer',
-    ENABLE_LOGIN_RUNTIME_FLOW: 'true',
+    UI_URL: login.mode === 'disabled' ? undefined : loginOrigin,
+    ALLOWED_ORIGINS: login.mode === 'external' ? `${input.origin},${loginOrigin}` : input.origin,
+    LOGIN_UI_ENABLED: login.mode === 'disabled' ? 'false' : 'true',
+    LOGIN_UI_EXECUTION_HOST_MODE: login.mode === 'external' ? 'dedicated' : 'issuer',
+    ENABLE_LOGIN_RUNTIME_FLOW: login.mode === 'disabled' ? 'false' : 'true',
     FLOW_RUNTIME_HMAC_SECRET: input.flowRuntimeHmacSecret,
     ENVIRONMENT: 'production',
     AUTHRIM_ENVIRONMENT_NAME: input.environmentName,
@@ -251,26 +290,41 @@ export function createAwsSamlTenant(input: CreateAwsSamlTenantInput): AwsTenantR
       tenantId: input.tenantId,
       audit: input.auditPorts,
     }),
-    SETTINGS: input.settings,
+    SETTINGS:
+      input.destinationUi === undefined
+        ? input.settings
+        : destinationSettings(input.settings, input.tenantId, uiConfig),
     AUTHRIM_CONFIG: input.configuration,
     STATE_STORE: createSAMLTransientStateKV(state),
-    KV: createPersistentRuntimeKV(input),
+    KV: createPersistentRuntimeKV(input, stores.persistentNameIDs),
   } as unknown as Env;
 
   return {
     tenantId: input.tenantId,
     origin: input.origin,
+    ui: uiConfig,
     env,
     async assertReady() {
       await input.assertSnapshotReady();
       await assertAwsRuntimeSchemaReady(input.stateDb);
-      await assertRuntimeSettingsReady(input, env);
-      await assertPasskeyOnlySamlFlowReady(
-        input.inventory.metadataCoreDb,
-        input.tenantId,
-        input.spEntityIds,
-        input.origin
-      );
+      await input.authenticationState?.assertReady();
+      await assertRuntimeSettingsReady(input, env, uiConfig);
+      if (login.mode === 'external') {
+        await assertPasskeyOnlySamlFlowReady(
+          input.inventory.metadataCoreDb,
+          input.tenantId,
+          input.spEntityIds,
+          login.baseUrl,
+          login.clientId
+        );
+      } else if (login.mode === 'embedded-rehearsal') {
+        await assertPasskeyOnlySamlFlowReady(
+          input.inventory.metadataCoreDb,
+          input.tenantId,
+          input.spEntityIds,
+          input.origin
+        );
+      }
       await assertAwsEventPolicyReady(input.inventory.metadataCoreDb, input.tenantId);
       await assertSAMLIdPProviderReadiness({
         env,

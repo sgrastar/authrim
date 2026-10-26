@@ -1,5 +1,5 @@
 /**
- * AWS composition for the existing SAML IdP handlers. Protocol state lives in PostgreSQL;
+ * AWS composition for the existing SAML IdP handlers. Protocol state uses explicit storage ports;
  * signing material is imported explicitly and is never generated on a login request.
  */
 
@@ -15,7 +15,7 @@ import type {
   SAMLRuntimeImportedSPRelease,
   SAMLRuntimePorts,
 } from '@authrim/ar-lib-core/types/saml-runtime-ports';
-import type { PostgresTransientStateStore } from './storage/postgres-transient-state';
+import type { TransientStateStore } from './storage/state-ports';
 
 /** A decrypted local-signing DR bundle is structurally assignable to this type. */
 export interface SAMLRuntimeSigningBundle {
@@ -39,7 +39,7 @@ export interface SAMLRuntimeImportedSecret {
 }
 
 export interface CreateSAMLRuntimePortsInput {
-  state: PostgresTransientStateStore;
+  state: TransientStateStore;
   /** Reuse the auth runtime's lifecycle- and revocation-validated session reader. */
   authSessions: AuthRuntimePorts['sessions'];
   signingBundles: SAMLRuntimeSigningBundle[];
@@ -303,7 +303,7 @@ export function createSAMLRuntimePorts(input: CreateSAMLRuntimePortsInput): SAML
  * All accepted keys embed a tenant ID, and writes require an explicit finite TTL.
  * The persistent NameID registry must use a separate durable store.
  */
-export function createSAMLTransientStateKV(state: PostgresTransientStateStore): {
+export function createSAMLTransientStateKV(state: TransientStateStore): {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
   delete(key: string): Promise<void>;

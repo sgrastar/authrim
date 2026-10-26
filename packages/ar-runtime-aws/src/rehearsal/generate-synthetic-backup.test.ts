@@ -115,6 +115,43 @@ describe('synthetic browser fixture identity boundary', () => {
     expect(authData.slice(0, 32)).toEqual(expectedRpHash);
   });
 
+  it('binds generated external credentials to the captured UI origin and leaves issuer identity intact', async () => {
+    const externalLogin = {
+      mode: 'external' as const,
+      baseUrl: 'https://login.example.test',
+      clientId: 'test-external-ui',
+      paths: { login: '/sign-in', reauth: '/again' },
+    };
+    const profile = { ...browserProfile, externalLogin };
+    expect(resolveSyntheticFixtureProfile(profile)).toMatchObject({
+      issuer,
+      externalLogin,
+      rpId: 'login.example.test',
+    });
+    const credential = await softwarePasskey(profile);
+    const assertion = await credential.sign('challenge', 'user-tenant-a');
+    expect(
+      JSON.parse(new TextDecoder().decode(fromBase64url(assertion.response.clientDataJSON)))
+    ).toMatchObject({ origin: externalLogin.baseUrl });
+    expect(fromBase64url(assertion.response.authenticatorData).slice(0, 32)).toEqual(
+      new Uint8Array(
+        await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode('login.example.test'))
+      )
+    );
+    for (const invalid of [
+      { ...externalLogin, baseUrl: 'http://login.example.test' },
+      { mode: 'disabled' },
+      { ...externalLogin, clientId: '' },
+    ]) {
+      expect(() =>
+        resolveSyntheticFixtureProfile({
+          ...browserProfile,
+          externalLogin: invalid,
+        } as SyntheticFixtureProfile)
+      ).toThrow('aws_synthetic_fixture_profile_invalid');
+    }
+  });
+
   it('accepts the optional profile file without changing the existing CLI arguments', () => {
     expect(
       parseSyntheticFixtureArguments(['--out', 'new-output', '--migrations', 'migrations'])

@@ -7,7 +7,13 @@ info:
     The current login profile supports passkeys. Authentication and SAML operations
     use the contracts owned by the Auth and SAML packages.
     Requests must use a configured tenant origin. A conflicting Host header or
-    X-Tenant-Id header is rejected with 404.
+    X-Tenant-Id header is rejected with 404. Login UI and Admin UI are independently
+    optional. The embedded-rehearsal login mode serves the two browser pages below.
+    External and disabled login modes do not serve local browser pages; disabled mode
+    also returns 404 for the interactive authentication routes. External mode uses the
+    imported public browser client and active registered HTTPS origin, with the existing
+    authentication origin, PKCE, and WebAuthn checks. An external Admin UI URL is metadata
+    only and does not deploy an Admin UI or Management API.
 servers:
   - url: /
 security: []
@@ -23,7 +29,9 @@ paths:
       description: >-
         Checks the tenant's restored configuration, activation evidence, and database
         availability. A successful response does not perform a login or verify an
-        external service provider connection.
+        external service provider connection. API-only deployments can report ready with
+        login disabled and without a Login UI client. This does not indicate that an
+        interactive login is available.
       responses:
         '200':
           description: The tenant runtime is ready to serve requests.
@@ -47,7 +55,9 @@ paths:
       tags: [Browser login]
       summary: Show the passkey login page for a pending SAML request
       description: >-
-        Requires a ready tenant runtime and the SAML continuation parameters below.
+        Available only in embedded-rehearsal login mode. External or disabled login
+        mode returns 404. Requires a ready tenant runtime and the SAML continuation
+        parameters below.
         The browser starts the login interaction and submits passkey proof through
         the same-origin authentication APIs. A successful page response does not
         establish a session or prove that the supplied request or challenge is valid;
@@ -77,7 +87,9 @@ paths:
       tags: [Browser login]
       summary: Show the passkey reauthentication page for a pending SAML request
       description: >-
-        Uses the same browser login flow as /login, but also requires a challenge_id.
+        Available only in embedded-rehearsal login mode. External or disabled login
+        mode returns 404. Uses the same browser login flow as /login, but also requires
+        a challenge_id.
         Rendering the page does not satisfy the challenge. The authentication and
         SAML handlers enforce the challenge and continuation requirements before
         completing reauthentication. The tenant runtime must be ready.

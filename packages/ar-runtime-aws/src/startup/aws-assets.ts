@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { canonicalRestoreJson } from '../import/restore-evidence';
+import { normalizeAwsAuthStateConfig } from '../storage/auth-state-config';
 import {
   loadActivatedAwsSamlTenant,
   type LoadActivatedAwsSamlTenantInput,
@@ -203,6 +204,11 @@ export async function loadAwsSamlDeployment(input: {
     }
     const raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     const manifest = parseAwsSamlDeploymentManifest(raw);
+    normalizeAwsAuthStateConfig(manifest.authState, {
+      accountId: location.bucketOwner,
+      region: location.region,
+      restoreId: manifest.evidence.restoreId,
+    });
     if (
       raw !== canonicalRestoreJson(manifest) ||
       manifest.evidence.issuer !== location.issuerOrigin
@@ -248,6 +254,8 @@ export async function loadAwsSamlDeployment(input: {
       environmentName: manifest.environmentName,
       spEntityIds: manifest.spEntityIds,
       allocationScope: manifest.allocationScope,
+      ...(manifest.destinationUi === undefined ? {} : { destinationUi: manifest.destinationUi }),
+      ...(manifest.authState === undefined ? {} : { authState: manifest.authState }),
       awsFlowRuntimeHmacSecret: config.flowHmacSecret,
       awsLookupReadKeys: config.lookupReadKeys,
     };

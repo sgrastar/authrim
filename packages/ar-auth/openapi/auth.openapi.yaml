@@ -13,6 +13,13 @@ info:
     has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
     "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
     indicated delay; a failed response does not establish whether an earlier write completed.
+
+    Browser CORS allows configured origins with credentials and the request headers
+    Content-Type, Authorization, X-Session-Id, and X-Authrim-Interaction-Id. An unapproved
+    origin receives no Access-Control-Allow-Origin header. The AWS SAML profile exposes
+    only its supported passkey and Login Runtime routes; when login is disabled, those
+    routes and their preflights return 404. External UI mode keeps the same client,
+    active origin, PKCE, and WebAuthn verification requirements.
   x-authrim-coverage: initial route inventory
 servers:
   - url: https://{tenant_domain}
@@ -41,6 +48,20 @@ tags:
   - name: Auth
 paths:
   /api/auth/health:
+    options:
+      operationId: optionsAuthHealth
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     get:
       tags:
         - Health
@@ -930,6 +951,20 @@ paths:
         '200':
           $ref: '#/components/responses/SessionVerify'
   /api/sessions/status:
+    options:
+      operationId: optionsSessionStatus
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     get:
       tags:
         - Sessions
@@ -1125,6 +1160,20 @@ paths:
             type: string
           description: Challenge id returned by the authorization flow.
   /api/v1/login/interactions/start:
+    options:
+      operationId: optionsLoginInteractionStart
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Login Runtime
@@ -1320,6 +1369,25 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
   /api/v1/login/interactions/{interaction_id}/submit:
+    options:
+      operationId: optionsLoginInteractionSubmit
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Login Runtime
@@ -1544,6 +1612,20 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/DirectLogout'
   /api/v1/auth/direct/passkey/login/finish:
+    options:
+      operationId: optionsDirectPasskeyLoginFinish
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Direct Auth
@@ -1569,6 +1651,20 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/DirectPasskeyLoginFinish'
   /api/v1/auth/direct/passkey/login/start:
+    options:
+      operationId: optionsDirectPasskeyLoginStart
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Direct Auth
@@ -1674,6 +1770,20 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/DirectPasskeySignupStart'
   /api/v1/auth/direct/session:
+    options:
+      operationId: optionsDirectSession
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     get:
       tags:
         - Direct Auth
@@ -1879,6 +1989,20 @@ paths:
           $ref: '#/components/responses/Error'
       security: []
   /auth/login-challenge:
+    options:
+      operationId: optionsLoginChallenge
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     get:
       tags:
         - Login Challenges
@@ -2875,6 +2999,21 @@ components:
             response:
               code: '123456'
   responses:
+    BrowserCorsPreflight:
+      description: >-
+        Browser preflight response. Access-Control-Allow-Origin is present only for a
+        configured allowed origin; the remaining headers alone do not grant browser access.
+      headers:
+        Access-Control-Allow-Origin:
+          schema: { type: string, format: uri }
+        Access-Control-Allow-Credentials:
+          schema: { type: string, const: 'true' }
+        Access-Control-Allow-Methods:
+          schema: { type: string }
+        Access-Control-Allow-Headers:
+          schema: { type: string }
+        Access-Control-Max-Age:
+          schema: { type: string, const: '86400' }
     Ok:
       description: Successful JSON response.
       content:

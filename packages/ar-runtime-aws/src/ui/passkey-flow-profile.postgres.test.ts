@@ -31,7 +31,7 @@ describe('AWS passkey Flow readiness against PostgreSQL', () => {
         );
         CREATE TABLE oauth_clients (
           tenant_id text NOT NULL, client_id text NOT NULL,
-          application_type text, allowed_channels text
+          application_type text, allowed_channels text, client_secret_hash text
         );
         CREATE TABLE web_origin_registry (
           tenant_id text NOT NULL, client_id text NOT NULL, origin text NOT NULL,

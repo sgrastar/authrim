@@ -419,7 +419,7 @@ app.use('*', async (c, next) => {
       return '';
     },
     allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Session-Id'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Session-Id', 'X-Authrim-Interaction-Id'],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
     credentials: true,

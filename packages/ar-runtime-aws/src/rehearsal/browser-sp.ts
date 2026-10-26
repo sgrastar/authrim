@@ -7,7 +7,7 @@ import { SAML_NAMESPACES as NS, NAMEID_FORMATS } from '../../../ar-saml/src/comm
 import { verifyXmlSignatureAndGetReferences } from '../../../ar-saml/src/common/signature';
 import { parseSAMLXml, type XMLDocument } from '../../../ar-saml/src/common/xml-utils';
 import { extractSAMLResponseIds } from '../../../ar-saml/src/idp/signing';
-import type { PostgresTransientStateStore } from '../storage/postgres-transient-state';
+import type { TransientStateStore } from '../storage/state-ports';
 
 const TENANT = 'tenant-a';
 const EMAIL = 'user-tenant-a@example.test';
@@ -16,7 +16,7 @@ const CHALLENGE_TYPE = 'synthetic-browser-sp';
 const TTL_MS = 10 * 60_000;
 const MAX_BODY = 128 * 1024;
 type Element = NonNullable<XMLDocument['documentElement']>;
-type Store = Pick<PostgresTransientStateStore, 'storeChallenge' | 'consumeChallenge'>;
+type Store = Pick<TransientStateStore, 'storeChallenge' | 'consumeChallenge'>;
 
 export interface SyntheticBrowserSpConfig {
   syntheticOnly: true;

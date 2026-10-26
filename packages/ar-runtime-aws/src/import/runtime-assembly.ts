@@ -34,6 +34,12 @@ import {
 } from './snapshot-admin-db';
 import { readVerifiedRows, rowInteger, rowNullableText, rowText } from './verified-rows';
 
+import {
+  isAwsUiOrigin,
+  normalizeAwsRuntimeUiConfig,
+  type AwsRuntimeUiConfig,
+} from '../ui/runtime-ui-config';
+
 const HEX_SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_CATEGORY = /^[a-zA-Z0-9_-]{1,128}$/u;
 const CONSUMED_NON_DATABASE_DATASETS = new Set([
@@ -64,7 +70,9 @@ function sameManifest(input: AssembleAwsSamlTenantInput): void {
     receipt.snapshotId !== manifest.snapshotId ||
     receipt.inventoryDigestSha256 !== manifest.inventoryDigestSha256 ||
     !HEX_SHA256.test(receipt.supplementSha256) ||
-    input.supplement.sourceFlowRuntimeEnabled !== true ||
+    typeof input.supplement.sourceFlowRuntimeEnabled !== 'boolean' ||
+    (normalizeAwsRuntimeUiConfig(input.destinationUi).ui.login.mode !== 'disabled' &&
+      input.supplement.sourceFlowRuntimeEnabled !== true) ||
     input.restored.committed.core.status !== 'committed_staging' ||
     input.restored.committed.core.family !== 'core' ||
     input.restored.committed.core.tenantId !== receipt.tenantId ||
@@ -221,17 +229,22 @@ async function signingBundle(
   } catch {
     return invalid();
   }
-  assertSourceSAMLSigningPolicy(bundle, input.backup.manifest.source.issuer);
+  assertSourceSAMLSigningPolicy(bundle, input.backup.manifest.source.issuer, input.destinationUi);
   return bundle;
 }
 
 export function assertSourceSAMLSigningPolicy(
   bundle: Pick<SAMLLocalSigningSecretDRBundle, 'generated' | 'settings'>,
-  issuer: string
+  issuer: string,
+  destinationUi?: AwsRuntimeUiConfig
 ): void {
+  const login = normalizeAwsRuntimeUiConfig(destinationUi).ui.login;
   if (
     bundle.generated.issuerUrl !== issuer ||
-    bundle.settings.interactiveLoginUrlPolicy !== 'tenant_host' ||
+    (login.mode === 'external'
+      ? bundle.settings.interactiveLoginUrlPolicy !== 'ui_base_url'
+      : login.mode === 'embedded-rehearsal' &&
+        bundle.settings.interactiveLoginUrlPolicy !== 'tenant_host') ||
     bundle.generated.idpEntityId !==
       buildSAMLEntityIdFromIssuerUrl(issuer, 'idp', bundle.settings.entityIdStyle)
   )
@@ -263,20 +276,38 @@ async function pairwiseSecret(
   };
 }
 
-async function verifyRestoredSourceLoginUi(input: AssembleAwsSamlTenantInput): Promise<void> {
+export async function verifyRestoredSourceLoginUi(
+  input: AssembleAwsSamlTenantInput
+): Promise<void> {
   const tenantId = input.backup.manifest.source.tenantId;
-  const origin = input.backup.manifest.source.issuer;
   const source = input.supplement.sourceLoginUi;
+  const login = normalizeAwsRuntimeUiConfig(input.destinationUi).ui.login;
+  if (source && 'mode' in source) {
+    if (source.mode !== 'disabled' || Object.keys(source).length !== 1 || login.mode !== 'disabled')
+      invalid();
+    return;
+  }
+  if (!source || !Array.isArray(source.origins as unknown) || source.origins.length !== 1)
+    invalid();
+  const clientId = rowText(source.client, 'client_id');
+  const origin = rowText(source.origins[0], 'origin');
+  if (login.mode === 'external' && (clientId !== login.clientId || origin !== login.baseUrl))
+    invalid();
   if (
-    !source ||
+    login.mode === 'embedded-rehearsal' &&
+    (clientId !== 'login-ui' || origin !== input.backup.manifest.source.issuer)
+  )
+    invalid();
+  if (
+    !isAwsUiOrigin(origin) ||
     rowText(source.client, 'tenant_id') !== tenantId ||
-    rowText(source.client, 'client_id') !== 'login-ui' ||
+    !/^[A-Za-z0-9_.:-]{1,128}$/u.test(clientId) ||
     rowText(source.client, 'application_type') !== 'web' ||
     rowNullableText(source.client, 'client_secret_hash') !== null ||
     rowNullableText(source.client, 'logout_webhook_secret_encrypted') !== null ||
     source.origins.length !== 1 ||
     rowText(source.origins[0], 'tenant_id') !== tenantId ||
-    rowText(source.origins[0], 'client_id') !== 'login-ui' ||
+    rowText(source.origins[0], 'client_id') !== clientId ||
     rowText(source.origins[0], 'origin') !== origin ||
     rowInteger(source.origins[0], 'handoff_allowed') !== 1 ||
     rowInteger(source.origins[0], 'is_active') !== 1
@@ -297,7 +328,7 @@ async function verifyRestoredSourceLoginUi(input: AssembleAwsSamlTenantInput): P
     client_secret_hash: string | null;
   }>(
     'SELECT tenant_id, client_id, application_type, allowed_channels, client_secret_hash FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
-    [tenantId, 'login-ui']
+    [tenantId, clientId]
   );
   const restoredOrigin = await input.restored.metadataCoreDb.queryOne<{
     tenant_id: string;
@@ -307,18 +338,18 @@ async function verifyRestoredSourceLoginUi(input: AssembleAwsSamlTenantInput): P
     is_active: number;
   }>(
     'SELECT tenant_id, client_id, origin, handoff_allowed, is_active FROM web_origin_registry WHERE tenant_id = ? AND client_id = ? AND origin = ?',
-    [tenantId, 'login-ui', origin]
+    [tenantId, clientId, origin]
   );
   if (
     !client ||
     client.tenant_id !== tenantId ||
-    client.client_id !== 'login-ui' ||
+    client.client_id !== clientId ||
     client.application_type !== rowText(source.client, 'application_type') ||
     client.allowed_channels !== rowText(source.client, 'allowed_channels') ||
     client.client_secret_hash !== null ||
     !restoredOrigin ||
     restoredOrigin.tenant_id !== tenantId ||
-    restoredOrigin.client_id !== 'login-ui' ||
+    restoredOrigin.client_id !== clientId ||
     restoredOrigin.origin !== origin ||
     restoredOrigin.handoff_allowed !== 1 ||
     restoredOrigin.is_active !== 1
@@ -466,7 +497,12 @@ async function rebuiltLookup(
     await addIndex(accountId, 'account_id', accountId);
   const passkeys = await readVerifiedRows(input.backup, 'core.passkeys');
   const seenCredentials = new Set<string>();
-  const rpId = new URL(input.backup.manifest.source.issuer).hostname;
+  // Direct Auth derives RP ID from the validated browser Origin, never from a supplied RP override.
+  // Include only credentials already enrolled for that exact host; source rows remain unchanged.
+  const login = normalizeAwsRuntimeUiConfig(input.destinationUi).ui.login;
+  const rpId = new URL(
+    login.mode === 'external' ? login.baseUrl : input.backup.manifest.source.issuer
+  ).hostname;
   for (const passkey of passkeys) {
     if (rowText(passkey, 'tenant_id') !== tenantId) invalid();
     const credentialId = rowText(passkey, 'credential_id');
@@ -516,6 +552,7 @@ export async function assembleAwsSamlTenantFromBackup(
     tenantId,
     origin: input.backup.manifest.source.issuer,
     environmentName: input.environmentName,
+    destinationUi: input.destinationUi,
     inventory: {
       tenantId,
       allocationScope: input.allocationScope,
@@ -527,10 +564,14 @@ export async function assembleAwsSamlTenantFromBackup(
       lookupReadKeys: input.awsLookupReadKeys,
     },
     stateDb: input.restored.stateDb,
+    authenticationState: input.restored.authenticationState,
     auditPorts: input.auditPorts,
     settings,
     configuration: {
-      get: async (key) => (key === 'flag:ENABLE_LOGIN_RUNTIME_FLOW' ? 'true' : null),
+      get: async (key) =>
+        key === 'flag:ENABLE_LOGIN_RUNTIME_FLOW'
+          ? String(input.supplement.sourceFlowRuntimeEnabled)
+          : null,
     },
     signingBundle: saml,
     pairwiseSecret: secret,

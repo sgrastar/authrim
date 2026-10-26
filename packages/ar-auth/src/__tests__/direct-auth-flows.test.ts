@@ -190,9 +190,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       write: () => Promise<T>
     ) =>
       actual.withGroupInputWrite(
-        typeof db.execute === 'function'
-          ? db
-          : { ...db, execute: async () => ({ success: true, rowsAffected: 1 }) },
+        {
+          ...db,
+          getType: () => 'd1',
+          execute:
+            typeof db.execute === 'function'
+              ? db.execute.bind(db)
+              : async () => ({ success: true, rowsAffected: 1 }),
+        },
         tenant,
         user,
         operation,
@@ -529,7 +534,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expiresAt: Date.now() + 60_000,
       data: { amr: ['passkey'] },
     });
-    mocks.coreAdapter.execute.mockResolvedValue(undefined);
+    mocks.coreAdapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.coreAdapter.queryOne.mockResolvedValue({
       state: 'active',
       current_step_id: 'auth:step',

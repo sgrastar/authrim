@@ -41,7 +41,22 @@ export class AwsSetupError extends Error {
 function failure(result, operation) {
   const raw = String(result.stderr ?? '');
   if (result.errorCode === 'ENOENT') return new AwsSetupError('aws_setup_cli_missing');
-  if (/ExpiredToken|InvalidClientTokenId|SSO session|Token has expired|login.*required/iu.test(raw))
+  // Credential refresh can fail on the local cache even when the login remains valid.
+  // Check before reauthentication boilerplate and never expose the path or raw diagnostics.
+  if (
+    /EACCES|EPERM|EROFS|Errno (?:1|13|30)\b|Permission denied|Operation not permitted|Read-only file system/iu.test(
+      raw
+    ) &&
+    /\.aws[/\\](?:login|sso|cli)[/\\]cache\b|AWS_LOGIN_CACHE_DIRECTORY|(?:credential|token)[^\r\n]*cache|cache[^\r\n]*(?:credential|token)/iu.test(
+      raw
+    )
+  )
+    return new AwsSetupError('aws_setup_credential_cache_access_denied');
+  if (
+    /ExpiredToken|InvalidClientTokenId|UnrecognizedClientException|RequestExpired|Unable to locate credentials|SSO session.*expired|Error loading SSO Token|Token has expired|Your session has expired\. Please reauthenticate|login session.*expired|login[ -](?:is[ -])?required|Please run ['"]?aws login/iu.test(
+      raw
+    )
+  )
     return new AwsSetupError('aws_setup_login_required');
   if (/AccessDenied|UnauthorizedOperation/iu.test(raw))
     return new AwsSetupError('aws_setup_access_denied');
@@ -78,6 +93,7 @@ export function createAwsSetupCli({ region, profile }, dependencies = {}) {
   const run = dependencies.runProcess ?? runProcess;
   return async (service, action, input = {}, files = {}) => {
     const operation = `${service}/${action}`;
+    const isInvoke = operation === 'lambda/invoke';
     if (
       !OPERATIONS.has(operation) ||
       !input ||
@@ -89,14 +105,33 @@ export function createAwsSetupCli({ region, profile }, dependencies = {}) {
       (operation === 'lambda/invoke' && (!files.payload || !files.response)) ||
       Object.keys(input).some((key) =>
         ['SecretString', 'SecretBinary', 'Payload', 'Body'].includes(key)
-      )
+      ) ||
+      (isInvoke &&
+        (Object.keys(input).some(
+          (key) => !['FunctionName', 'InvocationType', 'LogType'].includes(key)
+        ) ||
+          typeof input.FunctionName !== 'string' ||
+          !/^[A-Za-z0-9_][A-Za-z0-9_.:$-]{0,255}$/u.test(input.FunctionName) ||
+          (input.InvocationType !== undefined &&
+            !['RequestResponse', 'Event', 'DryRun'].includes(input.InvocationType)) ||
+          (input.LogType !== undefined && !['None', 'Tail'].includes(input.LogType))))
     )
       throw new AwsSetupError('aws_setup_operation_invalid');
+    // Lambda invoke is a custom CLI command and does not support --cli-input-json.
+    const inputArgs = isInvoke
+      ? [
+          '--function-name',
+          input.FunctionName,
+          ...(input.InvocationType === undefined
+            ? []
+            : ['--invocation-type', input.InvocationType]),
+          ...(input.LogType === undefined ? [] : ['--log-type', input.LogType]),
+        ]
+      : ['--cli-input-json', JSON.stringify(input)];
     const args = [
       service,
       action,
-      '--cli-input-json',
-      JSON.stringify(input),
+      ...inputArgs,
       '--profile',
       profile,
       '--region',

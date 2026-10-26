@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Private foundation for an Authrim SAML IdP disaster-recovery rehearsal — isolated two-AZ
+  Private foundation for an Authrim SAML IdP disaster-recovery rehearsal - isolated two-AZ
   VPC, encrypted versioned assets, one retained PostgreSQL instance and a disabled empty HTTP API;
-  no DNS, routes or tenant import.
+  optional retained DynamoDB authentication state; no DNS, routes or tenant import.
 
 Metadata:
   AWSToolsMetrics:
@@ -20,6 +20,16 @@ Metadata:
       - The empty HTTP API has no execute-api endpoint, routes, stages, or custom domain.
 
 Parameters:
+  AuthStateBackend:
+    Type: String
+    Default: postgresql
+    AllowedValues: [postgresql, dynamodb]
+    Description: Fresh-install authentication state backend; changing an existing backend requires a separate migration.
+  DynamoDbGatewayPrefixListId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^pl-[0-9a-f]+$'
+    Description: Region-verified AWS DynamoDB prefix-list ID; required only for DynamoDB state.
   VpcCidr:
     Type: String
     Default: 10.96.0.0/20
@@ -61,7 +71,114 @@ Parameters:
     MaxValue: 35
     Description: Automated RDS backup retention days, separate from retained stack resources.
 
+Rules:
+  RequireDynamoDbGatewayPrefix:
+    RuleCondition: !Equals [!Ref AuthStateBackend, dynamodb]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref DynamoDbGatewayPrefixListId, '']]
+        AssertDescription: DynamoDB state requires the regional DynamoDB gateway prefix list.
+  RejectUnusedDynamoDbGatewayPrefix:
+    RuleCondition: !Equals [!Ref AuthStateBackend, postgresql]
+    Assertions:
+      - Assert: !Equals [!Ref DynamoDbGatewayPrefixListId, '']
+        AssertDescription: PostgreSQL state must not include a DynamoDB gateway prefix list.
+
+Conditions:
+  HasDynamoAuthState: !Equals [!Ref AuthStateBackend, dynamodb]
+
 Resources:
+  AuthStateTable:
+    Type: AWS::DynamoDB::Table
+    Condition: HasDynamoAuthState
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Stores tenant-scoped authentication state independently of the SQL databases.
+        must:
+          - Retain encryption, point-in-time recovery, deletion protection and the pk/sk key contract.
+          - TTL is cleanup only; application checks expiration before accepting credentials or state.
+          - Backend changes require an explicit migration; never delete the retained prior generation.
+    Properties:
+      TableName: !Sub '${AWS::StackName}-auth-state'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  DynamoDbGatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: HasDynamoAuthState
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Provides private DynamoDB access from both subnets without NAT or internet routes.
+        must:
+          - Permit data operations only on this stack's selected table and same-account principals.
+          - IAM role policies and boundaries must independently permit every operation.
+    Properties:
+      VpcId: !Ref PrivateVpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+      RouteTableIds: [!Ref PrivateRouteTableA, !Ref PrivateRouteTableB]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:ConditionCheckItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:DescribeTable
+            Resource: !GetAtt AuthStateTable.Arn
+            Condition:
+              StringEquals:
+                aws:PrincipalAccount: !Ref AWS::AccountId
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  AuthStateBootstrapEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Condition: HasDynamoAuthState
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets maintenance and isolated browser Lambdas reach the selected DynamoDB endpoint.
+        must:
+          - Use only TCP 443 and the Region-verified DynamoDB prefix list; no internet-wide egress.
+    Properties:
+      GroupId: !Ref BootstrapSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: !Ref DynamoDbGatewayPrefixListId
+      Description: Authentication state via private DynamoDB gateway
+
   PrivateVpc:
     Type: AWS::EC2::VPC
     DeletionPolicy: Retain
@@ -428,6 +545,14 @@ Resources:
         'authrim:stack': !Ref 'AWS::StackName'
 
 Outputs:
+  AuthStateTableArn:
+    Condition: HasDynamoAuthState
+    Description: Exact selected authentication-state table for serving and maintenance IAM policies.
+    Value: !GetAtt AuthStateTable.Arn
+  DynamoDbGatewayPrefixListId:
+    Condition: HasDynamoAuthState
+    Description: Region-verified DynamoDB prefix list for private serving egress.
+    Value: !Ref DynamoDbGatewayPrefixListId
   VpcId:
     Description: Private VPC for the workload and offline bootstrap job.
     Value: !Ref PrivateVpc

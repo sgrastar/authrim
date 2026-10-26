@@ -1,16 +1,30 @@
 /** Encrypted source backup through the offline restore coordinator and real SAML handlers. */
-import { randomUUID, webcrypto } from 'node:crypto';
+import { createHash, randomUUID, webcrypto } from 'node:crypto';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from 'pg';
+import {
+  CreateTableCommand,
+  DeleteTableCommand,
+  DescribeTableCommand,
+  GetItemCommand,
+  PutItemCommand,
+  type AttributeValue,
+} from '@aws-sdk/client-dynamodb';
+import { createDynamoStateClient, DynamoStateTable } from '../../storage/dynamodb-state';
+import type { AwsAuthStateDependencies } from '../selected-auth-state';
 import { expect, it, vi } from 'vitest';
 import { verifyXmlSignatureAndGetReferences } from '../../../../ar-saml/src/common/signature';
 import { extractSAMLResponseIds } from '../../../../ar-saml/src/idp/signing';
 import { createAwsSamlRuntime } from '../../http-runtime';
 import { loadActivatedAwsSamlTenant } from '../../startup/load-activated-tenant';
 import { restoreEvidenceDigest } from '../restore-evidence';
-import { restoreOfflineAwsSamlTenant } from '../restore-offline';
+import type { AwsRuntimeUiConfig } from '../../ui/runtime-ui-config';
+import {
+  restoreOfflineAwsSamlTenant,
+  type RestoreOfflineAwsSamlTenantInput,
+} from '../restore-offline';
 import {
   TENANT,
   ORIGIN,
@@ -27,6 +41,8 @@ import {
 const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
 const useBundledRuntime = process.env.AUTHRIM_AWS_TEST_BUNDLE === 'true';
 const postgresIt = databaseUrl ? it : it.skip;
+const useDynamo = process.env.AUTHRIM_AWS_TEST_AUTH_STATE === 'dynamodb';
+const dynamoEndpoint = process.env.AUTHRIM_AWS_TEST_DYNAMODB_ENDPOINT;
 
 function urlFor(name: string): string {
   if (!databaseUrl) throw new Error('test_database_missing');
@@ -35,10 +51,34 @@ function urlFor(name: string): string {
   return url.toString();
 }
 
-postgresIt(
-  'restores encrypted backup and issues a signed SAML response after a real passkey login',
+postgresIt.each(['legacy', 'external', 'disabled'] as const)(
+  `restores encrypted backup and issues a signed SAML response with %s UI on ${useDynamo ? 'DynamoDB' : 'PostgreSQL'} after a real passkey login`,
   { timeout: 120_000 },
-  async () => {
+  async (uiMode) => {
+    const browserOrigin = uiMode === 'external' ? `${ORIGIN}:8443` : ORIGIN;
+    const destinationUi: AwsRuntimeUiConfig | undefined =
+      uiMode === 'external'
+        ? {
+            components: { loginUi: false, adminUi: false },
+            ui: {
+              login: {
+                mode: 'external',
+                baseUrl: browserOrigin,
+                clientId: 'login-ui',
+                paths: { login: '/login', reauth: '/reauth' },
+              },
+              admin: { mode: 'disabled' },
+            },
+          }
+        : uiMode === 'disabled'
+          ? {
+              components: { loginUi: false, adminUi: false },
+              ui: {
+                login: { mode: 'disabled' },
+                admin: { mode: 'external', baseUrl: 'https://admin.example.test' },
+              },
+            }
+          : undefined;
     if (!databaseUrl) throw new Error('test_database_missing');
     const suffix = randomUUID().replaceAll('-', '');
     const names = {
@@ -61,17 +101,92 @@ postgresIt(
     let restored: Awaited<ReturnType<typeof restoreOfflineAwsSamlTenant>> | null = null;
     let restarted: Awaited<ReturnType<typeof loadActivatedAwsSamlTenant>> | null = null;
     const directory = await mkdtemp(join(await realpath(tmpdir()), 'authrim-aws-backup-e2e-'));
-    const factories = useBundledRuntime
+    const baseFactories = useBundledRuntime
       ? ((await import(new URL('../../../dist/index.mjs', import.meta.url).href)) as unknown as {
           restoreOfflineAwsSamlTenant: typeof restoreOfflineAwsSamlTenant;
           loadActivatedAwsSamlTenant: typeof loadActivatedAwsSamlTenant;
           createAwsSamlRuntime: typeof createAwsSamlRuntime;
         })
       : { restoreOfflineAwsSamlTenant, loadActivatedAwsSamlTenant, createAwsSamlRuntime };
+    const restoreId = randomUUID();
+    const tableName = `authrim-e2e-${suffix}`;
+    let tableArn = '';
+    let tableCreated = false;
+    if (useDynamo && (!dynamoEndpoint || useBundledRuntime))
+      throw new Error('DynamoDB local source test requires an explicit local endpoint');
+    const makeClient = () => {
+      const client = createDynamoStateClient({
+        region: 'ap-northeast-1',
+        endpoint: dynamoEndpoint,
+        credentials: { accessKeyId: 'localtest', secretAccessKey: 'localtest' },
+      });
+      const send = client.send.bind(client);
+      // DynamoDB Local uses a synthetic region in DescribeTable metadata only.
+      vi.spyOn(client, 'send').mockImplementation((async (command: unknown) => {
+        const result = await send(command as never);
+        if (command instanceof DescribeTableCommand && 'Table' in result && result.Table)
+          result.Table.TableArn = tableArn;
+        return result;
+      }) as never);
+      return client;
+    };
+    const dynamoAdmin = useDynamo ? makeClient() : undefined;
+    const dependencies: AwsAuthStateDependencies = useDynamo
+      ? { createDynamoClient: makeClient }
+      : {};
+    const factories = {
+      ...baseFactories,
+      restoreOfflineAwsSamlTenant: (input: RestoreOfflineAwsSamlTenantInput) =>
+        baseFactories.restoreOfflineAwsSamlTenant(input, dependencies),
+      loadActivatedAwsSamlTenant: (input: Parameters<typeof loadActivatedAwsSamlTenant>[0]) =>
+        baseFactories.loadActivatedAwsSamlTenant(input, dependencies),
+    };
+    const authorityCounters = async () => {
+      if (!dynamoAdmin)
+        return (
+          await connections.state.query<{ counter: string }>(
+            'SELECT counter FROM authrim_aws_passkey_counters WHERE tenant_id=$1',
+            [TENANT]
+          )
+        ).rows;
+      const empty = await connections.state.query('SELECT * FROM authrim_aws_passkey_counters');
+      expect(empty.rows).toEqual([]); // SQL audit storage must never become a second auth authority.
+      const table = new DynamoStateTable({ client: dynamoAdmin, tableName, namespace: restoreId });
+      const row = await dynamoAdmin.send(
+        new GetItemCommand({
+          TableName: tableName,
+          ConsistentRead: true,
+          Key: {
+            ...table.accountKey(TENANT, 'user-tenant-a'),
+            sk: { S: `COUNTER#${createHash('sha256').update('passkey-a').digest('hex')}` },
+          },
+        })
+      );
+      return row.Item ? [{ counter: row.Item.counter.N }] : [];
+    };
     const externalFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       throw new Error('aws_test_external_fetch_forbidden');
     });
     try {
+      if (dynamoAdmin) {
+        const table = await dynamoAdmin.send(
+          new CreateTableCommand({
+            TableName: tableName,
+            BillingMode: 'PAY_PER_REQUEST',
+            AttributeDefinitions: [
+              { AttributeName: 'pk', AttributeType: 'S' },
+              { AttributeName: 'sk', AttributeType: 'S' },
+            ],
+            KeySchema: [
+              { AttributeName: 'pk', KeyType: 'HASH' },
+              { AttributeName: 'sk', KeyType: 'RANGE' },
+            ],
+          })
+        );
+        tableCreated = true;
+        tableArn =
+          table.TableDescription?.TableArn?.replace(':ddblocal:', ':ap-northeast-1:') ?? '';
+      }
       await admin.connect();
       adminConnected = true;
       for (const name of Object.values(names)) {
@@ -101,19 +216,48 @@ postgresIt(
       const credential = await softwarePasskey();
       await seedSource(connections.sourceCore, connections.sourcePii, credential);
       const signing = await sourceSigningBundle();
+      if (uiMode === 'external') {
+        signing.bundle.settings.interactiveLoginUrlPolicy = 'ui_base_url';
+        await connections.sourceCore.query(
+          'UPDATE web_origin_registry SET origin=$1 WHERE tenant_id=$2',
+          [browserOrigin, TENANT]
+        );
+      }
+      if (uiMode === 'disabled') {
+        await connections.sourceCore.query('DELETE FROM web_origin_registry WHERE tenant_id=$1', [
+          TENANT,
+        ]);
+        await connections.sourceCore.query(
+          "DELETE FROM oauth_clients WHERE tenant_id=$1 AND client_id='login-ui'",
+          [TENANT]
+        );
+      }
       const files = await buildBackupFiles({
         sourceCore: connections.sourceCore,
         sourcePii: connections.sourcePii,
         signing,
         credential,
         directory,
+        ...(uiMode === 'disabled'
+          ? { sourceLoginUi: { mode: 'disabled' as const }, sourceFlowRuntimeEnabled: false }
+          : {}),
       });
       const coreTargetId = randomUUID();
       const piiTargetId = randomUUID();
-      restored = await factories.restoreOfflineAwsSamlTenant({
+      const restoreInput: RestoreOfflineAwsSamlTenantInput = {
         backup: files.backup,
         supplement: files.supplement,
-        restoreId: randomUUID(),
+        restoreId,
+        ...(useDynamo
+          ? {
+              authState: {
+                backend: 'dynamodb' as const,
+                region: 'ap-northeast-1',
+                tableArn,
+                namespace: restoreId,
+              },
+            }
+          : {}),
         core: {
           connectionString: urlFor(names.core),
           targetId: coreTargetId,
@@ -126,18 +270,88 @@ postgresIt(
         },
         state: { connectionString: urlFor(names.state), initializeEmptySchema: true },
         environmentName: 'aws-backup-e2e',
+        ...(destinationUi === undefined ? {} : { destinationUi }),
         spEntityIds: [SP],
         allocationScope: 'shared_pool',
         awsFlowRuntimeHmacSecret: 'aws-flow-hmac-with-at-least-thirty-two-bytes',
         awsLookupReadKeys: [
           { generation: 1, secret: 'aws-lookup-hmac-with-at-least-thirty-two-bytes' },
         ],
-      });
+      };
+      restored = await factories.restoreOfflineAwsSamlTenant(restoreInput);
       expect(restored.evidence.tenantId).toBe(TENANT);
       const runtime = factories.createAwsSamlRuntime({ tenants: [restored.runtime] });
       const ready = await runtime.app.request(`${ORIGIN}/health/ready`);
       expect(ready.status, await ready.text()).toBe(200);
       const context = { requestContext: { http: { sourceIp: '203.0.113.8' } } };
+      if (uiMode === 'external') {
+        expect((await runtime.app.request(`${ORIGIN}/login`)).status).toBe(404);
+        const preflight = await runtime.app.request(
+          `${ORIGIN}/api/v1/auth/direct/passkey/login/start`,
+          {
+            method: 'OPTIONS',
+            headers: {
+              Origin: browserOrigin,
+              'Access-Control-Request-Method': 'POST',
+              'Access-Control-Request-Headers': 'Content-Type,X-Authrim-Interaction-Id',
+            },
+          },
+          context
+        );
+        expect(preflight.status).toBe(204);
+        expect(preflight.headers.get('access-control-allow-origin')).toBe(browserOrigin);
+        expect(preflight.headers.get('access-control-allow-headers')).toContain(
+          'X-Authrim-Interaction-Id'
+        );
+        const denied = await runtime.app.request(
+          `${ORIGIN}/api/v1/auth/direct/passkey/login/start`,
+          {
+            method: 'OPTIONS',
+            headers: {
+              Origin: 'https://evil.example.test',
+              'Access-Control-Request-Method': 'POST',
+            },
+          },
+          context
+        );
+        expect(denied.headers.get('access-control-allow-origin')).toBeNull();
+      }
+      if (uiMode === 'disabled') {
+        for (const path of [
+          '/login',
+          '/reauth',
+          '/admin',
+          '/api/v1/auth/direct/passkey/login/start',
+        ]) {
+          expect((await runtime.app.request(`${ORIGIN}${path}`)).status).toBe(404);
+        }
+        expect(
+          (
+            await connections.core.query<{ count: number }>(
+              "SELECT count(*)::int AS count FROM oauth_clients WHERE tenant_id=$1 AND client_id='login-ui'",
+              [TENANT]
+            )
+          ).rows[0].count
+        ).toBe(0);
+        const evidence = restored.evidence;
+        await restored.close();
+        restored = null;
+        const reload = {
+          ...restoreInput,
+          evidence,
+          state: { connectionString: urlFor(names.state) },
+        };
+        await expect(
+          factories.loadActivatedAwsSamlTenant({ ...reload, destinationUi: undefined })
+        ).rejects.toThrow('aws_activated_runtime_load_failed');
+        restarted = await factories.loadActivatedAwsSamlTenant(reload);
+        expect(restarted.runtime.ui).toEqual(destinationUi);
+        const after = factories.createAwsSamlRuntime({ tenants: [restarted.runtime] });
+        expect((await after.app.request(`${ORIGIN}/health/ready`)).status).toBe(200);
+        expect((await after.app.request(`${ORIGIN}/login`)).status).toBe(404);
+        expect(externalFetch).not.toHaveBeenCalled();
+        return;
+      }
       const requestId = `_backup-${randomUUID()}`;
       const xml = `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${requestId}" Version="2.0" IssueInstant="${new Date().toISOString()}" Destination="${ORIGIN}/saml/idp/sso" AssertionConsumerServiceURL="https://sp.example.test/acs" ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"><saml:Issuer>${SP}</saml:Issuer></samlp:AuthnRequest>`;
       const sso = await runtime.app.request(
@@ -154,7 +368,7 @@ postgresIt(
       );
       expect(sso.status).toBe(302);
       const location = sso.headers.get('Location');
-      expect(location).toContain(`${ORIGIN}/login`);
+      expect(location).toContain(`${browserOrigin}/login`);
       if (!location) throw new Error('missing_login_location');
       const samlRequestId = new URL(location).searchParams.get('saml_request_id');
       expect(samlRequestId).toBeTruthy();
@@ -162,7 +376,7 @@ postgresIt(
         `${ORIGIN}/api/v1/login/interactions/start`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          headers: { 'Content-Type': 'application/json', Origin: browserOrigin },
           body: JSON.stringify({
             flow_kind: 'login',
             target_type: 'saml_sp',
@@ -193,7 +407,7 @@ postgresIt(
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Origin: ORIGIN,
+            Origin: browserOrigin,
             'X-Authrim-Interaction-Id': flow.interaction.id,
           },
           body: JSON.stringify({
@@ -212,12 +426,17 @@ postgresIt(
         options: { challenge: string; rpId: string };
       };
       expect(started.options.rpId).toBe(new URL(ORIGIN).hostname);
-      const assertion = await credential.sign(started.options.challenge, 'user-tenant-a');
+      const assertion = await credential.sign(
+        started.options.challenge,
+        'user-tenant-a',
+        1,
+        browserOrigin
+      );
       const passkeyFinish = await runtime.app.request(
         `${ORIGIN}/api/v1/auth/direct/passkey/login/finish`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          headers: { 'Content-Type': 'application/json', Origin: browserOrigin },
           body: JSON.stringify({
             challenge_id: started.challenge_id,
             credential: assertion,
@@ -234,7 +453,7 @@ postgresIt(
         `${ORIGIN}/api/v1/auth/direct/session`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          headers: { 'Content-Type': 'application/json', Origin: browserOrigin },
           body: JSON.stringify({
             direct_auth_artifact: finished.direct_auth_artifact,
             client_id: 'login-ui',
@@ -258,7 +477,11 @@ postgresIt(
           `${ORIGIN}/api/v1/login/interactions/${encodeURIComponent(flow.interaction.id)}/submit`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Origin: ORIGIN, Cookie: sessionCookie },
+            headers: {
+              'Content-Type': 'application/json',
+              Origin: browserOrigin,
+              Cookie: sessionCookie,
+            },
             body: JSON.stringify({
               step_id: stepId,
               node_id: nodeId,
@@ -335,7 +558,9 @@ postgresIt(
           bindingRefs: ['TEST_PII'],
         },
         state: { connectionString: urlFor(names.state) },
+        ...(restoreInput.authState ? { authState: restoreInput.authState } : {}),
         environmentName: 'aws-backup-e2e',
+        ...(destinationUi === undefined ? {} : { destinationUi }),
         spEntityIds: [SP],
         allocationScope: 'shared_pool' as const,
         awsFlowRuntimeHmacSecret: 'aws-flow-hmac-with-at-least-thirty-two-bytes',
@@ -343,11 +568,28 @@ postgresIt(
           { generation: 1, secret: 'aws-lookup-hmac-with-at-least-thirty-two-bytes' },
         ],
       };
-      const beforeRestart = await connections.state.query<{ counter: string }>(
-        `SELECT counter FROM authrim_aws_passkey_counters WHERE tenant_id=$1`,
-        [TENANT]
-      );
-      expect(beforeRestart.rows).toEqual([{ counter: '1' }]);
+      if (useDynamo) {
+        if (restoreInput.authState?.backend !== 'dynamodb') throw new Error('test_state_missing');
+        for (const authState of [
+          undefined,
+          { backend: 'postgresql' as const },
+          { ...restoreInput.authState, namespace: randomUUID() },
+        ]) {
+          await expect(
+            factories.loadActivatedAwsSamlTenant({ ...loadInput, authState })
+          ).rejects.toThrow('aws_activated_runtime_load_failed');
+        }
+      }
+      await expect(
+        factories.loadActivatedAwsSamlTenant({
+          ...loadInput,
+          destinationUi: {
+            components: { loginUi: false, adminUi: false },
+            ui: { login: { mode: 'disabled' }, admin: { mode: 'disabled' } },
+          },
+        })
+      ).rejects.toThrow('aws_activated_runtime_load_failed');
+      expect(await authorityCounters()).toEqual([{ counter: '1' }]);
       const mirrored = await connections.core.query<{ counter: string }>(
         `SELECT counter FROM passkeys WHERE id='passkey-a' AND tenant_id=$1`,
         [TENANT]
@@ -451,7 +693,7 @@ postgresIt(
         `${ORIGIN}/api/v1/login/interactions/start`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          headers: { 'Content-Type': 'application/json', Origin: browserOrigin },
           body: JSON.stringify({
             flow_kind: 'login',
             target_type: 'saml_sp',
@@ -478,7 +720,7 @@ postgresIt(
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Origin: ORIGIN,
+            Origin: browserOrigin,
             'X-Authrim-Interaction-Id': secondFlow.interaction.id,
           },
           body: JSON.stringify({
@@ -495,13 +737,14 @@ postgresIt(
       const secondAssertion = await credential.sign(
         secondStarted.options.challenge,
         'user-tenant-a',
-        2
+        2,
+        browserOrigin
       );
       const secondPasskeyFinish = await restartedRuntime.app.request(
         `${ORIGIN}/api/v1/auth/direct/passkey/login/finish`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          headers: { 'Content-Type': 'application/json', Origin: browserOrigin },
           body: JSON.stringify({
             challenge_id: secondStarted.challenge_id,
             credential: secondAssertion,
@@ -517,7 +760,7 @@ postgresIt(
         `${ORIGIN}/api/v1/auth/direct/session`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+          headers: { 'Content-Type': 'application/json', Origin: browserOrigin },
           body: JSON.stringify({
             direct_auth_artifact: secondFinished.direct_auth_artifact,
             client_id: 'login-ui',
@@ -541,7 +784,7 @@ postgresIt(
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Origin: ORIGIN,
+              Origin: browserOrigin,
               Cookie: secondSessionCookie,
             },
             body: JSON.stringify({
@@ -589,14 +832,47 @@ postgresIt(
         }).some((reference) => reference.uri === `#${secondResponseId}`)
       ).toBe(true);
       expect(secondSignedXml).toContain(`InResponseTo="${secondRequestId}"`);
-      expect(
-        (
-          await connections.state.query<{ counter: string }>(
-            `SELECT counter FROM authrim_aws_passkey_counters WHERE tenant_id=$1`,
-            [TENANT]
-          )
-        ).rows[0]?.counter
-      ).toBe('2');
+      expect(await authorityCounters()).toEqual([{ counter: '2' }]);
+      if (dynamoAdmin) {
+        const table = new DynamoStateTable({
+          client: dynamoAdmin,
+          tableName,
+          namespace: restoreId,
+        });
+        const key = table.key(TENANT, 'RESTORE', 'seal');
+        const original = await dynamoAdmin.send(
+          new GetItemCommand({ TableName: tableName, ConsistentRead: true, Key: key })
+        );
+        if (!original.Item) throw new Error('test_restore_seal_missing');
+        // Already-loaded instances must stop issuing assertions when their restore seal changes.
+        const mutations: Record<string, AttributeValue>[] = [
+          { status: { S: 'staging' } },
+          { receiptSha256: { S: '0'.repeat(64) } },
+        ];
+        for (const mutation of mutations) {
+          await dynamoAdmin.send(
+            new PutItemCommand({
+              TableName: tableName,
+              Item: { ...original.Item, ...mutation },
+            })
+          );
+          const ready = await restartedRuntime.app.request(`${ORIGIN}/health/ready`);
+          expect(ready.status).toBe(503);
+          expect(await ready.json()).toEqual({ error: 'temporarily_unavailable' });
+          const rejected = await restartedRuntime.app.request(
+            secondResume.toString(),
+            { headers: { Cookie: secondSessionCookie } },
+            context
+          );
+          expect(rejected.status).toBe(503);
+          expect(await rejected.json()).toEqual({ error: 'temporarily_unavailable' });
+          await expect(factories.loadActivatedAwsSamlTenant(loadInput)).rejects.toThrow(
+            'aws_activated_runtime_load_failed'
+          );
+          await dynamoAdmin.send(new PutItemCommand({ TableName: tableName, Item: original.Item }));
+          expect((await restartedRuntime.app.request(`${ORIGIN}/health/ready`)).status).toBe(200);
+        }
+      }
       expect(
         (
           await connections.core.query<{ counter: string }>(
@@ -615,6 +891,10 @@ postgresIt(
         for (const name of created.reverse())
           await admin.query(`DROP DATABASE "${name}" WITH (FORCE)`);
         await admin.end();
+      }
+      if (dynamoAdmin) {
+        if (tableCreated) await dynamoAdmin.send(new DeleteTableCommand({ TableName: tableName }));
+        dynamoAdmin.destroy();
       }
       await rm(directory, { recursive: true, force: true });
     }

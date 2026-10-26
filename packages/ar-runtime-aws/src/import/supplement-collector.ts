@@ -30,6 +30,8 @@ import {
 import { readVerifiedRows, rowInteger, rowNullableText, rowText } from './verified-rows';
 import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 
+import { isAwsUiOrigin } from '../ui/runtime-ui-config';
+
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CATEGORY = /^[A-Za-z0-9_-]{1,128}$/u;
 const MAX_CAPTURE_BYTES = 256 * 1024 * 1024;
@@ -114,17 +116,22 @@ function validateSourceLoginUi(
   source: SourceCapturePayload['sourceLoginUi'],
   manifest: TenantBundleManifest
 ): void {
+  if (source && 'mode' in source) {
+    exactKeys(source, ['mode']);
+    if (source.mode !== 'disabled') invalid();
+    return;
+  }
   exactKeys(source, ['client', 'origins']);
   if (!isArray(source.origins) || source.origins.length !== 1) invalid();
   if (
     rowText(source.client, 'tenant_id') !== manifest.source.tenantId ||
-    rowText(source.client, 'client_id') !== 'login-ui' ||
+    !/^[A-Za-z0-9_.:-]{1,128}$/u.test(rowText(source.client, 'client_id')) ||
     rowText(source.client, 'application_type') !== 'web' ||
     rowNullableText(source.client, 'client_secret_hash') !== null ||
     rowNullableText(source.client, 'logout_webhook_secret_encrypted') !== null ||
     rowText(source.origins[0], 'tenant_id') !== manifest.source.tenantId ||
-    rowText(source.origins[0], 'client_id') !== 'login-ui' ||
-    rowText(source.origins[0], 'origin') !== manifest.source.issuer ||
+    rowText(source.origins[0], 'client_id') !== rowText(source.client, 'client_id') ||
+    !isAwsUiOrigin(rowText(source.origins[0], 'origin')) ||
     rowInteger(source.origins[0], 'handoff_allowed') !== 1 ||
     rowInteger(source.origins[0], 'is_active') !== 1
   )
@@ -205,7 +212,7 @@ export async function buildAwsSamlSupplementFromFrozenCapture(input: {
     if (
       !manifest.selection.settings ||
       !manifest.selection.users ||
-      payload.sourceFlowRuntimeEnabled !== true ||
+      typeof payload.sourceFlowRuntimeEnabled !== 'boolean' ||
       !Array.isArray(payload.platformDestinationProfiles.profiles) ||
       !Array.isArray(payload.platformDestinationProfiles.versions) ||
       typeof payload.consentIpSalt !== 'string' ||

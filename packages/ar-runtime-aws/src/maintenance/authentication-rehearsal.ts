@@ -1,3 +1,8 @@
+import {
+  selectedSyntheticDynamoState,
+  type SyntheticAuthStateSelection,
+} from '../rehearsal/selected-auth-state';
+import { readSyntheticDynamoAuthStateSnapshot } from './selected-auth-state-snapshot';
 import type { AwsTenantRuntime } from '../http-runtime';
 import {
   runSyntheticSamlLoginProbe,
@@ -29,6 +34,7 @@ export interface SyntheticAwsAuthenticationRehearsalInput {
     spEntityIds: readonly string[];
   };
   seed: unknown;
+  authState?: SyntheticAuthStateSelection;
 }
 
 interface RehearsalDependencies {
@@ -190,24 +196,27 @@ async function snapshot(
       completedAudits: count(audits.rows[0].count),
     };
   });
-  const state = await readOnly(input.databases.state, factory, async (client) => {
-    const counters = await client.query<{ counter: string }>(
-      `SELECT counter::text AS counter FROM authrim_aws_passkey_counters
+  const dynamo = selectedSyntheticDynamoState(input.authState);
+  const state = dynamo
+    ? await readSyntheticDynamoAuthStateSnapshot({ ...dynamo, passkeyRowId: core.rowId })
+    : await readOnly(input.databases.state, factory, async (client) => {
+        const counters = await client.query<{ counter: string }>(
+          `SELECT counter::text AS counter FROM authrim_aws_passkey_counters
         WHERE tenant_id=$1 AND user_id=$2 AND credential_id=$3`,
-      [TENANT, USER, core.rowId]
-    );
-    check(counters.rows.length === 1);
-    const sessions = await client.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM authrim_aws_transient_state
+          [TENANT, USER, core.rowId]
+        );
+        check(counters.rows.length === 1);
+        const sessions = await client.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM authrim_aws_transient_state
         WHERE tenant_id=$1 AND kind='session' AND payload->>'userId'=$2`,
-      [TENANT, USER]
-    );
-    check(sessions.rows.length === 1);
-    return {
-      counter: count(counters.rows[0].counter, MAX_COUNTER),
-      sessions: count(sessions.rows[0].count),
-    };
-  });
+          [TENANT, USER]
+        );
+        check(sessions.rows.length === 1);
+        return {
+          counter: count(counters.rows[0].counter, MAX_COUNTER),
+          sessions: count(sessions.rows[0].count),
+        };
+      });
   check(core.counter === state.counter);
   return { ...core, sessions: state.sessions };
 }
@@ -270,6 +279,7 @@ export async function runSyntheticAwsAuthenticationRehearsal(
   let stage = 'configuration';
   try {
     const probe = parseProbe(input);
+    selectedSyntheticDynamoState(input.authState);
     const factory = dependencies.clientFactory ?? createMaintenanceSqlClient;
     const runProbe = dependencies.probe ?? runSyntheticSamlLoginProbe;
     stage = 'snapshot_before';

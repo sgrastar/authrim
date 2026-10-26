@@ -98,8 +98,17 @@ function manifest(): AwsSamlDeploymentManifest {
   };
 }
 
-function fixture() {
-  const manifestBytes = new TextEncoder().encode(canonicalRestoreJson(manifest()));
+function fixture(
+  destinationUi?: AwsSamlDeploymentManifest['destinationUi'],
+  authState?: AwsSamlDeploymentManifest['authState']
+) {
+  const manifestBytes = new TextEncoder().encode(
+    canonicalRestoreJson({
+      ...manifest(),
+      ...(destinationUi === undefined ? {} : { destinationUi }),
+      ...(authState === undefined ? {} : { authState }),
+    })
+  );
   const location: AwsSamlDeploymentLocation = {
     region: 'ap-northeast-1',
     issuerOrigin: 'https://tenant-a.example.test',
@@ -150,6 +159,82 @@ function fixture() {
   };
 }
 
+it('preserves independent UI omission through the pinned cold-start manifest', async () => {
+  const destinationUi: NonNullable<AwsSamlDeploymentManifest['destinationUi']> = {
+    components: { loginUi: false, adminUi: false },
+    ui: {
+      login: { mode: 'disabled' },
+      admin: { mode: 'external', baseUrl: 'https://admin.example.test' },
+    },
+  };
+  const value = fixture(destinationUi);
+  const close = vi.fn(async () => undefined);
+  const loadTenant = vi.fn(async (input: LoadActivatedAwsSamlTenantInput) => ({
+    authState: { config: { backend: 'postgresql' as const } },
+    runtime: {
+      tenantId: TENANT,
+      origin: input.evidence.issuer,
+      ui: input.destinationUi,
+      env: {} as Env,
+      assertReady: async () => undefined,
+    },
+    close,
+  }));
+  const loaded = await loadAwsSamlDeployment({ ...value, loadTenant });
+  expect(loadTenant).toHaveBeenCalledWith(expect.objectContaining({ destinationUi }));
+  expect(loaded.runtime.ui).toEqual(destinationUi);
+  await loaded.close();
+  expect(() =>
+    parseAwsSamlDeploymentManifest(
+      JSON.stringify({
+        ...manifest(),
+        destinationUi: { ...destinationUi, components: { loginUi: true, adminUi: false } },
+      })
+    )
+  ).toThrow('aws_deployment_config_invalid');
+});
+
+it('pins the selected auth-state backend through cold start and refuses wrong deployment targets', async () => {
+  const authState = {
+    backend: 'dynamodb' as const,
+    region: 'ap-northeast-1',
+    tableArn: 'arn:aws:dynamodb:ap-northeast-1:123456789012:table/authrim-state',
+    namespace: UUID_A,
+  };
+  const value = fixture(undefined, authState);
+  const loadTenant = vi.fn(async (input: LoadActivatedAwsSamlTenantInput) => ({
+    // This seam inspects inputs; actual backend receipts are tested through restore/cold-start integration.
+    authState: { config: { backend: 'postgresql' as const } },
+    runtime: {
+      tenantId: TENANT,
+      origin: input.evidence.issuer,
+      env: {} as Env,
+      assertReady: async () => undefined,
+    },
+    close: async () => undefined,
+  }));
+  const loaded = await loadAwsSamlDeployment({ ...value, loadTenant });
+  expect(loadTenant).toHaveBeenCalledWith(expect.objectContaining({ authState }));
+  await loaded.close();
+  for (const invalid of [
+    { ...authState, namespace: UUID_B },
+    { ...authState, tableArn: authState.tableArn.replace('123456789012', '999999999999') },
+    {
+      ...authState,
+      region: 'us-east-1',
+      tableArn: authState.tableArn.replace('ap-northeast-1', 'us-east-1'),
+    },
+  ]) {
+    const mismatch = fixture(undefined, invalid);
+    const rejectLoader = vi.fn();
+    await expect(
+      loadAwsSamlDeployment({ ...mismatch, loadTenant: rejectLoader })
+    ).rejects.toThrow();
+    expect(rejectLoader).not.toHaveBeenCalled();
+    expect(mismatch.getSecret).not.toHaveBeenCalled();
+  }
+});
+
 it('loads exact object and secret versions, verifies hashes, and removes private temporary files', async () => {
   const value = fixture();
   let loadedInput: LoadActivatedAwsSamlTenantInput | undefined;
@@ -161,6 +246,7 @@ it('loads exact object and secret versions, verifies hashes, and removes private
     expect(input.core.connectionString).toBe(secret.coreDatabaseUrl);
     expect(input.evidence.tenantId).toBe(TENANT);
     return {
+      authState: { config: { backend: 'postgresql' as const } },
       runtime: {
         tenantId: TENANT,
         origin: input.evidence.issuer,

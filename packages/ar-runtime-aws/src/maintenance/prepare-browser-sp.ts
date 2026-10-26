@@ -1,3 +1,5 @@
+import type { AwsSelectedAuthStateEvidence } from '../import/selected-auth-state';
+import { selectedSyntheticDynamoState } from '../rehearsal/selected-auth-state';
 import { X509Certificate } from 'node:crypto';
 import { SAML_NAMESPACES as NS } from '../../../ar-saml/src/common/constants';
 import { parseSAMLXml } from '../../../ar-saml/src/common/xml-utils';
@@ -13,6 +15,7 @@ export async function prepareBrowserSp(input: {
   spEntityIds: string[];
   host: string;
   stateDatabaseUrl: string;
+  authState?: AwsSelectedAuthStateEvidence;
   seed: unknown;
   metadata: () => Promise<Response>;
   currentSecret: () => Promise<string>;
@@ -43,6 +46,7 @@ export async function prepareBrowserSp(input: {
     !/^[a-f0-9]{64}$/u.test(pin.certificateDerSha256)
   )
     fail();
+  const dynamo = selectedSyntheticDynamoState(input.authState);
   input.onStage?.('metadata');
   const response = await input.metadata();
   if (response.status !== 200) fail();
@@ -80,7 +84,8 @@ export async function prepareBrowserSp(input: {
       environmentName: input.environmentName,
       origin: input.issuer,
       tenantId: input.tenantId,
-      stateDatabaseUrl: input.stateDatabaseUrl,
+      ...(dynamo ? {} : { stateDatabaseUrl: input.stateDatabaseUrl }),
+      ...(input.authState === undefined ? {} : { authState: input.authState }),
       certificatePem: certificate.toString(),
       certificateDerSha256: pin?.certificateDerSha256,
     },

@@ -16,6 +16,7 @@ interface LoginClient {
   client_id: string;
   application_type: string | null;
   allowed_channels: string | null;
+  client_secret_hash: string | null;
 }
 
 function record(value: unknown): RecordValue | null {
@@ -155,7 +156,8 @@ export async function assertPasskeyOnlySamlFlowReady(
   db: Pick<DatabaseAdapter, 'queryOne'>,
   tenantId: string,
   spEntityIds: readonly string[],
-  origin: string
+  origin: string,
+  clientId = 'login-ui'
 ): Promise<void> {
   let parsedOrigin: URL;
   try {
@@ -168,7 +170,8 @@ export async function assertPasskeyOnlySamlFlowReady(
     spEntityIds.length === 0 ||
     new Set(spEntityIds).size !== spEntityIds.length ||
     parsedOrigin.protocol !== 'https:' ||
-    parsedOrigin.origin !== origin
+    parsedOrigin.origin !== origin ||
+    !/^[A-Za-z0-9_.:-]{1,128}$/u.test(clientId)
   ) {
     throw new Error('aws_login_flow_inventory_invalid');
   }
@@ -212,14 +215,20 @@ export async function assertPasskeyOnlySamlFlowReady(
   }
 
   const client = await db.queryOne<LoginClient>(
-    `SELECT client_id, application_type, allowed_channels FROM oauth_clients
-     WHERE tenant_id = ? AND client_id = 'login-ui'`,
-    [tenantId]
+    `SELECT client_id, application_type, allowed_channels, client_secret_hash FROM oauth_clients
+     WHERE tenant_id = ? AND client_id = ?`,
+    [tenantId, clientId]
   );
-  if (!client || client.application_type === 'native') {
+  if (
+    !client ||
+    client.client_id !== clientId ||
+    client.application_type !== 'web' ||
+    client.client_secret_hash !== null
+  ) {
     throw new Error('aws_login_client_unavailable');
   }
-  if (client.allowed_channels) {
+  if (!client.allowed_channels) throw new Error('aws_login_client_channel_unavailable');
+  {
     let channels: unknown;
     try {
       channels = JSON.parse(client.allowed_channels);
@@ -232,9 +241,9 @@ export async function assertPasskeyOnlySamlFlowReady(
   }
   const approvedOrigin = await db.queryOne<{ origin: string }>(
     `SELECT origin FROM web_origin_registry
-     WHERE tenant_id = ? AND client_id = 'login-ui' AND origin = ?
+     WHERE tenant_id = ? AND client_id = ? AND origin = ?
        AND handoff_allowed = 1 AND is_active = 1`,
-    [tenantId, origin]
+    [tenantId, clientId, origin]
   );
   if (approvedOrigin?.origin !== origin) {
     throw new Error('aws_login_origin_unavailable');

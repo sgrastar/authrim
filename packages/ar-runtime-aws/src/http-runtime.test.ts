@@ -59,6 +59,35 @@ function tenant(): AwsTenantRuntime {
 }
 
 describe('AWS trusted runtime ingress', () => {
+  it.each(['disabled', 'external'] as const)(
+    'does not serve embedded login or admin assets for %s login',
+    async (mode) => {
+      const configured = tenant();
+      configured.ui = {
+        components: { loginUi: false, adminUi: false },
+        ui: {
+          login:
+            mode === 'external'
+              ? {
+                  mode,
+                  baseUrl: 'https://login.example.test',
+                  clientId: 'custom-login',
+                  paths: { login: '/sign-in', reauth: '/reauth' },
+                }
+              : { mode },
+          admin: { mode: 'external', baseUrl: 'https://admin.example.test' },
+        },
+      };
+      const { app } = createAwsSamlRuntime({ tenants: [configured] });
+      for (const path of ['/login', '/reauth', '/admin', '/sign-in']) {
+        expect((await app.request(`https://a.example.test${path}`)).status).toBe(404);
+      }
+      expect(configured.assertReady).not.toHaveBeenCalled();
+      expect((await app.request('https://a.example.test/health/ready')).status).toBe(200);
+      if (mode === 'disabled')
+        expect((await app.request('https://a.example.test/api/auth/health')).status).toBe(404);
+    }
+  );
   it('requires explicit adapters and matching issuer identity', () => {
     const missing = tenant();
     delete missing.env.RUNTIME_DATA_PORTS;

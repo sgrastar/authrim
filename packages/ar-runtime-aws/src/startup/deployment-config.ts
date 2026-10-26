@@ -1,3 +1,5 @@
+import { normalizeAwsRuntimeUiConfig, type AwsRuntimeUiConfig } from '../ui/runtime-ui-config';
+import { normalizeAwsAuthStateConfig, type AwsAuthStateConfig } from '../storage/auth-state-config';
 import type { OpenVerifiedTenantBackupV2Input } from '../import/backup-reader';
 import type { AwsRestoreActivationEvidence } from '../import/restore-coordinator';
 import type { LoadActivatedAwsSamlTenantInput } from './load-activated-tenant';
@@ -23,6 +25,8 @@ export interface AwsSamlDeploymentManifest {
   core: { targetId: string; bindingRefs: readonly string[] };
   pii: { targetId: string; bindingRefs: readonly string[] };
   environmentName: string;
+  destinationUi?: AwsRuntimeUiConfig;
+  authState?: AwsAuthStateConfig;
   spEntityIds: readonly string[];
   allocationScope: LoadActivatedAwsSamlTenantInput['allocationScope'];
 }
@@ -222,7 +226,15 @@ export function parseAwsSamlDeploymentManifest(raw: string): AwsSamlDeploymentMa
       'environmentName',
       'spEntityIds',
       'allocationScope',
+      ...(Object.hasOwn(value, 'destinationUi') ? ['destinationUi'] : []),
+      ...(Object.hasOwn(value, 'authState') ? ['authState'] : []),
     ]);
+    if (Object.hasOwn(value, 'destinationUi'))
+      value.destinationUi = normalizeAwsRuntimeUiConfig(value.destinationUi);
+    if (Object.hasOwn(value, 'authState'))
+      value.authState = normalizeAwsAuthStateConfig(value.authState, {
+        restoreId: value.evidence?.restoreId,
+      });
     exact(value.backup, ['receipt', 'selection', 'datasets', 'maxSnapshotAgeMs', 'parts']);
     exact(value.core, ['targetId', 'bindingRefs']);
     exact(value.pii, ['targetId', 'bindingRefs']);

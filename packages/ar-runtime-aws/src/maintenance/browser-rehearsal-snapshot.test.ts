@@ -1,3 +1,4 @@
+import * as authStateSnapshot from './selected-auth-state-snapshot';
 import { describe, expect, it, vi } from 'vitest';
 import { readBrowserRehearsalSnapshot } from './browser-rehearsal-snapshot';
 import type { MaintenanceSqlClient } from './database';
@@ -96,6 +97,52 @@ describe('read-only browser rehearsal evidence', () => {
     for (const client of fake.clients) expect(client.end).toHaveBeenCalledOnce();
   });
 
+  it('reads selected DynamoDB auth counts after Core and never consults the PostgreSQL auth mirror', async () => {
+    const fake = world();
+    const config = {
+      backend: 'dynamodb',
+      region: 'ap-northeast-1',
+      tableArn: 'arn:aws:dynamodb:ap-northeast-1:123456789012:table/test-auth-state',
+      namespace: '00000000-0000-4000-8000-000000000000',
+    } as const;
+    const receipt = {
+      formatVersion: 1 as const,
+      authState: config,
+      tenantId: 'tenant-a',
+      source: {
+        tenantId: 'tenant-a',
+        issuer: 'https://tenant-a.example.test',
+        productVersion: '0.4.2',
+      },
+      bundleId: 'a'.repeat(32),
+      snapshotId: 'snapshot',
+      inventoryDigestSha256: 'b'.repeat(64),
+      supplementSha256: 'c'.repeat(64),
+      accountAuthStates: 1,
+      passkeyCounters: 1,
+      persistentNameIds: 0,
+    };
+    const observe = vi
+      .spyOn(authStateSnapshot, 'readSyntheticDynamoAuthStateSnapshot')
+      .mockImplementation(async () => {
+        expect(fake.sql.some((query) => query.includes('FROM passkeys'))).toBe(true);
+        return { counter: 1, sessions: 3, outstanding: 0, consumed: 2 };
+      });
+    try {
+      expect(
+        await readBrowserRehearsalSnapshot(targets(), fake.factory, { config, receipt })
+      ).toMatchObject({
+        statePasskeyCounter: 1,
+        managedSessionCount: 3,
+        consumedBrowserSpRequestCount: 2,
+      });
+      expect(observe).toHaveBeenCalledWith({ target: config, receipt, passkeyRowId: 'passkey-a' });
+      expect(fake.sql.some((query) => query.includes('authrim_aws_'))).toBe(false);
+      expect(fake.clients).toHaveLength(1);
+    } finally {
+      observe.mockRestore();
+    }
+  });
   it.each(['name', 'user', 'path', 'tls', 'host'] as const)(
     'rejects changed %s before DB access',
     async (kind) => {

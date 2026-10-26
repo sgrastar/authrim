@@ -9,6 +9,8 @@ import {
 } from './setup-execution-state.mjs';
 import { captureExecutionBuild, readExecutionBuildPins } from './setup-build.mjs';
 import { validateServingCaBundle } from './package-serving.mjs';
+import { normalizeSetupUi } from './setup-ui-config.mjs';
+import { normalizeSetupAuthState } from './setup-auth-state.mjs';
 
 export const EXECUTION_TEMPLATES = Object.freeze({
   bootstrap: 'saml-idp-bootstrap-roles.yaml',
@@ -59,6 +61,7 @@ const PARAMETERS = {
     'PrivateSubnetACidr',
     'PrivateSubnetBCidr',
     'S3GatewayPrefixListId',
+    'DynamoDbGatewayPrefixListId',
     'DatabaseInstanceClass',
     'AllocatedStorageGiB',
     'BackupRetentionDays',
@@ -82,6 +85,9 @@ export function normalizeExecutionConfig(input) {
     'fixture',
     'databasePrefix',
     'issuer',
+    'components',
+    'ui',
+    'authState',
   ]);
   if (
     input.formatVersion !== 1 ||
@@ -90,6 +96,11 @@ export function normalizeExecutionConfig(input) {
     !['browser-rehearsal', 'existing-issuer'].includes(input.mode)
   )
     fail();
+  normalizeSetupUi(input.components, input.ui, input.mode);
+  const authentication = normalizeSetupAuthState(input.authState);
+  const dynamoPrefix = input.stacks?.foundation?.parameters?.DynamoDbGatewayPrefixListId;
+  if (authentication.backend === 'dynamodb') text(dynamoPrefix, /^pl-[a-f0-9]{8,17}$/u);
+  else if (dynamoPrefix !== undefined) fail();
   keys(input.target, ['accountId', 'region']);
   const account = text(input.target.accountId, /^\d{12}$/u);
   text(input.target.region, /^[a-z]{2}(?:-[a-z]+)+-\d$/u);
@@ -117,7 +128,8 @@ export function normalizeExecutionConfig(input) {
     const stack = input.stacks[name];
     keys(stack, ['name', 'disposition', 'stackId', 'templateSha256', 'parameters']);
     text(stack.name, /^[A-Za-z][A-Za-z0-9-]{0,44}$/u);
-    if (name === 'foundation' && stack.name.length > 28) fail();
+    // The foundation name is also used verbatim in its S3 bucket's physical name.
+    if (name === 'foundation' && !/^[a-z][a-z0-9-]{0,27}$/u.test(stack.name)) fail();
     names.push(stack.name);
     if (!['create', 'reuse'].includes(stack.disposition)) fail();
     if (stack.disposition === 'reuse') {

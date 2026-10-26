@@ -1,4 +1,4 @@
-/** PostgreSQL composition for the existing Authrim Direct Auth passkey handlers. */
+/** AWS state composition for the existing Authrim Direct Auth passkey handlers. */
 
 import { randomBytes } from 'node:crypto';
 import type { AuthRuntimePorts } from '@authrim/ar-lib-core/types/auth-runtime-ports';
@@ -9,27 +9,27 @@ import type {
 } from '@authrim/ar-lib-core/durable-objects/ChallengeStore';
 import type { Session } from '@authrim/ar-lib-core/durable-objects/SessionStore';
 import type { RegionKey } from '@authrim/ar-lib-core/utils/region-sharding';
-import type { PostgresAccountAuthStateStore } from './storage/postgres-account-auth-state';
-import type { PostgresAuthorizationCodeStore } from './storage/postgres-authorization-code';
-import type { PostgresRateLimitStore } from './storage/postgres-rate-limit';
 import type {
-  PostgresTransientStateStore,
+  AccountAuthStateStore,
+  AuthorizationCodeStore,
+  RateLimitStore,
+  TransientStateStore,
   StoreChallengeInput,
   TransientChallenge,
   TransientSession,
-} from './storage/postgres-transient-state';
+} from './storage/state-ports';
 
 const SESSION_REVOCATION_AUTHORITY = 'user-session-do-v1' as const;
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/u;
 const REGION_KEYS = new Set<RegionKey>(['apac', 'weur', 'eeur', 'enam', 'wnam', 'oc', 'afr', 'me']);
 
 export interface CreateAuthRuntimePortsInput {
-  state: PostgresTransientStateStore;
-  accountAuthentication: PostgresAccountAuthStateStore;
+  state: TransientStateStore;
+  accountAuthentication: AccountAuthStateStore;
   /** Normal SAML passkey sign-in emits a Direct Auth code before session redemption. */
-  authorizationCodes: PostgresAuthorizationCodeStore;
-  rateLimit: PostgresRateLimitStore;
-  /** Stored only in the opaque session ID; PostgreSQL does not shard by this label. */
+  authorizationCodes: AuthorizationCodeStore;
+  rateLimit: RateLimitStore;
+  /** Stored only in the opaque session ID; The state store does not shard by this label. */
   sessionRegion?: RegionKey;
 }
 
@@ -104,7 +104,7 @@ function sessionRecord(row: TransientSession): Session {
 }
 
 async function requireActiveSessionAccount(
-  accountAuthentication: PostgresAccountAuthStateStore,
+  accountAuthentication: AccountAuthStateStore,
   row: TransientSession
 ): Promise<void> {
   const state = await accountAuthentication.getAccountStateRpc(
@@ -122,7 +122,7 @@ async function requireActiveSessionAccount(
 
 /**
  * Returned selectors close over tenant and account identity. No Cloudflare namespace or DO stub
- * is emulated; each RPC maps to an atomic PostgreSQL operation or a scoped account check.
+ * is emulated; each RPC maps to an atomic state operation or a scoped account check.
  */
 export function createAuthRuntimePorts(input: CreateAuthRuntimePortsInput): AuthRuntimePorts {
   const sessionRegion = input.sessionRegion ?? 'apac';

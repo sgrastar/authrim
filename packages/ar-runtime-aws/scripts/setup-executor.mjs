@@ -3,6 +3,7 @@ import { mkdir, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { AwsSetupError, createAwsSetupCli } from './setup-aws-cli.mjs';
 import { assertSetupIdentity, executeSetupStack } from './setup-cloudformation.mjs';
+import { normalizeSetupAuthState } from './setup-auth-state.mjs';
 import { EXECUTION_STAGES, verifyExecutionPlan } from './setup-execution-plan.mjs';
 import {
   canonicalSetupJson,
@@ -264,6 +265,7 @@ export async function executeAwsSetup(
     const save = () => writeSetupState(statePath, state);
     await save();
     const config = plan.config;
+    const authentication = normalizeSetupAuthState(config.authState);
     const browser = config.mode === 'browser-rehearsal';
     const directory = `${resolve(statePath)}.assets`;
     const clients = new Map();
@@ -282,6 +284,14 @@ export async function executeAwsSetup(
     const output = (stage, key) =>
       state.stages[stage]?.outputs?.[key] ?? fail(`output_missing_${stage}_${key}`);
     const foundation = (key) => output('foundation', key);
+    const authStateParams = () =>
+      authentication.backend === 'dynamodb'
+        ? { AuthStateTableArn: foundation('AuthStateTableArn') }
+        : {};
+    const dynamoNetworkParams = () =>
+      authentication.backend === 'dynamodb'
+        ? { DynamoDbGatewayPrefixListId: foundation('DynamoDbGatewayPrefixListId') }
+        : {};
     const boot = (key) => output('bootstrap', key);
     const access = (key) => output('access-bind', key);
     const origin = () =>
@@ -308,6 +318,7 @@ export async function executeAwsSetup(
     });
     const accessParams = (bound) => ({
       ...(config.stacks.access.parameters ?? {}),
+      ...authStateParams(),
       BrowserStackName: config.stacks.workload.name,
       DbBootstrapStackName: config.stacks.database.name,
       OperatorRoleName: config.identities.operator.principalArn.split('/').at(-1),
@@ -352,7 +363,10 @@ export async function executeAwsSetup(
         return stack(
           stage,
           'foundation',
-          config.stacks.foundation.parameters ?? {},
+          {
+            ...(config.stacks.foundation.parameters ?? {}),
+            ...(config.authState === undefined ? {} : { AuthStateBackend: authentication.backend }),
+          },
           'operator',
           boot('FoundationCfnServiceRoleArn')
         );
@@ -370,6 +384,7 @@ export async function executeAwsSetup(
             DbBootstrapVpcId: foundation('VpcId'),
             DbBootstrapSubnetIds: foundation('PrivateSubnetIds'),
             DbBootstrapSecurityGroupId: foundation('BootstrapSecurityGroupId'),
+            ...authStateParams(),
           },
           'bootstrap',
           undefined,
@@ -429,6 +444,7 @@ export async function executeAwsSetup(
             MasterSecretArn: foundation('DatabaseMasterSecretArn'),
             JobConfigSecretArn: inputSecret(),
             JobConfigSecretVersionId: inputVersion(),
+            ...authStateParams(),
             BrowserSpSecretArn: browser ? output('access', 'BrowserSpSecretArn') : '',
             JobPermissionsBoundaryArn: browser
               ? access('DbBootstrapPermissionsBoundaryArn')
@@ -523,6 +539,7 @@ export async function executeAwsSetup(
                 SecretsEndpointSecurityGroupId: foundation('SecretsEndpointSecurityGroupId'),
                 HttpApiId: foundation('HttpApiId'),
                 IssuerHost: config.issuer.host,
+                ...authStateParams(),
               },
               'bootstrap',
               undefined,
@@ -532,6 +549,7 @@ export async function executeAwsSetup(
         const manifest = state.stages.manifest.receipt;
         const common = {
           ...(config.stacks.workload.parameters ?? {}),
+          ...authStateParams(),
           RuntimeSecretArn: output('database', 'RuntimeSecretArn'),
           RuntimeSecretVersionId: state.initializationId,
           ManifestKey: manifest.key,
@@ -575,6 +593,7 @@ export async function executeAwsSetup(
             DatabasePort: '5432',
             SecretsEndpointSecurityGroupId: foundation('SecretsEndpointSecurityGroupId'),
             S3GatewayPrefixListId: foundation('S3GatewayPrefixListId'),
+            ...dynamoNetworkParams(),
             RuntimePermissionsBoundaryArn: output('runtime-bind', 'RuntimePermissionsBoundaryArn'),
             ManifestBucket: foundation('AssetsBucketName'),
             BackupObjectPrefix: config.assets.prefix,

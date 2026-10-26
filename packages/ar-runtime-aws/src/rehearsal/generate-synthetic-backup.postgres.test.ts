@@ -10,27 +10,50 @@ import { prepareBrowserSp } from '../maintenance/prepare-browser-sp';
 import { parseSAMLXml } from '../../../ar-saml/src/common/xml-utils';
 import { SAML_NAMESPACES } from '../../../ar-saml/src/common/constants';
 import { generateSyntheticAwsBackup } from './generate-synthetic-backup';
-import { migrate, fromBase64url, type buildBackupFiles } from './synthetic-fixture';
+import type { AwsRuntimeUiConfig } from '../ui/runtime-ui-config';
+import { verifyXmlSignatureAndGetReferences } from '../../../ar-saml/src/common/signature';
+import { extractSAMLResponseIds } from '../../../ar-saml/src/idp/signing';
+import {
+  migrate,
+  fromBase64url,
+  signSyntheticPasskeyAssertion,
+  type buildBackupFiles,
+} from './synthetic-fixture';
 
 const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
 const postgresIt = databaseUrl ? it : it.skip;
 type Backup = Awaited<ReturnType<typeof buildBackupFiles>>['backup'];
 
-postgresIt(
-  'generates and restores a separate browser fixture with AWS-bound issuer, passkey and SP metadata',
+postgresIt.each(['embedded', 'external'] as const)(
+  'generates and restores a separate %s browser fixture with AWS-bound issuer, passkey and SP metadata',
   { timeout: 120_000 },
-  async () => {
+  async (mode) => {
     if (!databaseUrl) throw new Error('test_database_missing');
     const base = new URL(databaseUrl);
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname))
       throw new Error('local_test_database_required');
     const issuer = 'https://abcdefghij.execute-api.ap-northeast-1.amazonaws.com';
+    const externalLogin = {
+      mode: 'external' as const,
+      baseUrl: 'https://login.example.test',
+      clientId: 'external-browser-client',
+      paths: { login: '/sign-in', reauth: '/sign-in-again' },
+    };
+    const destinationUi: AwsRuntimeUiConfig | undefined =
+      mode === 'external'
+        ? {
+            components: { loginUi: false, adminUi: false },
+            ui: { login: externalLogin, admin: { mode: 'disabled' } },
+          }
+        : undefined;
     const profile = {
       kind: 'aws-browser' as const,
       issuer,
       spEntityId: `${issuer}/test-sp/metadata`,
       acsUrl: `${issuer}/test-sp/acs`,
+      ...(mode === 'external' ? { externalLogin } : {}),
     };
+    const expectedRp = new URL(mode === 'external' ? externalLogin.baseUrl : issuer).hostname;
     const suffix = randomUUID().replaceAll('-', '');
     const names = {
       core: `browser_core_${suffix}`,
@@ -107,7 +130,7 @@ postgresIt(
         };
       };
       expect(secrets.softwarePasskeyCdpCredential).toMatchObject({
-        rpId: new URL(issuer).hostname,
+        rpId: expectedRp,
         isResidentCredential: true,
         signCount: 0,
         userHandle: btoa('user-tenant-a'),
@@ -145,12 +168,164 @@ postgresIt(
         environmentName: descriptor.environmentName,
         spEntityIds: descriptor.spEntityIds,
         allocationScope: 'shared_pool',
+        ...(destinationUi ? { destinationUi } : {}),
         awsFlowRuntimeHmacSecret: secrets.awsFlowRuntimeHmacSecret,
         awsLookupReadKeys: secrets.awsLookupReadKeys,
       });
       expect(restored.runtime.origin).toBe(issuer);
       const app = createAwsSamlRuntime({ tenants: [restored.runtime] }).app;
       expect((await app.request(`${issuer}/health/ready`)).status).toBe(200);
+      if (mode === 'external') {
+        expect(summary).toMatchObject({ externalLogin, rpId: expectedRp });
+        expect((await app.request(`${issuer}/login`)).status).toBe(404);
+        const context = { requestContext: { http: { sourceIp: '203.0.113.8' } } };
+        const requestId = `_generated-${randomUUID()}`;
+        const authn = `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${requestId}" Version="2.0" IssueInstant="${new Date().toISOString()}" Destination="${issuer}/saml/idp/sso" AssertionConsumerServiceURL="${profile.acsUrl}" ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"><saml:Issuer>${profile.spEntityId}</saml:Issuer></samlp:AuthnRequest>`;
+        const sso = await app.request(
+          `${issuer}/saml/idp/sso`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ SAMLRequest: btoa(authn) }).toString(),
+          },
+          context
+        );
+        expect(sso.status, await sso.clone().text()).toBe(302);
+        expect(sso.headers.get('location')).toContain(`${externalLogin.baseUrl}/sign-in?`);
+        const location = new URL(sso.headers.get('location') ?? '');
+        const samlRequestId = location.searchParams.get('saml_request_id');
+        const post = (path: string, body: unknown, extra: Record<string, string> = {}) =>
+          app.request(
+            `${issuer}${path}`,
+            {
+              method: 'POST',
+              headers: {
+                Origin: externalLogin.baseUrl,
+                'Content-Type': 'application/json',
+                ...extra,
+              },
+              body: JSON.stringify(body),
+            },
+            context
+          );
+        const flowResponse = await post('/api/v1/login/interactions/start', {
+          flow_kind: 'login',
+          target_type: 'saml_sp',
+          target_id: profile.spEntityId,
+          saml_sp_id: profile.spEntityId,
+          saml_request_id: samlRequestId,
+          saml_sp_entity_id: profile.spEntityId,
+          return_to: 'saml_sso',
+        });
+        expect(flowResponse.status, await flowResponse.clone().text()).toBe(200);
+        const flow: {
+          interaction: { id: string };
+          contract_hash: string;
+          signature: string;
+        } = await flowResponse.json();
+        const verifier = 'synthetic-external-ui-verifier-'.repeat(3);
+        const startBody = {
+          client_id: externalLogin.clientId,
+          code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        };
+        const wrongClient = await post('/api/v1/auth/direct/passkey/login/start', {
+          ...startBody,
+          client_id: 'login-ui',
+        });
+        expect(wrongClient.status).toBeGreaterThanOrEqual(400);
+        const start = await post('/api/v1/auth/direct/passkey/login/start', startBody, {
+          'X-Authrim-Interaction-Id': flow.interaction.id,
+        });
+        expect(start.status, await start.clone().text()).toBe(200);
+        const started: {
+          challenge_id: string;
+          options: { challenge: string; rpId: string };
+        } = await start.json();
+        expect(started.options.rpId).toBe(expectedRp);
+        const assertion = await signSyntheticPasskeyAssertion({
+          id: secrets.softwarePasskeyCredentialId,
+          privateJwk: secrets.softwarePasskeyPrivateJwk,
+          rpId: expectedRp,
+          origin: externalLogin.baseUrl,
+          challenge: started.options.challenge,
+          userId: 'user-tenant-a',
+          counter: 1,
+        });
+        const finish = await post('/api/v1/auth/direct/passkey/login/finish', {
+          challenge_id: started.challenge_id,
+          credential: assertion,
+          code_verifier: verifier,
+          channel: 'browser',
+        });
+        expect(finish.status, await finish.clone().text()).toBe(200);
+        const artifact: { direct_auth_artifact: string } = await finish.json();
+        const session = await post('/api/v1/auth/direct/session', {
+          direct_auth_artifact: artifact.direct_auth_artifact,
+          client_id: externalLogin.clientId,
+          code_verifier: verifier,
+          channel: 'browser',
+          defer_authorization_continuation: true,
+        });
+        expect(session.status, await session.clone().text()).toBe(200);
+        const cookie = session.headers.get('set-cookie')?.match(/authrim_session=[^;,]+/u)?.[0];
+        if (!cookie) throw new Error('synthetic_session_missing');
+        const submit = async (step: string, node: string, handle: string) => {
+          const response = await post(
+            `/api/v1/login/interactions/${encodeURIComponent(flow.interaction.id)}/submit`,
+            {
+              step_id: step,
+              node_id: node,
+              selected_handle: handle,
+              contract_hash: flow.contract_hash,
+              signature: flow.signature,
+            },
+            { Cookie: cookie }
+          );
+          expect(response.status, await response.clone().text()).toBe(200);
+          const result: { completed: boolean } = await response.json();
+          return result;
+        };
+        const authentication = await submit('auth:step', 'auth', 'passkey');
+        if (!authentication.completed) await submit('complete:step', 'complete', 'completed');
+        const resume = new URL('/saml/idp/sso', issuer);
+        resume.searchParams.set('saml_request_id', samlRequestId ?? '');
+        resume.searchParams.set('saml_sp_entity_id', profile.spEntityId);
+        resume.searchParams.set('return_to', 'saml_sso');
+        const response = await app.request(
+          resume.toString(),
+          { headers: { Cookie: cookie } },
+          context
+        );
+        const html = await response.text();
+        expect(response.status, html).toBe(200);
+        const encoded = html.match(/name="SAMLResponse"[^>]*value="([^"]+)"/u)?.[1];
+        if (!encoded) throw new Error('synthetic_saml_response_missing');
+        const signedXml = atob(encoded);
+        const responseId = extractSAMLResponseIds(signedXml).responseId;
+        const publicMetadata = await app.request(`${issuer}/saml/idp/metadata`, {}, context);
+        const signingCertificate = (await publicMetadata.text()).match(
+          /<ds:X509Certificate>([^<]+)<\/ds:X509Certificate>/u
+        )?.[1];
+        if (!signingCertificate) throw new Error('synthetic_certificate_missing');
+        expect(
+          verifyXmlSignatureAndGetReferences(signedXml, {
+            certificateOrKey: `-----BEGIN CERTIFICATE-----\n${signingCertificate}\n-----END CERTIFICATE-----`,
+            expectedId: responseId,
+            strictXswProtection: true,
+          }).some((reference) => reference.uri === `#${responseId}`)
+        ).toBe(true);
+        expect(signedXml).toContain(`InResponseTo="${requestId}"`);
+        expect(signedXml).toContain(`<saml:Audience>${profile.spEntityId}</saml:Audience>`);
+        expect(
+          (
+            await db.core.query<{ counter: string }>(
+              "SELECT counter FROM passkeys WHERE tenant_id='tenant-a' AND id='passkey-a'"
+            )
+          ).rows
+        ).toEqual([{ counter: '1' }]);
+      }
       expect((await app.request('https://tenant-a.example.test/health/ready')).status).toBe(404);
       // Readiness has no ingress requirement, but real protocol routes require trusted context.
       // A mocked metadata response alone cannot catch this private-preparer integration error.
@@ -255,7 +430,7 @@ postgresIt(
         ['tenant-a']
       );
       expect(passkeys.rows).toEqual([
-        { credential_id: secrets.softwarePasskeyCredentialId, rp_id: new URL(issuer).hostname },
+        { credential_id: secrets.softwarePasskeyCredentialId, rp_id: expectedRp },
       ]);
       const sp = await db.core.query<{ config_json: string }>(
         "SELECT config_json FROM identity_providers WHERE id='provider-a' AND tenant_id=$1",

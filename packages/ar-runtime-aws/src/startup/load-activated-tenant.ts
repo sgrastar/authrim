@@ -1,3 +1,7 @@
+import {
+  awsRuntimeUiConfigurationEvidence,
+  type AwsRuntimeUiConfig,
+} from '../ui/runtime-ui-config';
 /** Reconstruct a published SAML IdP after a Lambda cold start without importing rows again. */
 import { Client, Pool } from 'pg';
 import { PostgresAdapter } from '@authrim/ar-lib-core';
@@ -19,11 +23,13 @@ import {
 import { readVerifiedAwsSamlSupplement, restoreEvidenceDigest } from '../import/restore-evidence';
 import { deriveAwsStateSourceExpectations } from '../import/restore-offline';
 import { assembleAwsSamlTenantFromBackup } from '../import/runtime-assembly';
+import type { AwsAuthStateConfig } from '../storage/auth-state-config';
 import {
-  assertAwsLiveStateCompatible,
-  awsStateSupplementPayloadSha256,
-  type AwsStateRestoreReceipt,
-} from '../import/state-restore';
+  awsAuthStateConfigurationEvidence,
+  selectAwsAuthState,
+  type AwsAuthStateDependencies,
+  type AwsSelectedAuthStateEvidence,
+} from '../import/selected-auth-state';
 import type { AwsTenantRuntime } from '../http-runtime';
 import { verifyActivatedDatabaseRows } from './live-database-verification';
 
@@ -36,7 +42,9 @@ export interface LoadActivatedAwsSamlTenantInput {
   core: { connectionString: string; targetId: string; bindingRefs: readonly string[] };
   pii: { connectionString: string; targetId: string; bindingRefs: readonly string[] };
   state: { connectionString: string };
+  authState?: AwsAuthStateConfig;
   environmentName: string;
+  destinationUi?: AwsRuntimeUiConfig;
   spEntityIds: readonly string[];
   allocationScope: 'shared_pool' | 'tenant_exclusive';
   awsFlowRuntimeHmacSecret: string;
@@ -104,32 +112,6 @@ function sameManifest(
     invalid();
 }
 
-function stateReceipt(
-  manifest: Awaited<ReturnType<typeof openVerifiedTenantBackupV2>>['manifest'],
-  supplement: Awaited<ReturnType<typeof readVerifiedAwsSamlSupplement>>
-): AwsStateRestoreReceipt {
-  const state = supplement.state;
-  if (
-    state.persistentNameIdsComplete !== true ||
-    !Array.isArray(state.accountAuthStates) ||
-    !Array.isArray(state.passkeyCounters) ||
-    !Array.isArray(state.persistentNameIds) ||
-    state.receipt.supplementSha256 !== awsStateSupplementPayloadSha256(state)
-  )
-    invalid();
-  return {
-    tenantId: manifest.source.tenantId,
-    source: { ...manifest.source },
-    bundleId: manifest.bundleId,
-    snapshotId: manifest.snapshotId,
-    inventoryDigestSha256: manifest.inventoryDigestSha256,
-    supplementSha256: state.receipt.supplementSha256,
-    accountAuthStates: state.accountAuthStates.length,
-    passkeyCounters: state.passkeyCounters.length,
-    persistentNameIds: state.persistentNameIds.length,
-  };
-}
-
 function assertReceipt(
   receipt: PostgresFamilyRestoreReceipt | null,
   family: 'core' | 'pii',
@@ -150,8 +132,12 @@ function assertReceipt(
     invalid();
 }
 
-async function load(input: LoadActivatedAwsSamlTenantInput): Promise<{
+async function load(
+  input: LoadActivatedAwsSamlTenantInput,
+  dependencies: AwsAuthStateDependencies
+): Promise<{
   runtime: AwsTenantRuntime;
+  authState: AwsSelectedAuthStateEvidence;
   close(): Promise<void>;
 }> {
   const plan = structuredClone({ ...input, backup: { ...input.backup, signal: undefined } });
@@ -170,6 +156,8 @@ async function load(input: LoadActivatedAwsSamlTenantInput): Promise<{
       piiBindingRefs: plan.pii.bindingRefs,
       awsLookupReadKeys: plan.awsLookupReadKeys,
       awsFlowRuntimeHmacSecret: plan.awsFlowRuntimeHmacSecret,
+      ...awsRuntimeUiConfigurationEvidence(plan.destinationUi),
+      ...awsAuthStateConfigurationEvidence(plan.authState, evidence.restoreId),
     }) !== evidence.configurationSha256
   )
     invalid();
@@ -194,8 +182,6 @@ async function load(input: LoadActivatedAwsSamlTenantInput): Promise<{
       ...plan.supplement,
       manifest: backup.manifest,
     });
-    const state = stateReceipt(backup.manifest, supplement);
-    if (restoreEvidenceDigest(state) !== evidence.stateReceiptSha256) invalid();
     const targets = await Promise.all(
       [plan.core.connectionString, plan.pii.connectionString, plan.state.connectionString].map(
         databaseIdentity
@@ -208,6 +194,20 @@ async function load(input: LoadActivatedAwsSamlTenantInput): Promise<{
       connectionTimeoutMillis: 5_000,
     });
     cleanup.push(() => stateDb.end());
+    const authenticationState = selectAwsAuthState(
+      {
+        manifest: backup.manifest,
+        supplement: supplement.state,
+        expected: await deriveAwsStateSourceExpectations(backup),
+        authState: plan.authState,
+        restoreId: evidence.restoreId,
+        stateDb,
+      },
+      dependencies
+    );
+    cleanup.push(authenticationState.close);
+    const state = authenticationState.receipt;
+    if (restoreEvidenceDigest(state) !== evidence.stateReceiptSha256) invalid();
     const coreDb = new PostgresAdapter({
       connectionString: plan.core.connectionString,
       clientFactory: adapterClient,
@@ -246,32 +246,19 @@ async function load(input: LoadActivatedAwsSamlTenantInput): Promise<{
         evidence,
         assertCommittedTargets: async () => {
           await readFamilyReceipts();
+          await authenticationState.bound.assertReady();
         },
       });
     await assertSnapshotReady();
     const { core, pii } = await readFamilyReceipts();
-    await assertAwsLiveStateCompatible({
-      manifest: backup.manifest,
-      supplement: supplement.state,
-      expected: await deriveAwsStateSourceExpectations(backup),
-      receipt: state,
-      connection: {
-        withDedicatedConnection: async (run) => {
-          const client = await stateDb.connect();
-          try {
-            return await run(client);
-          } finally {
-            client.release();
-          }
-        },
-      },
-    });
+    await authenticationState.assertLive();
     await verifyActivatedDatabaseRows({
       backup,
       core: plan.core,
       pii: plan.pii,
       stateDb,
       activatedAtMs: evidence.activatedAtMs,
+      readPasskeyCounters: authenticationState.readPasskeyCounters,
     });
     const runtime = await assembleAwsSamlTenantFromBackup({
       backup,
@@ -281,6 +268,7 @@ async function load(input: LoadActivatedAwsSamlTenantInput): Promise<{
         accountCoreByBindingRef: bindings(plan.core.bindingRefs, coreDb),
         accountPiiByBindingRef: bindings(plan.pii.bindingRefs, piiDb),
         stateDb,
+        authenticationState: authenticationState.bound,
         committed: { core, pii, state },
       },
       environmentName: plan.environmentName,
@@ -288,12 +276,13 @@ async function load(input: LoadActivatedAwsSamlTenantInput): Promise<{
       allocationScope: plan.allocationScope,
       auditPorts: createPostgresAuditRuntimePorts(stateDb, [evidence.tenantId]),
       awsFlowRuntimeHmacSecret: plan.awsFlowRuntimeHmacSecret,
+      ...awsRuntimeUiConfigurationEvidence(plan.destinationUi),
       awsLookupReadKeys: plan.awsLookupReadKeys,
       assertSnapshotReady,
     });
     await runtime.assertReady();
     await backup.close();
-    return { runtime, close };
+    return { runtime, authState: authenticationState.evidence, close };
   } catch {
     await close();
     throw new Error('aws_activated_runtime_load_invalid');
@@ -303,9 +292,12 @@ async function load(input: LoadActivatedAwsSamlTenantInput): Promise<{
 }
 
 /** No source import, bootstrap, or activation marker mutation occurs on this path. */
-export async function loadActivatedAwsSamlTenant(input: LoadActivatedAwsSamlTenantInput) {
+export async function loadActivatedAwsSamlTenant(
+  input: LoadActivatedAwsSamlTenantInput,
+  dependencies: AwsAuthStateDependencies = {}
+) {
   try {
-    return await load(input);
+    return await load(input, dependencies);
   } catch {
     throw new Error('aws_activated_runtime_load_failed');
   }

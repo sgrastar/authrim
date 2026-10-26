@@ -12,10 +12,11 @@
  * - Pagination
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
+import { installGroupBoundaryFixture } from './helpers/group-boundary-fixture';
 
 const SCIM_TOMBSTONE_KEY = { generation: 2, secret: 's'.repeat(32) };
 const scimTombstoneInserts: unknown[][] = [];
@@ -646,6 +647,9 @@ describe('SCIM 2.0 Endpoints', () => {
     };
   }
 
+  let groupBoundaries: ReturnType<typeof installGroupBoundaryFixture>;
+  afterEach(() => groupBoundaries?.close());
+
   beforeEach(() => {
     vi.clearAllMocks();
     accountCreationState.deliveryStatus = 201;
@@ -1206,6 +1210,9 @@ describe('SCIM 2.0 Endpoints', () => {
         })),
       } as any,
     };
+
+    if (!mockEnv.DB) throw new Error('scim_core_fixture_missing');
+    groupBoundaries = installGroupBoundaryFixture(mockEnv.DB);
 
     // Create Hono app with mock environment binding
     app = new Hono();

@@ -40,10 +40,48 @@ function makeSchema(overrides: Partial<CustomClaimSchema> = {}): CustomClaimSche
   };
 }
 
+/** Model the durable boundary contract instead of treating its writes as successful no-ops. */
+function mockBoundaryWrites() {
+  const rows = new Map<
+    string,
+    { tenantId: string; userId: string; status: 'writing' | 'failed' }
+  >();
+  return (
+    sql: string,
+    params: unknown[] = []
+  ): { success: boolean; rowsAffected: number } | undefined => {
+    if (!sql.includes('service_group_write_boundaries')) return undefined;
+    if (sql.startsWith('INSERT INTO')) {
+      const [id, tenantId, userId] = params.map(String);
+      if (rows.has(id)) throw new Error('mock_boundary_duplicate');
+      rows.set(id, { tenantId, userId, status: 'writing' });
+      return { success: true, rowsAffected: 1 };
+    }
+    const [tenantId, userId, id] = params.map(String);
+    const row = rows.get(id);
+    if (!row || row.tenantId !== tenantId || row.userId !== userId)
+      return { success: true, rowsAffected: 0 };
+    if (sql.startsWith('UPDATE')) {
+      row.status = 'failed';
+      return { success: true, rowsAffected: 1 };
+    }
+    if (sql.startsWith('DELETE')) {
+      if (sql.includes("status='failed'") && row.status !== 'failed')
+        return { success: true, rowsAffected: 0 };
+      if (sql.includes("status='writing'") && row.status !== 'writing')
+        return { success: true, rowsAffected: 0 };
+      rows.delete(id);
+      return { success: true, rowsAffected: 1 };
+    }
+    throw new Error('mock_boundary_statement_unknown');
+  };
+}
+
 function createMockCoreDb(state: {
   schemas: CustomClaimSchema[];
   userCustomFields: Map<string, Record<string, string>>;
 }) {
+  const boundaryWrite = mockBoundaryWrites();
   return {
     query: vi.fn(async (sql: string, params?: unknown[]) => {
       if (sql.includes('FROM custom_claim_schemas')) {
@@ -84,6 +122,8 @@ function createMockCoreDb(state: {
       return null;
     }),
     execute: vi.fn(async (sql: string, params?: unknown[]) => {
+      const boundary = boundaryWrite(sql, params);
+      if (boundary) return boundary;
       if (sql.includes('INSERT INTO user_custom_fields')) {
         const [_tenantId, userId, fieldName, fieldValue] = params ?? [];
         const values = state.userCustomFields.get(String(userId)) || {};
@@ -122,7 +162,10 @@ function createMockCoreDb(state: {
 }
 
 function createMockPiiDb(state: { userCustomAttributes: Map<string, Record<string, unknown>> }) {
+  const boundaryWrite = mockBoundaryWrites();
   const execute = vi.fn(async (sql: string, params?: unknown[]) => {
+    const boundary = boundaryWrite(sql, params);
+    if (boundary) return boundary;
     if (sql.includes('INSERT INTO identity_sensitive_values')) {
       const valueKey = sql.includes("'custom_attributes_json'")
         ? 'custom_attributes_json'

@@ -1,3 +1,8 @@
+import { rowText } from './verified-rows';
+import {
+  awsRuntimeUiConfigurationEvidence,
+  type AwsRuntimeUiConfig,
+} from '../ui/runtime-ui-config';
 import { deriveAwsStateSourceExpectations } from './state-source-expectations';
 export { deriveAwsStateSourceExpectations } from './state-source-expectations';
 import { Client, Pool } from 'pg';
@@ -17,7 +22,12 @@ import {
 import { coordinateAwsRestore } from './restore-coordinator';
 import { readVerifiedAwsSamlSupplement, restoreEvidenceDigest } from './restore-evidence';
 import { assembleAwsSamlTenantFromBackup } from './runtime-assembly';
-import { assertVerifiedAwsStateRestored, restoreVerifiedAwsState } from './state-restore';
+import type { AwsAuthStateConfig } from '../storage/auth-state-config';
+import {
+  awsAuthStateConfigurationEvidence,
+  selectAwsAuthState,
+  type AwsAuthStateDependencies,
+} from './selected-auth-state';
 
 export interface RestoreOfflineAwsSamlTenantInput {
   backup: OpenVerifiedTenantBackupV2Input;
@@ -26,7 +36,9 @@ export interface RestoreOfflineAwsSamlTenantInput {
   core: { connectionString: string; targetId: string; bindingRefs: readonly string[] };
   pii: { connectionString: string; targetId: string; bindingRefs: readonly string[] };
   state: { connectionString: string; initializeEmptySchema: boolean };
+  authState?: AwsAuthStateConfig;
   environmentName: string;
+  destinationUi?: AwsRuntimeUiConfig;
   spEntityIds: readonly string[];
   allocationScope: 'shared_pool' | 'tenant_exclusive';
   awsFlowRuntimeHmacSecret: string;
@@ -63,18 +75,26 @@ function adapters(refs: readonly string[], db: PostgresAdapter): Record<string, 
   return Object.fromEntries(refs.map((ref) => [ref, db]));
 }
 
-/** Offline orchestration: no Cloudflare/AWS API calls and no implicit schema migration. */
-export async function restoreOfflineAwsSamlTenant(input: RestoreOfflineAwsSamlTenantInput) {
+/** Maintenance orchestration: no Cloudflare calls or implicit schema migration. */
+export async function restoreOfflineAwsSamlTenant(
+  input: RestoreOfflineAwsSamlTenantInput,
+  dependencies: AwsAuthStateDependencies = {}
+) {
   try {
-    return await restoreOfflineAwsSamlTenantInternal(input);
+    return await restoreOfflineAwsSamlTenantInternal(input, dependencies);
   } catch {
     throw new Error('aws_offline_restore_failed');
   }
 }
 
-async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlTenantInput) {
+async function restoreOfflineAwsSamlTenantInternal(
+  input: RestoreOfflineAwsSamlTenantInput,
+  dependencies: AwsAuthStateDependencies
+) {
   // Snapshot mutable caller policy before opening files or databases.
   const plan = structuredClone({ ...input, backup: { ...input.backup, signal: undefined } });
+  awsRuntimeUiConfigurationEvidence(plan.destinationUi);
+  awsAuthStateConfigurationEvidence(plan.authState, plan.restoreId);
   const backup = await openVerifiedTenantBackupV2({ ...plan.backup, signal: input.backup.signal });
   const cleanup: Array<() => Promise<void>> = [];
   let closed = false;
@@ -107,6 +127,18 @@ async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlT
     if (plan.state.initializeEmptySchema) await bootstrapFreshAwsRuntimeSchema(stateDb);
     await assertAwsRuntimeSchemaReady(stateDb);
     const tenantId = backup.manifest.source.tenantId;
+    const authenticationState = selectAwsAuthState(
+      {
+        manifest: backup.manifest,
+        supplement: supplement.state,
+        expected: await deriveAwsStateSourceExpectations(backup),
+        authState: plan.authState,
+        restoreId: plan.restoreId,
+        stateDb,
+      },
+      dependencies
+    );
+    cleanup.push(authenticationState.close);
     const restored = await coordinateAwsRestore({
       stateDb,
       restoreId: plan.restoreId,
@@ -127,9 +159,14 @@ async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlT
           family: 'core',
           tenantId,
           ...plan.core,
+          ...('mode' in supplement.sourceLoginUi
+            ? {}
+            : { supplementalLoginClientId: rowText(supplement.sourceLoginUi.client, 'client_id') }),
           supplementalRows: {
-            'core.oauth_clients': [supplement.sourceLoginUi.client],
-            'core.web_origin_registry': supplement.sourceLoginUi.origins,
+            'core.oauth_clients':
+              'mode' in supplement.sourceLoginUi ? [] : [supplement.sourceLoginUi.client],
+            'core.web_origin_registry':
+              'mode' in supplement.sourceLoginUi ? [] : supplement.sourceLoginUi.origins,
           },
         });
         const pii = await restoreVerifiedPostgresFamily({
@@ -138,22 +175,8 @@ async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlT
           tenantId,
           ...plan.pii,
         });
-        const stateInput: Parameters<typeof restoreVerifiedAwsState>[0] = {
-          manifest: backup.manifest,
-          supplement: supplement.state,
-          expected: await deriveAwsStateSourceExpectations(backup),
-          connection: {
-            withDedicatedConnection: async (run) => {
-              const client = await stateDb.connect();
-              try {
-                return await run(client);
-              } finally {
-                client.release();
-              }
-            },
-          },
-        };
-        const state = await restoreVerifiedAwsState(stateInput);
+        await authenticationState.restore();
+        const state = authenticationState.receipt;
         const assertCommittedTargets = async () => {
           const [observedCore, observedPii] = await Promise.all([
             readPostgresFamilyStagingReceipt(plan.core),
@@ -164,6 +187,7 @@ async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlT
             restoreEvidenceDigest(observedPii) !== restoreEvidenceDigest(pii)
           )
             invalid();
+          await authenticationState.bound.assertReady();
         };
         return {
           committed: {
@@ -180,6 +204,8 @@ async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlT
               piiBindingRefs: plan.pii.bindingRefs,
               awsLookupReadKeys: plan.awsLookupReadKeys,
               awsFlowRuntimeHmacSecret: plan.awsFlowRuntimeHmacSecret,
+              ...awsRuntimeUiConfigurationEvidence(plan.destinationUi),
+              ...awsAuthStateConfigurationEvidence(plan.authState, plan.restoreId),
             }),
           },
           assertCommittedTargets,
@@ -187,7 +213,7 @@ async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlT
             await Promise.all([
               verifyPostgresFamilyStagingRows(plan.core),
               verifyPostgresFamilyStagingRows(plan.pii),
-              assertVerifiedAwsStateRestored({ ...stateInput, receipt: state }),
+              authenticationState.assertStaging(),
             ]);
             // Closing rechecks the pinned input files. Do this before publication so a
             // replaced artifact cannot leave an active import behind an unsuccessful return.
@@ -202,6 +228,7 @@ async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlT
                 accountCoreByBindingRef: bindings.core,
                 accountPiiByBindingRef: bindings.pii,
                 stateDb,
+                authenticationState: authenticationState.bound,
                 committed: { core, pii, state },
               },
               environmentName: plan.environmentName,
@@ -209,13 +236,14 @@ async function restoreOfflineAwsSamlTenantInternal(input: RestoreOfflineAwsSamlT
               allocationScope: plan.allocationScope,
               auditPorts: createPostgresAuditRuntimePorts(stateDb, [tenantId]),
               awsFlowRuntimeHmacSecret: plan.awsFlowRuntimeHmacSecret,
+              ...awsRuntimeUiConfigurationEvidence(plan.destinationUi),
               awsLookupReadKeys: plan.awsLookupReadKeys,
               assertSnapshotReady,
             }),
         };
       },
     });
-    return { ...restored, close };
+    return { ...restored, authState: authenticationState.evidence, close };
   } catch {
     await close();
     throw new Error('aws_offline_restore_failed');

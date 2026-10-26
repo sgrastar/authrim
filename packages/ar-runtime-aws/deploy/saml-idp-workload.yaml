@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Authrim SAML IdP disaster-recovery workload for one existing issuer host —
+  Authrim SAML IdP disaster-recovery workload for one existing issuer host -
   deploys only private Lambda and regional HTTP ingress; databases, secrets,
   certificate, DNS, and restored activation evidence are provisioned separately.
 
@@ -15,6 +15,16 @@ Metadata:
       - Do not change authoritative DNS until restore readiness and external SP checks pass.
 
 Parameters:
+  DynamoDbGatewayPrefixListId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^pl-[0-9a-f]+$'
+    Description: Foundation DynamoDB gateway prefix list; required exactly when AuthStateTableArn is set.
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'
+    Description: Exact selected foundation auth-state table ARN; empty preserves PostgreSQL state.
   IssuerHost:
     Type: String
     Description: Existing public issuer hostname, without scheme, port, path, or trailing dot.
@@ -145,12 +155,45 @@ Parameters:
     Description: Optional existing SNS topic ARN for Lambda error and throttle alarms.
     AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):sns:[a-z0-9-]+:[0-9]{12}:.+$'
 
+Rules:
+  RequireAuthStateEndpoint:
+    RuleCondition: !Not [!Equals [!Ref AuthStateTableArn, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref DynamoDbGatewayPrefixListId, '']]
+        AssertDescription: DynamoDB state requires the selected foundation endpoint prefix list.
+  RejectUnusedAuthStateEndpoint:
+    RuleCondition: !Equals [!Ref AuthStateTableArn, '']
+    Assertions:
+      - Assert: !Equals [!Ref DynamoDbGatewayPrefixListId, '']
+        AssertDescription: PostgreSQL state must not include a DynamoDB prefix list.
+
 Conditions:
+  HasAuthStateTable:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AuthStateTableArn
+          - ''
   HasRuntimeSecretKmsKey: !Not [!Equals [!Ref RuntimeSecretKmsKeyArn, '']]
   HasSnapshotKmsKey: !Not [!Equals [!Ref SnapshotKmsKeyArn, '']]
   HasAlarmTopic: !Not [!Equals [!Ref AlarmTopicArn, '']]
 
 Resources:
+  AuthStateRuntimeEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Condition: HasAuthStateTable
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Adds private DynamoDB connectivity only when the selected runtime uses it.
+        must:
+          - Limit egress to TCP 443 and the verified regional DynamoDB prefix list.
+    Properties:
+      GroupId: !Ref RuntimeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: !Ref DynamoDbGatewayPrefixListId
+      Description: Authentication state via private DynamoDB gateway
+
   RuntimeSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Metadata:
@@ -244,6 +287,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Dedicated serving role grants only selected versioned snapshot objects, secret, logs, and Lambda VPC ENI operations.
         must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
           - No database admin, deployment artifact read, bucket listing, or wildcard Secrets Manager access.
           - EC2 network permissions are for Lambda service setup; function code is explicitly denied below.
           - Keep the bootstrap-managed permissions boundary and the dedicated authrim-dr path.
@@ -263,6 +307,21 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              - Fn::If:
+                  - HasAuthStateTable
+                  - Sid: SelectedAuthState
+                    Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:UpdateItem
+                      - dynamodb:ConditionCheckItem
+                      - dynamodb:Query
+                      - dynamodb:Scan
+                      - dynamodb:DescribeTable
+                    Resource:
+                      Ref: AuthStateTableArn
+                  - Ref: AWS::NoValue
               - Sid: WriteOnlyOwnFunctionLogs
                 Effect: Allow
                 Action:

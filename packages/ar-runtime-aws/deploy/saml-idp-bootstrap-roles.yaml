@@ -12,12 +12,16 @@ Metadata:
       - Requires CAPABILITY_NAMED_IAM.
 
 Parameters:
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'
+    Description: Exact auth-state table ARN; empty keeps PostgreSQL.
   OperatorPrincipalArn:
     Type: String
     Default: ''
     Description: >-
-      Exact same-account human or federated role ARN permitted to assume the operator role.
-      Empty creates a dormant role with no Allow trust statement.
+      Same-account human/federated role ARN; empty creates dormant trust.
     AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):iam::[0-9]{12}:(user|role)/[A-Za-z0-9+=,.@_/-]+$'
   OperatorPrincipalMode:
     Type: String
@@ -26,8 +30,7 @@ Parameters:
       - iam-user
       - federated-role
     Description: >-
-      IAM users must present MFA when assuming OperatorRole. Federated roles use
-      MFA enforced by their identity provider instead of aws:MultiFactorAuthPresent.
+      IAM users require MFA; federated roles require identity-provider MFA.
   FoundationStackName:
     Type: String
     Default: authrim-dr-foundation
@@ -44,52 +47,52 @@ Parameters:
     Type: String
     Default: ''
     AllowedPattern: '^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
-    Description: Exact foundation bucket; empty denies serving S3 reads.
+    Description: Exact bucket; empty denies serving S3 reads.
   AssetObjectPrefix:
     Type: String
     Default: ''
     AllowedPattern: "^$|^[A-Za-z0-9!_.'()-]+(/[A-Za-z0-9!_.'()-]+)*/$"
-    Description: Workload ZIP, manifest and backup prefix; empty denies serving S3 reads.
+    Description: ZIP/manifest/backup prefix; empty denies serving S3 reads.
   RuntimeSecretArn:
     Type: String
     Default: ''
     AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$'
-    Description: Exact existing runtime secret ARN; empty keeps secret reads denied.
+    Description: Exact runtime secret; empty denies reads.
   FoundationVpcId:
     Type: String
     Default: ''
     AllowedPattern: '^$|^vpc-[0-9a-f]+$'
-    Description: Exact VpcId foundation output; empty denies workload security-group creation.
+    Description: Foundation VpcId; empty denies workload group creation.
   DatabaseSecurityGroupId:
     Type: String
     Default: ''
     AllowedPattern: '^$|^sg-[0-9a-f]+$'
-    Description: Exact DatabaseSecurityGroupId foundation output; empty denies workload ingress edits.
+    Description: Foundation DatabaseSecurityGroupId; empty denies ingress edits.
   SecretsEndpointSecurityGroupId:
     Type: String
     Default: ''
     AllowedPattern: '^$|^sg-[0-9a-f]+$'
-    Description: Exact SecretsEndpointSecurityGroupId foundation output; empty denies workload ingress edits.
+    Description: Foundation SecretsEndpointSecurityGroupId; empty denies ingress edits.
   HttpApiId:
     Type: String
     Default: ''
     AllowedPattern: '^$|^[a-z0-9]+$'
-    Description: Exact empty HttpApiId foundation output; empty denies workload API child writes.
+    Description: Foundation HttpApiId; empty denies API child writes.
   IssuerHost:
     Type: String
     Default: ''
     AllowedPattern: '^$|^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*[a-z0-9]$'
-    Description: Exact pre-existing issuer hostname for the workload domain; empty denies domain writes.
+    Description: Existing issuer host; empty denies domain writes.
   RuntimeSecretKmsKeyArn:
     Type: String
     Default: ''
     AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+$'
-    Description: Optional exact customer managed key for the runtime secret.
+    Description: Optional exact runtime-secret KMS key.
   SnapshotKmsKeyArn:
     Type: String
     Default: ''
     AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+$'
-    Description: Optional exact customer managed key for versioned snapshot objects.
+    Description: Optional exact snapshot KMS key.
 
   DbBootstrapStackName:
     Type: String
@@ -133,6 +136,7 @@ Rules:
         AssertDescription: Input and master secrets must differ.
 
 Conditions:
+  HasAuthStateTable: !Not [!Equals [!Ref AuthStateTableArn, '']]
   HasOperatorPrincipal: !Not [!Equals [!Ref OperatorPrincipalArn, '']]
   IsIamUserOperator: !Equals [!Ref OperatorPrincipalMode, iam-user]
   HasIamUserOperator: !And [!Condition HasOperatorPrincipal, !Condition IsIamUserOperator]
@@ -165,35 +169,45 @@ Conditions:
     - !Not [!Equals [!Ref DbBootstrapSecurityGroupId, '']]
 
 Resources:
+  # Compact IAM action arrays keep this reviewed template within the 51,200-byte inline limit.
   RuntimePermissionsBoundary:
     Type: AWS::IAM::ManagedPolicy
     Metadata:
       com.aws.cloudformation.Context:
-        why: Caps the serving role even if a future workload change adds an inline allow.
+        why: Caps future serving-role grants.
         must:
-          - Snapshot and secret reads are absent until exact phase-two bindings are supplied.
-          - Keep the policy on the workload RuntimeRole and never grant deployment or IAM actions.
+          - Optional selected-table data access only; no DynamoDB administration.
+          - No snapshot/secret reads before exact phase-two binding.
+          - Boundary required on RuntimeRole; no deployment or IAM grants.
     Properties:
       Path: /authrim-dr/boundary/
       ManagedPolicyName: !Sub '${AWS::StackName}-runtime-boundary'
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          - Fn::If:
+              - HasAuthStateTable
+              - Sid: SelectedAuthState
+                Effect: Allow
+                # prettier-ignore
+                Action:
+                  [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem,
+                   dynamodb:ConditionCheckItem, dynamodb:Query, dynamodb:Scan,
+                   dynamodb:DescribeTable]
+                Resource:
+                  Ref: AuthStateTableArn
+              - Ref: AWS::NoValue
           - Sid: FunctionLogsOnly
             Effect: Allow
-            Action:
-              - logs:CreateLogStream
-              - logs:PutLogEvents
+            Action: [logs:CreateLogStream, logs:PutLogEvents]
             Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${WorkloadStackName}/lambda:*'
           - Sid: LambdaVpcSetupOnly
             Effect: Allow
+            # prettier-ignore
             Action:
-              - ec2:CreateNetworkInterface
-              - ec2:DescribeNetworkInterfaces
-              - ec2:DescribeSubnets
-              - ec2:DeleteNetworkInterface
-              - ec2:AssignPrivateIpAddresses
-              - ec2:UnassignPrivateIpAddresses
+              [ec2:CreateNetworkInterface, ec2:DescribeNetworkInterfaces, ec2:DescribeSubnets,
+               ec2:DeleteNetworkInterface, ec2:AssignPrivateIpAddresses,
+               ec2:UnassignPrivateIpAddresses]
             Resource: '*'
           - !If
             - HasSnapshotBinding
@@ -232,13 +246,11 @@ Resources:
             - !Ref 'AWS::NoValue'
           - Sid: DenyFunctionCodeVpcManagement
             Effect: Deny
+            # prettier-ignore
             Action:
-              - ec2:CreateNetworkInterface
-              - ec2:DescribeNetworkInterfaces
-              - ec2:DescribeSubnets
-              - ec2:DeleteNetworkInterface
-              - ec2:AssignPrivateIpAddresses
-              - ec2:UnassignPrivateIpAddresses
+              [ec2:CreateNetworkInterface, ec2:DescribeNetworkInterfaces, ec2:DescribeSubnets,
+               ec2:DeleteNetworkInterface, ec2:AssignPrivateIpAddresses,
+               ec2:UnassignPrivateIpAddresses]
             Resource: '*'
             Condition:
               ArnLike:
@@ -248,11 +260,12 @@ Resources:
     Type: AWS::IAM::Role
     Metadata:
       com.aws.cloudformation.Context:
-        why: Builds the private network, retained asset bucket and RDS instance, and one empty hidden HTTP API for the fixed foundation stack.
+        why: Builds the fixed private foundation with retained data and an empty hidden API.
         must:
-          - Never manage Authrim IAM roles, policies, Lambda functions, API Gateway routes or domains, or secrets directly.
-          - Create only the tagged, execute-api-disabled foundation API; leave its properties immutable afterward.
-          - Use only for the exact FoundationStackName through the operator change-set policy.
+          - DynamoDB lifecycle only on the named foundation table; no item access.
+          - No Authrim IAM, Lambda, API routes/domains or direct secret management.
+          - Create only the tagged, endpoint-disabled foundation API; then immutable.
+          - Operator change sets restricted to FoundationStackName.
     Properties:
       Path: /authrim-dr/cfn/
       RoleName: !Sub '${AWS::StackName}-foundation-cfn'
@@ -270,12 +283,10 @@ Resources:
             Statement:
               - Sid: CreateTaggedFoundationNetwork
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - ec2:CreateVpc
-                  - ec2:CreateSubnet
-                  - ec2:CreateRouteTable
-                  - ec2:CreateVpcEndpoint
-                  - ec2:CreateSecurityGroup
+                  [ec2:CreateVpc, ec2:CreateSubnet, ec2:CreateRouteTable, ec2:CreateVpcEndpoint,
+                   ec2:CreateSecurityGroup]
                 Resource: '*'
                 Condition:
                   StringEquals:
@@ -283,11 +294,10 @@ Resources:
                     aws:RequestTag/authrim:stack: !Ref FoundationStackName
               - Sid: CreateOnlyWithinTaggedFoundationNetwork
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - ec2:CreateSubnet
-                  - ec2:CreateRouteTable
-                  - ec2:CreateSecurityGroup
-                  - ec2:CreateVpcEndpoint
+                  [ec2:CreateSubnet, ec2:CreateRouteTable, ec2:CreateSecurityGroup,
+                   ec2:CreateVpcEndpoint]
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*'
                   - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*'
@@ -299,23 +309,14 @@ Resources:
                     aws:ResourceTag/authrim:stack: !Ref FoundationStackName
               - Sid: ManageOnlyTaggedFoundationNetwork
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - ec2:DeleteVpc
-                  - ec2:ModifyVpcAttribute
-                  - ec2:DeleteSubnet
-                  - ec2:ModifySubnetAttribute
-                  - ec2:DeleteRouteTable
-                  - ec2:AssociateRouteTable
-                  - ec2:DisassociateRouteTable
-                  - ec2:CreateRoute
-                  - ec2:DeleteRoute
-                  - ec2:DeleteVpcEndpoints
-                  - ec2:ModifyVpcEndpoint
-                  - ec2:DeleteSecurityGroup
-                  - ec2:AuthorizeSecurityGroupIngress
-                  - ec2:RevokeSecurityGroupIngress
-                  - ec2:AuthorizeSecurityGroupEgress
-                  - ec2:RevokeSecurityGroupEgress
+                  [ec2:DeleteVpc, ec2:ModifyVpcAttribute, ec2:DeleteSubnet,
+                   ec2:ModifySubnetAttribute, ec2:DeleteRouteTable, ec2:AssociateRouteTable,
+                   ec2:DisassociateRouteTable, ec2:CreateRoute, ec2:DeleteRoute,
+                   ec2:DeleteVpcEndpoints, ec2:ModifyVpcEndpoint, ec2:DeleteSecurityGroup,
+                   ec2:AuthorizeSecurityGroupIngress, ec2:RevokeSecurityGroupIngress,
+                   ec2:AuthorizeSecurityGroupEgress, ec2:RevokeSecurityGroupEgress]
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*'
                   - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*'
@@ -346,9 +347,7 @@ Resources:
                       - CreateSecurityGroup
               - Sid: MaintainOnlyOwnNetworkTags
                 Effect: Allow
-                Action:
-                  - ec2:CreateTags
-                  - ec2:DeleteTags
+                Action: [ec2:CreateTags, ec2:DeleteTags]
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*'
                   - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*'
@@ -376,21 +375,15 @@ Resources:
                     aws:RequestTag/authrim:stack: 'false'
               - Sid: InspectRegionalNetwork
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - ec2:DescribeVpcs
-                  - ec2:DescribeSubnets
-                  - ec2:DescribeRouteTables
-                  - ec2:DescribeVpcEndpoints
-                  - ec2:DescribeSecurityGroups
-                  - ec2:DescribeAvailabilityZones
-                  - ec2:DescribePrefixLists
-                  - ec2:DescribeManagedPrefixLists
-                  - ec2:DescribeVpcAttribute
-                  - ec2:DescribeVpcEncryptionControls
-                  - ec2:DescribeNetworkAcls
-                  - ec2:DescribeSecurityGroupRules
-                  - ec2:DescribeAccountAttributes
-                  - ec2:DescribeInternetGateways
+                  [ec2:DescribeVpcs, ec2:DescribeSubnets, ec2:DescribeRouteTables,
+                   ec2:DescribeVpcEndpoints, ec2:DescribeSecurityGroups,
+                   ec2:DescribeAvailabilityZones, ec2:DescribePrefixLists,
+                   ec2:DescribeManagedPrefixLists, ec2:DescribeVpcAttribute,
+                   ec2:DescribeVpcEncryptionControls, ec2:DescribeNetworkAcls,
+                   ec2:DescribeSecurityGroupRules, ec2:DescribeAccountAttributes,
+                   ec2:DescribeInternetGateways]
                 Resource: '*'
                 Condition:
                   StringEquals:
@@ -421,45 +414,36 @@ Resources:
                     aws:ResourceTag/authrim:stack: !Ref FoundationStackName
               - Sid: ManageExactFoundationBucket
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - s3:CreateBucket
-                  - s3:DeleteBucket
-                  - s3:GetBucketLocation
-                  - s3:GetBucketPolicy
-                  - s3:PutBucketPolicy
-                  - s3:DeleteBucketPolicy
-                  - s3:GetBucketVersioning
-                  - s3:PutBucketVersioning
-                  - s3:GetEncryptionConfiguration
-                  - s3:PutEncryptionConfiguration
-                  - s3:GetBucketPublicAccessBlock
-                  - s3:PutBucketPublicAccessBlock
-                  - s3:GetBucketOwnershipControls
-                  - s3:PutBucketOwnershipControls
-                  - s3:GetBucketTagging
-                  - s3:PutBucketTagging
-                  - s3:ListBucket
-                  - s3:ListTagsForResource
+                  [s3:CreateBucket, s3:DeleteBucket, s3:GetBucketLocation, s3:GetBucketPolicy,
+                   s3:PutBucketPolicy, s3:DeleteBucketPolicy, s3:GetBucketVersioning,
+                   s3:PutBucketVersioning, s3:GetEncryptionConfiguration,
+                   s3:PutEncryptionConfiguration, s3:GetBucketPublicAccessBlock,
+                   s3:PutBucketPublicAccessBlock, s3:GetBucketOwnershipControls,
+                   s3:PutBucketOwnershipControls, s3:GetBucketTagging, s3:PutBucketTagging,
+                   s3:ListBucket, s3:ListTagsForResource]
                 Resource: !Sub 'arn:${AWS::Partition}:s3:::${FoundationStackName}-${AWS::AccountId}-${AWS::Region}-assets'
+              - Sid: ManageNamedFoundationAuthState
+                Effect: Allow
+                # prettier-ignore
+                Action:
+                  [dynamodb:CreateTable, dynamodb:DeleteTable, dynamodb:UpdateTable,
+                   dynamodb:DescribeTable, dynamodb:DescribeContinuousBackups,
+                   dynamodb:UpdateContinuousBackups, dynamodb:DescribeTimeToLive,
+                   dynamodb:UpdateTimeToLive, dynamodb:ListTagsOfResource, dynamodb:TagResource,
+                   dynamodb:UntagResource]
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${FoundationStackName}-auth-state'
               - Sid: ManageNamedFoundationDatabase
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - rds:CreateDBInstance
-                  - rds:DeleteDBInstance
-                  - rds:ModifyDBInstance
-                  - rds:DescribeDBInstances
-                  - rds:CreateDBSubnetGroup
-                  - rds:DeleteDBSubnetGroup
-                  - rds:ModifyDBSubnetGroup
-                  - rds:DescribeDBSubnetGroups
-                  - rds:CreateDBParameterGroup
-                  - rds:DeleteDBParameterGroup
-                  - rds:ModifyDBParameterGroup
-                  - rds:DescribeDBParameterGroups
-                  - rds:DescribeDBParameters
-                  - rds:AddTagsToResource
-                  - rds:RemoveTagsFromResource
-                  - rds:ListTagsForResource
+                  [rds:CreateDBInstance, rds:DeleteDBInstance, rds:ModifyDBInstance,
+                   rds:DescribeDBInstances, rds:CreateDBSubnetGroup, rds:DeleteDBSubnetGroup,
+                   rds:ModifyDBSubnetGroup, rds:DescribeDBSubnetGroups, rds:CreateDBParameterGroup,
+                   rds:DeleteDBParameterGroup, rds:ModifyDBParameterGroup,
+                   rds:DescribeDBParameterGroups, rds:DescribeDBParameters, rds:AddTagsToResource,
+                   rds:RemoveTagsFromResource, rds:ListTagsForResource]
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:${FoundationStackName}-postgres'
                   - !Sub 'arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:subgrp:${FoundationStackName}-db-subnets'
@@ -473,9 +457,7 @@ Resources:
                 Resource: '*'
               - Sid: CreateRdsManagedMasterSecretOnly
                 Effect: Allow
-                Action:
-                  - secretsmanager:CreateSecret
-                  - secretsmanager:TagResource
+                Action: [secretsmanager:CreateSecret, secretsmanager:TagResource]
                 Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*'
               - Sid: DescribeRdsManagedSecretKey
                 Effect: Allow
@@ -507,11 +489,11 @@ Resources:
     Type: AWS::IAM::Role
     Metadata:
       com.aws.cloudformation.Context:
-        why: Builds one Lambda/API workload and its exact boundary-capped serving role.
+        why: Builds one Lambda/API and its boundary-capped role.
         must:
-          - IAM writes target only the workload RuntimeRole name and path.
-          - CreateRole requires RuntimePermissionsBoundary; no boundary removal or bootstrap policy changes.
-          - Use only for the exact WorkloadStackName through the operator change-set policy.
+          - IAM writes only to the exact workload RuntimeRole.
+          - Require RuntimePermissionsBoundary; no removal or bootstrap policy edits.
+          - Operator change sets restricted to WorkloadStackName.
     Properties:
       Path: /authrim-dr/cfn/
       RoleName: !Sub '${AWS::StackName}-workload-cfn'
@@ -536,16 +518,11 @@ Resources:
                     iam:PermissionsBoundary: !Ref RuntimePermissionsBoundary
               - Sid: ManageOnlyServingRoleInlinePolicy
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - iam:DeleteRole
-                  - iam:GetRole
-                  - iam:PutRolePolicy
-                  - iam:DeleteRolePolicy
-                  - iam:GetRolePolicy
-                  - iam:ListRolePolicies
-                  - iam:ListAttachedRolePolicies
-                  - iam:TagRole
-                  - iam:UntagRole
+                  [iam:DeleteRole, iam:GetRole, iam:PutRolePolicy, iam:DeleteRolePolicy,
+                   iam:GetRolePolicy, iam:ListRolePolicies, iam:ListAttachedRolePolicies,
+                   iam:TagRole, iam:UntagRole]
                 Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/workload/${WorkloadStackName}-runtime'
               - Sid: PassOnlyServingRoleToLambda
                 Effect: Allow
@@ -556,36 +533,24 @@ Resources:
                     iam:PassedToService: lambda.amazonaws.com
               - Sid: ManageStackLambda
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - lambda:CreateFunction
-                  - lambda:DeleteFunction
-                  - lambda:GetFunction
-                  - lambda:GetFunctionConfiguration
-                  - lambda:GetFunctionCodeSigningConfig
-                  - lambda:GetFunctionRecursionConfig
-                  - lambda:GetRuntimeManagementConfig
-                  - lambda:GetFunctionScalingConfig
-                  - lambda:GetPolicy
-                  - lambda:UpdateFunctionCode
-                  - lambda:UpdateFunctionConfiguration
-                  - lambda:PutFunctionConcurrency
-                  - lambda:DeleteFunctionConcurrency
-                  - lambda:GetFunctionConcurrency
-                  - lambda:AddPermission
-                  - lambda:RemovePermission
-                  - lambda:TagResource
-                  - lambda:UntagResource
+                  [lambda:CreateFunction, lambda:DeleteFunction, lambda:GetFunction,
+                   lambda:GetFunctionConfiguration, lambda:GetFunctionCodeSigningConfig,
+                   lambda:GetFunctionRecursionConfig, lambda:GetRuntimeManagementConfig,
+                   lambda:GetFunctionScalingConfig, lambda:GetPolicy, lambda:UpdateFunctionCode,
+                   lambda:UpdateFunctionConfiguration, lambda:PutFunctionConcurrency,
+                   lambda:DeleteFunctionConcurrency, lambda:GetFunctionConcurrency,
+                   lambda:AddPermission, lambda:RemovePermission, lambda:TagResource,
+                   lambda:UntagResource]
                 Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${WorkloadStackName}-*'
               - Sid: ManageOnlyStackLogs
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - logs:CreateLogGroup
-                  - logs:DeleteLogGroup
-                  - logs:PutRetentionPolicy
-                  - logs:DescribeLogStreams
-                  - logs:TagResource
-                  - logs:UntagResource
-                  - logs:ListTagsForResource
+                  [logs:CreateLogGroup, logs:DeleteLogGroup, logs:PutRetentionPolicy,
+                   logs:DescribeLogStreams, logs:TagResource, logs:UntagResource,
+                   logs:ListTagsForResource]
                 Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${WorkloadStackName}/*'
               - Sid: DescribeLogGroups
                 Effect: Allow
@@ -630,9 +595,7 @@ Resources:
                     ec2:CreateAction: CreateSecurityGroup
               - Sid: MaintainOnlyOwnWorkloadGroupTags
                 Effect: Allow
-                Action:
-                  - ec2:CreateTags
-                  - ec2:DeleteTags
+                Action: [ec2:CreateTags, ec2:DeleteTags]
                 Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*'
                 Condition:
                   StringEquals:
@@ -657,21 +620,17 @@ Resources:
                 - HasFoundationIngressBinding
                 - Sid: EditOnlyBoundFoundationIngress
                   Effect: Allow
-                  Action:
-                    - ec2:AuthorizeSecurityGroupIngress
-                    - ec2:RevokeSecurityGroupIngress
+                  Action: [ec2:AuthorizeSecurityGroupIngress, ec2:RevokeSecurityGroupIngress]
                   Resource:
                     - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${DatabaseSecurityGroupId}'
                     - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${SecretsEndpointSecurityGroupId}'
                 - !Ref 'AWS::NoValue'
               - Sid: InspectWorkloadNetwork
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - ec2:DescribeSecurityGroups
-                  - ec2:DescribeVpcs
-                  - ec2:DescribeSubnets
-                  - ec2:DescribeSecurityGroupRules
-                  - ec2:DescribeNetworkInterfaces
+                  [ec2:DescribeSecurityGroups, ec2:DescribeVpcs, ec2:DescribeSubnets,
+                   ec2:DescribeSecurityGroupRules, ec2:DescribeNetworkInterfaces]
                 Resource: '*'
                 Condition:
                   StringEquals:
@@ -687,12 +646,10 @@ Resources:
                 - HasHttpApiId
                 - Sid: ManageOnlyBoundHttpApiChildren
                   Effect: Allow
+                  # prettier-ignore
                   Action:
-                    - apigateway:GET
-                    - apigateway:POST
-                    - apigateway:PATCH
-                    - apigateway:PUT
-                    - apigateway:DELETE
+                    [apigateway:GET, apigateway:POST, apigateway:PATCH, apigateway:PUT,
+                     apigateway:DELETE]
                   Resource:
                     - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${HttpApiId}/*'
                 - !Ref 'AWS::NoValue'
@@ -710,27 +667,21 @@ Resources:
                 - HasIssuerHost
                 - Sid: ManageOnlyExactIssuerDomain
                   Effect: Allow
+                  # prettier-ignore
                   Action:
-                    - apigateway:GET
-                    - apigateway:POST
-                    - apigateway:PATCH
-                    - apigateway:PUT
-                    - apigateway:DELETE
-                    - apigateway:AddCertificateToDomain
-                    - apigateway:RemoveCertificateFromDomain
+                    [apigateway:GET, apigateway:POST, apigateway:PATCH, apigateway:PUT,
+                     apigateway:DELETE, apigateway:AddCertificateToDomain,
+                     apigateway:RemoveCertificateFromDomain]
                   Resource:
                     - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${IssuerHost}'
                     - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${IssuerHost}/*'
                 - !Ref 'AWS::NoValue'
               - Sid: ManageStackAlarms
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - cloudwatch:PutMetricAlarm
-                  - cloudwatch:DeleteAlarms
-                  - cloudwatch:DescribeAlarms
-                  - cloudwatch:TagResource
-                  - cloudwatch:UntagResource
-                  - cloudwatch:ListTagsForResource
+                  [cloudwatch:PutMetricAlarm, cloudwatch:DeleteAlarms, cloudwatch:DescribeAlarms,
+                   cloudwatch:TagResource, cloudwatch:UntagResource, cloudwatch:ListTagsForResource]
                 Resource: !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${WorkloadStackName}-*'
               - Sid: InspectExistingCertificate
                 Effect: Allow
@@ -758,6 +709,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Caps maintenance permissions.
         must:
+          - Optional selected-table data access only; no DynamoDB administration.
           - Exact inputs read; runtime read/write.
           - No IAM, code-driven ENIs, or unversioned reads.
     Properties:
@@ -766,17 +718,27 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          - Fn::If:
+              - HasAuthStateTable
+              - Sid: SelectedAuthState
+                Effect: Allow
+                # prettier-ignore
+                Action:
+                  [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem,
+                   dynamodb:ConditionCheckItem, dynamodb:Query, dynamodb:Scan,
+                   dynamodb:DescribeTable]
+                Resource:
+                  Ref: AuthStateTableArn
+              - Ref: AWS::NoValue
           - Effect: Allow
             Action: [logs:CreateLogStream, logs:PutLogEvents]
             Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${DbBootstrapStackName}/job:*'
           - Effect: Allow
+            # prettier-ignore
             Action:
-              - ec2:CreateNetworkInterface
-              - ec2:DescribeNetworkInterfaces
-              - ec2:DescribeSubnets
-              - ec2:DeleteNetworkInterface
-              - ec2:AssignPrivateIpAddresses
-              - ec2:UnassignPrivateIpAddresses
+              [ec2:CreateNetworkInterface, ec2:DescribeNetworkInterfaces, ec2:DescribeSubnets,
+               ec2:DeleteNetworkInterface, ec2:AssignPrivateIpAddresses,
+               ec2:UnassignPrivateIpAddresses]
             Resource: '*'
           - Effect: Allow
             Action: secretsmanager:GetSecretValue
@@ -791,13 +753,11 @@ Resources:
             Action: s3:GetObjectVersion
             Resource: !Sub 'arn:${AWS::Partition}:s3:::${DbBootstrapAssetsBucketName}/${DbBootstrapAssetPrefix}*'
           - Effect: Deny
+            # prettier-ignore
             Action:
-              - ec2:CreateNetworkInterface
-              - ec2:DescribeNetworkInterfaces
-              - ec2:DescribeSubnets
-              - ec2:DeleteNetworkInterface
-              - ec2:AssignPrivateIpAddresses
-              - ec2:UnassignPrivateIpAddresses
+              [ec2:CreateNetworkInterface, ec2:DescribeNetworkInterfaces, ec2:DescribeSubnets,
+               ec2:DeleteNetworkInterface, ec2:AssignPrivateIpAddresses,
+               ec2:UnassignPrivateIpAddresses]
             Resource: '*'
             Condition:
               ArnEquals:
@@ -868,12 +828,10 @@ Resources:
                 Action: [lambda:DeleteFunction, lambda:GetFunction, lambda:GetFunctionConfiguration, lambda:GetFunctionCodeSigningConfig, lambda:GetFunctionRecursionConfig, lambda:GetRuntimeManagementConfig, lambda:GetFunctionScalingConfig, lambda:UpdateFunctionCode, lambda:PutFunctionConcurrency, lambda:DeleteFunctionConcurrency, lambda:GetFunctionConcurrency, lambda:TagResource, lambda:UntagResource, lambda:ListTags]
                 Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DbBootstrapStackName}-job'
               - Effect: Allow
+                # prettier-ignore
                 Action:
-                  - ec2:DescribeSecurityGroups
-                  - ec2:DescribeSubnets
-                  - ec2:DescribeVpcs
-                  - ec2:GetSecurityGroupsForVpc
-                  - ec2:DescribeNetworkInterfaces
+                  [ec2:DescribeSecurityGroups, ec2:DescribeSubnets, ec2:DescribeVpcs,
+                   ec2:GetSecurityGroupsForVpc, ec2:DescribeNetworkInterfaces]
                 Resource: '*'
                 Condition:
                   StringEquals: { 'aws:RequestedRegion': !Ref 'AWS::Region' }
@@ -894,13 +852,11 @@ Resources:
                 Condition:
                   StringEquals: { 'aws:RequestedRegion': !Ref 'AWS::Region' }
               - Effect: Allow
+                # prettier-ignore
                 Action:
-                  - secretsmanager:CreateSecret
-                  - secretsmanager:DescribeSecret
-                  - secretsmanager:GetSecretValue
-                  - secretsmanager:UpdateSecret
-                  - secretsmanager:TagResource
-                  - secretsmanager:UntagResource
+                  [secretsmanager:CreateSecret, secretsmanager:DescribeSecret,
+                   secretsmanager:GetSecretValue, secretsmanager:UpdateSecret,
+                   secretsmanager:TagResource, secretsmanager:UntagResource]
                 Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DbBootstrapStackName}-runtime-??????'
               - Effect: Allow
                 Action: s3:GetObjectVersion
@@ -910,11 +866,11 @@ Resources:
     Type: AWS::IAM::Role
     Metadata:
       com.aws.cloudformation.Context:
-        why: Controls changes to fixed foundation, workload and maintenance stacks.
+        why: Controls the fixed deployment stacks.
         must:
-          - Keep trust dormant until an exact same-account principal is selected.
-          - Never grant IAM policy editing, direct foundation or serving mutation, or bootstrap-stack updates.
-          - Permit preflight reads only for these stacks, deployment roles and the selected IAM user; policy simulation is advisory.
+          - Dormant trust until an exact same-account principal is bound.
+          - No IAM editing, direct foundation/serving mutation, or bootstrap-stack update.
+          - Preflight reads only these stacks/roles/user; simulation is advisory.
     Properties:
       Path: /authrim-dr/operator/
       RoleName: !Sub '${AWS::StackName}-operator'
@@ -963,16 +919,13 @@ Resources:
                     cloudformation:RoleArn: !GetAtt WorkloadCfnServiceRole.Arn
               - Sid: ExecuteAndInspectOnlyPinnedStacks
                 Effect: Allow
+                # prettier-ignore
                 Action:
-                  - cloudformation:ExecuteChangeSet
-                  - cloudformation:DeleteChangeSet
-                  - cloudformation:DescribeChangeSet
-                  - cloudformation:DescribeStacks
-                  - cloudformation:DescribeStackEvents
-                  - cloudformation:ListStackResources
-                  - cloudformation:GetTemplate
-                  - cloudformation:TagResource
-                  - cloudformation:UntagResource
+                  [cloudformation:ExecuteChangeSet, cloudformation:DeleteChangeSet,
+                   cloudformation:DescribeChangeSet, cloudformation:DescribeStacks,
+                   cloudformation:DescribeStackEvents, cloudformation:ListStackResources,
+                   cloudformation:GetTemplate, cloudformation:TagResource,
+                   cloudformation:UntagResource]
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${FoundationStackName}/*'
                   - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${WorkloadStackName}/*'
@@ -1033,16 +986,12 @@ Resources:
               ArnEquals:
                 cloudformation:RoleArn: !GetAtt DbBootstrapCfnServiceRole.Arn
           - Effect: Allow
+            # prettier-ignore
             Action:
-              - cloudformation:ExecuteChangeSet
-              - cloudformation:DeleteChangeSet
-              - cloudformation:DescribeChangeSet
-              - cloudformation:DescribeStacks
-              - cloudformation:DescribeStackEvents
-              - cloudformation:ListStackResources
-              - cloudformation:GetTemplate
-              - cloudformation:TagResource
-              - cloudformation:UntagResource
+              [cloudformation:ExecuteChangeSet, cloudformation:DeleteChangeSet,
+               cloudformation:DescribeChangeSet, cloudformation:DescribeStacks,
+               cloudformation:DescribeStackEvents, cloudformation:ListStackResources,
+               cloudformation:GetTemplate, cloudformation:TagResource, cloudformation:UntagResource]
             Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${DbBootstrapStackName}/*'
           - Effect: Allow
             Action: iam:PassRole
@@ -1078,7 +1027,7 @@ Outputs:
     Condition: HasDbBootstrapBinding
     Value: !Ref DbBootstrapPermissionsBoundary
   OperatorRoleArn:
-    Description: Dormant until OperatorPrincipalArn names an authorized same-account principal.
+    Description: Dormant until an authorized same-account principal is bound.
     Value: !GetAtt OperatorRole.Arn
   FoundationCfnServiceRoleArn:
     Description: Supply for change sets on FoundationStackName only.

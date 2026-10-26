@@ -49,6 +49,8 @@ export interface RestoreVerifiedPostgresFamilyInput {
   targetId: string;
   connectionString: string;
   /** Source system Login UI rows, pinned and reviewed separately by the coordinator. */
+  /** The one captured public Login UI client admitted by the separate supplement. */
+  supplementalLoginClientId?: string;
   supplementalRows?: Partial<
     Record<'core.oauth_clients' | 'core.web_origin_registry', readonly PortableSqliteRow[]>
   >;
@@ -235,6 +237,8 @@ export async function restoreVerifiedPostgresFamily(
   input: RestoreVerifiedPostgresFamilyInput
 ): Promise<PostgresFamilyRestoreReceipt> {
   const { backup, family, tenantId, targetId } = input;
+  const supplementalClientId = input.supplementalLoginClientId ?? 'login-ui';
+  if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(supplementalClientId)) invalid();
   if (
     !UUID.test(targetId) ||
     !tenantId ||
@@ -331,7 +335,8 @@ export async function restoreVerifiedPostgresFamily(
         if (supplement) {
           const row = JSON.parse(rowJson) as PortableSqliteRow;
           const clientId = row.client_id;
-          if (!clientId || clientId[0] !== 'text' || clientId[1] !== 'login-ui') invalid();
+          if (!clientId || clientId[0] !== 'text' || clientId[1] !== supplementalClientId)
+            invalid();
         }
         const rowBytes = utf8.encode(rowJson).byteLength;
         sourceBytes += rowBytes;

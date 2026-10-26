@@ -10,6 +10,10 @@ const access = parse(
   await readFile(new URL('../deploy/saml-browser-access.yaml', import.meta.url), 'utf8')
 );
 const resources = template.Resources;
+const issuerTemplateBody = await readFile(
+  new URL('../deploy/saml-idp-workload.yaml', import.meta.url),
+  'utf8'
+);
 const bootstrapBody = await readFile(
   new URL('../deploy/saml-idp-bootstrap-roles.yaml', import.meta.url),
   'utf8'
@@ -74,7 +78,15 @@ const routes = Object.entries(resources).filter(
   ([, resource]) => resource.Type === 'AWS::ApiGatewayV2::Route'
 );
 
-test('browser API exposes only the approved 24 explicit routes with valid path segments', () => {
+test('existing-issuer ingress forwards preflight to the same strict runtime route filter', () => {
+  // This stack already forwards all methods; tenant-specific CORS is owned by ar-auth.
+  assert.match(issuerTemplateBody, /RouteKey: \$default/u);
+  assert.match(issuerTemplateBody, /Target: !Join \['', \['integrations\/', !Ref LambdaIntegration\]\]/u);
+  assert.ok(!issuerTemplateBody.includes('CorsConfiguration:'));
+  assert.equal(resources.BrowserApi.Properties.CorsConfiguration, undefined);
+});
+
+test('browser API exposes only the approved routes and exact authentication preflight paths', () => {
   const expected = [
     'GET /health/ready',
     'GET /login',
@@ -87,6 +99,14 @@ test('browser API exposes only the approved 24 explicit routes with valid path s
     'POST /api/v1/auth/direct/session',
     'POST /api/v1/login/interactions/start',
     'POST /api/v1/login/interactions/{interactionId}/submit',
+    'OPTIONS /api/auth/health',
+    'OPTIONS /auth/login-challenge',
+    'OPTIONS /api/sessions/status',
+    'OPTIONS /api/v1/auth/direct/passkey/login/start',
+    'OPTIONS /api/v1/auth/direct/passkey/login/finish',
+    'OPTIONS /api/v1/auth/direct/session',
+    'OPTIONS /api/v1/login/interactions/start',
+    'OPTIONS /api/v1/login/interactions/{interactionId}/submit',
     'GET /saml/idp/metadata',
     'GET /saml/idp/sso',
     'POST /saml/idp/sso',
@@ -103,7 +123,7 @@ test('browser API exposes only the approved 24 explicit routes with valid path s
   ];
   for (const [name, route] of routes) {
     const key = route.Properties.RouteKey;
-    assert.match(key, /^(GET|POST) \/[^\s]+$/u, name);
+    assert.match(key, /^(GET|POST|OPTIONS) \/[^\s]+$/u, name);
     const path = key.slice(key.indexOf(' ') + 1);
     assert.ok(path.slice(1).split('/').every(Boolean), `${name} has an empty API path segment`);
     assert.ok(!path.includes('+') && !path.includes('*'), `${name} must not be a catch-all`);

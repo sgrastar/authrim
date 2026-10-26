@@ -1,3 +1,4 @@
+import type { AwsSelectedAuthStateEvidence } from '../import/selected-auth-state';
 import { createHash, X509Certificate } from 'node:crypto';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { sourceSigningBundle } from '../rehearsal/synthetic-fixture';
@@ -60,6 +61,45 @@ describe('private browser SP preparation', () => {
     source.currentSecret.mockResolvedValue(written);
     await prepareBrowserSp(source);
     expect(source.saveSecret.mock.calls[1][0]).toBe(written);
+  });
+  it('pins DynamoDB auth evidence without copying a PostgreSQL credential into the SP secret', async () => {
+    const source = input();
+    const config = {
+      backend: 'dynamodb',
+      region: 'ap-northeast-1',
+      tableArn: 'arn:aws:dynamodb:ap-northeast-1:123456789012:table/test-auth-state',
+      namespace: '00000000-0000-4000-8000-000000000000',
+    } as const;
+    const authState: AwsSelectedAuthStateEvidence = {
+      config,
+      receipt: {
+        formatVersion: 1,
+        authState: config,
+        tenantId: 'tenant-a',
+        source: { tenantId: 'tenant-a', issuer, productVersion: '0.4.2' },
+        bundleId: 'a'.repeat(32),
+        snapshotId: 'snapshot',
+        inventoryDigestSha256: 'b'.repeat(64),
+        supplementSha256: 'c'.repeat(64),
+        accountAuthStates: 1,
+        passkeyCounters: 1,
+        persistentNameIds: 0,
+      },
+    };
+    await prepareBrowserSp({ ...source, authState });
+    const written = source.saveSecret.mock.calls[0][0];
+    const decoded = JSON.parse(written) as Record<string, unknown>;
+    expect(decoded.authState).toEqual(authState);
+    expect(decoded).not.toHaveProperty('stateDatabaseUrl');
+    expect(written).not.toContain('synthetic-test-password');
+    source.currentSecret.mockResolvedValue(written);
+    await prepareBrowserSp({ ...source, authState });
+    expect(source.saveSecret.mock.calls[1][0]).toBe(written);
+    const changed = structuredClone(authState);
+    changed.receipt.source.issuer = 'https://wrong.example.test';
+    source.saveSecret.mockClear();
+    await expect(prepareBrowserSp({ ...source, authState: changed })).rejects.toThrow();
+    expect(source.saveSecret).not.toHaveBeenCalled();
   });
   it.each([
     'database',

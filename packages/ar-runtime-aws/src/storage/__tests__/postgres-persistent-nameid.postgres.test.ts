@@ -59,15 +59,15 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
         one.put({ tenantId: 'tenant-a', key, value: record(1000) }),
         two.put({ tenantId: 'tenant-a', key, value: record(1001) }),
       ]);
-      expect(contenders.filter((value) => value.status === 'fulfilled')).toHaveLength(1);
-      expect(contenders.filter((value) => value.status === 'rejected')).toHaveLength(1);
+      expect(contenders.filter((value) => value.status === 'fulfilled')).toHaveLength(2);
+      expect(contenders.filter((value) => value.status === 'rejected')).toHaveLength(0);
       const saved = await two.get({ tenantId: 'tenant-a', key });
       expect(saved === record(1000) || saved === record(1001)).toBe(true);
       if (saved === null) throw new Error('persistent NameID was not stored');
       await one.put({ tenantId: 'tenant-a', key, value: saved });
-      await expect(one.put({ tenantId: 'tenant-a', key, value: record(1002) })).rejects.toThrow(
-        'aws_persistent_nameid_conflict'
-      );
+      await expect(
+        one.put({ tenantId: 'tenant-a', key, value: record(1002) })
+      ).resolves.toBeUndefined();
       expect(await two.get({ tenantId: 'tenant-a', key })).toBe(saved);
       await expect(two.get({ tenantId: 'tenant-b', key })).rejects.toThrow(
         'aws_persistent_nameid_invalid'

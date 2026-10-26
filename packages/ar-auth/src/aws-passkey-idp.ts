@@ -21,6 +21,13 @@ const EXACT_ROUTES = new Set([
 const FLOW_SUBMIT_ROUTE = /^\/api\/v1\/login\/interactions\/[^/]+\/submit$/u;
 
 export function isAwsPasskeyIdpAuthRoute(method: string, pathname: string): boolean {
+  if (method.toUpperCase() === 'OPTIONS') {
+    return (
+      EXACT_ROUTES.has(`GET ${pathname}`) ||
+      EXACT_ROUTES.has(`POST ${pathname}`) ||
+      FLOW_SUBMIT_ROUTE.test(pathname)
+    );
+  }
   if (EXACT_ROUTES.has(`${method.toUpperCase()} ${pathname}`)) return true;
   return method.toUpperCase() === 'POST' && FLOW_SUBMIT_ROUTE.test(pathname);
 }

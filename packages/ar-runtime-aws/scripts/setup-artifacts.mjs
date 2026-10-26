@@ -11,6 +11,8 @@ import {
   writeSetupState,
 } from './setup-execution-state.mjs';
 import { readExecutionBuildPins } from './setup-build.mjs';
+import { normalizeSetupUi } from './setup-ui-config.mjs';
+import { executionAuthState } from './setup-auth-state.mjs';
 
 const execute = promisify(execFile);
 const fail = (code) => {
@@ -90,6 +92,20 @@ export async function readExecutionFixture(directory, expectedSha256) {
   return { descriptor, sha256: setupDigest(bytes) };
 }
 
+/** Only newly generated synthetic source data may be adapted to the requested external UI. */
+export function createSyntheticExecutionProfile(config, origin) {
+  const destinationUi = normalizeSetupUi(config.components, config.ui, config.mode);
+  return {
+    kind: 'aws-browser',
+    issuer: origin,
+    spEntityId: `${origin}/test-sp/metadata`,
+    acsUrl: `${origin}/test-sp/acs`,
+    ...(destinationUi?.ui.login.mode === 'external'
+      ? { externalLogin: destinationUi.ui.login }
+      : {}),
+  };
+}
+
 export async function prepareExecutionArtifacts({
   config,
   root,
@@ -104,12 +120,7 @@ export async function prepareExecutionArtifacts({
   if (canonicalSetupJson(await readExecutionBuildPins(root)) !== canonicalSetupJson(build))
     fail('build_inputs_changed');
   if (config.fixture.generate) {
-    const profile = {
-      kind: 'aws-browser',
-      issuer: origin,
-      spEntityId: `${origin}/test-sp/metadata`,
-      acsUrl: `${origin}/test-sp/acs`,
-    };
+    const profile = createSyntheticExecutionProfile(config, origin);
     const profilePath = join(directory, 'fixture-profile.json');
     await writeSetupState(profilePath, profile);
     let exists = false;
@@ -142,6 +153,11 @@ export async function prepareExecutionArtifacts({
       summary.issuer !== origin
     )
       fail('synthetic_origin_mismatch');
+    if (
+      canonicalSetupJson(summary.externalLogin ?? null) !==
+      canonicalSetupJson(profile.externalLogin ?? null)
+    )
+      fail('synthetic_ui_mismatch');
   }
   const fixture = await readExecutionFixture(
     config.fixture.directory,
@@ -153,7 +169,16 @@ export async function prepareExecutionArtifacts({
     'package-lambda.mjs',
     ...(config.mode === 'browser-rehearsal' ? ['package-browser-sp.mjs'] : []),
   ])
-    await runLocal(root, `scripts/${script}`, ['--ca-bundle', config.assets.caBundlePath]);
+    await runLocal(root, `scripts/${script}`, [
+      '--ca-bundle',
+      config.assets.caBundlePath,
+      ...(script === 'package-lambda.mjs' && config.ui
+        ? [
+            '--login-ui',
+            config.ui.login.mode === 'embedded-rehearsal' ? 'embedded-rehearsal' : 'none',
+          ]
+        : []),
+    ]);
   const artifacts = {};
   for (const name of ['job', 'idp', ...(config.mode === 'browser-rehearsal' ? ['sp'] : [])]) {
     const bytes = await readSetupFile(
@@ -263,7 +288,18 @@ export async function uploadExecutionArtifacts({
     join(config.fixture.directory, descriptor.supplement.path),
     descriptor.supplement.sha256
   );
-  const cloudFixture = { ...descriptor, backup: { ...descriptor.backup, parts }, supplement };
+  const destinationUi = normalizeSetupUi(config.components, config.ui, config.mode);
+  const cloudFixture = {
+    ...descriptor,
+    backup: { ...descriptor.backup, parts },
+    supplement,
+    ...(destinationUi ? { destinationUi } : {}),
+    ...(config.authState === undefined
+      ? {}
+      : {
+          authState: executionAuthState(config, state, descriptor.restoreId),
+        }),
+  };
   const fixturePath = join(directory, 'cloud-fixture.json');
   await writeSetupState(fixturePath, cloudFixture);
   const fixture = await pinned(

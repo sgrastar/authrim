@@ -134,7 +134,7 @@ describe('setup cloud platform selection', () => {
     );
   });
 
-  it('opens the AWS SAML DR guide without invoking the Cloudflare path', async () => {
+  it('opens the AWS setup workflow without invoking the Cloudflare path', async () => {
     const harness = entryHarness();
     await vm.runInContext("selectSetupPlatform('aws')", harness.context);
     expect(harness.context.selectedSetupPlatform).toBe('aws');
@@ -145,8 +145,9 @@ describe('setup cloud platform selection', () => {
     const start = html.indexOf('id="section-aws-setup"');
     const end = html.indexOf('id="section-prerequisites"', start);
     const awsGuide = html.slice(start, end < 0 ? undefined : end);
-    expect(awsGuide).toContain('pnpm run setup aws check');
-    expect(awsGuide).toContain('data-i18n="web.platform.awsGuide"');
+    expect(awsGuide).toContain('id="btn-aws-plan"');
+    expect(awsGuide).toContain('id="aws-database"');
+    expect(awsGuide).toContain('id="btn-aws-resume"');
     expect(openingTag(html, 'btn-aws-platform-back')).toMatch(/^<button\b/u);
   });
 

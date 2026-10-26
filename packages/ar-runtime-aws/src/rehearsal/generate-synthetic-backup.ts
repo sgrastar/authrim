@@ -160,6 +160,7 @@ export async function generateSyntheticAwsBackup(input: GenerateSyntheticBackupI
             environmentName: profile.environmentName,
             acsUrl: profile.acsUrl,
             rpId: profile.rpId,
+            ...(profile.externalLogin ? { externalLogin: profile.externalLogin } : {}),
             spStartUrl: `${profile.issuer}/test-sp/start`,
           }
         : {}),

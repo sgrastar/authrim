@@ -1,4 +1,9 @@
 import {
+  selectedSyntheticDynamoState,
+  type SyntheticAuthStateSelection,
+} from '../rehearsal/selected-auth-state';
+import { readSyntheticDynamoAuthStateSnapshot } from './selected-auth-state-snapshot';
+import {
   assertMaintenanceTls,
   createMaintenanceSqlClient,
   type MaintenanceDatabase,
@@ -81,10 +86,12 @@ async function readOnly<T>(
 /** Observe only the fixed synthetic browser databases; no credential identifiers leave this helper. */
 export async function readBrowserRehearsalSnapshot(
   targets: BrowserTargets,
-  clientFactory: MaintenanceSqlFactory = createMaintenanceSqlClient
+  clientFactory: MaintenanceSqlFactory = createMaintenanceSqlClient,
+  authState?: SyntheticAuthStateSelection
 ): Promise<BrowserRehearsalSnapshot> {
   try {
     validateTargets(targets);
+    const dynamo = selectedSyntheticDynamoState(authState);
     const core = await readOnly(targets.core, clientFactory, async (client) => {
       const passkey = await client.query<{ id: string; counter: string }>(
         `SELECT id, counter::text AS counter FROM passkeys WHERE tenant_id=$1 AND user_id=$2`,
@@ -104,36 +111,38 @@ export async function readBrowserRehearsalSnapshot(
         audits: count(audits.rows[0].count),
       };
     });
-    const state = await readOnly(targets.state, clientFactory, async (client) => {
-      // The authority uses the Core row ID, not the WebAuthn credential ID.
-      const passkey = await client.query<{ counter: string }>(
-        `SELECT counter::text AS counter FROM authrim_aws_passkey_counters
+    const state = dynamo
+      ? await readSyntheticDynamoAuthStateSnapshot({ ...dynamo, passkeyRowId: core.rowId })
+      : await readOnly(targets.state, clientFactory, async (client) => {
+          // The authority uses the Core row ID, not the WebAuthn credential ID.
+          const passkey = await client.query<{ counter: string }>(
+            `SELECT counter::text AS counter FROM authrim_aws_passkey_counters
           WHERE tenant_id=$1 AND user_id=$2 AND credential_id=$3`,
-        [TENANT, USER, core.rowId]
-      );
-      check(passkey.rows.length === 1);
-      const sessions = await client.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM authrim_aws_transient_state
+            [TENANT, USER, core.rowId]
+          );
+          check(passkey.rows.length === 1);
+          const sessions = await client.query<{ count: string }>(
+            `SELECT count(*)::text AS count FROM authrim_aws_transient_state
           WHERE tenant_id=$1 AND kind='session' AND payload->>'userId'=$2`,
-        [TENANT, USER]
-      );
-      const requests = await client.query<{ outstanding: string; consumed: string }>(
-        `SELECT count(*) FILTER (WHERE consumed_at_ms IS NULL AND
+            [TENANT, USER]
+          );
+          const requests = await client.query<{ outstanding: string; consumed: string }>(
+            `SELECT count(*) FILTER (WHERE consumed_at_ms IS NULL AND
                   expires_at_ms > floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint)::text AS outstanding,
                 count(*) FILTER (WHERE consumed_at_ms IS NOT NULL)::text AS consumed
           FROM authrim_aws_transient_state
           WHERE tenant_id=$1 AND kind='challenge' AND payload->>'userId'=$2
             AND payload->>'type'='synthetic-browser-sp' AND starts_with(id, 'browser-sp:_browser_')`,
-        [TENANT, USER]
-      );
-      check(sessions.rows.length === 1 && requests.rows.length === 1);
-      return {
-        counter: count(passkey.rows[0].counter, 0xffffffff),
-        sessions: count(sessions.rows[0].count),
-        outstanding: count(requests.rows[0].outstanding),
-        consumed: count(requests.rows[0].consumed),
-      };
-    });
+            [TENANT, USER]
+          );
+          check(sessions.rows.length === 1 && requests.rows.length === 1);
+          return {
+            counter: count(passkey.rows[0].counter, 0xffffffff),
+            sessions: count(sessions.rows[0].count),
+            outstanding: count(requests.rows[0].outstanding),
+            consumed: count(requests.rows[0].consumed),
+          };
+        });
     check(core.counter === state.counter);
     return {
       corePasskeyCounter: core.counter,

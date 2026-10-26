@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Isolated single-Region Aurora DSQL cluster for synthetic Authrim compatibility probes;
+  no production runtime, existing databases, DNS, or identity policies are changed.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: A dedicated DSQL cluster, accessed by a separately authorized test identity over TLS.
+    must:
+      - Use only synthetic probe data; do not import customer data or signing keys.
+      - Keep this stack separate from the PostgreSQL DR foundation and serving stacks.
+      - Keep the cluster single-Region; do not add peers or a witness Region for this probe.
+      - Grant DbConnectAdmin only on this cluster ARN to the selected probe identity separately.
+      - This template grants no IAM permissions and does not authorize production activation.
+      - Retained resources require explicit cleanup and may continue to incur charges.
+
+Resources:
+  ProbeCluster:
+    Type: AWS::DSQL::Cluster
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Tests DSQL semantics without changing the existing PostgreSQL or Cloudflare paths.
+        must:
+          - Preserve deletion protection and retention until test evidence has been reviewed.
+          - Use default AWS-owned-key encryption at rest; never store plaintext credentials.
+          - Require IAM authentication and certificate-verified TLS in the probe client.
+    Properties:
+      DeletionProtectionEnabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-probe'
+        - Key: 'authrim:stack'
+          Value: !Ref AWS::StackName
+        - Key: 'authrim:purpose'
+          Value: dsql-compatibility-probe
+        - Key: 'authrim:data'
+          Value: synthetic-only
+
+Outputs:
+  ClusterId:
+    Description: Identifier of the isolated compatibility-test cluster.
+    Value: !Ref ProbeCluster
+  ClusterArn:
+    Description: Exact resource ARN to use for separately granted probe IAM permissions.
+    Value: !GetAtt ProbeCluster.ResourceArn
+  ClusterEndpoint:
+    Description: TLS hostname for the probe client; the database name is postgres.
+    Value: !GetAtt ProbeCluster.Endpoint

@@ -11,6 +11,11 @@ Metadata:
       - Only synthetic browser rehearsal resources use these roles; no Cloudflare or DNS permissions.
       - Bind the new API ID after empty endpoint creation, before publishing any route.
 Parameters:
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'
+    Description: Exact selected foundation auth-state table ARN; empty preserves PostgreSQL state.
   BrowserStackName:
     Type: String
     Default: authrim-dr-browser
@@ -62,6 +67,11 @@ Rules:
                 - Ref: SpSecretName
         AssertDescription: Input and SP secret containers must differ.
 Conditions:
+  HasAuthStateTable:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AuthStateTableArn
+          - ''
   HasApiId:
     Fn::Not:
       - Fn::Equals:
@@ -124,6 +134,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Caps the independent browser DB maintenance job.
         must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
           - Only this job may read the exact master secret.
           - Serving/SP roles must never acquire this boundary.
           - SP preparation may only write the dedicated SP input container.
@@ -134,6 +145,21 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          - Fn::If:
+              - HasAuthStateTable
+              - Sid: SelectedAuthState
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:ConditionCheckItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource:
+                  Ref: AuthStateTableArn
+              - Ref: AWS::NoValue
           - Effect: Allow
             Action:
               - logs:CreateLogStream
@@ -336,6 +362,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Caps idp serving permissions independently from DB administration.
         must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
           - Read only the dedicated secret; no master access, secret writes or database administration.
           - ENI APIs are usable by the Lambda service but denied to function code.
     Properties:
@@ -345,6 +372,21 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          - Fn::If:
+              - HasAuthStateTable
+              - Sid: SelectedAuthState
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:ConditionCheckItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource:
+                  Ref: AuthStateTableArn
+              - Ref: AWS::NoValue
           - Effect: Allow
             Action:
               - logs:CreateLogStream
@@ -387,6 +429,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Caps sp serving permissions independently from DB administration.
         must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
           - Read only the dedicated secret; no master access, secret writes or database administration.
           - ENI APIs are usable by the Lambda service but denied to function code.
     Properties:
@@ -396,6 +439,18 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          - Fn::If:
+              - HasAuthStateTable
+              - Sid: SelectedAuthState
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DescribeTable
+                Resource:
+                  Ref: AuthStateTableArn
+              - Ref: AWS::NoValue
           - Effect: Allow
             Action:
               - logs:CreateLogStream

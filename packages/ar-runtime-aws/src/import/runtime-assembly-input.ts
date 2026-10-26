@@ -1,3 +1,5 @@
+import type { AwsRuntimeUiConfig } from '../ui/runtime-ui-config';
+import type { AwsBoundAuthState } from './selected-auth-state';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
 import type { LookupBlindIndexKey } from '@authrim/ar-lib-core/services/lookup-directory/blind-index';
 import type { AuditRuntimePorts } from '@authrim/ar-lib-core/types/audit-runtime-ports';
@@ -32,6 +34,7 @@ export interface AwsSamlRestoredDatabases {
   accountCoreByBindingRef: Readonly<Record<string, DatabaseAdapter>>;
   accountPiiByBindingRef: Readonly<Record<string, DatabaseAdapter>>;
   stateDb: PostgresQueryClient;
+  authenticationState?: AwsBoundAuthState;
   /** Exact source manifest hashes pinned to the committed Core and PII restore receipts. */
   committed: {
     core: PostgresFamilyRestoreReceipt;
@@ -45,6 +48,7 @@ export interface AssembleAwsSamlTenantInput {
   restored: AwsSamlRestoredDatabases;
   supplement: VerifiedAwsSamlSupplement;
   environmentName: string;
+  destinationUi?: AwsRuntimeUiConfig;
   /** Explicit operator-approved SP entity IDs; an empty list never means all SPs. */
   spEntityIds: readonly string[];
   allocationScope: 'shared_pool' | 'tenant_exclusive';

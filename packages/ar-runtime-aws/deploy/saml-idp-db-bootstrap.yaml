@@ -11,6 +11,11 @@ Metadata:
       - Pin the artifact, fixture, and input secret versions before deployment.
       - Keep DB administration separate from serving; invocation inputs cannot override destinations.
 Parameters:
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'
+    Description: Exact selected foundation auth-state table ARN; empty preserves PostgreSQL state.
   PrivateSubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Exact foundation PrivateSubnetIds output.
@@ -94,6 +99,11 @@ Parameters:
     AllowedPattern: '^[0-9a-f]{64}$'
     Description: Trusted SHA256 of the versioned fixture manifest bytes.
 Conditions:
+  HasAuthStateTable:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AuthStateTableArn
+          - ''
   HasBrowserSpSecret: !Not [!Equals [!Ref BrowserSpSecretArn, '']]
 Resources:
   RuntimeSecret:
@@ -135,6 +145,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Gives only this private job access to pinned inputs and its generated credentials.
         must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
           - Keep the separate bootstrap-managed maintenance boundary.
           - No bucket listing, unversioned reads, secret creation, or master-secret writes.
           - Optional browser SP preparation writes only the separate state-only secret container.
@@ -154,6 +165,21 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              - Fn::If:
+                  - HasAuthStateTable
+                  - Sid: SelectedAuthState
+                    Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:UpdateItem
+                      - dynamodb:ConditionCheckItem
+                      - dynamodb:Query
+                      - dynamodb:Scan
+                      - dynamodb:DescribeTable
+                    Resource:
+                      Ref: AuthStateTableArn
+                  - Ref: AWS::NoValue
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${JobLogGroup}:*'

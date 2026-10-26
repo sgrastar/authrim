@@ -26,6 +26,8 @@ import { runSyntheticAwsAuthenticationRehearsal } from './authentication-rehears
 import { prepareBrowserSp } from './prepare-browser-sp';
 import { readBrowserRehearsalSnapshot } from './browser-rehearsal-snapshot';
 import { readCommittedMaintenanceActivation } from './inspect-restore';
+import { normalizeAwsRuntimeUiConfig, type AwsRuntimeUiConfig } from '../ui/runtime-ui-config';
+import { normalizeAwsAuthStateConfig, type AwsAuthStateConfig } from '../storage/auth-state-config';
 import {
   countMaintenanceRows,
   DATABASE_FAMILIES,
@@ -72,6 +74,8 @@ interface MaintenanceFixture {
   environmentName: string;
   spEntityIds: string[];
   allocationScope: 'shared_pool' | 'tenant_exclusive';
+  destinationUi?: AwsRuntimeUiConfig;
+  authState?: AwsAuthStateConfig;
 }
 function invalid(): never {
   throw new Error('aws_maintenance_configuration_invalid');
@@ -263,6 +267,12 @@ function parseFixture(raw: Uint8Array): MaintenanceFixture {
     pins.reduce((sum, pin) => sum + pin.size, 0) > MAX_ASSET_BYTES
   )
     invalid();
+  if (fixture.destinationUi !== undefined)
+    fixture.destinationUi = normalizeAwsRuntimeUiConfig(fixture.destinationUi);
+  if (fixture.authState !== undefined)
+    fixture.authState = normalizeAwsAuthStateConfig(fixture.authState, {
+      restoreId: fixture.restoreId,
+    });
   return fixture;
 }
 function databases(
@@ -491,6 +501,16 @@ export async function handler(event: unknown) {
         environmentName: fixture.environmentName,
         spEntityIds: fixture.spEntityIds,
         allocationScope: fixture.allocationScope,
+        ...(fixture.destinationUi ? { destinationUi: fixture.destinationUi } : {}),
+        ...(fixture.authState
+          ? {
+              authState: normalizeAwsAuthStateConfig(fixture.authState, {
+                accountId: config.bucketOwner,
+                region: config.region,
+                restoreId: fixture.restoreId,
+              }),
+            }
+          : {}),
         awsFlowRuntimeHmacSecret: runtime.flowHmacSecret,
         awsLookupReadKeys: runtime.lookupReadKeys,
       };
@@ -527,10 +547,14 @@ export async function handler(event: unknown) {
       }
       if (action.action === 'authenticate') {
         stage = 'authenticate';
+        const inspected = await loadActivatedAwsSamlTenant({ ...input, evidence });
+        const authState = inspected.authState;
+        await inspected.close();
         const authentication = await runSyntheticAwsAuthenticationRehearsal({
           load: () => loadActivatedAwsSamlTenant({ ...input, evidence }),
           databases: targets,
           fixture,
+          authState,
           seed: JSON.parse(await getSecret(config.configSecretArn, config.configSecretVersionId)),
         });
         return {
@@ -560,6 +584,7 @@ export async function handler(event: unknown) {
             spEntityIds: fixture.spEntityIds,
             host: config.host,
             stateDatabaseUrl: runtime.stateDatabaseUrl,
+            authState: loaded.authState,
             seed: JSON.parse(await getSecret(config.configSecretArn, config.configSecretVersionId)),
             metadata: async () =>
               app.app.request(`${fixture.manifest.source.issuer}/saml/idp/metadata`, undefined, {
@@ -595,7 +620,13 @@ export async function handler(event: unknown) {
           rowCounts,
           ...(fixture.environmentName === 'aws-browser-rehearsal' &&
           config.databasePrefix === 'authrim_dr_browser'
-            ? { browserSnapshot: await readBrowserRehearsalSnapshot(targets) }
+            ? {
+                browserSnapshot: await readBrowserRehearsalSnapshot(
+                  targets,
+                  undefined,
+                  loaded.authState
+                ),
+              }
             : {}),
         };
       } finally {

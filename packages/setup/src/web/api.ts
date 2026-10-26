@@ -305,6 +305,7 @@ import {
 import { saveUiEnv, buildInitialUiEnvConfig, mergeAndSaveUiEnv } from '../core/ui-env.js';
 import { validateSetupDomainInputs } from './domain-form-state.js';
 import { runReleaseUpdateCli } from './release-update-runner.js';
+import { createAwsSetupApi } from './aws-api.js';
 import { getMissingRequiredDeploySecrets } from '../core/secrets.js';
 import {
   buildCloudflareBootstrapTokenEndDate,
@@ -1634,6 +1635,9 @@ export function createApiRoutes(): Hono {
   api.use('/control', validateSession);
   api.use('/control/*', validateSession);
   api.use('/r2/*', validateSession);
+
+  // AWS operations have their own token and same-loopback-origin checks, including status reads.
+  api.route('/aws', createAwsSetupApi({ getToken: getSessionToken, rootDir: process.cwd() }));
 
   // ==========================================================================
   // Cloudflare Zone Check

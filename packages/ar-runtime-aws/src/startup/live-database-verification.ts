@@ -150,6 +150,10 @@ export async function verifyActivatedDatabaseRows(input: {
   core: { connectionString: string; targetId: string };
   pii: { connectionString: string; targetId: string };
   stateDb: Pool;
+  /** Read the selected authority after the Core snapshot; never use the legacy SQL copy on DynamoDB. */
+  readPasskeyCounters?: () => Promise<
+    Array<{ user_id: string; credential_id: string; counter: string }>
+  >;
   activatedAtMs: number;
 }): Promise<void> {
   try {
@@ -197,17 +201,21 @@ export async function verifyActivatedDatabaseRows(input: {
         );
         // State is authoritative and advances before the eventual Core mirror. Read it
         // after the Core snapshot so a concurrent verified login cannot look like rollback.
-        const stateCounters = await input.stateDb.query<{
-          user_id: string;
-          credential_id: string;
-          counter: string;
-        }>(
-          `SELECT user_id,credential_id,counter FROM authrim_aws_passkey_counters
+        const stateCounters = input.readPasskeyCounters
+          ? await input.readPasskeyCounters()
+          : (
+              await input.stateDb.query<{
+                user_id: string;
+                credential_id: string;
+                counter: string;
+              }>(
+                `SELECT user_id,credential_id,counter FROM authrim_aws_passkey_counters
            WHERE tenant_id=$1`,
-          [tenantId]
-        );
-        if (stateCounters.rows.length !== passkeys.size) invalid();
-        const counters = new Map(stateCounters.rows.map((row) => [row.credential_id, row]));
+                [tenantId]
+              )
+            ).rows;
+        if (stateCounters.length !== passkeys.size) invalid();
+        const counters = new Map(stateCounters.map((row) => [row.credential_id, row]));
         if (counters.size !== passkeys.size) invalid();
         for (const [id, original] of accounts) {
           const current = liveAccounts.get(id);

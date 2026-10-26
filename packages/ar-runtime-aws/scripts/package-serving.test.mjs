@@ -50,6 +50,7 @@ before(async () => {
   leaf = await readFile(join(directory, 'leaf.pem'), 'utf8');
   for (const file of [
     'lambda.mjs',
+    'lambda-api.mjs',
     'browser-sp.mjs',
     'db-bootstrap.mjs',
     'synthetic-backup-cli.mjs',
@@ -60,6 +61,17 @@ before(async () => {
       join(directory, file),
       file.endsWith('.mjs') ? 'export const handler = () => 200;\n' : 'must-not-be-packaged'
     );
+});
+
+test('API-only packaging uses its own bundle but preserves the Lambda handler filename', async () => {
+  const apiSource = 'export const handler = () => "API_ONLY_SENTINEL";\n';
+  await writeFile(join(directory, 'lambda-api.mjs'), apiSource);
+  const receipt = await packageServingArtifact({ entry: 'lambda', outputDirectory: directory, caBundlePath: caPath, loginUi: 'none' });
+  assert.equal(receipt.handler, 'lambda.handler');
+  assert.deepEqual(receipt.files, ['certs/rds-ca.pem', 'lambda.mjs']);
+  const content = await execute('unzip', ['-p', join(directory, 'lambda.zip'), 'lambda.mjs']);
+  assert.equal(content.stdout, apiSource);
+  assert.equal(receipt.loginUi, 'none');
 });
 
 after(async () => {

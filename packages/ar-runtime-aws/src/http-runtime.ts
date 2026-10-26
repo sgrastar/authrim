@@ -4,13 +4,17 @@ import { isIP } from 'node:net';
 import type { Env } from '@authrim/ar-lib-core';
 import { createSAMLIdPApp } from '@authrim/ar-saml/idp-app';
 import { fetchAwsPasskeyIdpAuth, isAwsPasskeyIdpAuthRoute } from '@authrim/ar-auth/aws-passkey-idp';
-import { renderAwsPasskeyLoginPage } from './ui/passkey-login';
+import { normalizeAwsRuntimeUiConfig, type AwsRuntimeUiConfig } from './ui/runtime-ui-config';
+
+declare const AUTHRIM_AWS_EMBEDDED_UI: boolean;
 
 export interface AwsTenantRuntime {
   tenantId: string;
   /** Canonical public HTTPS origin, also used by the imported SAML/WebAuthn configuration. */
   origin: string;
   env: Env;
+  /** Undefined retains compatibility with the original embedded rehearsal profile. */
+  ui?: AwsRuntimeUiConfig;
   /** Verify imported data/key generations and database availability before serving traffic. */
   assertReady(this: void): Promise<void>;
 }
@@ -32,6 +36,14 @@ export function createAwsSamlRuntime(options: AwsSamlRuntimeOptions) {
   if (options.tenants.length === 0) throw new Error('aws_tenant_inventory_required');
   const tenants = new Map<string, AwsTenantRuntime>();
   for (const tenant of options.tenants) {
+    const ui = normalizeAwsRuntimeUiConfig(tenant.ui);
+    if (
+      typeof AUTHRIM_AWS_EMBEDDED_UI !== 'undefined' &&
+      !AUTHRIM_AWS_EMBEDDED_UI &&
+      ui.ui.login.mode === 'embedded-rehearsal'
+    ) {
+      throw new Error('aws_embedded_ui_not_packaged');
+    }
     const url = new URL(tenant.origin);
     if (
       url.protocol !== 'https:' ||
@@ -91,8 +103,13 @@ export function createAwsSamlRuntime(options: AwsSamlRuntimeOptions) {
       return c.json({ error: 'not_found' }, 404);
     }
     const isReadyRoute = c.req.method === 'GET' && url.pathname === '/health/ready';
-    const isLoginRoute = c.req.method === 'GET' && ['/login', '/reauth'].includes(url.pathname);
-    const isAuthRoute = isAwsPasskeyIdpAuthRoute(c.req.method, url.pathname);
+    const login = normalizeAwsRuntimeUiConfig(tenant.ui).ui.login;
+    const isLoginRoute =
+      login.mode === 'embedded-rehearsal' &&
+      c.req.method === 'GET' &&
+      ['/login', '/reauth'].includes(url.pathname);
+    const isAuthRoute =
+      login.mode !== 'disabled' && isAwsPasskeyIdpAuthRoute(c.req.method, url.pathname);
     const isProtocolRoute = PROTOCOL_PATHS.has(url.pathname);
     if (!isReadyRoute && !isLoginRoute && !isAuthRoute && !isProtocolRoute) {
       return c.json({ error: 'not_found' }, 404);
@@ -103,7 +120,13 @@ export function createAwsSamlRuntime(options: AwsSamlRuntimeOptions) {
       return c.json({ error: 'temporarily_unavailable' }, 503);
     }
     if (isReadyRoute) return c.json({ status: 'ready' });
-    if (isLoginRoute) return renderAwsPasskeyLoginPage(c.req.raw);
+    if (
+      isLoginRoute &&
+      (typeof AUTHRIM_AWS_EMBEDDED_UI === 'undefined' || AUTHRIM_AWS_EMBEDDED_UI)
+    ) {
+      const { renderAwsPasskeyLoginPage } = await import('./ui/passkey-login');
+      return renderAwsPasskeyLoginPage(c.req.raw);
+    }
 
     const sourceIp = c.env?.requestContext?.http?.sourceIp;
     if (!sourceIp || !isIP(sourceIp)) {

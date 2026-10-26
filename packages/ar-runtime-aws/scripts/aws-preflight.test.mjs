@@ -527,6 +527,7 @@ test('interactive MFA prompts take precedence over timeout without exposing the 
 test('expired aws login sessions and login-required errors request reauthentication', async () => {
   for (const stderr of [
     'The login session associated with this profile has expired. Please run aws login to refresh your session. DO_NOT_PRINT',
+    'Your session has expired. Please reauthenticate. DO_NOT_PRINT',
     'Login required for this profile: DO_NOT_PRINT',
     'Login is required. DO_NOT_PRINT',
     'Please run "aws login" to authenticate. DO_NOT_PRINT',
@@ -539,5 +540,24 @@ test('expired aws login sessions and login-required errors request reauthenticat
     assert.match(check(report, 'identity').message, /login_required/u);
     assert.match(check(report, 'identity').remediation, /再ログイン/u);
     assert.doesNotMatch(JSON.stringify(report), /DO_NOT_PRINT/u);
+  }
+});
+
+test('local credential cache access failures take precedence over reauthentication boilerplate', async () => {
+  for (const stderr of [
+    "[Errno 1] Operation not permitted: '/Users/DO_NOT_PRINT/.aws/login/cache/token.json'",
+    "Failed to refresh token: EACCES: permission denied, open '/Users/DO_NOT_PRINT/.aws/login/cache/token.json'. Please re-authenticate using aws login",
+    "PermissionError: [Errno 13] Permission denied: 'C:\\Users\\DO_NOT_PRINT\\.aws\\sso\\cache\\token.json'",
+    "[Errno 30] Read-only file system: '/Users/DO_NOT_PRINT/.aws/cli/cache/credentials.json'",
+  ]) {
+    const report = await runAwsPreflight(
+      target,
+      fixture((args) => (args[0] === 'sts' ? { exitCode: 255, stderr } : undefined))
+    );
+    assert.equal(report.status, 'blocked');
+    assert.match(check(report, 'identity').message, /credential_cache_access_denied/u);
+    assert.match(check(report, 'identity').remediation, /キャッシュ|アクセス制限/u);
+    assert.doesNotMatch(check(report, 'identity').remediation, /再ログインしてください/u);
+    assert.doesNotMatch(JSON.stringify(report), /DO_NOT_PRINT|token\.json|credentials\.json/u);
   }
 });

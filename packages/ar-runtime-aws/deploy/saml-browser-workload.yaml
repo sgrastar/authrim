@@ -12,6 +12,11 @@ Metadata:
       - Reuse existing private subnets and bootstrap security group without network changes.
       - Never enable the original foundation API.
 Parameters:
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'
+    Description: Exact selected foundation auth-state table ARN; empty preserves PostgreSQL state.
   DeployWorkload:
     Type: String
     Default: 'false'
@@ -186,6 +191,11 @@ Rules:
                 - ''
         AssertDescription: SpArtifactObjectVersion must be pinned before publishing routes.
 Conditions:
+  HasAuthStateTable:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AuthStateTableArn
+          - ''
   HasWorkload:
     Fn::Equals:
       - Ref: DeployWorkload
@@ -237,6 +247,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Runs idp with separate, version-pinned serving permissions.
         must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
           - No master secret, input fixture secret, secret writes or database initialization.
           - SP uses only state DB credentials; IdP uses its own isolated runtime credentials.
           - Phase-one empty parameters are unreachable while HasWorkload is false; RequirePreparedInputs
@@ -263,6 +274,21 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              - Fn::If:
+                  - HasAuthStateTable
+                  - Sid: SelectedAuthState
+                    Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:UpdateItem
+                      - dynamodb:ConditionCheckItem
+                      - dynamodb:Query
+                      - dynamodb:Scan
+                      - dynamodb:DescribeTable
+                    Resource:
+                      Ref: AuthStateTableArn
+                  - Ref: AWS::NoValue
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -436,6 +462,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Runs sp with separate, version-pinned serving permissions.
         must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
           - No master secret, input fixture secret, secret writes or database initialization.
           - SP uses only state DB credentials; IdP uses its own isolated runtime credentials.
           - Phase-one empty parameters are unreachable while HasWorkload is false; RequirePreparedInputs
@@ -462,6 +489,18 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              - Fn::If:
+                  - HasAuthStateTable
+                  - Sid: SelectedAuthState
+                    Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:UpdateItem
+                      - dynamodb:DescribeTable
+                    Resource:
+                      Ref: AuthStateTableArn
+                  - Ref: AWS::NoValue
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -1036,6 +1075,158 @@ Resources:
           - ''
           - - integrations/
             - Ref: SpIntegration
+  IdpPreflightRoute1:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/auth/health
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute2:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /auth/login-challenge
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute3:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/sessions/status
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute4:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/auth/direct/passkey/login/start
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute5:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/auth/direct/passkey/login/finish
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute6:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/auth/direct/session
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute7:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/login/interactions/start
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute8:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/login/interactions/{interactionId}/submit
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
   BrowserStage:
     Type: AWS::ApiGatewayV2::Stage
     Condition: HasWorkload
@@ -1060,6 +1251,14 @@ Resources:
       - IdpRoute18
       - IdpRoute19
       - IdpRoute20
+      - IdpPreflightRoute1
+      - IdpPreflightRoute2
+      - IdpPreflightRoute3
+      - IdpPreflightRoute4
+      - IdpPreflightRoute5
+      - IdpPreflightRoute6
+      - IdpPreflightRoute7
+      - IdpPreflightRoute8
       - SpRoute2
       - SpRoute3
       - SpRoute4

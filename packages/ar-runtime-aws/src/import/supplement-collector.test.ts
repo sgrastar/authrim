@@ -216,6 +216,45 @@ afterEach(async () => {
 });
 
 describe('offline AWS supplement collector', () => {
+  it('accepts explicitly captured UI absence and refuses a missing declaration', async () => {
+    const disabled = capture();
+    disabled.payload.sourceLoginUi = { mode: 'disabled' };
+    disabled.payload.sourceFlowRuntimeEnabled = false;
+    await expect(
+      buildAwsSamlSupplementFromFrozenCapture({ backup: backup(), capture: disabled })
+    ).resolves.toMatchObject({ payload: { sourceLoginUi: { mode: 'disabled' } } });
+    Reflect.deleteProperty(disabled.payload, 'sourceLoginUi');
+    await expect(
+      buildAwsSamlSupplementFromFrozenCapture({ backup: backup(), capture: disabled })
+    ).rejects.toThrow('aws_supplement_collector_invalid');
+  });
+
+  it('accepts an explicitly captured public external client and refuses inactive or cross-tenant origins', async () => {
+    const external = capture();
+    const source = external.payload.sourceLoginUi;
+    if ('mode' in source) throw new Error('test_source_missing');
+    source.client = { ...source.client, client_id: textCell('external-login') };
+    source.origins = [
+      {
+        ...source.origins[0],
+        client_id: textCell('external-login'),
+        origin: textCell('https://login.example.test'),
+      },
+    ];
+    await expect(
+      buildAwsSamlSupplementFromFrozenCapture({ backup: backup(), capture: external })
+    ).resolves.toMatchObject({ payload: { sourceLoginUi: source } });
+    source.origins = [{ ...source.origins[0], tenant_id: textCell('another-tenant') }];
+    await expect(
+      buildAwsSamlSupplementFromFrozenCapture({ backup: backup(), capture: external })
+    ).rejects.toThrow('aws_supplement_collector_invalid');
+    source.origins = [
+      { ...source.origins[0], tenant_id: textCell(TENANT), handoff_allowed: integerCell(0) },
+    ];
+    await expect(
+      buildAwsSamlSupplementFromFrozenCapture({ backup: backup(), capture: external })
+    ).rejects.toThrow('aws_supplement_collector_invalid');
+  });
   it('builds the pinned supplement envelope from a complete frozen capture', async () => {
     const result = await buildAwsSamlSupplementFromFrozenCapture({
       backup: backup(),

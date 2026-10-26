@@ -153,7 +153,7 @@ describe('CanonicalRuntimeUserStore OTP fast path', () => {
     const piiQueryOne = vi.fn();
     const store = new CanonicalRuntimeUserStore({
       tenantId: 'tenant-1',
-      coreAdapter: adapter({ queryOne: coreQueryOne, batch }),
+      coreAdapter: adapter({ queryOne: coreQueryOne, batch, getType: () => 'd1' }),
       piiAdapter: adapter({ queryOne: piiQueryOne }),
     });
 
@@ -166,12 +166,7 @@ describe('CanonicalRuntimeUserStore OTP fast path', () => {
       }),
       expect.objectContaining({
         sql: expect.stringContaining('UPDATE identity_accounts'),
-        params: [
-          JSON.stringify({ source: 'test', last_login_at: 1234 }),
-          1234,
-          'account:user-1',
-          'tenant-1',
-        ],
+        params: [1234, 1234, 1234, 'tenant-1', 'user-1', 'account:user-1', 1234],
       }),
     ]);
     expect(piiQueryOne).not.toHaveBeenCalled();

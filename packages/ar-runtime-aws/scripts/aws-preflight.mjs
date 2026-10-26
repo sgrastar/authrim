@@ -59,6 +59,17 @@ function validateOptions(options) {
 function errorKind(response) {
   if (response.errorCode === 'ENOENT') return 'cli_missing';
   const text = String(response.stderr ?? '');
+  // Credential refresh can fail on the local cache even when the login remains valid.
+  // Check before reauthentication boilerplate and never expose the path or raw diagnostics.
+  if (
+    /EACCES|EPERM|EROFS|Errno (?:1|13|30)\b|Permission denied|Operation not permitted|Read-only file system/iu.test(
+      text
+    ) &&
+    /\.aws[/\\](?:login|sso|cli)[/\\]cache\b|AWS_LOGIN_CACHE_DIRECTORY|(?:credential|token)[^\r\n]*cache|cache[^\r\n]*(?:credential|token)/iu.test(
+      text
+    )
+  )
+    return 'credential_cache_access_denied';
   if (/Enter MFA code(?: for)?/iu.test(text)) return 'mfa_session_required';
   if (response.errorCode === 'ETIMEDOUT') return 'cli_timeout';
   if (/SSL validation failed|CERTIFICATE_VERIFY_FAILED|certificate verify failed/u.test(text))
@@ -82,7 +93,7 @@ function errorKind(response) {
     /\((?:ExpiredToken|ExpiredTokenException|InvalidClientTokenId|UnrecognizedClientException|RequestExpired)\)/u.test(
       text
     ) ||
-    /Unable to locate credentials|SSO session.*expired|Error loading SSO Token|Token has expired|login session.*expired|login[ -](?:is[ -])?required|Please run ['"]?aws login/iu.test(
+    /Unable to locate credentials|SSO session.*expired|Error loading SSO Token|Token has expired|Your session has expired\. Please reauthenticate|login session.*expired|login[ -](?:is[ -])?required|Please run ['"]?aws login/iu.test(
       text
     )
   )
@@ -202,6 +213,8 @@ export async function runAwsPreflight(options, dependencies = {}) {
   };
   const remedies = {
     access_denied: '対象だけに限定した診断用の読取権限を管理者に付与してもらってください。',
+    credential_cache_access_denied:
+      'ローカルの認証キャッシュを読み取り・更新できません。キャッシュの所有者・アクセス権と実行環境のファイルアクセス制限を確認し、利用できる環境で診断を再実行してください。ログインの有効期限とは別のエラーです。',
     login_required:
       '選択したプロファイルで再ログインしてください。IAM Identity Centerは aws sso login、通常のAWSログインは aws login を使います。',
     mfa_session_required:

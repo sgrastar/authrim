@@ -8,18 +8,33 @@ import {
   createSyntheticBrowserSp,
   type SyntheticBrowserSpConfig,
 } from './browser-sp';
+import { installSyntheticSpStateDiagnostics } from './browser-sp-diagnostics';
 import { PostgresTransientStateStore } from '../storage/postgres-transient-state';
+import { createAwsStateStores } from '../storage/create-state-stores';
+import { createDynamoStateClient } from '../storage/dynamodb-state';
+import {
+  normalizeAwsAuthStateConfig,
+  dynamoAuthStateTableName,
+} from '../storage/auth-state-config';
+import {
+  assertDynamoAuthStateTable,
+  assertDynamoAuthStateSealed,
+} from '../import/auth-state-restore';
+import type { AwsSelectedAuthStateEvidence } from '../import/selected-auth-state';
+import { selectedSyntheticDynamoState } from './selected-auth-state';
 
 export interface SyntheticBrowserSpSecret extends SyntheticBrowserSpConfig {
   formatVersion: 1;
-  stateDatabaseUrl: string;
+  stateDatabaseUrl?: string;
+  authState?: AwsSelectedAuthStateEvidence;
 }
 
 /** Also used by the private preparer; pins cannot be selected by the request or secret itself. */
 export function parseSyntheticBrowserSpSecret(
   value: unknown,
   expectedOrigin: string,
-  expectedDbHost: string
+  expectedDbHost: string,
+  expectedAws?: { accountId: string; region: string }
 ): SyntheticBrowserSpSecret {
   try {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
@@ -30,7 +45,8 @@ export function parseSyntheticBrowserSpSecret(
       'environmentName',
       'origin',
       'tenantId',
-      'stateDatabaseUrl',
+      ...(source.stateDatabaseUrl === undefined ? [] : ['stateDatabaseUrl']),
+      ...(source.authState === undefined ? [] : ['authState']),
       'certificatePem',
       'certificateDerSha256',
     ];
@@ -38,13 +54,33 @@ export function parseSyntheticBrowserSpSecret(
       Object.keys(source).length !== keys.length ||
       !keys.every((key) => key in source) ||
       source.formatVersion !== 1 ||
-      source.origin !== expectedOrigin ||
-      typeof source.stateDatabaseUrl !== 'string' ||
-      !/^[a-z0-9.-]+\.rds\.amazonaws\.com$/u.test(expectedDbHost)
+      source.origin !== expectedOrigin
     )
       throw new Error();
     const config = source as unknown as SyntheticBrowserSpSecret;
     assertSyntheticBrowserSpConfig(config);
+    if (config.authState !== undefined) {
+      const selection = config.authState;
+      const normalized = normalizeAwsAuthStateConfig(selection.config, expectedAws);
+      if (normalized.backend === 'dynamodb') {
+        const dynamo = selectedSyntheticDynamoState(selection);
+        if (
+          !dynamo ||
+          config.stateDatabaseUrl !== undefined ||
+          dynamo.receipt.source.issuer !== config.origin ||
+          dynamo.receipt.tenantId !== config.tenantId ||
+          Object.keys(selection).sort().join(',') !== 'config,receipt'
+        )
+          throw new Error();
+        return config;
+      }
+      if (Object.keys(selection).join(',') !== 'config') throw new Error();
+    }
+    if (
+      typeof config.stateDatabaseUrl !== 'string' ||
+      !/^[a-z0-9.-]+\.rds\.amazonaws\.com$/u.test(expectedDbHost)
+    )
+      throw new Error();
     const url = new URL(config.stateDatabaseUrl);
     if (
       url.protocol !== 'postgresql:' ||
@@ -98,8 +134,42 @@ async function initialize(): Promise<ReturnType<typeof createSyntheticBrowserSp>
   const config = parseSyntheticBrowserSpSecret(
     JSON.parse(secret.SecretString) as unknown,
     origin,
-    host
+    host,
+    { accountId: arn.split(':')[4], region: 'ap-northeast-1' }
   );
+  const dynamo = selectedSyntheticDynamoState(config.authState);
+  if (dynamo) {
+    const stateClient = createDynamoStateClient({ region: dynamo.target.region });
+    const markWarm = installSyntheticSpStateDiagnostics(stateClient);
+    try {
+      await assertDynamoAuthStateTable(stateClient, dynamo.target);
+      const ready = () => assertDynamoAuthStateSealed({ ...dynamo, client: stateClient });
+      await ready();
+      markWarm();
+      const { state } = createAwsStateStores({
+        backend: 'dynamodb',
+        client: stateClient,
+        tableName: dynamoAuthStateTableName(dynamo.target),
+        namespace: dynamo.target.namespace,
+      });
+      return createSyntheticBrowserSp({
+        config,
+        store: {
+          async storeChallenge(input) {
+            await ready();
+            return state.storeChallenge(input);
+          },
+          async consumeChallenge(input) {
+            await ready();
+            return state.consumeChallenge(input);
+          },
+        },
+      });
+    } catch {
+      stateClient.destroy();
+      throw new Error('synthetic_browser_sp_initialization_failed');
+    }
+  }
   const pool = new Pool({
     connectionString: config.stateDatabaseUrl,
     max: 2,

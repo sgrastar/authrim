@@ -10,6 +10,7 @@ const ENTRIES = [
   'restore-cli',
   'collector-cli',
   'lambda',
+  'lambda-api',
   'db-bootstrap',
   'synthetic-backup-cli',
   'browser-sp',

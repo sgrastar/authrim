@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   registerAwsCommands,
+  runAwsAdoptPlanCommand,
   runAwsExecutionCommand,
   runAwsSetupCommand,
 } from '../cli/commands/aws.js';
@@ -153,6 +154,8 @@ describe('AWS setup command', () => {
       'apply',
       'resume',
       'status',
+      'adopt-plan',
+      'dsql',
     ]);
     const check = aws?.commands[0];
     expect(check?.options.find((option) => option.long === '--phase')?.argChoices).toEqual([
@@ -234,5 +237,51 @@ describe('AWS setup command', () => {
     ).toBe(2);
     expect(runScript).not.toHaveBeenCalled();
     expect(reportError.mock.calls.flat().join()).not.toContain('ENOENT');
+  });
+
+  it('requires all three reviewed digests before starting plan adoption', async () => {
+    const runScript = vi.fn();
+    const options = {
+      source,
+      previousPlan: 'original-plan.json',
+      previousPlanSha256: 'a'.repeat(64),
+      previousState: 'original-state.json',
+      previousStateSha256: 'b'.repeat(64),
+      plan: 'reviewed-plan.json',
+      planSha256: 'c'.repeat(64),
+      state: 'new-state.json',
+    };
+    for (const field of ['previousPlanSha256', 'previousStateSha256', 'planSha256'] as const) {
+      expect(
+        await runAwsAdoptPlanCommand(
+          { ...options, [field]: 'invalid' },
+          { runScript, reportError: vi.fn() }
+        )
+      ).toBe(2);
+    }
+    expect(runScript).not.toHaveBeenCalled();
+    runScript.mockResolvedValue(0);
+    expect(await runAwsAdoptPlanCommand(options, { runScript })).toBe(0);
+    expect(runScript).toHaveBeenCalledExactlyOnceWith(
+      join(scripts, 'setup-execute.mjs'),
+      [
+        'adopt-plan',
+        '--previous-plan',
+        resolve(options.previousPlan),
+        '--previous-plan-sha256',
+        options.previousPlanSha256,
+        '--previous-state',
+        resolve(options.previousState),
+        '--previous-state-sha256',
+        options.previousStateSha256,
+        '--plan',
+        resolve(options.plan),
+        '--plan-sha256',
+        options.planSha256,
+        '--state',
+        resolve(options.state),
+      ],
+      source
+    );
   });
 });

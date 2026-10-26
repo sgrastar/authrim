@@ -1,4 +1,5 @@
 import type { DatabaseAdapter } from '../../db';
+import { settleGroupInputBoundary } from '../../db/group-input-mutations';
 import { BUILTIN_GROUP_FIELDS, type EvaluationInput, type Field, type GroupPlan } from './model';
 import type { GroupInputReader, InputVersion } from './store';
 const primary = { consistencyClass: 'primary_required' as const };
@@ -105,13 +106,24 @@ export class SavedGroupInputReader implements GroupInputReader {
         Date.now(),
       ]
     );
-    for (const db of [this.core, this.pii])
+    for (const db of [this.core, this.pii]) {
+      if (db.groupInputMutations) {
+        for (const id of ids)
+          await settleGroupInputBoundary(
+            db,
+            { id, tenantId: this.tenantId, userId: this.userId },
+            'accepted'
+          );
+        continue;
+      }
+      if (db.getType() === 'aurora-dsql') throw new Error('group_boundary_capability_required');
       await db.batch(
         ids.map((id) => ({
           sql: "DELETE FROM service_group_write_boundaries WHERE tenant_id = ? AND user_id = ? AND id = ? AND status = 'failed'",
           params: [this.tenantId, this.userId, id],
         }))
       );
+    }
   }
   async version(): Promise<InputVersion> {
     await this.route?.verify();

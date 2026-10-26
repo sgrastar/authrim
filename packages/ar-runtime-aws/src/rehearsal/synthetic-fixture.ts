@@ -18,17 +18,37 @@ import { SNAPSHOT_ADMIN_MAPPING_TABLES } from '../import/snapshot-admin-db';
 import { awsStateSupplementPayloadSha256 } from '../import/state-restore';
 import type { VerifiedAwsSamlSupplement } from '../import/runtime-assembly-input';
 
+import { normalizeAwsRuntimeUiConfig, type AwsRuntimeUiConfig } from '../ui/runtime-ui-config';
+
 export const TENANT = 'tenant-a';
 export const ORIGIN = 'https://tenant-a.example.test';
 export const SP = 'https://sp.example.test/entity';
+type ExternalLogin = Extract<AwsRuntimeUiConfig['ui']['login'], { mode: 'external' }>;
+
 export type SyntheticFixtureProfile =
   | { kind: 'in-process' }
-  | { kind: 'aws-browser'; issuer: string; spEntityId: string; acsUrl: string };
+  | {
+      kind: 'aws-browser';
+      issuer: string;
+      spEntityId: string;
+      acsUrl: string;
+      externalLogin?: ExternalLogin;
+    };
 
-/** Explicitly synthetic addresses only; browser fixtures never use an existing customer host. */
+interface ResolvedSyntheticFixtureProfile {
+  kind: 'in-process' | 'aws-browser';
+  issuer: string;
+  spEntityId: string;
+  acsUrl: string;
+  environmentName: string;
+  rpId: string;
+  externalLogin?: ExternalLogin;
+}
+
+/** Issuer/SP stay on isolated AWS test hosts; optional external UI metadata creates synthetic source rows only. */
 export function resolveSyntheticFixtureProfile(
   input: SyntheticFixtureProfile = { kind: 'in-process' }
-) {
+): ResolvedSyntheticFixtureProfile {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new Error('aws_synthetic_fixture_profile_invalid');
   if (input.kind === 'in-process') {
@@ -55,16 +75,28 @@ export function resolveSyntheticFixtureProfile(
       issuer.port ||
       input.spEntityId !== `${issuer.origin}/test-sp/metadata` ||
       input.acsUrl !== `${issuer.origin}/test-sp/acs` ||
-      Object.keys(input).some((key) => !['kind', 'issuer', 'spEntityId', 'acsUrl'].includes(key))
+      Object.keys(input).some(
+        (key) => !['kind', 'issuer', 'spEntityId', 'acsUrl', 'externalLogin'].includes(key)
+      )
     )
       throw new Error('invalid_profile');
+    const externalLogin =
+      input.externalLogin === undefined
+        ? undefined
+        : normalizeAwsRuntimeUiConfig({
+            components: { loginUi: false, adminUi: false },
+            ui: { login: input.externalLogin, admin: { mode: 'disabled' } },
+          }).ui.login;
+    if (externalLogin !== undefined && externalLogin.mode !== 'external')
+      throw new Error('invalid_external_login');
     return {
       kind: input.kind,
       issuer: issuer.origin,
       spEntityId: input.spEntityId,
       acsUrl: input.acsUrl,
       environmentName: 'aws-browser-rehearsal',
-      rpId: issuer.hostname,
+      rpId: externalLogin ? new URL(externalLogin.baseUrl).hostname : issuer.hostname,
+      ...(externalLogin ? { externalLogin } : {}),
     };
   } catch {
     throw new Error('aws_synthetic_fixture_profile_invalid');
@@ -122,6 +154,62 @@ function derSignature(raw: Uint8Array): Uint8Array {
   return new Uint8Array([0x30, content.length, ...content]);
 }
 
+/** Sign only a test credential created by this module; never included in the serving artifact. */
+export async function signSyntheticPasskeyAssertion(input: {
+  id: string;
+  privateJwk: JsonWebKey;
+  rpId: string;
+  origin: string;
+  challenge: string;
+  userId: string;
+  counter: number;
+}) {
+  const { challenge, userId, counter, origin: browserOrigin } = input;
+  const privateKey = await webcrypto.subtle.importKey(
+    'jwk',
+    input.privateJwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign']
+  );
+  if (!Number.isSafeInteger(counter) || counter < 1 || counter > 0xffffffff)
+    throw new Error('test_passkey_counter_invalid');
+  const clientData = new TextEncoder().encode(
+    JSON.stringify({
+      type: 'webauthn.get',
+      challenge,
+      origin: browserOrigin,
+      crossOrigin: false,
+    })
+  );
+  const rpHash = new Uint8Array(
+    await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(input.rpId))
+  );
+  const counterBytes = new Uint8Array(4);
+  new DataView(counterBytes.buffer).setUint32(0, counter);
+  const authData = new Uint8Array([...rpHash, 5, ...counterBytes]);
+  const clientHash = new Uint8Array(await webcrypto.subtle.digest('SHA-256', clientData));
+  const signature = new Uint8Array(
+    await webcrypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      privateKey,
+      new Uint8Array([...authData, ...clientHash])
+    )
+  );
+  return {
+    id: input.id,
+    rawId: input.id,
+    type: 'public-key' as const,
+    response: {
+      clientDataJSON: base64url(clientData),
+      authenticatorData: base64url(authData),
+      signature: base64url(derSignature(signature)),
+      userHandle: base64url(new TextEncoder().encode(userId)),
+    },
+    clientExtensionResults: {},
+  };
+}
+
 export async function softwarePasskey(profileInput?: SyntheticFixtureProfile) {
   const profile = resolveSyntheticFixtureProfile(profileInput);
   const keys = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
@@ -159,43 +247,21 @@ export async function softwarePasskey(profileInput?: SyntheticFixtureProfile) {
         ...new Uint8Array(await webcrypto.subtle.exportKey('pkcs8', keys.privateKey))
       )
     ),
-    async sign(challenge: string, userId: string, counter = 1) {
-      if (!Number.isSafeInteger(counter) || counter < 1 || counter > 0xffffffff)
-        throw new Error('test_passkey_counter_invalid');
-      const clientData = new TextEncoder().encode(
-        JSON.stringify({
-          type: 'webauthn.get',
-          challenge,
-          origin: profile.issuer,
-          crossOrigin: false,
-        })
-      );
-      const rpHash = new Uint8Array(
-        await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(profile.rpId))
-      );
-      const counterBytes = new Uint8Array(4);
-      new DataView(counterBytes.buffer).setUint32(0, counter);
-      const authData = new Uint8Array([...rpHash, 5, ...counterBytes]);
-      const clientHash = new Uint8Array(await webcrypto.subtle.digest('SHA-256', clientData));
-      const signature = new Uint8Array(
-        await webcrypto.subtle.sign(
-          { name: 'ECDSA', hash: 'SHA-256' },
-          keys.privateKey,
-          new Uint8Array([...authData, ...clientHash])
-        )
-      );
-      return {
+    async sign(
+      challenge: string,
+      userId: string,
+      counter = 1,
+      browserOrigin = profile.externalLogin?.baseUrl ?? profile.issuer
+    ) {
+      return signSyntheticPasskeyAssertion({
         id,
-        rawId: id,
-        type: 'public-key' as const,
-        response: {
-          clientDataJSON: base64url(clientData),
-          authenticatorData: base64url(authData),
-          signature: base64url(derSignature(signature)),
-          userHandle: base64url(new TextEncoder().encode(userId)),
-        },
-        clientExtensionResults: {},
-      };
+        privateJwk: await webcrypto.subtle.exportKey('jwk', keys.privateKey),
+        rpId: profile.rpId,
+        origin: browserOrigin,
+        challenge,
+        userId,
+        counter,
+      });
     },
   };
 }
@@ -216,7 +282,7 @@ export async function sourceSigningBundle(profileInput?: SyntheticFixtureProfile
     warning: 'synthetic test',
     settings: {
       entityIdStyle: 'metadata_url',
-      interactiveLoginUrlPolicy: 'tenant_host',
+      interactiveLoginUrlPolicy: profile.externalLogin ? 'ui_base_url' : 'tenant_host',
       certificateSubject: {
         countryName: '',
         stateOrProvinceName: '',
@@ -291,14 +357,19 @@ export async function seedSource(
   await core.query(
     `INSERT INTO oauth_clients
       (tenant_id,client_id,client_name,redirect_uris,grant_types,response_types,application_type,allowed_channels,created_at,updated_at)
-     VALUES ($1,'login-ui','Login UI','[]','["authorization_code"]','["code"]','web','["browser"]',$2,$2)`,
-    [TENANT, NOW]
+     VALUES ($1,$2,'Login UI','[]','["authorization_code"]','["code"]','web','["browser"]',$3,$3)`,
+    [TENANT, profile.externalLogin?.clientId ?? 'login-ui', NOW]
   );
   await core.query(
     `INSERT INTO web_origin_registry
       (id,tenant_id,client_id,origin,handoff_allowed,created_at,updated_at)
-     VALUES ('origin-a',$1,'login-ui',$2,1,$3,$3)`,
-    [TENANT, profile.issuer, NOW]
+     VALUES ('origin-a',$1,$2,$3,1,$4,$4)`,
+    [
+      TENANT,
+      profile.externalLogin?.clientId ?? 'login-ui',
+      profile.externalLogin?.baseUrl ?? profile.issuer,
+      NOW,
+    ]
   );
   await core.query(
     `INSERT INTO identity_subjects
@@ -612,6 +683,9 @@ export async function buildBackupFiles(input: {
   directory: string;
   passphrase?: string;
   maxSnapshotAgeMs?: number;
+  /** Explicit synthetic capture used by no-UI/external-source restore tests. */
+  sourceLoginUi?: VerifiedAwsSamlSupplement['sourceLoginUi'];
+  sourceFlowRuntimeEnabled?: boolean;
   profile?: SyntheticFixtureProfile;
 }) {
   const profile = resolveSyntheticFixtureProfile(input.profile);
@@ -788,12 +862,12 @@ export async function buildBackupFiles(input: {
   };
   state.receipt.supplementSha256 = awsStateSupplementPayloadSha256(state);
   const payload: Omit<VerifiedAwsSamlSupplement, 'receipt'> = {
-    sourceLoginUi: { client: loginClient, origins: loginOrigins },
+    sourceLoginUi: input.sourceLoginUi ?? { client: loginClient, origins: loginOrigins },
     platformDestinationProfiles: { profiles: [], versions: [] },
     state,
     accountRoutes: { 'account:user-tenant-a': sourceRoute() },
     platformSettings: {},
-    sourceFlowRuntimeEnabled: true,
+    sourceFlowRuntimeEnabled: input.sourceFlowRuntimeEnabled ?? true,
     consentIpSalt: 'consent-salt-with-at-least-thirty-two-bytes',
   };
   const supplement: {

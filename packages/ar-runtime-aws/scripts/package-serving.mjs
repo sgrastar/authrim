@@ -10,10 +10,11 @@ const PEM = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/gu;
 const ZIP_TIME = new Date('2000-01-01T00:00:00Z');
 
 export function parseServingPackageArguments(args) {
-  if (args.length !== 2 || args[0] !== '--ca-bundle' || !args[1]) {
+  if (![2, 4].includes(args.length) || args[0] !== '--ca-bundle' || !args[1] ||
+    (args.length === 4 && (args[2] !== '--login-ui' || !['embedded-rehearsal', 'none'].includes(args[3])))) {
     throw new Error('usage: package-serving --ca-bundle <AWS RDS root CA bundle>');
   }
-  return { caBundlePath: resolve(args[1]) };
+  return { caBundlePath: resolve(args[1]), ...(args.length === 4 ? { loginUi: args[3] } : {}) };
 }
 
 /** Supplied CA roots are explicit operator input; never fetch trust material while packaging. */
@@ -39,8 +40,10 @@ export function validateServingCaBundle(ca) {
 }
 
 /** The explicit allow-list prevents SQL, source maps, fixture data and keys entering serving ZIPs. */
-export async function packageServingArtifact({ entry, outputDirectory, caBundlePath }) {
+export async function packageServingArtifact({ entry, outputDirectory, caBundlePath, loginUi }) {
   if (!['lambda', 'browser-sp'].includes(entry)) throw new Error('aws_serving_entry_invalid');
+  if (loginUi !== undefined && (entry !== 'lambda' || !['embedded-rehearsal', 'none'].includes(loginUi)))
+    throw new Error('aws_serving_ui_selection_invalid');
   const ca = await readFile(caBundlePath, 'utf8');
   validateServingCaBundle(ca);
   const temporary = await mkdtemp(join(tmpdir(), 'authrim-serving-package-'));
@@ -50,7 +53,7 @@ export async function packageServingArtifact({ entry, outputDirectory, caBundleP
       const destination = join(temporary, file);
       await mkdir(dirname(destination), { recursive: true });
       if (file === 'certs/rds-ca.pem') await writeFile(destination, ca);
-      else await copyFile(join(outputDirectory, file), destination);
+      else await copyFile(join(outputDirectory, entry === 'lambda' && loginUi === 'none' ? 'lambda-api.mjs' : file), destination);
       await utimes(destination, ZIP_TIME, ZIP_TIME);
     }
     let uncompressedSize = 0;
@@ -68,6 +71,7 @@ export async function packageServingArtifact({ entry, outputDirectory, caBundleP
       size: archive.length,
       uncompressedSize,
       caBundleSha256: createHash('sha256').update(ca).digest('hex'),
+      ...(loginUi !== undefined ? { loginUi } : {}),
       files,
     };
     await copyFile(zip, join(outputDirectory, `${entry}.zip`));

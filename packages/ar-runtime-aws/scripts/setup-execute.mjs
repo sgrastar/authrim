@@ -5,15 +5,27 @@ import { AwsSetupError } from './setup-aws-cli.mjs';
 import { createExecutionPlan } from './setup-execution-plan.mjs';
 import { canonicalSetupJson, readSetupJson, setupDigest } from './setup-execution-state.mjs';
 import { executeAwsSetup } from './setup-executor.mjs';
+import { adoptExecutionPlan } from './setup-plan-adoption.mjs';
+import { createSetupConfiguration } from './setup-config.mjs';
 
 export async function runExecutionCommand(args, root = process.cwd()) {
   const [mode, ...rest] = args;
   const options = {};
   const allowed = {
+    configure: ['input', 'out'],
     plan: ['config', 'out', 'account-id', 'region'],
     apply: ['plan', 'plan-sha256', 'state', 'through'],
     resume: ['plan', 'plan-sha256', 'state', 'through'],
     status: ['state'],
+    'adopt-plan': [
+      'previous-plan',
+      'previous-plan-sha256',
+      'previous-state',
+      'previous-state-sha256',
+      'plan',
+      'plan-sha256',
+      'state',
+    ],
   }[mode];
   if (!allowed || rest.length % 2) throw new AwsSetupError('aws_setup_arguments_invalid');
   for (let index = 0; index < rest.length; index += 2) {
@@ -26,6 +38,36 @@ export async function runExecutionCommand(args, root = process.cwd()) {
     )
       throw new AwsSetupError('aws_setup_arguments_invalid');
     options[key] = rest[index + 1];
+  }
+  if (mode === 'configure') {
+    if (!options.input || !options.out) throw new AwsSetupError('aws_setup_arguments_invalid');
+    const config = createSetupConfiguration(
+      await readSetupJson(resolve(options.input)),
+      resolve(options.out)
+    );
+    const serialized = canonicalSetupJson(config);
+    const file = await open(resolve(options.out), 'wx', 0o600);
+    try {
+      await file.writeFile(`${serialized}\n`);
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    return { status: 'configured', configSha256: setupDigest(serialized) };
+  }
+  if (mode === 'adopt-plan') {
+    if (allowed.some((key) => !options[key]))
+      throw new AwsSetupError('aws_setup_arguments_invalid');
+    return adoptExecutionPlan({
+      root,
+      previousPlanPath: resolve(options['previous-plan']),
+      previousPlanSha256: options['previous-plan-sha256'],
+      previousStatePath: resolve(options['previous-state']),
+      previousStateSha256: options['previous-state-sha256'],
+      planPath: resolve(options.plan),
+      planSha256: options['plan-sha256'],
+      statePath: resolve(options.state),
+    });
   }
   if (mode === 'plan') {
     if (!options.config || !options.out) throw new AwsSetupError('aws_setup_arguments_invalid');

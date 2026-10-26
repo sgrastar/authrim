@@ -200,6 +200,121 @@ export function registerAwsCommands(program: Command): void {
       process.exitCode = await runAwsExecutionCommand(mode, options);
     });
   }
+  aws
+    .command('adopt-plan')
+    .description(
+      'Advanced: verify a blocked pre-initialization deployment against a source-only plan update'
+    )
+    .requiredOption('--previous-plan <path>', 'Original executable plan (never modified)')
+    .requiredOption('--previous-plan-sha256 <sha256>', 'Reviewed original plan digest')
+    .requiredOption('--previous-state <path>', 'Blocked original execution state (never modified)')
+    .requiredOption(
+      '--previous-state-sha256 <sha256>',
+      'Reviewed SHA256 of the original state file bytes'
+    )
+    .requiredOption('--plan <path>', 'New executable plan with identical deployment inputs')
+    .requiredOption('--plan-sha256 <sha256>', 'Reviewed new plan digest')
+    .requiredOption('--state <path>', 'New private execution state; must not already exist')
+    .option('--source <path>', 'Authrim source repository')
+    .action(async (options: AwsAdoptPlanOptions) => {
+      process.exitCode = await runAwsAdoptPlanCommand(options);
+    });
+  const dsql = aws
+    .command('dsql')
+    .description('Evaluate an existing Aurora DSQL cluster; SAML serving is not supported');
+  for (const mode of ['check', 'verify'] as const) {
+    const command = dsql
+      .command(mode)
+      .description(
+        mode === 'check'
+          ? 'Check the selected identity and read-only DSQL connection'
+          : 'Run an isolated synthetic identity restore after reviewing the check result'
+      )
+      .requiredOption('--account-id <id>', 'Expected AWS account ID')
+      .requiredOption('--region <region>', 'Expected DSQL region')
+      .requiredOption('--profile <name>', 'Existing AWS CLI profile')
+      .requiredOption('--config <path>', 'DSQL connection settings without credentials')
+      .option('--source <path>', 'Authrim source repository');
+    if (mode === 'verify')
+      command
+        .requiredOption('--config-sha256 <sha256>', 'Connection digest returned by dsql check')
+        .requiredOption('--bundle-sha256 <sha256>', 'Program digest returned by dsql check')
+        .requiredOption('--principal-arn <arn>', 'Principal ARN returned by dsql check')
+        .requiredOption('--principal-id <id>', 'Principal ID returned by dsql check')
+        .requiredOption(
+          '--write-probe',
+          'Explicitly allow synthetic writes in a new disposable schema'
+        )
+        .option('--users <count>', 'Synthetic users (1–2000)', '1001');
+    command.action(async (options: AwsDsqlOptions) => {
+      process.exitCode = await runAwsDsqlCommand(mode, options);
+    });
+  }
+}
+
+export interface AwsDsqlOptions {
+  accountId: string;
+  region: string;
+  profile: string;
+  config: string;
+  source?: string;
+  configSha256?: string;
+  bundleSha256?: string;
+  principalArn?: string;
+  principalId?: string;
+  writeProbe?: boolean;
+  users?: string;
+}
+
+/** DSQL remains an explicit evaluation branch, never a PostgreSQL deployment mode. */
+export async function runAwsDsqlCommand(
+  mode: 'check' | 'verify',
+  options: AwsDsqlOptions,
+  dependencies: AwsSetupDependencies = {}
+): Promise<number> {
+  try {
+    const root = resolve(options.source ?? process.cwd());
+    const script = await requireScript(root, 'setup-dsql.mjs');
+    const args = [
+      mode,
+      '--account-id',
+      options.accountId,
+      '--region',
+      options.region,
+      '--profile',
+      options.profile,
+      '--config',
+      resolve(options.config),
+    ];
+    if (mode === 'verify') {
+      if (
+        !options.writeProbe ||
+        !options.configSha256 ||
+        !options.bundleSha256 ||
+        !options.principalArn ||
+        !options.principalId
+      )
+        throw new Error('aws_dsql_review_required');
+      args.push(
+        '--config-sha256',
+        options.configSha256,
+        '--bundle-sha256',
+        options.bundleSha256,
+        '--principal-arn',
+        options.principalArn,
+        '--principal-id',
+        options.principalId,
+        '--write-probe'
+      );
+      if (options.users !== undefined) args.push('--users', options.users);
+    }
+    return await (dependencies.runScript ?? executeScript)(script, args, root);
+  } catch {
+    (dependencies.reportError ?? ((message) => process.stderr.write(`${message}\n`)))(
+      'DSQLの確認を実行できませんでした。接続設定と確認結果を見直してください。SAMLの構築・有効化は行いません。'
+    );
+    return 2;
+  }
 }
 
 export interface AwsExecutionOptions {
@@ -229,6 +344,60 @@ export async function runAwsExecutionCommand(
   } catch {
     (dependencies.reportError ?? ((message) => process.stderr.write(`${message}\n`)))(
       'AWSセットアップを実行できませんでした。計画・状態ファイルとソースの配置を確認してください。'
+    );
+    return 2;
+  }
+}
+
+export interface AwsAdoptPlanOptions {
+  previousPlan: string;
+  previousPlanSha256: string;
+  previousState: string;
+  previousStateSha256: string;
+  plan: string;
+  planSha256: string;
+  state: string;
+  source?: string;
+}
+
+/** Explicit advanced recovery; cloud reconciliation stays in the fixed executor script. */
+export async function runAwsAdoptPlanCommand(
+  options: AwsAdoptPlanOptions,
+  dependencies: AwsSetupDependencies = {}
+): Promise<number> {
+  try {
+    if (
+      ![options.previousPlanSha256, options.previousStateSha256, options.planSha256].every(
+        (value) => /^[a-f0-9]{64}$/u.test(value ?? '')
+      )
+    )
+      throw new Error('aws_adoption_digest_missing');
+    const root = resolve(options.source ?? process.cwd());
+    const script = await requireScript(root, 'setup-execute.mjs');
+    return await (dependencies.runScript ?? executeScript)(
+      script,
+      [
+        'adopt-plan',
+        '--previous-plan',
+        resolve(options.previousPlan),
+        '--previous-plan-sha256',
+        options.previousPlanSha256,
+        '--previous-state',
+        resolve(options.previousState),
+        '--previous-state-sha256',
+        options.previousStateSha256,
+        '--plan',
+        resolve(options.plan),
+        '--plan-sha256',
+        options.planSha256,
+        '--state',
+        resolve(options.state),
+      ],
+      root
+    );
+  } catch {
+    (dependencies.reportError ?? ((message) => process.stderr.write(`${message}\n`)))(
+      'AWSの構築記録を引き継げませんでした。元と新しい計画・状態ファイルの識別情報を確認してください。'
     );
     return 2;
   }
