@@ -342,6 +342,13 @@ export async function publishEvent<T = unknown>(
   payload: EventPublishPayload<T>,
   options?: EventPublishOptions
 ): Promise<EventPublishResult> {
+  if (c.env.EVENT_RUNTIME_PORTS) {
+    const delivery = c.env.EVENT_RUNTIME_PORTS.publish(payload, options);
+    // Most auth callers intentionally do not await publishEvent. Keep the original promise
+    // request-scoped so Lambda can drain and surface a failed durable write before returning.
+    getWaitUntilFromContext(c)?.(delivery);
+    return delivery;
+  }
   const dispatcher = await createEventDispatcherFromContext(c);
   return dispatcher.publish(payload, options);
 }

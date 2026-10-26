@@ -576,6 +576,10 @@
             {
               "path": "012_flow_audit_sign_in_attempts.sql",
               "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
+            },
+            {
+              "path": "013_saml_passkey_configuration_and_route_generation.sql",
+              "checksum": "2d82407f3ff17044028b444bb1b62fabcd08bb169528b6429750fef266bd1f02"
             }
           ]
         },
@@ -1209,6 +1213,10 @@
         {
           "path": "012_flow_audit_sign_in_attempts.sql",
           "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
+        },
+        {
+          "path": "013_saml_passkey_configuration_and_route_generation.sql",
+          "checksum": "2d82407f3ff17044028b444bb1b62fabcd08bb169528b6429750fef266bd1f02"
         }
       ]
     },

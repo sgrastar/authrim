@@ -54,6 +54,7 @@ export type SAMLPersistentIdentifierAlgorithm = PersistentIdentifierAlgorithm;
 export interface SAMLPairwiseSaltSource {
   PAIRWISE_SALT?: string;
   KEY_MANAGER?: Env['KEY_MANAGER'];
+  SAML_RUNTIME_PORTS?: Env['SAML_RUNTIME_PORTS'];
 }
 
 export interface SAMLTransientNameIDStoreSource {
@@ -149,7 +150,7 @@ export async function resolveSAMLPairwiseSecretForRef(
   tenantId: string,
   secretRef: string
 ): Promise<string | undefined> {
-  if (env.KEY_MANAGER) {
+  if (env.SAML_RUNTIME_PORTS || env.KEY_MANAGER) {
     const secret = await getKeyManagerSecret(env as Env, tenantId, {
       secretRef,
     });

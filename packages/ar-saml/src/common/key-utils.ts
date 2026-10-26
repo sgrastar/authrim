@@ -111,6 +111,17 @@ export async function getSigningKey(
   options: SigningKeyLookupOptions = {}
 ): Promise<{ privateKeyPem: string; publicKeyPem: string; kid: string }> {
   const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing key tenant');
+  if (env.SAML_RUNTIME_PORTS) {
+    // An alternate runtime must use the imported key. Never create or rotate it on a login path.
+    const key = await env.SAML_RUNTIME_PORTS.signing.getKey({
+      tenantId: resolvedTenantId,
+      keyRef: options.keyRef,
+    });
+    if (!key.kid || !key.privateKeyPem || !key.publicKeyPem || !key.certificate) {
+      throw new Error('SAML runtime signing key is incomplete');
+    }
+    return { privateKeyPem: key.privateKeyPem, publicKeyPem: key.publicKeyPem, kid: key.kid };
+  }
   const cacheKey = buildSigningKeyCacheKey(resolvedTenantId, options.keyRef);
 
   // Check cache
@@ -167,6 +178,14 @@ export async function getSigningCertificate(
   options: SigningKeyLookupOptions = {}
 ): Promise<string> {
   const resolvedTenantId = requireSAMLTenantId(tenantId, 'SAML signing certificate tenant');
+  if (env.SAML_RUNTIME_PORTS) {
+    const key = await env.SAML_RUNTIME_PORTS.signing.getKey({
+      tenantId: resolvedTenantId,
+      keyRef: options.keyRef,
+    });
+    if (!key.certificate) throw new Error('SAML runtime signing certificate is missing');
+    return key.certificate;
+  }
   const cacheKey = buildSigningKeyCacheKey(resolvedTenantId, options.keyRef);
 
   // Check cache
@@ -192,6 +211,9 @@ export async function getKeyManagerSecret(
   options: SecretLookupOptions
 ): Promise<KeyManagerSecret> {
   requireSAMLTenantId(tenantId, 'SAML KeyManager secret tenant');
+  if (env.SAML_RUNTIME_PORTS) {
+    return env.SAML_RUNTIME_PORTS.signing.getSecret({ tenantId, secretRef: options.secretRef });
+  }
   const keyManagerId = env.KEY_MANAGER.idFromName(options.secretRef);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 

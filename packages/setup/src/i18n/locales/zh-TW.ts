@@ -741,6 +741,26 @@ const zhTW: Translations = {
   'web.lightMode': '淺色',
   'web.systemMode': '系統',
 
+  // Web UI cloud platform selection
+  'web.platform.title': '選擇部署平台',
+  'web.platform.description': '請選擇用來部署 Authrim 的雲端平台。',
+  'web.platform.cloudflareAction': '在 Cloudflare 上部署',
+  'web.platform.cloudflareDescription': '在 Cloudflare Workers 上設定 Authrim。',
+  'web.platform.awsAction': '在 AWS 上部署',
+  'web.platform.development': '開發中',
+  'web.platform.awsScope': '目前僅支援 SAML DR',
+  'web.platform.choose': '選擇',
+  'web.platform.back': '返回選擇部署平台',
+  'web.platform.awsTitle': '在 AWS 上準備 SAML DR',
+  'web.platform.awsDescription': '準備 SAML IdP 復原環境，以因應 Cloudflare 故障。',
+  'web.platform.awsGuide':
+    '目前可透過 AWS 設定指令檢查先決條件並建立部署計畫。瀏覽器部署功能仍在開發中。',
+  'web.platform.awsPrerequisites': '請準備 AWS 帳戶、區域，以及透過專用角色登入的設定檔。',
+  'web.platform.awsCommand': '先決條件檢查指令',
+  'web.platform.awsCommandNote': '請將帳戶 ID 和設定檔名稱替換為您實際使用的 AWS 設定。',
+  'web.platform.targetPending': '未選擇',
+  'web.platform.chooseCloudflare': '繼續設定 Cloudflare',
+
   // Web UI Prerequisites
   'web.prereq.title': '準備',
   'web.prereq.checking': '檢查中...',

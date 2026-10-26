@@ -7,6 +7,7 @@ import {
   CanonicalRuntimeUserStore,
   createAuthContextFromHono,
   ensureDatabaseAdapter,
+  getRegistryTenantMetadataRoute,
   getTenantMetadataContextFromHono,
   isDatabaseSource,
   resolveAccountDataContext,
@@ -48,7 +49,7 @@ export async function tenantRBACStores(
   });
   // A user store bound to the metadata database itself is that database: the same adapter, so
   // a read of both reads it once.
-  const metadataBinding = metadataContext?.route?.bindingRef;
+  const metadataBinding = getRegistryTenantMetadataRoute(metadataContext)?.bindingRef;
   return {
     metadata,
     accounts: stores.map((store) =>

@@ -1302,7 +1302,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       metadata: { client_id: 'web-client' },
     };
 
-    async function finishWith(challenge: unknown) {
+    async function finishWith(
+      challenge: unknown,
+      configureEnv?: (env: ReturnType<typeof createEnv>) => void
+    ) {
       const codeVerifier = 'passkey-login-code-verifier';
       mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
         challenge: 'passkey-login-challenge',
@@ -1319,19 +1322,19 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       });
       mocks.challengeStore.getChallengeRpc.mockResolvedValue(challenge);
       const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
-      const response = await directPasskeyLoginFinishHandler(
-        createContext({
-          challenge_id: 'challenge_1',
-          credential: {
-            id: 'credential-id',
-            rawId: 'credential-id',
-            response: {},
-            type: 'public-key',
-          },
-          code_verifier: codeVerifier,
-          channel: 'browser',
-        }) as never
-      );
+      const context = createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      });
+      configureEnv?.(context.env);
+      const response = await directPasskeyLoginFinishHandler(context as never);
       return response;
     }
 
@@ -1365,6 +1368,39 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect(response.status).toBe(200);
       expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalled();
       expect(artifactMetadata()).not.toHaveProperty('browser_session_only');
+    });
+
+    it('does not access the Cloudflare code store for a SAML browser-only artifact', async () => {
+      const response = await finishWith(samlChallenge, (env) => {
+        Object.assign(env, { AUTH_RUNTIME_PORTS: {} });
+        Object.defineProperty(env, 'AUTH_CODE_STORE', {
+          get: () => {
+            throw new Error('Cloudflare code store was accessed');
+          },
+        });
+      });
+
+      expect(response.status).toBe(200);
+      expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+      expect(artifactMetadata()).toMatchObject({ browser_session_only: true });
+    });
+
+    it('uses the typed runtime code port for an OIDC authorization challenge', async () => {
+      const store = vi.fn().mockResolvedValue({ success: true, expiresAt: Date.now() + 60_000 });
+      const response = await finishWith(oidcChallenge, (env) => {
+        Object.assign(env, { AUTH_RUNTIME_PORTS: { authorizationCodes: { store } } });
+        Object.defineProperty(env, 'AUTH_CODE_STORE', {
+          get: () => {
+            throw new Error('Cloudflare code store was accessed');
+          },
+        });
+      });
+
+      expect(response.status).toBe(200);
+      expect(store).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 'tenant_test', clientId: 'web-client' })
+      );
+      expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
     });
 
     it('issues nothing when the challenge cannot be read', async () => {

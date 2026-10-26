@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DatabaseAdapter } from '../../db/adapter';
 import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
@@ -503,6 +504,46 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
       last_login_at: lastLoginAt,
     });
   });
+
+  it('projects PostgreSQL bigint epoch strings without treating them as date strings', async () => {
+    seedActiveCanonicalUser();
+    const row = adapter.getById('identity_accounts', 'account-1');
+    if (!row) throw new Error('fixture_missing');
+    adapter.seed('identity_accounts', [
+      { ...row, created_at: '1700000000000', updated_at: '1700000000020' },
+    ]);
+    await expect(repository.findByLegacyUserId('user-1')).resolves.toMatchObject({
+      created_at: '2023-11-14T22:13:20.000Z',
+      updated_at: '2023-11-14T22:13:20.020Z',
+    });
+    adapter.seed('identity_accounts', [{ ...row, updated_at: '9007199254740993' }]);
+    await expect(repository.findByLegacyUserId('user-1')).rejects.toThrow(
+      'canonical_projection_timestamp_invalid'
+    );
+  });
+
+  it.each(['person@example.test', { formatted: 'Tokyo' }])(
+    'preserves PostgreSQL JSONB value %j',
+    async (value) => {
+      const queryOne = vi.fn(async (sql: string) => ({
+        value_json: sql.includes('value_json::text AS value_json') ? JSON.stringify(value) : value,
+      }));
+      const resolver = new CanonicalSensitiveValueResolver({
+        getType: () => 'postgres',
+        queryOne,
+      } as unknown as DatabaseAdapter);
+      const ref = encodeCanonicalSensitiveValueRef({
+        tenantId: 'tenant-a',
+        userId: 'user-1',
+        field: 'email',
+      });
+      await expect(resolver.resolveValue(ref, { tenantId: 'tenant-a' })).resolves.toEqual(value);
+      expect(queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('value_json::text AS value_json'),
+        ['tenant-a', 'user-1', 'email']
+      );
+    }
+  );
 
   it('encodes and resolves canonical sensitive value storage refs through an explicit resolver', async () => {
     const piiAdapter = new MockDatabaseAdapter();

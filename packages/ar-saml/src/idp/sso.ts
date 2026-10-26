@@ -24,6 +24,7 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   requireAdminDatabaseAdapter,
   filterSamlAttributesByDestinationConsentWithStatus,
+  filterSamlAttributesByDestinationConsentDescriptorWithStatus,
   resolveSamlAssertionTtlSeconds,
   resolveSamlRequestTtlSeconds,
   RuntimeIdentityMappingReleaseSafetyError,
@@ -105,7 +106,10 @@ import { scheduleSAMLAttributeWithheldAudit, scheduleSAMLPolicyFailureAudit } fr
 import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
 import { releaseSAMLAttributesWithInstitution } from './institution-release';
 import type { SAMLWithheldScopedValues } from './institution-scope';
-import { resolveSAMLRuntimeIdentityMapping } from './runtime-identity-mapping';
+import {
+  assertSAMLImportedSPRelease,
+  resolveSAMLRuntimeIdentityMapping,
+} from './runtime-identity-mapping';
 import { buildSAMLAssertionTiming, resolveSAMLAuthnInstant } from './assertion-timing';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
@@ -1308,30 +1312,36 @@ async function checkUserAuthentication(
     return null;
   }
 
-  // Verify session with SessionStore (sharded)
-  if (!isShardedSessionId(sessionId)) {
-    return null;
-  }
-
   try {
-    const { stub: sessionStore } = getSessionStoreBySessionId(
-      env,
-      sessionId,
-      resolveSAMLTenantIdFromContext(c)
-    );
-    const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
-      method: 'GET',
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const session = await response.json<{
+    let session: {
       userId?: string;
       createdAt?: number;
       data?: Record<string, unknown>;
-    }>();
+    } | null;
+    if (env.SAML_RUNTIME_PORTS) {
+      session = await env.SAML_RUNTIME_PORTS.sessions.get({
+        tenantId: resolveSAMLTenantIdFromContext(c),
+        sessionId,
+      });
+    } else {
+      // Existing Cloudflare sessions are sharded and resolved through SessionStore.
+      if (!isShardedSessionId(sessionId)) return null;
+      const { stub: sessionStore } = getSessionStoreBySessionId(
+        env,
+        sessionId,
+        resolveSAMLTenantIdFromContext(c)
+      );
+      const response = await sessionStore.fetch(`https://session-store/session/${sessionId}`, {
+        method: 'GET',
+      });
+      if (!response.ok) return null;
+      session = await response.json<{
+        userId?: string;
+        createdAt?: number;
+        data?: Record<string, unknown>;
+      }>();
+    }
+    if (!session) return null;
     const data =
       session.data && typeof session.data === 'object' && !Array.isArray(session.data)
         ? session.data
@@ -1478,13 +1488,24 @@ async function generateSAMLResponse(
   }
   let destinationFieldConsentConfirmed: { consentRecordId: string } | undefined;
   if (identityMapping?.destinationProfileId) {
-    const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
+    const importedRelease = env.SAML_RUNTIME_PORTS?.serviceProviders.getRelease({
+      tenantId,
+      entityId: spConfig.entityId,
+    });
+    if (env.SAML_RUNTIME_PORTS) {
+      assertSAMLImportedSPRelease(importedRelease ?? null, {
+        tenantId,
+        spEntityId: spConfig.entityId,
+        idpEntityId,
+        sourceSelector: spConfig.identityMapping,
+      });
+    }
+    const releaseInput = {
       coreAdapter: await resolveAuthCorePersistenceAdapterFromEnv(
         env,
         'saml-destination-profile-consent',
         { tenantId }
       ),
-      adminAdapter: requireAdminDatabaseAdapter(env, 'saml-destination-profile-consent'),
       tenantId,
       subjectId: userInfo.id,
       samlSpId: spConfig.entityId,
@@ -1498,7 +1519,18 @@ async function generateSAMLResponse(
         runtimeContext: identityMappingRuntimeContext,
       }),
       attributes: attributeRelease.attributes,
-    })) as {
+    };
+    const destinationRelease = (
+      env.SAML_RUNTIME_PORTS
+        ? await filterSamlAttributesByDestinationConsentDescriptorWithStatus({
+            ...releaseInput,
+            descriptor: importedRelease?.destinationProfile ?? null,
+          })
+        : await filterSamlAttributesByDestinationConsentWithStatus({
+            ...releaseInput,
+            adminAdapter: requireAdminDatabaseAdapter(env, 'saml-destination-profile-consent'),
+          })
+    ) as {
       attributes: typeof attributeRelease.attributes;
       consentApplied: boolean;
       consentRecordId?: string;

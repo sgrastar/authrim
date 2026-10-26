@@ -24,6 +24,7 @@ import {
 import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import type { StoreCodeRequest } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   accountAuthenticationDenialReason,
   signInAttemptFailureRecorder,
@@ -1431,11 +1432,6 @@ async function generateAuthCode(
     throw new Error('Direct Auth artifact requires client_id binding');
   }
 
-  const authCodeStoreId = env.AUTH_CODE_STORE.idFromName(
-    buildDOInstanceName('auth-code', tenantId)
-  );
-  const authCodeStore = env.AUTH_CODE_STORE.get(authCodeStoreId);
-
   const oauthSettings = await resolveEffectiveSettings(env, 'oauth', { tenantId, clientId });
   // With assurance on, how the user authenticated goes with the code: the token endpoint enforces
   // the AAL it reached and reports it (amr, the acr of that AAL) in its tokens.
@@ -1461,8 +1457,8 @@ async function generateAuthCode(
   const browserSessionOnly = challengeIdOfArtifact
     ? await isBrowserSessionOnlyChallenge(env, tenantId, challengeIdOfArtifact)
     : false;
-  if (!browserSessionOnly)
-    await authCodeStore.storeCodeRpc({
+  if (!browserSessionOnly) {
+    const codeRequest: StoreCodeRequest = {
       code: authCode,
       tenantId,
       clientId,
@@ -1491,7 +1487,18 @@ async function generateAuthCode(
             ...(assuranceAcr ? { assuranceAcr } : {}),
           }
         : {}),
-    });
+    };
+    if (env.AUTH_RUNTIME_PORTS) {
+      const codeStore = env.AUTH_RUNTIME_PORTS.authorizationCodes;
+      if (!codeStore) throw new Error('auth_runtime_authorization_code_store_unavailable');
+      await codeStore.store(codeRequest);
+    } else {
+      const authCodeStoreId = env.AUTH_CODE_STORE.idFromName(
+        buildDOInstanceName('auth-code', tenantId)
+      );
+      await env.AUTH_CODE_STORE.get(authCodeStoreId).storeCodeRpc(codeRequest);
+    }
+  }
 
   const challengeStore = await getChallengeStoreByChallengeId(env, authCode, tenantId);
 

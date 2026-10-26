@@ -758,6 +758,26 @@ const ko: Translations = {
   'web.lightMode': '라이트',
   'web.systemMode': '시스템',
 
+  // Web UI cloud platform selection
+  'web.platform.title': '구축할 클라우드 선택',
+  'web.platform.description': 'Authrim을 구축할 클라우드를 선택하세요.',
+  'web.platform.cloudflareAction': 'Cloudflare에 구축',
+  'web.platform.cloudflareDescription': 'Cloudflare Workers에 Authrim을 설정합니다.',
+  'web.platform.awsAction': 'AWS에 구축',
+  'web.platform.development': '개발 중',
+  'web.platform.awsScope': '현재 SAML DR만 지원',
+  'web.platform.choose': '선택',
+  'web.platform.back': '클라우드 선택으로 돌아가기',
+  'web.platform.awsTitle': 'AWS에서 SAML DR 준비',
+  'web.platform.awsDescription': 'Cloudflare 장애에 대비해 SAML IdP 복구 환경을 준비합니다.',
+  'web.platform.awsGuide':
+    '현재 AWS 설정 명령으로 사전 확인과 배포 계획 작성을 진행할 수 있습니다. 브라우저에서의 구축 기능은 개발 중입니다.',
+  'web.platform.awsPrerequisites': 'AWS 계정, 리전, 전용 역할로 로그인할 프로필을 준비하세요.',
+  'web.platform.awsCommand': '사전 확인 명령',
+  'web.platform.awsCommandNote': '계정 ID와 프로필 이름을 사용 중인 AWS 설정으로 바꾸세요.',
+  'web.platform.targetPending': '선택 안 됨',
+  'web.platform.chooseCloudflare': 'Cloudflare 설정으로 이동',
+
   // Web UI Prerequisites
   'web.prereq.title': '준비',
   'web.prereq.checking': '확인 중...',

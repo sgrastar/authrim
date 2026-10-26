@@ -57,6 +57,16 @@ export interface TenantMetadataContext {
   route: ResolvedTenantDatabaseSource;
 }
 
+/** A non-Cloudflare runtime has no D1 binding identity or registry row to expose. */
+export interface PortableTenantMetadataContext {
+  runtimeKind: 'portable';
+  tenantId: string;
+  coreDb: DatabaseSource;
+  route: Pick<ResolvedTenantDatabaseSource, 'allocationScope'>;
+}
+
+export type AnyTenantMetadataContext = TenantMetadataContext | PortableTenantMetadataContext;
+
 export interface AccountDataContext {
   tenantId: string;
   accountId: string;
@@ -469,8 +479,15 @@ function piiCacheMode(env: Env): UserPiiCacheMode {
 export async function resolveTenantMetadataContext(
   env: Env,
   tenantId: string
-): Promise<TenantMetadataContext> {
+): Promise<AnyTenantMetadataContext> {
   if (!SAFE_ID.test(tenantId)) throw new Error('tenant_metadata_tenant_id_invalid');
+  if (env.RUNTIME_DATA_PORTS) {
+    const resolved = await env.RUNTIME_DATA_PORTS.resolveTenant(tenantId);
+    if (resolved.runtimeKind !== 'portable' || resolved.tenantId !== tenantId || !resolved.coreDb) {
+      throw new Error('tenant_metadata_context_conflict');
+    }
+    return resolved;
+  }
   const route = await resolveTenantDatabaseSourceFromRegistry(env, {
     tenantId,
     role: 'tenant_core',
@@ -518,6 +535,28 @@ export async function resolveAccountDataContextByIdentifier(
     nowMs?: number;
   }
 ): Promise<AccountDataContext> {
+  if (env.RUNTIME_DATA_PORTS) {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
+    const resolved = await env.RUNTIME_DATA_PORTS.resolveAccount(input);
+    const expectedAccountId = input.expectedAccountId
+      ? normalizeAccountId(input.expectedAccountId)
+      : input.indexKind === 'account_id' && typeof input.identifier === 'string'
+        ? normalizeAccountId(input.identifier)
+        : undefined;
+    if (
+      resolved.tenantId !== input.tenantId ||
+      !resolved.accountId ||
+      resolved.accountId !== normalizeAccountId(resolved.accountId) ||
+      (expectedAccountId !== undefined && resolved.accountId !== expectedAccountId) ||
+      resolved.membership.tenantId !== input.tenantId ||
+      resolved.membership.accountId !== resolved.accountId ||
+      !resolved.coreDb ||
+      !resolved.piiDb
+    ) {
+      throw new Error('account_data_context_conflict');
+    }
+    return resolved;
+  }
   const base = await resolveAccountRouteBaseByIdentifier(env, input);
   // Both are checked; a failure of the PII destination is reported before the core's, so that an
   // inactive account is reported only where both destinations are the ones routed to.
@@ -558,6 +597,20 @@ export async function resolveAccountCoreDataContext(
   input: { tenantId: string; accountId: string; nowMs?: number }
 ): Promise<AccountCoreDataContext> {
   const accountId = normalizeAccountId(input.accountId);
+  if (env.RUNTIME_DATA_PORTS) {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
+    const resolved = await env.RUNTIME_DATA_PORTS.resolveAccountCore({ ...input, accountId });
+    if (
+      resolved.tenantId !== input.tenantId ||
+      resolved.accountId !== accountId ||
+      resolved.membership.tenantId !== input.tenantId ||
+      resolved.membership.accountId !== accountId ||
+      !resolved.coreDb
+    ) {
+      throw new Error('account_data_context_conflict');
+    }
+    return resolved;
+  }
   const base = await resolveAccountCoreRouteBaseByIdentifier(env, {
     tenantId: input.tenantId,
     indexKind: 'account_id',
@@ -662,6 +715,10 @@ export async function resolveAccountPiiSourceForAudit(
   input: { tenantId: string; accountId: string; nowMs?: number }
 ): Promise<DatabaseSource> {
   const accountId = normalizeAccountId(input.accountId);
+  if (env.RUNTIME_DATA_PORTS) {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
+    return env.RUNTIME_DATA_PORTS.resolveAccountPiiForAudit({ ...input, accountId });
+  }
   const base = await resolveAccountRouteBaseByIdentifier(env, {
     tenantId: input.tenantId,
     indexKind: 'account_id',
@@ -715,10 +772,22 @@ export async function resolveOtpAccountCoreDataContextByIdentifierFromHono(
 
 export function getTenantMetadataContextFromHono(
   c: HonoContext<{ Bindings: Env }>
-): TenantMetadataContext | undefined {
+): AnyTenantMetadataContext | undefined {
   return (c as unknown as { get(key: string): unknown }).get('tenantMetadataContext') as
-    | TenantMetadataContext
+    | AnyTenantMetadataContext
     | undefined;
+}
+
+/** Control-plane callers require a real registry identity and must reject a portable route. */
+export function getRegistryTenantMetadataRoute(
+  metadata: AnyTenantMetadataContext | undefined
+): ResolvedTenantDatabaseSource | undefined {
+  const route = metadata?.route;
+  if (!route) return undefined;
+  if (metadata && 'runtimeKind' in metadata && metadata.runtimeKind === 'portable') {
+    throw new Error('tenant_metadata_registry_route_required');
+  }
+  return route as ResolvedTenantDatabaseSource;
 }
 
 /**
@@ -736,7 +805,7 @@ export function getTenantMetadataContextFromHono(
  * `usesRoutedAccountStorage` wrappers). It used to be three: ar-auth's tenant-exclusive-only
  * check sent shared-pool tenants' passkey, email-code and TOTP requests to the metadata database.
  */
-export function usesRoutedAccountStorage(metadata: TenantMetadataContext | undefined): boolean {
+export function usesRoutedAccountStorage(metadata: AnyTenantMetadataContext | undefined): boolean {
   const allocationScope = (metadata?.route as Partial<ResolvedTenantDatabaseSource> | undefined)
     ?.allocationScope;
   if (allocationScope === undefined || allocationScope === null) return false;

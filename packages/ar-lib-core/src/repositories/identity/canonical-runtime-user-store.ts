@@ -118,24 +118,29 @@ interface CanonicalAccountAuthenticationStateRow {
   account_lifecycle_state: string;
   subject_lifecycle_state: string;
   directory_publication_state: string;
-  account_updated_at: number;
-  subject_updated_at: number;
+  account_updated_at: number | string;
+  subject_updated_at: number | string;
 }
 
-function runtimeTimestampToIso(value: number): string {
-  const absolute = Math.abs(value);
+function runtimeTimestampToIso(value: number | string): string {
+  // PostgreSQL int8 values are strings by default; validate before numeric/date coercion.
+  const numeric = typeof value === 'string' ? Number(value) : value;
+  if (typeof value === 'string' && (!/^-?\d+$/.test(value) || !Number.isSafeInteger(numeric))) {
+    throw new Error('canonical_account_authentication_timestamp_invalid');
+  }
+  const absolute = Math.abs(numeric);
   const milliseconds =
     absolute < 100_000_000_000
-      ? value * 1000
+      ? numeric * 1000
       : absolute < 100_000_000_000_000
-        ? value
+        ? numeric
         : absolute < 100_000_000_000_000_000
-          ? value / 1000
-          : value / 1_000_000;
+          ? numeric / 1000
+          : numeric / 1_000_000;
   return new Date(milliseconds).toISOString();
 }
 
-function runtimeTimestampToMilliseconds(value: number): number {
+function runtimeTimestampToMilliseconds(value: number | string): number {
   const parsed = Date.parse(runtimeTimestampToIso(value));
   if (!Number.isSafeInteger(parsed) || parsed < 1) {
     throw new Error('canonical_account_authentication_timestamp_invalid');

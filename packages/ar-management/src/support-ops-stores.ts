@@ -7,11 +7,12 @@ import type { Context } from 'hono';
 import {
   createAuthContextFromHono,
   ensureDatabaseAdapter,
+  getRegistryTenantMetadataRoute,
   getTenantMetadataContextFromHono,
   resolveTenantMetadataContext,
   type DatabaseAdapter,
   type Env,
-  type TenantMetadataContext,
+  type AnyTenantMetadataContext,
 } from '@authrim/ar-lib-core';
 import { tenantCoreStores } from './compliance/tenant-stores';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
@@ -48,9 +49,9 @@ async function storesOf(
   env: Env,
   tenantId: string,
   metadata: DatabaseAdapter,
-  metadataContext: TenantMetadataContext | undefined
+  metadataContext: AnyTenantMetadataContext | undefined
 ): Promise<SupportOpsStores> {
-  const route = metadataContext?.route;
+  const route = getRegistryTenantMetadataRoute(metadataContext);
   const metadataIdentity = route?.registryRow?.database_id
     ? {
         databaseId: route.registryRow.database_id,
@@ -73,7 +74,7 @@ async function storesOf(
     purpose: 'support-ops',
   });
   // A user store bound to the metadata database itself is that database: the same adapter.
-  const metadataBinding = metadataContext?.route?.bindingRef;
+  const metadataBinding = route?.bindingRef;
   return {
     metadata,
     metadataIdentity,

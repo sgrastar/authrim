@@ -17,6 +17,53 @@ function adapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
 }
 
 describe('CanonicalRuntimeUserStore OTP fast path', () => {
+  it.each(['1700000000', '1700000000000'])(
+    'accepts PostgreSQL int8 timestamps %s',
+    async (timestamp) => {
+      const store = new CanonicalRuntimeUserStore({
+        tenantId: 'tenant-1',
+        coreAdapter: adapter({
+          queryOne: vi.fn(async () => ({
+            user_id: 'user-1',
+            account_type: 'end_user',
+            account_lifecycle_state: 'active',
+            subject_lifecycle_state: 'active',
+            directory_publication_state: 'active',
+            account_updated_at: timestamp,
+            subject_updated_at: timestamp,
+          })),
+        }),
+      });
+      await expect(store.findAccountAuthenticationState('user-1')).resolves.toMatchObject({
+        lifecycle: 'active',
+        sourceVersionMs: 1_700_000_000_000,
+      });
+    }
+  );
+
+  it.each(['not-a-time', '', '1.5', '9007199254740993'])(
+    'rejects invalid database timestamp %s',
+    async (timestamp) => {
+      const store = new CanonicalRuntimeUserStore({
+        tenantId: 'tenant-1',
+        coreAdapter: adapter({
+          queryOne: vi.fn(async () => ({
+            user_id: 'user-1',
+            account_type: 'end_user',
+            account_lifecycle_state: 'active',
+            subject_lifecycle_state: 'active',
+            directory_publication_state: 'active',
+            account_updated_at: timestamp,
+            subject_updated_at: timestamp,
+          })),
+        }),
+      });
+      await expect(store.findAccountAuthenticationState('user-1')).rejects.toThrow(
+        'canonical_account_authentication_timestamp_invalid'
+      );
+    }
+  );
+
   it('reads a Core-only account authentication state and normalizes restrictive lifecycle', async () => {
     const coreQueryOne = vi.fn(async () => ({
       user_id: 'user-1',

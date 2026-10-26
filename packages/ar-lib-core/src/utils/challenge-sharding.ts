@@ -19,6 +19,8 @@
 
 import type { Env } from '../types/env';
 import type { DurableObjectNamespace } from '@cloudflare/workers-types';
+import type { AuthChallengeStoreRpc, AuthRuntimePorts } from '../types/auth-runtime-ports';
+import { isValidTenantIdentifier } from './tenant-request-policy';
 import { fnv1a32 } from './tenant-context';
 import {
   getRegionShardConfig,
@@ -38,6 +40,22 @@ import {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ChallengeStoreStub = any;
+
+function runtimeChallengeStore(
+  env: Env,
+  tenantId: string,
+  kind: Parameters<AuthRuntimePorts['challenges']['forIdentity']>[0]['kind'],
+  key: string
+): AuthChallengeStoreRpc | undefined {
+  const ports = env.AUTH_RUNTIME_PORTS;
+  if (!ports) return undefined;
+  if (!isValidTenantIdentifier(tenantId) || !key.trim()) {
+    throw new Error('auth_runtime_challenge_identity_invalid');
+  }
+  const store = ports.challenges.forIdentity({ tenantId, kind, key });
+  if (!store) throw new Error('auth_runtime_challenge_store_unavailable');
+  return store;
+}
 
 /**
  * Default shard count for challenge store sharding.
@@ -176,6 +194,8 @@ export async function getChallengeStoreByEmail(
   email: string,
   tenantId: string
 ): Promise<ChallengeStoreStub> {
+  const runtimeStore = runtimeChallengeStore(env, tenantId, 'email', email);
+  if (runtimeStore) return runtimeStore;
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByEmail(email, shardCount);
   const instanceName = buildChallengeShardInstanceName(shardIndex, tenantId);
@@ -203,6 +223,8 @@ export async function getChallengeStoreByUserId(
   userId: string,
   tenantId: string
 ): Promise<ChallengeStoreStub> {
+  const runtimeStore = runtimeChallengeStore(env, tenantId, 'user', userId);
+  if (runtimeStore) return runtimeStore;
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByUserId(userId, shardCount);
   const instanceName = buildChallengeShardInstanceName(shardIndex, tenantId);
@@ -223,6 +245,8 @@ export async function getChallengeStoreByUserId(
  * @returns DurableObjectStub<ChallengeStore> for the global (singleton) instance
  */
 export function getChallengeStoreGlobal(env: Env): ChallengeStoreStub {
+  // A global, tenantless store cannot be bound to an alternate runtime safely.
+  if (env.AUTH_RUNTIME_PORTS) throw new Error('auth_runtime_global_challenge_store_unavailable');
   const id = env.CHALLENGE_STORE.idFromName('global');
   return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
 }
@@ -261,6 +285,8 @@ export async function getChallengeStoreByChallengeId(
   challengeId: string,
   tenantId: string
 ): Promise<ChallengeStoreStub> {
+  const runtimeStore = runtimeChallengeStore(env, tenantId, 'challenge', challengeId);
+  if (runtimeStore) return runtimeStore;
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByChallengeId(challengeId, shardCount);
   const instanceName = buildChallengeShardInstanceName(shardIndex, tenantId);
@@ -283,6 +309,8 @@ export function getChallengeStoreForLease(
   leaseKey: string,
   tenantId: string
 ): ChallengeStoreStub {
+  const runtimeStore = runtimeChallengeStore(env, tenantId, 'lease', leaseKey);
+  if (runtimeStore) return runtimeStore;
   const partition = fnv1a32(leaseKey) % CHALLENGE_LEASE_PARTITIONS;
   const id = env.CHALLENGE_STORE.idFromName(`tenant:${tenantId}:challenge:lease-${partition}`);
   return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
@@ -327,6 +355,8 @@ export function getChallengeStoreByDID(
   did: string,
   tenantId: string
 ): ChallengeStoreStub {
+  const runtimeStore = runtimeChallengeStore(env, tenantId, 'did', did);
+  if (runtimeStore) return runtimeStore;
   // Use a synchronous version for DID - simpler since it's just for sharding
   const shardCount = cachedChallengeShardCount || DEFAULT_CHALLENGE_SHARD_COUNT;
   const shardIndex = getChallengeShardIndexByDID(did, shardCount);
@@ -468,6 +498,9 @@ export function getRegionAwareChallengeStore(
     resolution.shardIndex
   );
 
+  const runtimeStore = runtimeChallengeStore(env, tenantId, 'challenge', challengeId);
+  if (runtimeStore) return { stub: runtimeStore, resolution, instanceName };
+
   const stub = getRegionAwareDOStub(
     env.CHALLENGE_STORE as unknown as DurableObjectNamespace,
     instanceName,
@@ -515,6 +548,8 @@ export async function getRegionAwareChallengeStoreForNew(
   };
 
   const instanceName = buildRegionInstanceName(tenantId, regionKey, 'challenge', shardIndex);
+  const runtimeStore = runtimeChallengeStore(env, tenantId, 'challenge', challengeId);
+  if (runtimeStore) return { stub: runtimeStore, challengeId, uuid, resolution, instanceName };
   const stub = getRegionAwareDOStub(
     env.CHALLENGE_STORE as unknown as DurableObjectNamespace,
     instanceName,

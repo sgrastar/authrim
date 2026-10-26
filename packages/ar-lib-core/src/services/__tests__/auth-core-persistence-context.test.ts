@@ -49,4 +49,38 @@ describe('auth-core-persistence-context', () => {
       'auth_core_admin_database_required'
     );
   });
+
+  it('uses the portable tenant metadata port without requiring a Cloudflare registry', async () => {
+    const core = createMockAdapter('postgres');
+    const resolveTenant = vi.fn(async (tenantId: string) => ({
+      runtimeKind: 'portable' as const,
+      tenantId,
+      coreDb: core,
+      route: { allocationScope: 'shared_pool' as const },
+    }));
+    const env = {
+      RUNTIME_DATA_PORTS: { resolveTenant },
+    } as unknown as Parameters<typeof resolveAuthCorePersistenceAdapterFromEnv>[0];
+    await expect(
+      resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-providers', { tenantId: 'tenant-a' })
+    ).resolves.toBe(core);
+    expect(resolveTenant).toHaveBeenCalledExactlyOnceWith('tenant-a');
+  });
+
+  it('rejects a portable metadata provider that returns a different tenant', async () => {
+    const core = createMockAdapter('postgres');
+    const env = {
+      RUNTIME_DATA_PORTS: {
+        resolveTenant: vi.fn(async () => ({
+          runtimeKind: 'portable',
+          tenantId: 'tenant-b',
+          coreDb: core,
+          route: { allocationScope: 'shared_pool' },
+        })),
+      },
+    } as unknown as Parameters<typeof resolveAuthCorePersistenceAdapterFromEnv>[0];
+    await expect(
+      resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-providers', { tenantId: 'tenant-a' })
+    ).rejects.toThrow('tenant_metadata_context_conflict');
+  });
 });

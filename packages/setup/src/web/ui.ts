@@ -5124,7 +5124,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     });
   </script>
 </head>
-<body>
+<body${manageOnly ? '' : ' class="platform-entry-mode"'}>
   <!-- Background Typography -->
   <div class="bg-typography" aria-hidden="true">Authrim</div>
 
@@ -5141,7 +5141,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     <header class="setup-masthead">
       <div class="setup-wordmark">Authrim<sup>SETUP</sup></div>
       <div class="setup-meta">
-        <span id="setup-primary-meta">${startCopy.target} <b>Cloudflare Workers</b></span>
+        <span id="setup-primary-meta">${startCopy.target} <b data-i18n="web.platform.targetPending">Not selected</b></span>
         <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">◐ <span data-setup-copy="startTheme">${startCopy.theme}</span></button>
         <div class="top-controls">
           <div class="lang-selector">
@@ -5153,7 +5153,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
     </header>
 
-    <div class="step-indicator" id="step-indicator">
+    <div class="step-indicator hidden" id="step-indicator">
       <div class="step step-active" id="step-1" data-label="${setupStepLabels[0]}">01</div>
       <div class="step-connector"></div>
       <div class="step step-pending" id="step-2" data-label="${setupStepLabels[1]}">02</div>
@@ -5177,15 +5177,46 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div class="setup-hero-number" id="setup-hero-number">0<em>1</em></div>
       <div class="setup-hero-main">
         <p class="header-wizard" data-i18n="web.header.setupWizard">Setup Wizard</p>
-        <h1 id="setup-hero-title">Authrim</h1>
+        <h1 id="setup-hero-title" tabindex="-1">Authrim</h1>
         <p class="subtitle" data-i18n="web.header.subtitle">OIDC Provider on Cloudflare Workers</p>
       </div>
       <p class="setup-hero-aside" id="setup-hero-aside">
       </p>
     </header>
 
-    <!-- Step 1: Prepare -->
-    <div id="section-prerequisites" class="setup-prereq-section setup-section-enter">
+    <!-- Choose the platform before running provider-specific checks. -->
+    <div id="section-platform" class="setup-start-section setup-section-enter">
+      <div class="platform-grid">
+        <button type="button" class="platform-choice" id="btn-platform-cloudflare">
+          <span class="platform-name">Cloudflare</span>
+          <span class="platform-description" data-i18n="web.platform.cloudflareDescription">Set up Authrim on Cloudflare Workers.</span>
+          <span class="platform-action"><span data-i18n="web.platform.cloudflareAction">Build on Cloudflare</span> <span aria-hidden="true">→</span></span>
+        </button>
+        <button type="button" class="platform-choice" id="btn-platform-aws">
+          <span class="platform-name">AWS</span>
+          <span class="platform-badge" data-i18n="web.platform.development">In development</span>
+          <span class="platform-description" data-i18n="web.platform.awsScope">Currently supports SAML DR only</span>
+          <span class="platform-action"><span data-i18n="web.platform.awsAction">Build on AWS</span> <span aria-hidden="true">→</span></span>
+        </button>
+      </div>
+    </div>
+
+    <div id="section-aws-setup" class="setup-start-section hidden">
+      <div class="aws-setup-guide">
+        <p class="aws-setup-scope"><span class="platform-badge" data-i18n="web.platform.development">In development</span> <strong data-i18n="web.platform.awsScope">Currently supports SAML DR only</strong></p>
+        <p data-i18n="web.platform.awsGuide">AWS setup commands currently support prerequisite checks and planning. Browser-based deployment is in development.</p>
+        <p data-i18n="web.platform.awsPrerequisites">Prepare your AWS account, region, and a profile signed in to the dedicated operator role.</p>
+        <h2 data-i18n="web.platform.awsCommand">Prerequisite check command</h2>
+        <pre><code>pnpm run setup aws check --account-id YOUR_AWS_ACCOUNT_ID --region ap-northeast-1 --profile YOUR_AWS_PROFILE</code></pre>
+        <p class="f-help" data-i18n="web.platform.awsCommandNote">Replace the account ID and profile name with your AWS settings.</p>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn btn-back" id="btn-aws-platform-back" data-i18n="web.platform.back">Back to platform selection</button>
+      </div>
+    </div>
+
+    <!-- Step 1: Prepare Cloudflare -->
+    <div id="section-prerequisites" class="setup-prereq-section hidden">
       <section class="checksec">
         <div class="sechead">
           <h3 data-i18n="web.prereq.environmentCheck">Environment Check</h3>
@@ -5203,6 +5234,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div id="prereq-content" class="setup-prereq-message"></div>
 
       <div class="actions setup-prereq-actions">
+        <button type="button" class="btn btn-back" id="btn-platform-back" data-i18n="web.platform.back">Back to platform selection</button>
         <div class="progress" id="prereq-progress"><span data-setup-copy="stepKicker">${setupCopy.stepKicker}</span> <b>01</b> / 09</div>
         <div class="spacer"></div>
         <button type="button" class="btn btn-back" id="btn-recheck-prereq">↻ <span data-i18n="web.prereq.recheck">Re-check</span></button>
@@ -6720,6 +6752,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     // State
     let currentStep = 1;
+    let selectedSetupPlatform = MANAGE_ONLY ? 'cloudflare' : null;
     let config = {};
     let loadedConfig = null;
     let lastLoadedConfigSummary = null;
@@ -6926,6 +6959,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     const sections = {
+      platform: document.getElementById('section-platform'),
+      awsSetup: document.getElementById('section-aws-setup'),
       prerequisites: document.getElementById('section-prerequisites'),
       topMenu: document.getElementById('section-top-menu'),
       loadConfig: document.getElementById('section-load-config'),
@@ -7209,6 +7244,38 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       warning.classList.remove('hidden');
     }
 
+    // Platform entry stays independent from Cloudflare preparation and deployment.
+    function setPlatformHero(platform) {
+      const isAws = platform === 'aws';
+      document.getElementById('step-indicator')?.classList.add('hidden');
+      const title = document.getElementById('setup-hero-title');
+      if (title) title.textContent = t(isAws ? 'web.platform.awsTitle' : 'web.platform.title');
+      const kicker = document.querySelector('.setup-hero .header-wizard');
+      if (kicker) kicker.textContent = t('web.header.setupWizard');
+      const aside = document.getElementById('setup-hero-aside');
+      if (aside) aside.textContent = t(isAws ? 'web.platform.awsDescription' : 'web.platform.description');
+      updateSetupPrimaryMeta();
+    }
+
+    function showPlatformSelection() {
+      selectedSetupPlatform = null;
+      showSection('platform');
+      document.getElementById('setup-hero-title')?.focus();
+    }
+
+    async function selectSetupPlatform(platform) {
+      if (platform !== 'cloudflare' && platform !== 'aws') return;
+      selectedSetupPlatform = platform;
+      if (platform === 'aws') {
+        showSection('awsSetup');
+      } else {
+        currentStep = 1;
+        showSection('prerequisites');
+      }
+      document.getElementById('setup-hero-title')?.focus();
+      if (platform === 'cloudflare') await checkPrerequisites();
+    }
+
     // Step navigation
     function setStep(step) {
       currentStep = step;
@@ -7250,7 +7317,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const copy = getSetupUiRuntimeCopy();
       const envName = config?.env || config?.environment?.prefix || 'prod';
-      if (step >= 4) {
+      if (selectedSetupPlatform !== 'cloudflare') {
+        primaryMeta.innerHTML = escapeHtml(copy.startTarget) + ' <b>' +
+          escapeHtml(selectedSetupPlatform === 'aws' ? 'AWS' : t('web.platform.targetPending')) + '</b>';
+      } else if (step >= 4) {
         primaryMeta.innerHTML = escapeHtml(t('env.name')) + ' <b>' + escapeHtml(envName) + '</b>';
       } else {
         primaryMeta.innerHTML = escapeHtml(copy.startTarget) + ' <b>Cloudflare Workers</b>';
@@ -7301,7 +7371,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           : sections.envDelete && !sections.envDelete.classList.contains('hidden')
             ? 'envDelete'
             : null;
-      if (activeEnvSection) {
+      if (sections.platform && !sections.platform.classList.contains('hidden')) {
+        setPlatformHero(null);
+      } else if (sections.awsSetup && !sections.awsSetup.classList.contains('hidden')) {
+        setPlatformHero('aws');
+      } else if (activeEnvSection) {
         setEnvManagementHero(activeEnvSection);
       } else {
         setStep(currentStep || 1);
@@ -7552,7 +7626,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         s.classList.remove('setup-section-enter');
       });
       sections[name].classList.remove('hidden');
-      if (['envList', 'envDetail', 'envDelete'].includes(name)) {
+      const isPlatformEntry = name === 'platform' || name === 'awsSetup';
+      document.body.classList.toggle('platform-entry-mode', isPlatformEntry);
+      if (isPlatformEntry) {
+        document.body.classList.remove('env-management-mode');
+        setPlatformHero(name === 'awsSetup' ? 'aws' : null);
+      } else if (['envList', 'envDetail', 'envDelete'].includes(name)) {
         document.body.classList.add('env-management-mode');
         setEnvManagementHero(name);
       } else {
@@ -9148,6 +9227,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Top menu handlers
+    document.getElementById('btn-platform-cloudflare').addEventListener('click', () => selectSetupPlatform('cloudflare'));
+    document.getElementById('btn-platform-aws').addEventListener('click', () => selectSetupPlatform('aws'));
+    document.getElementById('btn-platform-back').addEventListener('click', showPlatformSelection);
+    document.getElementById('btn-aws-platform-back').addEventListener('click', showPlatformSelection);
     document.getElementById('btn-recheck-prereq').addEventListener('click', checkPrerequisites);
     document.getElementById('btn-prereq-continue').addEventListener('click', showTopMenu);
 
@@ -15333,14 +15416,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       await Promise.allSettled([runtimeContextPromise, loadEnvironments()]);
     }
 
-    // Initialize
-    if (MANAGE_ONLY) {
-      // The CLI already enforced prerequisites, but the browser still needs the same read-only
-      // context so account and workers.dev metadata do not remain as placeholders.
-      initializeManageOnly();
-    } else {
-      checkPrerequisites();
+    function initializeSetupEntry() {
+      if (MANAGE_ONLY) {
+        // Management keeps its existing read-only Cloudflare context and environment list.
+        return initializeManageOnly();
+      }
+      showPlatformSelection();
     }
+
+    // Initialize
+    initializeSetupEntry();
   </script>
 </body>
 </html>`;

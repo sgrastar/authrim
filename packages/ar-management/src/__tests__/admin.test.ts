@@ -2733,6 +2733,7 @@ describe('Admin API Handlers', () => {
           {
             id: 'passkey-1',
             credential_id: 'cred-abc',
+            counter: 0,
             device_name: 'Chrome on Mac',
             created_at: Date.now(),
             last_used_at: null,

@@ -32,6 +32,7 @@ import {
 import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js';
 import { controlProvisionCommand } from './cli/commands/control-provision.js';
 import { registerLocalCommands } from './cli/commands/local.js';
+import { registerAwsCommands } from './cli/commands/aws.js';
 import { recoverInitialD1Command } from './cli/commands/recover-initial-d1.js';
 import { recoverAbsentQueueCommand } from './cli/commands/recover-absent-queue.js';
 import {
@@ -1042,6 +1043,7 @@ program
   .action(infoCommand);
 
 registerLocalCommands(program);
+registerAwsCommands(program);
 
 function normalizePnpmScriptArgv(argv: string[]): string[] {
   const [, , commandName, firstCommandArg] = argv;

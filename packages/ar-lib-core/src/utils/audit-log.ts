@@ -1247,6 +1247,14 @@ export async function createAuditLog(
   if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) {
     throw new AuditLogDeliveryError('audit_log_created_at_invalid', entry.action, tenantId);
   }
+  if (env.AUDIT_RUNTIME_PORTS) {
+    try {
+      await env.AUDIT_RUNTIME_PORTS.append({ ...entry, id, tenantId, createdAt: createdAtMs });
+    } catch {
+      throw new AuditLogDeliveryError('audit_log_runtime_write_failed', entry.action, tenantId);
+    }
+    return;
+  }
   // The legacy audit_log schema stores seconds; the unified service stores milliseconds.
   const createdAt = Math.floor(createdAtMs / 1000);
   let failureBehavior: ReturnType<typeof resolveAuditEventFailureBehavior>['behavior'] =

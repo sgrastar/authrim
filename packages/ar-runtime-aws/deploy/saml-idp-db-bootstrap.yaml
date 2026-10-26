@@ -1,0 +1,281 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Authrim private database initialization and synthetic restore rehearsal. Manual
+  invocation only; no HTTP endpoint, schedule, DNS, or Cloudflare access.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    must:
+      - Use the foundation private subnets and existing bootstrap security group unchanged.
+      - Pin the artifact, fixture, and input secret versions before deployment.
+      - Keep DB administration separate from serving; invocation inputs cannot override destinations.
+Parameters:
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Exact foundation PrivateSubnetIds output.
+  BootstrapSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Exact foundation BootstrapSecurityGroupId output; already permits DB and private AWS access.
+  DatabaseHost:
+    Type: String
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]+\.rds\.amazonaws\.com$'
+    Description: Exact foundation DatabaseEndpointAddress output.
+  DatabasePort:
+    Type: Number
+    Default: 5432
+    AllowedValues: [5432]
+  DatabasePrefix:
+    Type: String
+    Default: authrim_dr_rehearsal
+    AllowedPattern: '^authrim_dr_[a-z0-9_]{1,30}$'
+    Description: Dedicated logical DB and role prefix; core, pii and state suffixes are added.
+  InitializationId:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    Description: Immutable UUID for prepared credentials and owned DB objects; preserve across retries.
+  MasterSecretArn:
+    Type: String
+    AllowedPattern: '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$'
+    Description: Exact RDS-managed master secret ARN; its value is read only inside the job.
+  JobConfigSecretArn:
+    Type: String
+    AllowedPattern: '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$'
+    Description: Existing synthetic fixture input secret; never embed secret contents here.
+  JobConfigSecretVersionId:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9-]{32,64}$'
+    Description: Pinned version of the input secret matching the synthetic fixture.
+  BrowserSpSecretArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$'
+    Description: Optional synthetic browser SP secret container; only the isolated browser job may populate it.
+  JobPermissionsBoundaryArn:
+    Type: String
+    AllowedPattern: '^arn:(aws|aws-cn|aws-us-gov):iam::[0-9]{12}:policy/authrim-dr/boundary/[A-Za-z0-9+=,.@_-]+$'
+    Description: Separate DbBootstrapPermissionsBoundaryArn output from role bootstrap.
+  AssetsBucketName:
+    Type: String
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+    Description: Existing foundation versioned asset bucket in this Region.
+  AssetPrefix:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9!_.'()-]+(/[A-Za-z0-9!_.'()-]+)*/$"
+    Description: Exact job-only asset prefix bound in the bootstrap permissions boundary.
+  BucketOwnerAccountId:
+    Type: String
+    AllowedPattern: '^[0-9]{12}$'
+    Description: Expected bucket owner, checked on every fixture download.
+  ArtifactKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    AllowedPattern: '^[^*?]+$'
+    Description: Versioned job ZIP key under AssetPrefix; contains db-bootstrap.mjs and trusted RDS CA.
+  ArtifactObjectVersion:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    Description: Pinned S3 version of the reviewed Lambda ZIP.
+  FixtureKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    AllowedPattern: '^[^*?]+$'
+    Description: Exact pinned synthetic fixture manifest key under AssetPrefix.
+  FixtureVersionId:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    Description: Pinned S3 version of the fixture manifest.
+  FixtureSha256:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{64}$'
+    Description: Trusted SHA256 of the versioned fixture manifest bytes.
+Conditions:
+  HasBrowserSpSecret: !Not [!Equals [!Ref BrowserSpSecretArn, '']]
+Resources:
+  RuntimeSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Retains generated DB credentials before any SQL mutation so initialization can resume.
+        must:
+          - Initial content is a nonsecret marker; never reset this field after initialization.
+          - The job uses InitializationId as an immutable secret version and never returns secret values.
+        mutability:
+          SecretString: must-never-change
+    Properties:
+      Name: !Sub '${AWS::StackName}-runtime'
+      Description: Authrim private database maintenance generated runtime credentials
+      SecretString: '{"formatVersion":1,"uninitialized":true}'
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  JobLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Keeps bounded, redacted job diagnostics and completion evidence.
+        must:
+          - Never log database passwords, secret values, backup rows, or passkey material.
+    Properties:
+      LogGroupName: !Sub '/authrim/aws-saml/${AWS::StackName}/job'
+      RetentionInDays: 14
+
+  JobRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Gives only this private job access to pinned inputs and its generated credentials.
+        must:
+          - Keep the separate bootstrap-managed maintenance boundary.
+          - No bucket listing, unversioned reads, secret creation, or master-secret writes.
+          - Optional browser SP preparation writes only the separate state-only secret container.
+    Properties:
+      Path: /authrim-dr/maintenance/
+      RoleName: !Sub '${AWS::StackName}-job'
+      PermissionsBoundary: !Ref JobPermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: private-initialization-and-restore
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${JobLogGroup}:*'
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref MasterSecretArn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref JobConfigSecretArn
+                Condition:
+                  StringEquals:
+                    secretsmanager:VersionId: !Ref JobConfigSecretVersionId
+              - Effect: Allow
+                Action:
+                  [
+                    secretsmanager:GetSecretValue,
+                    secretsmanager:PutSecretValue,
+                    secretsmanager:DescribeSecret,
+                  ]
+                Resource: !Ref RuntimeSecret
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${AssetsBucketName}/${AssetPrefix}*'
+              - !If
+                - HasBrowserSpSecret
+                - Effect: Allow
+                  Action: [secretsmanager:GetSecretValue, secretsmanager:PutSecretValue]
+                  Resource: !Ref BrowserSpSecretArn
+                - !Ref 'AWS::NoValue'
+              - Effect: Allow
+                Action:
+                  [
+                    ec2:CreateNetworkInterface,
+                    ec2:DescribeNetworkInterfaces,
+                    ec2:DescribeSubnets,
+                    ec2:DeleteNetworkInterface,
+                    ec2:AssignPrivateIpAddresses,
+                    ec2:UnassignPrivateIpAddresses,
+                  ]
+                Resource: '*'
+              - Effect: Deny
+                Action:
+                  [
+                    ec2:CreateNetworkInterface,
+                    ec2:DescribeNetworkInterfaces,
+                    ec2:DescribeSubnets,
+                    ec2:DeleteNetworkInterface,
+                    ec2:AssignPrivateIpAddresses,
+                    ec2:UnassignPrivateIpAddresses,
+                  ]
+                Resource: '*'
+                Condition:
+                  ArnEquals:
+                    lambda:SourceFunctionArn: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-job'
+
+  JobFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Runs bounded initialization, restore and verification inside the existing private network.
+        must:
+          - Manual synchronous invocation only; no public URL, API, schedule or event source.
+          - Keep pinned deployment inputs and InitializationId unchanged for retries.
+          - No Cloudflare client, DNS write, or network configuration mutation.
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-job'
+      Description: Authrim private database maintenance and synthetic restore rehearsal
+      Runtime: nodejs24.x
+      Architectures: [arm64]
+      Handler: db-bootstrap.handler
+      Role: !GetAtt JobRole.Arn
+      Code:
+        S3Bucket: !Ref AssetsBucketName
+        S3Key: !Ref ArtifactKey
+        S3ObjectVersion: !Ref ArtifactObjectVersion
+      MemorySize: 2048
+      Timeout: 900
+      EphemeralStorage:
+        Size: 1024
+      ReservedConcurrentExecutions: 1
+      VpcConfig:
+        SecurityGroupIds: [!Ref BootstrapSecurityGroupId]
+        SubnetIds: !Ref PrivateSubnetIds
+      Environment:
+        Variables:
+          AUTHRIM_AWS_DB_HOST: !Ref DatabaseHost
+          AUTHRIM_AWS_DB_PORT: !Sub '${DatabasePort}'
+          AUTHRIM_AWS_MASTER_SECRET_ARN: !Ref MasterSecretArn
+          AUTHRIM_AWS_JOB_CONFIG_SECRET_ARN: !Ref JobConfigSecretArn
+          AUTHRIM_AWS_JOB_CONFIG_SECRET_VERSION_ID: !Ref JobConfigSecretVersionId
+          AUTHRIM_AWS_BROWSER_SP_SECRET_ARN: !If
+            - HasBrowserSpSecret
+            - !Ref BrowserSpSecretArn
+            - !Ref 'AWS::NoValue'
+          AUTHRIM_AWS_RUNTIME_SECRET_ARN: !Ref RuntimeSecret
+          AUTHRIM_AWS_INITIALIZATION_ID: !Ref InitializationId
+          AUTHRIM_AWS_DATABASE_PREFIX: !Ref DatabasePrefix
+          AUTHRIM_AWS_ASSETS_BUCKET: !Ref AssetsBucketName
+          AUTHRIM_AWS_BUCKET_OWNER: !Ref BucketOwnerAccountId
+          AUTHRIM_AWS_ASSET_PREFIX: !Ref AssetPrefix
+          AUTHRIM_AWS_FIXTURE_KEY: !Ref FixtureKey
+          AUTHRIM_AWS_FIXTURE_VERSION_ID: !Ref FixtureVersionId
+          AUTHRIM_AWS_FIXTURE_SHA256: !Ref FixtureSha256
+          NODE_EXTRA_CA_CERTS: /var/task/certs/rds-ca.pem
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: WARN
+        SystemLogLevel: WARN
+        LogGroup: !Ref JobLogGroup
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+Outputs:
+  JobFunctionArn:
+    Description: Manual synchronous maintenance invocation target; no public endpoint.
+    Value: !GetAtt JobFunction.Arn
+  RuntimeSecretArn:
+    Description: Runtime credential container; generated version is returned only as a nonsecret ID.
+    Value: !Ref RuntimeSecret
+  InitializationId:
+    Description: Credential version ID and DB ownership marker; preserve across retries.
+    Value: !Ref InitializationId
+  JobLogGroupName:
+    Description: Redacted initialization and restoration diagnostics.
+    Value: !Ref JobLogGroup

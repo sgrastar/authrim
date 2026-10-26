@@ -888,7 +888,7 @@ async function resolveAssignment(
          AND a.target_type = ?
          AND a.target_id = ?
          AND a.flow_kind = ?
-         AND a.enabled = 1
+         AND a.enabled = TRUE
          AND f.status = 'published'
          AND f.deleted_at IS NULL`,
       [tenantId, target.targetType, target.targetId, flowKind]
@@ -904,7 +904,7 @@ async function resolveAssignment(
        AND a.target_type = 'tenant'
        AND a.target_id IS NULL
        AND a.flow_kind = ?
-       AND a.enabled = 1
+       AND a.enabled = TRUE
        AND f.status = 'published'
        AND f.deleted_at IS NULL`,
     [tenantId, flowKind]

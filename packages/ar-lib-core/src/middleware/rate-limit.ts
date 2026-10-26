@@ -268,6 +268,9 @@ export const VALID_CLOUD_PROVIDERS: CloudProvider[] = ['cloudflare', 'aws', 'azu
  * @returns Cloud provider setting
  */
 export async function getCloudProvider(env: Env): Promise<CloudProvider> {
+  // An alternate AWS auth runtime must never trust a client-supplied Cloudflare IP header,
+  // including during its first request before any KV-backed provider refresh completes.
+  if (env.AUTH_RUNTIME_PORTS) return 'aws';
   const now = Date.now();
   const cacheTTL = getCacheTTLMs(env);
 
@@ -303,6 +306,7 @@ async function refreshCloudProviderFromKV(env: Env): Promise<void> {
 }
 
 function scheduleCloudProviderRefresh(env: Env, ctx?: HonoExecutionContext): void {
+  if (env.AUTH_RUNTIME_PORTS) return;
   const now = Date.now();
   const cacheTTL = getCacheTTLMs(env);
   if (
@@ -626,6 +630,17 @@ export async function checkRateLimit(
   tenantId?: string
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
   const rateLimitKey = buildRateLimitKey(clientIP, tenantId, config.endpointClass);
+
+  if (env.AUTH_RUNTIME_PORTS) {
+    const runtimeLimiter = env.AUTH_RUNTIME_PORTS.rateLimit;
+    if (!runtimeLimiter) throw new Error('auth_runtime_rate_limit_unavailable');
+    return runtimeLimiter.check({
+      tenantId,
+      key: rateLimitKey,
+      windowSeconds: config.windowSeconds,
+      maxRequests: config.maxRequests,
+    });
+  }
 
   // Try DO-based rate limiting first
   try {
