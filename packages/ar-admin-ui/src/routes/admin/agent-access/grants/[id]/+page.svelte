@@ -1,5 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { LogPager } from '$lib/admin/log-pager.svelte';
+	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	const logPager = new LogPager();
+	let auditLoading = $state(false);
+	let auditError = $state('');
 	import {
 		adminAgentAccessAPI,
 		type AdminAgentGrant,
@@ -48,6 +53,34 @@
 		expiresOn = value.expires_at ? new Date(value.expires_at).toISOString().slice(0, 10) : '';
 	}
 
+	function receiveEvents(
+		result: Awaited<ReturnType<typeof adminAgentAccessAPI.listGrantAuditPage>>
+	) {
+		logPager.reset();
+		logPager.info = result.pagination;
+		events = result.events;
+		auditError = '';
+	}
+	async function loadAuditPage() {
+		const tenantId = loadedTenantId;
+		const id = grant?.id;
+		if (!tenantId || !id) return;
+		const generation = loadGeneration;
+		auditLoading = true;
+		auditError = '';
+		try {
+			const result = await adminAgentAccessAPI.listGrantAuditPage(id, tenantId, logPager.cursor);
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
+			events = result.events;
+			logPager.info = result.pagination;
+		} catch (caught) {
+			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
+			auditError = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
+		} finally {
+			if (generation === loadGeneration) auditLoading = false;
+		}
+	}
+
 	async function load(tenantId: string) {
 		const generation = ++loadGeneration;
 		loading = true;
@@ -61,11 +94,11 @@
 			if (!id) throw new Error($LL.admin_agent_access_load_error());
 			const [loadedGrant, loadedEvents] = await Promise.all([
 				adminAgentAccessAPI.getGrant(id, tenantId),
-				adminAgentAccessAPI.listGrantAudit(id, tenantId)
+				adminAgentAccessAPI.listGrantAuditPage(id, tenantId)
 			]);
 			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			setGrant(loadedGrant);
-			events = loadedEvents;
+			receiveEvents(loadedEvents);
 			loadedTenantId = tenantId;
 			notice =
 				$page.url.searchParams.get('created') === '1' ? $LL.admin_agent_access_grant_created() : '';
@@ -105,12 +138,12 @@
 			);
 			const [updated, updatedEvents] = await Promise.all([
 				adminAgentAccessAPI.getGrant(grant.id, tenantId),
-				adminAgentAccessAPI.listGrantAudit(grant.id, tenantId)
+				adminAgentAccessAPI.listGrantAuditPage(grant.id, tenantId)
 			]);
 			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			notice = $LL.admin_agent_access_updated_notice();
 			setGrant(updated);
-			events = updatedEvents;
+			receiveEvents(updatedEvents);
 		} catch (caught) {
 			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
@@ -139,12 +172,12 @@
 			else await adminAgentAccessAPI.revokeGrant(grant.id, tenantId);
 			const [updated, updatedEvents] = await Promise.all([
 				adminAgentAccessAPI.getGrant(grant.id, tenantId),
-				adminAgentAccessAPI.listGrantAudit(grant.id, tenantId)
+				adminAgentAccessAPI.listGrantAuditPage(grant.id, tenantId)
 			]);
 			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			notice = $LL.admin_agent_access_transition_notice();
 			setGrant(updated);
-			events = updatedEvents;
+			receiveEvents(updatedEvents);
 		} catch (caught) {
 			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
@@ -164,12 +197,12 @@
 			await adminAgentAccessAPI.preauthorizeGrant(grant.id, tenantId);
 			const [updated, updatedEvents] = await Promise.all([
 				adminAgentAccessAPI.getGrant(grant.id, tenantId),
-				adminAgentAccessAPI.listGrantAudit(grant.id, tenantId)
+				adminAgentAccessAPI.listGrantAuditPage(grant.id, tenantId)
 			]);
 			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			notice = $LL.admin_agent_access_preauthorized_notice();
 			setGrant(updated);
-			events = updatedEvents;
+			receiveEvents(updatedEvents);
 		} catch (caught) {
 			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
@@ -317,12 +350,20 @@
 
 		<section class="audit">
 			<h2>{$LL.admin_agent_access_audit_title()}</h2>
-			{#each events as event (event.id)}
-				<article>
-					<div><strong>{event.action}</strong><span>{event.result} · {event.severity}</span></div>
-					<time>{formatDate(event.created_at)}</time>
-				</article>
-			{:else}<p>{$LL.admin_agent_access_audit_empty()}</p>{/each}
+			{#if auditError}<p role="alert">{auditError}</p>{:else}
+				{#each events as event (event.id)}
+					<article>
+						<div><strong>{event.action}</strong><span>{event.result} · {event.severity}</span></div>
+						<time>{formatDate(event.created_at)}</time>
+					</article>
+				{:else}<p>{$LL.admin_agent_access_audit_empty()}</p>{/each}
+			{/if}
+			<LogCursorPager
+				pager={logPager}
+				loading={auditLoading}
+				reload={loadAuditPage}
+				label={$LL.admin_agent_access_audit_title()}
+			/>
 		</section>
 	{/if}
 </AdminPageShell>

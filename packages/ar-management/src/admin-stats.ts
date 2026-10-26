@@ -1,3 +1,4 @@
+import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin Statistics API Endpoints
  *
@@ -307,6 +308,8 @@ export async function adminStatsTokensHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(stats);
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-STATS');
     log.error('Failed to get token statistics', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -438,6 +441,8 @@ export async function adminStatsAuthHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(stats);
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-STATS');
     log.error('Failed to get auth statistics', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -552,6 +557,8 @@ export async function adminStatsTimelineHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(stats);
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-STATS');
     log.error('Failed to get timeline statistics', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -770,6 +777,8 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(stats);
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-STATS');
     log.error('Failed to get client statistics', { clientId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1037,6 +1046,8 @@ export async function adminStatsGeographyHandler(c: Context<{ Bindings: Env }>) 
 
     return c.json(stats);
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-STATS');
     log.error('Failed to get geography statistics', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

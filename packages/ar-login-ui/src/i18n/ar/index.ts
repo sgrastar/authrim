@@ -164,6 +164,8 @@ const ar = createTranslation({
 	account_reauthTotpCodePlaceholder: 'رمز من 6 أو 8 أرقام',
 	account_actionFailed: 'فشلت العملية',
 	account_remainingLoginMethodRequired: 'أضف طريقة دخول أخرى قبل حذف هذه الطريقة.',
+	account_activityIncomplete: 'نتائج النشاط غير مكتملة. يرجى المحاولة لاحقًا.',
+	account_activityLoadMore: 'تحميل النشاط الأقدم',
 	account_activityTitle: 'النشاط',
 	account_operationNameUpdated: 'تم تغيير الاسم',
 	account_operationPasskeyCreated: 'تمت إضافة مفتاح المرور',

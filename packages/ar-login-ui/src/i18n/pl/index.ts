@@ -169,6 +169,8 @@ const translation = {
 	account_reauthTotpCodePlaceholder: '6- lub 8-cyfrowy kod',
 	account_actionFailed: 'Operacja zawiodła.',
 	account_remainingLoginMethodRequired: 'Dodaj inną metodę logowania przed usunięciem tej metody.',
+	account_activityIncomplete: 'Wyniki aktywności są niepełne. Spróbuj ponownie później.',
+	account_activityLoadMore: 'Wczytaj starsze aktywności',
 	account_activityTitle: 'Aktywność',
 	account_operationNameUpdated: 'Zmieniono nazwę',
 	account_operationPasskeyCreated: 'Dodano klucz dostępu',

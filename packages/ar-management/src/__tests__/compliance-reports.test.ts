@@ -1,8 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from './test-sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -297,6 +296,7 @@ describe('compliance reports', () => {
 
   it('lists audit log entries of the period, oldest first', async () => {
     const events = sqliteStore();
+    events.db.exec('ALTER TABLE log_object_catalog ADD COLUMN source_table TEXT');
     const insert = events.db.prepare(
       `INSERT INTO event_log (id, tenant_id, event_type, event_category, result, created_at,
          anonymized_user_id)
@@ -318,6 +318,12 @@ describe('compliance reports', () => {
     });
     const response = await createComplianceReport(
       context({
+        env: {
+          DB: events,
+          DB_ADMIN: events,
+          EXPORT_ARTIFACTS: {},
+          OBJECT_ENCRYPTION_ROOT_KEY: 'a'.repeat(64),
+        },
         body: {
           type: 'audit_log',
           parameters: { from: '2026-09-01T00:00:00Z', to: '2026-09-03T00:00:00Z' },

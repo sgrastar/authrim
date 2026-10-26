@@ -1,3 +1,4 @@
+import { createLogReadAdapter } from './log-read-adapter';
 import type { Context } from 'hono';
 import type { Env, DatabaseAdapter, AuditProfile } from '@authrim/ar-lib-core';
 import {
@@ -16,6 +17,7 @@ export interface AuditHotQueryContext {
   dialect: AuditHotQueryDialect;
   createdAtUnit: AuditCreatedAtUnit;
   auditProfileId: string;
+  archiveRead?: ReturnType<typeof createLogReadAdapter>;
 }
 
 export interface AuditHotQuerySqlSpec {
@@ -142,10 +144,36 @@ export function getAuditHotQuerySupportForProfile(
 
 export async function getAuditHotQuerySupport(
   env: Env,
-  tenantId: string
+  tenantId: string,
+  readOptions?: Pick<Parameters<typeof createLogReadAdapter>[0], 'window' | 'hotOnly' | 'page'> & {
+    /** Existing activity cursors use the primary store's timestamp unit. */
+    storedCursorTime?: number;
+  }
 ): Promise<AuditHotQuerySupport> {
   const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
-  return getAuditHotQuerySupportForProfile(env, resolved.auditProfile);
+  const support = getAuditHotQuerySupportForProfile(env, resolved.auditProfile);
+  if (support.context) {
+    const { storedCursorTime, ...options } = readOptions ?? {};
+    const archiveRead = createLogReadAdapter({
+      env,
+      tenantId,
+      adapter: support.context.adapter,
+      dataset: support.context.mode === 'legacy' ? 'core.audit_log' : 'core.event_log',
+      ...options,
+      window:
+        storedCursorTime === undefined
+          ? options.window
+          : {
+              ...options.window,
+              toMs: Math.min(
+                options.window?.toMs ?? Number.MAX_SAFE_INTEGER,
+                storedCursorTime * (support.context.createdAtUnit === 'seconds' ? 1000 : 1)
+              ),
+            },
+    });
+    support.context = { ...support.context, adapter: archiveRead.adapter, archiveRead };
+  }
+  return support;
 }
 
 export function getAuditHotQuerySqlSpec(context: AuditHotQueryContext): AuditHotQuerySqlSpec {

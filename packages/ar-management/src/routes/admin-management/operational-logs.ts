@@ -1,3 +1,5 @@
+import { logQueryErrorResponse } from '../../log-archive-query';
+import { createLogReadAdapter, logDetailWindow, logPageRequest } from '../../log-read-adapter';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env, OperationalLogStorageOptions } from '@authrim/ar-lib-core';
@@ -30,9 +32,30 @@ interface OperationalLogSummaryRow {
   detail_object_catalog_id: string | null;
 }
 
-function getCoreAdapter(c: Context<any, any, any>) {
+function getCoreAdapter(c: Context) {
   const tenantId = getTenantIdFromContext(c);
   return createAuthContextFromHono(c, tenantId).coreAdapter;
+}
+
+function getLogRead(c: AdminContext, list = false) {
+  const tenantId = getTenantIdFromContext(c);
+  return createLogReadAdapter({
+    env: c.env,
+    tenantId,
+    dataset: 'core.operational_logs',
+    adapter: getCoreAdapter(c),
+    ...(list
+      ? {
+          page: c.env?.DB_ADMIN
+            ? logPageRequest(
+                c,
+                tenantId,
+                Math.max(1, Math.min(Number(c.req.query('limit') || 50), 100))
+              )
+            : undefined,
+        }
+      : logDetailWindow(c)),
+  });
 }
 
 function getOperationalLogStorageOptions(c: AdminContext): OperationalLogStorageOptions {
@@ -62,7 +85,8 @@ operationalLogsRouter.use(
 
 operationalLogsRouter.get('/', async (c) => {
   try {
-    const adapter = getCoreAdapter(c);
+    const logRead = getLogRead(c, true);
+    const adapter = logRead.adapter;
     const tenantId = getTenantIdFromContext(c);
     const subjectType = c.req.query('subject_type');
     const subjectId = c.req.query('subject_id');
@@ -114,9 +138,11 @@ operationalLogsRouter.get('/', async (c) => {
         expires_at: row.expires_at,
         has_detail: !!row.detail_object_catalog_id,
       })),
-      total: rows.length,
+      ...(logRead.pagination() ? { pagination: logRead.pagination() } : { total: rows.length }),
     });
-  } catch {
+  } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -136,7 +162,7 @@ operationalLogsRouter.get('/:id', async (c) => {
     if (access instanceof Response) {
       return access;
     }
-    const adapter = getCoreAdapter(c);
+    const adapter = getLogRead(c).adapter;
     const tenantId = getTenantIdFromContext(c);
     const entry = await getOperationalLog(
       adapter,
@@ -161,7 +187,9 @@ operationalLogsRouter.get('/:id', async (c) => {
     });
 
     return c.json(entry);
-  } catch {
+  } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

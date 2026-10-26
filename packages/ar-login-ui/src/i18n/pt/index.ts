@@ -153,6 +153,9 @@ const pt = createTranslation({
 	account_reauthTotpCodePlaceholder: 'Código de 6 ou 8 dígitos',
 	account_actionFailed: 'A operação falhou',
 	account_remainingLoginMethodRequired: 'Adicione outro método de login antes de excluir este.',
+	account_activityIncomplete:
+		'Os resultados das atividades estão incompletos. Tente novamente mais tarde.',
+	account_activityLoadMore: 'Carregar atividades anteriores',
 	account_activityTitle: 'Atividade',
 	account_operationNameUpdated: 'Nome alterado',
 	account_operationPasskeyCreated: 'Passkey adicionada',

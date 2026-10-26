@@ -45,4 +45,31 @@ describe('AccountActivityWidget', () => {
 
 		expect(renderActivity()).toContain('No items');
 	});
+
+	it('shows an incomplete error instead of a false empty activity list', () => {
+		setLocale('en');
+		const html = renderActivity({
+			error: 'Activity results are incomplete.',
+			hasMore: true,
+			onmore: () => {}
+		});
+		expect(html).toContain('role="alert"');
+		expect(html).toContain('Activity results are incomplete.');
+		expect(html).not.toContain('No items');
+		expect(html).not.toContain('Load older activity');
+	});
+
+	it('keeps loaded rows while loading the next page and disables another request', () => {
+		setLocale('en');
+		const html = renderActivity({
+			operations: operations(),
+			loading: true,
+			hasMore: true,
+			onmore: () => {}
+		});
+		expect(html).toContain('Load older activity');
+		expect(html).toMatch(/<button[^>]*disabled/);
+		expect(html).toContain('Guest account registered');
+		expect(html).not.toContain('account-section-skeleton');
+	});
 });

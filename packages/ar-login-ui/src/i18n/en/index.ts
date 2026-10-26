@@ -169,6 +169,8 @@ const en = {
 	account_reauthTotpCodePlaceholder: '6- or 8-digit code',
 	account_actionFailed: 'The operation failed',
 	account_remainingLoginMethodRequired: 'Add another login method before deleting this method.',
+	account_activityIncomplete: 'Activity results are incomplete. Please retry later.',
+	account_activityLoadMore: 'Load older activity',
 	account_activityTitle: 'Activity',
 	account_operationNameUpdated: 'Name changed',
 	account_operationPasskeyCreated: 'Passkey added',

@@ -142,6 +142,42 @@ audit data. Setup-managed audit archives are written as checksummed, cataloged, 
 the Management query path verifies the catalog checksum and decrypts the indexed record before
 returning it. Plaintext and legacy archive object layouts are not accepted by that path.
 
+### Queries over retained whole-row archives
+
+Management can read the encrypted `authrim.log.row.v1` chunks produced by row archiving together
+with the primary log store. This covers user audit events, administrator audit evidence (including
+user, resource, and Agent Grant history), operational logs, access traces, and the signed-in user's
+account activity. Existing tenant, subject, permission, and sensitive-detail restrictions still apply.
+When the same ID exists in both stores, its current primary-store representation takes precedence.
+Expired event and operational rows are excluded; access traces respect the configured retention.
+
+Archive-backed lists return `pagination.mode: cursor`, `has_more`, and `next_cursor`. Send that
+cursor with the same tenant, endpoint, and filters to continue. These responses have no total count
+or numbered pages. Changing a filter or tenant starts a new traversal. Lists without row archives
+retain their existing pagination contracts. The administrator's user-activity endpoint keeps its
+existing cursor format while reading bounded archive pages. Archive-only audit profiles can combine indexed summary
+records with whole-row events; their existing statistics capability is unchanged.
+
+For whole-row detail retrieval, pass `event_at` as Unix milliseconds alongside the entry ID. Use
+the timestamp from the list, converting seconds to milliseconds where necessary. The Admin UI keeps
+this hint in audit-detail links, including reloads. ID-only requests do not scan whole-row archives;
+existing indexed lookups for archive-only profiles remain available.
+
+![Audit entry in the existing Admin UI, using development fixtures](screenshots/log-archive-detail.png)
+
+Statistics and audit reports use the same retained rows. A required chunk that is missing, corrupt,
+undecryptable, or outside a read budget produces HTTP 503 with `error: log_query_incomplete` and
+`complete: false`. No partial statistics or empty successful result is substituted. Narrow the time
+range or retry later. The UI shows this failure instead of a definitive zero or empty history.
+
+Reads are bounded: at most 64 required chunks, 8 MiB per stored chunk, 16 MiB of stored bodies and
+16 MiB after decompression, 10,000 rows, and a 4 MiB SQL view, with time-budget checks between read
+steps. A list may stop earlier once its next page boundary is proven, so a long history does not
+require loading every chunk for its first page. Statistics require the entire selected range; they
+fail explicitly when it cannot be completed. Enabling row archiving or changing retention is a
+separate configuration action. These guarantees do not change the lifecycle of older per-event
+archive copies or external sinks.
+
 ## Diagnostic and Sensitive Detail
 
 Diagnostic logging is designed to preserve operational evidence without putting sensitive data into

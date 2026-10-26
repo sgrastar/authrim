@@ -1,5 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { LogPager } from '$lib/admin/log-pager.svelte';
+	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	const logPager = new LogPager();
+	let loadGeneration = 0;
+	import { onMount, untrack } from 'svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	let loadedTenantId = '';
 	import { Modal } from '$lib/components';
 	import {
 		AdminDataTable,
@@ -31,6 +37,16 @@
 	let selectedLog = $state<OperationalLogDetail | null>(null);
 
 	async function loadLogs() {
+		const mine = ++loadGeneration;
+		logPager.prepare(
+			JSON.stringify([
+				settingsContext.tenantId,
+				subjectTypeFilter,
+				subjectIdFilter,
+				actionFilter,
+				actorIdFilter
+			])
+		);
 		loading = true;
 		error = '';
 		try {
@@ -39,19 +55,31 @@
 				subjectId: subjectIdFilter.trim() || undefined,
 				action: actionFilter.trim() || undefined,
 				actorId: actorIdFilter.trim() || undefined,
+				cursor: logPager.cursor,
 				limit: 100
 			});
+			if (mine !== loadGeneration) return;
 			logs = response.items;
-			total = response.total;
+			logPager.info = response.pagination;
+			total = response.total ?? 0;
 		} catch (err) {
+			if (mine !== loadGeneration) return;
 			error = err instanceof Error ? err.message : $LL.admin_operational_logs_load_failed();
 		} finally {
-			loading = false;
+			if (mine === loadGeneration) loading = false;
 		}
 	}
 
-	onMount(() => {
-		loadLogs();
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		untrack(() => {
+			void loadLogs();
+		});
 	});
 
 	async function openDetail(log: OperationalLogSummary) {
@@ -60,7 +88,7 @@
 		detailError = '';
 		selectedLog = null;
 		try {
-			selectedLog = await adminOperationalLogsAPI.get(log.id);
+			selectedLog = await adminOperationalLogsAPI.get(log.id, log.created_at * 1000);
 		} catch (err) {
 			detailError =
 				err instanceof Error ? err.message : $LL.admin_operational_logs_detail_load_failed();
@@ -92,7 +120,9 @@
 {/snippet}
 
 {#snippet entriesActions()}
-	<span class="section-meta">{$LL.admin_operational_logs_total_count({ count: total })}</span>
+	{#if !logPager.info}<span class="section-meta"
+			>{$LL.admin_operational_logs_total_count({ count: total })}</span
+		>{/if}
 {/snippet}
 
 <AdminPageShell>
@@ -186,6 +216,12 @@
 				</tbody>
 			</AdminDataTable>
 		{/if}
+		<LogCursorPager
+			pager={logPager}
+			label={$LL.admin_operational_logs_title()}
+			{loading}
+			reload={loadLogs}
+		/>
 	</AdminSection>
 </AdminPageShell>
 
