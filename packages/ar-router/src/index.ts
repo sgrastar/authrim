@@ -1,3 +1,7 @@
+import {
+  runSamlDrCoveredFetch,
+  type SamlDrWriterEnv,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context, type Next } from 'hono';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { cors } from 'hono/cors';
@@ -25,7 +29,7 @@ const log = createLogger().module('ROUTER');
  * Environment bindings for the Router Worker
  * Service Bindings to other workers
  */
-interface Env {
+interface Env extends SamlDrWriterEnv {
   // Service Bindings to specialized workers
   OP_DISCOVERY: Fetcher;
   OP_VC?: Fetcher;
@@ -2179,19 +2183,21 @@ app.onError((err, c) => {
 /** Private fetch entrypoint bound only by the Login UI Worker. */
 export class LoginUiBackendEntrypoint extends WorkerEntrypoint<Env> {
   fetch(request: Request): Promise<Response> {
-    const trustedRequest = validateLoginUiServiceBindingRequest(request);
-    if (!trustedRequest) {
-      return Promise.resolve(
-        Response.json(
-          {
-            error: 'access_denied',
-            error_description: 'Trusted Login UI service-binding request required.',
-          },
-          { status: 403 }
-        )
-      );
-    }
-    return Promise.resolve(app.fetch(trustedRequest, this.env, this.ctx));
+    return runSamlDrCoveredFetch(this.env, this.ctx, async (env, context) => {
+      const trustedRequest = validateLoginUiServiceBindingRequest(request);
+      if (!trustedRequest) {
+        return Promise.resolve(
+          Response.json(
+            {
+              error: 'access_denied',
+              error_description: 'Trusted Login UI service-binding request required.',
+            },
+            { status: 403 }
+          )
+        );
+      }
+      return Promise.resolve(app.fetch(trustedRequest, env, context));
+    });
   }
 }
 
@@ -2202,6 +2208,11 @@ export default {
     env: unknown,
     executionCtx?: ExecutionContext
   ): Response | Promise<Response> {
-    return app.fetch(sanitizePublicRouterRequest(request), env as Env, executionCtx);
+    return runSamlDrCoveredFetch(env as Env, executionCtx, (coveredEnv, coveredContext) =>
+      Promise.resolve(app.fetch(sanitizePublicRouterRequest(request), coveredEnv, coveredContext))
+    );
   },
 };
+
+export const SAML_DR_WRITER_SURFACES = ['fetch', 'rpc:LoginUiBackendEntrypoint.fetch'] as const;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

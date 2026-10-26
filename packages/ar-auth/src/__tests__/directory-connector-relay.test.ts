@@ -16,7 +16,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-import { DirectoryConnectorRelay } from '../directory-connector-relay';
+import {
+  DirectoryConnectorRelay,
+  SAML_DR_DIRECTORY_RELAY_SURFACE,
+} from '../directory-connector-relay';
 import {
   buildDirectoryRelayAuthCanonical,
   signDirectoryRelayCanonical,
@@ -34,7 +37,9 @@ function createStorage() {
   };
 }
 
-function createRelay(options: { connector?: Record<string, unknown> } = {}) {
+function createRelay(
+  options: { connector?: Record<string, unknown>; env?: Record<string, unknown> } = {}
+) {
   const storage = createStorage();
   const db = createAdapter();
   const connector = {
@@ -56,6 +61,7 @@ function createRelay(options: { connector?: Record<string, unknown> } = {}) {
     },
     DB: db,
     WORDWARDEN_SECRET: 'active-secret',
+    ...options.env,
   };
   const ctx = {
     storage,
@@ -163,6 +169,75 @@ describe('DirectoryConnectorRelay', () => {
     resolveTenantDatabaseSourceFromRegistry.mockImplementation(async (env) => ({
       source: env.DB,
     }));
+  });
+
+  it('does not expose internal heartbeat or message helpers as RPC bypasses', () => {
+    expect(SAML_DR_DIRECTORY_RELAY_SURFACE.guarded).toEqual(['webSocketMessage']);
+    expect(Object.getOwnPropertyNames(DirectoryConnectorRelay.prototype).sort()).toEqual(
+      ['constructor', 'fetch', 'webSocketMessage', 'webSocketClose', 'webSocketError'].sort()
+    );
+  });
+
+  it('denies relay source heartbeat before DB resolution or any write during a backup hold', async () => {
+    const acquire = vi.fn(async () => ({ admitted: false }));
+    const complete = vi.fn(async () => {});
+    const { relay, storage } = createRelay({
+      env: {
+        ENABLE_SAML_DR_EXPORT: 'true',
+        TENANT_BACKUP_WRAPPING_KEY: 'local-test-key',
+        SAML_DR_MUTATION_CONTROL: {
+          acquireEnvironmentBackupMutationPermit: acquire,
+          completeEnvironmentBackupMutationPermit: complete,
+        },
+      },
+    });
+    const { ws, sent } = relayWebSocket(relayAttachment);
+    await expect(relay.webSocketMessage(ws, JSON.stringify(await authResponse()))).rejects.toThrow(
+      'backup_mutation_unavailable'
+    );
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+    expect(resolveTenantDatabaseSourceFromRegistry).not.toHaveBeenCalled();
+    expect(storage.put).not.toHaveBeenCalled();
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
+
+  it('keeps the permit until the authoritative heartbeat and websocket response finish', async () => {
+    const acquire = vi.fn(async () => ({ admitted: true }));
+    const complete = vi.fn(async () => {});
+    const { relay, db } = createRelay({
+      env: {
+        ENABLE_SAML_DR_EXPORT: 'true',
+        TENANT_BACKUP_WRAPPING_KEY: 'local-test-key',
+        SAML_DR_MUTATION_CONTROL: {
+          acquireEnvironmentBackupMutationPermit: acquire,
+          completeEnvironmentBackupMutationPermit: complete,
+        },
+      },
+    });
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const execute = vi.fn(async () => {
+      await pending;
+      return executeResult();
+    });
+    Object.assign(db, { execute });
+    const { ws, sent, raw } = relayWebSocket(relayAttachment);
+    const operation = relay.webSocketMessage(ws, JSON.stringify(await authResponse()));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalled());
+    expect(complete).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+    finish();
+    await operation;
+    expect(sent.at(-1)).toMatchObject({ type: 'auth.ok' });
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete.mock.invocationCallOrder[0]).toBeGreaterThan(
+      raw.send.mock.invocationCallOrder[0]
+    );
   });
 
   it('reports relay runtime defaults in status responses', async () => {
@@ -377,27 +452,19 @@ describe('DirectoryConnectorRelay', () => {
 
   it('records connector fleet registration when relay auth includes instance metadata', async () => {
     const { relay, db } = createRelay();
-    const relayInternals = relay as unknown as {
-      recordFleetRegistration: (
-        attachment: Record<string, unknown>,
-        message: Record<string, unknown>
-      ) => Promise<boolean>;
-    };
-
-    await expect(
-      relayInternals.recordFleetRegistration(
-        {
-          tenantId: 'tenant-a',
-          connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
-        },
-        {
+    const { ws, sent } = relayWebSocket(relayAttachment);
+    await relay.webSocketMessage(
+      ws,
+      JSON.stringify(
+        await authResponse({
           instance_id: 'wwi_1234567890123456789012',
           display_name: 'campus relay',
           version: '0.1.0',
           started_at: '2026-06-24T00:00:00.000Z',
-        }
+        })
       )
-    ).resolves.toBe(true);
+    );
+    expect(sent.at(-1)).toMatchObject({ type: 'auth.ok' });
 
     expect(db.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO directory_connector_instances'),
@@ -414,25 +481,12 @@ describe('DirectoryConnectorRelay', () => {
 
   it('rejects relay fleet registration without an immutable instance id', async () => {
     const { relay, db } = createRelay();
-    const relayInternals = relay as unknown as {
-      recordFleetRegistration: (
-        attachment: Record<string, unknown>,
-        message: Record<string, unknown>
-      ) => Promise<boolean>;
-    };
-
-    await expect(
-      relayInternals.recordFleetRegistration(
-        {
-          tenantId: 'tenant-a',
-          connectorId: 'wwcon_8K4M2Q9F7D3H6P1X',
-        },
-        {
-          version: '0.1.0',
-          started_at: '2026-06-24T00:00:00.000Z',
-        }
-      )
-    ).resolves.toBe(false);
+    const { ws, sent } = relayWebSocket(relayAttachment);
+    await relay.webSocketMessage(
+      ws,
+      JSON.stringify(await authResponse({ instance_id: undefined }))
+    );
+    expect(sent.at(-1)).not.toMatchObject({ type: 'auth.ok' });
 
     expect(db.execute).not.toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO directory_connector_instances'),
@@ -605,9 +659,6 @@ describe('DirectoryConnectorRelay', () => {
       authenticatedAt: Date.now(),
     });
 
-    const relayInternals = relay as unknown as {
-      handleVerifyError: (ws: WebSocket, message: unknown) => Promise<void>;
-    };
     const ws = {
       deserializeAttachment: vi.fn(() => ({
         connectionId: 'conn-1',
@@ -618,20 +669,23 @@ describe('DirectoryConnectorRelay', () => {
         const message = JSON.parse(payload) as { type?: string; id?: string; request_id?: string };
         if (message.type !== 'verify.request') return;
         setTimeout(() => {
-          void relayInternals.handleVerifyError(ws as unknown as WebSocket, {
-            type: 'verify.error',
-            protocol: 'authrim.wordwarden.relay.v1',
-            protocol_version: 1,
-            min_supported_version: 1,
-            id: message.id,
-            request_id: message.request_id,
-            tenant_id: 'tenant-a',
-            connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
-            error: {
-              code: 'invalid_relay_request',
-              retryable: false,
-            },
-          });
+          void relay.webSocketMessage(
+            ws as unknown as WebSocket,
+            JSON.stringify({
+              type: 'verify.error',
+              protocol: 'authrim.wordwarden.relay.v1',
+              protocol_version: 1,
+              min_supported_version: 1,
+              id: message.id,
+              request_id: message.request_id,
+              tenant_id: 'tenant-a',
+              connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+              error: {
+                code: 'invalid_relay_request',
+                retryable: false,
+              },
+            })
+          );
         }, 0);
       }),
       close: vi.fn(),
@@ -693,7 +747,6 @@ describe('DirectoryConnectorRelay', () => {
           connectorId: string;
         }
       >;
-      handleVerifyError: (ws: WebSocket, message: unknown) => Promise<void>;
     };
     relayInternals.pending.set('message-1', {
       resolve: vi.fn(),
@@ -714,17 +767,20 @@ describe('DirectoryConnectorRelay', () => {
       close: vi.fn(),
     } as unknown as WebSocket;
 
-    await relayInternals.handleVerifyError(ws, {
-      type: 'verify.error',
-      protocol: 'authrim.wordwarden.relay.v1',
-      protocol_version: 1,
-      min_supported_version: 1,
-      id: 'message-1',
-      error: {
-        code: '<script>alert(1)</script>'.repeat(20),
-        retryable: false,
-      },
-    });
+    await relay.webSocketMessage(
+      ws,
+      JSON.stringify({
+        type: 'verify.error',
+        protocol: 'authrim.wordwarden.relay.v1',
+        protocol_version: 1,
+        min_supported_version: 1,
+        id: 'message-1',
+        error: {
+          code: '<script>alert(1)</script>'.repeat(20),
+          retryable: false,
+        },
+      })
+    );
 
     clearTimeout(timeout);
     expect(reject).toHaveBeenCalledWith(

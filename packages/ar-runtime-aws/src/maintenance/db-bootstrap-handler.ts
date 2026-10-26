@@ -13,7 +13,7 @@ import {
   restoreOfflineAwsSamlTenant,
   type RestoreOfflineAwsSamlTenantInput,
 } from '../import/restore-offline';
-import { canonicalRestoreJson } from '../import/restore-evidence';
+import { canonicalRestoreJson, restoreEvidenceDigest } from '../import/restore-evidence';
 import type { AwsRestoreActivationEvidence } from '../import/restore-coordinator';
 import { createAwsSdkAssetReader, type AwsAssetReader } from '../startup/aws-assets';
 import {
@@ -25,6 +25,7 @@ import { loadActivatedAwsSamlTenant } from '../startup/load-activated-tenant';
 import { runSyntheticAwsAuthenticationRehearsal } from './authentication-rehearsal';
 import { prepareBrowserSp } from './prepare-browser-sp';
 import { readBrowserRehearsalSnapshot } from './browser-rehearsal-snapshot';
+import { readCommittedMaintenanceActivation } from './inspect-restore';
 import {
   countMaintenanceRows,
   DATABASE_FAMILIES,
@@ -143,15 +144,26 @@ export function parseMaintenanceConfiguration(
   return value;
 }
 export function parseMaintenanceAction(event: unknown): {
-  action: 'initialize' | 'restore' | 'verify' | 'authenticate' | 'prepare-browser-sp';
+  action:
+    | 'initialize'
+    | 'restore'
+    | 'inspect-restore'
+    | 'verify'
+    | 'authenticate'
+    | 'prepare-browser-sp';
   evidence?: AwsRestoreActivationEvidence;
 } {
   if (!event || typeof event !== 'object' || Array.isArray(event)) invalid();
   const input = event as { action?: unknown; evidence?: AwsRestoreActivationEvidence };
   if (
-    !['initialize', 'restore', 'verify', 'authenticate', 'prepare-browser-sp'].includes(
-      String(input.action)
-    )
+    ![
+      'initialize',
+      'restore',
+      'inspect-restore',
+      'verify',
+      'authenticate',
+      'prepare-browser-sp',
+    ].includes(String(input.action))
   )
     invalid();
   const requiresEvidence = ['verify', 'authenticate', 'prepare-browser-sp'].includes(
@@ -160,7 +172,13 @@ export function parseMaintenanceAction(event: unknown): {
   exactKeys(input, requiresEvidence ? ['action', 'evidence'] : ['action']);
   if (requiresEvidence && (!input.evidence || typeof input.evidence !== 'object')) invalid();
   return input as {
-    action: 'initialize' | 'restore' | 'verify' | 'authenticate' | 'prepare-browser-sp';
+    action:
+      | 'initialize'
+      | 'restore'
+      | 'inspect-restore'
+      | 'verify'
+      | 'authenticate'
+      | 'prepare-browser-sp';
     evidence?: AwsRestoreActivationEvidence;
   };
 }
@@ -486,6 +504,23 @@ export async function handler(event: unknown) {
         } finally {
           await restored.close();
         }
+      } else if (action.action === 'inspect-restore') {
+        stage = 'inspect_restore';
+        evidence = await readCommittedMaintenanceActivation({
+          connectionString: runtime.stateDatabaseUrl,
+          expected: {
+            restoreId: fixture.restoreId,
+            tenantId: fixture.manifest.source.tenantId,
+            issuer: fixture.manifest.source.issuer,
+            backupReceiptSha256: restoreEvidenceDigest(fixture.backup.receipt),
+            supplementFileSha256: fixture.supplement.sha256,
+            coreTargetId: fixture.core.targetId,
+            piiTargetId: fixture.pii.targetId,
+            maxSnapshotAgeMs: fixture.backup.maxSnapshotAgeMs,
+          },
+        });
+        // This candidate is not trusted merely because it was stored. The common cold_reload
+        // path below verifies source hashes, every committed target, configuration and readiness.
       } else {
         if (!action.evidence || action.evidence.restoreId !== fixture.restoreId) invalid();
         evidence = action.evidence;

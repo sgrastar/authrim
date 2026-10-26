@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { AccountAuthenticationLifecycle } from '@authrim/ar-lib-core';
+import type {
+  SamlDrAccountAuthState,
+  SamlDrPasskeyCounter,
+  SamlDrPersistentNameId,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-snapshot';
 import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
 import {
   PostgresPersistentNameIDRegistry,
@@ -24,34 +29,9 @@ const LIFECYCLES = new Set<AccountAuthenticationLifecycle>([
 ]);
 const BATCH_ROWS = 200;
 
-export interface VerifiedAwsAccountAuthState {
-  tenantId: string;
-  userId: string;
-  accountId: string;
-  lifecycle: AccountAuthenticationLifecycle;
-  lifecycleVersionMs: number;
-  lifecycleOperationId: string | null;
-  revokedAfterMs: number | null;
-  lastLoginAtMs: number | null;
-}
-
-export interface VerifiedAwsPasskeyCounter {
-  tenantId: string;
-  passkeyId: string;
-  userId: string;
-  /** Raw WebAuthn credential ID, checked against the source Core passkey row. */
-  credentialId: string;
-  /** Canonical decimal to avoid lossy JSON serialization of a source D1 integer. */
-  counter: string;
-  updatedAtMs: number;
-}
-
-export interface VerifiedAwsPersistentNameID {
-  tenantId: string;
-  registryKey: string;
-  valueJson: string;
-  createdAtMs: number;
-}
+export type VerifiedAwsAccountAuthState = SamlDrAccountAuthState;
+export type VerifiedAwsPasskeyCounter = SamlDrPasskeyCounter;
+export type VerifiedAwsPersistentNameID = SamlDrPersistentNameId;
 
 /** Captured and authenticated separately from the tenant bundle, at the same source boundary. */
 export interface VerifiedAwsStateSupplement {

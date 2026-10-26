@@ -770,6 +770,10 @@ Resources:
             Resource:
               Ref: BrowserInputSecret
           - Effect: Allow
+            Action: s3:GetBucketVersioning
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${AssetsBucketName}
+          - Effect: Allow
             Action:
               - logs:DescribeLogStreams
               - logs:FilterLogEvents

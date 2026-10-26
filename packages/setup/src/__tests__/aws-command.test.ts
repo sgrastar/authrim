@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { registerAwsCommands, runAwsSetupCommand } from '../cli/commands/aws.js';
+import {
+  registerAwsCommands,
+  runAwsExecutionCommand,
+  runAwsSetupCommand,
+} from '../cli/commands/aws.js';
 
 describe('AWS setup command', () => {
   let source: string;
@@ -16,6 +20,7 @@ describe('AWS setup command', () => {
     await mkdir(scripts, { recursive: true });
     await writeFile(join(scripts, 'aws-preflight.mjs'), '// test fixture only\n');
     await writeFile(join(scripts, 'setup-plan.mjs'), '// test fixture only\n');
+    await writeFile(join(scripts, 'setup-execute.mjs'), '// test fixture only\n');
   });
 
   afterEach(async () => {
@@ -142,12 +147,92 @@ describe('AWS setup command', () => {
     registerAwsCommands(program);
     expect(program.commands.slice(0, 2)).toEqual([init, deploy]);
     const aws = program.commands.find((command) => command.name() === 'aws');
-    expect(aws?.commands.map((command) => command.name())).toEqual(['check', 'plan']);
+    expect(aws?.commands.map((command) => command.name())).toEqual([
+      'check',
+      'plan',
+      'apply',
+      'resume',
+      'status',
+    ]);
     const check = aws?.commands[0];
     expect(check?.options.find((option) => option.long === '--phase')?.argChoices).toEqual([
       'bootstrap',
       'foundation',
       'workload',
     ]);
+  });
+
+  it('creates an executable local plan without running the legacy AWS preflight', async () => {
+    const runScript = vi.fn().mockResolvedValue(0);
+    expect(
+      await runAwsSetupCommand(
+        'plan',
+        { ...target, source, config: 'deployment.json', out: 'plan.json' },
+        { runScript }
+      )
+    ).toBe(0);
+    expect(runScript).toHaveBeenCalledExactlyOnceWith(
+      join(scripts, 'setup-execute.mjs'),
+      [
+        'plan',
+        '--config',
+        resolve('deployment.json'),
+        '--out',
+        resolve('plan.json'),
+        '--account-id',
+        target.accountId,
+        '--region',
+        target.region,
+      ],
+      source
+    );
+  });
+
+  it('wires resume to the real executor with the digest and bounded stage', async () => {
+    const runScript = vi.fn().mockResolvedValue(0);
+    expect(
+      await runAwsExecutionCommand(
+        'resume',
+        {
+          source,
+          plan: 'plan.json',
+          planSha256: 'a'.repeat(64),
+          state: 'state.json',
+          through: 'verify',
+        },
+        { runScript }
+      )
+    ).toBe(0);
+    expect(runScript).toHaveBeenCalledExactlyOnceWith(
+      join(scripts, 'setup-execute.mjs'),
+      [
+        'resume',
+        '--state',
+        resolve('state.json'),
+        '--plan',
+        resolve('plan.json'),
+        '--plan-sha256',
+        'a'.repeat(64),
+        '--through',
+        'verify',
+      ],
+      source
+    );
+  });
+
+  it('rejects a symlinked writer and never forwards raw process errors', async () => {
+    await rm(join(scripts, 'setup-execute.mjs'));
+    await symlink(join(scripts, 'setup-plan.mjs'), join(scripts, 'setup-execute.mjs'));
+    const runScript = vi.fn();
+    const reportError = vi.fn();
+    expect(
+      await runAwsExecutionCommand(
+        'status',
+        { source, state: 'state.json' },
+        { runScript, reportError }
+      )
+    ).toBe(2);
+    expect(runScript).not.toHaveBeenCalled();
+    expect(reportError.mock.calls.flat().join()).not.toContain('ENOENT');
   });
 });

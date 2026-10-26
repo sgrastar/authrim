@@ -603,6 +603,12 @@ export interface Env {
   ENABLE_IDENTITY_STITCHING?: string; // "true" to enable automatic identity stitching
   ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL?: string; // "false" to allow unverified emails (not recommended)
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
+  /** Experimental source capture remains unavailable until all writers can be verified. */
+  ENABLE_SAML_DR_EXPORT?: string;
+  SAML_DR_MUTATION_CONTROL?: Pick<
+    ControlServiceBinding,
+    'acquireEnvironmentBackupMutationPermit' | 'completeEnvironmentBackupMutationPermit'
+  >;
   TENANT_BACKUP_WRAPPING_KEY?: string; // Dedicated 32-byte hex key for temporary backup operation secrets
   ADMIN_CREDENTIAL_ENCRYPTION_KEY?: string; // Encryption key for Admin-managed external credentials
 

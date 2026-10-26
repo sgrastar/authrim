@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { phase8RestoreHoldReason } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-holds';
 import { PHASE8_RESTORED_SENSITIVE_COLUMNS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-references';
@@ -229,7 +230,7 @@ export function createPhase8OtherStoreHandlers(
         const avatars = await Promise.all(
           rows.map(({ rowJson }) => decodePortableUserAvatar(rowJson, context.lease.tenantId))
         );
-        await Promise.all(
+        await samlDrAll(
           avatars.map(async (avatar) => {
             if (purpose === 'restore') await ports.importAsset(context, avatar);
             else if (!(await ports.verifyAsset(context, avatar))) invalid();
@@ -245,7 +246,7 @@ export function createPhase8OtherStoreHandlers(
           objectChunks.push(chunk);
           byObject.set(chunk.objectId, objectChunks);
         }
-        await Promise.all(
+        await samlDrAll(
           [...byObject.values()].map(async (objectChunks) => {
             for (const chunk of objectChunks) {
               if (purpose === 'restore')
@@ -282,7 +283,7 @@ export function createPhase8OtherStoreHandlers(
       rows.push(row);
       sourceCursor = row.nextCursor;
     }
-    await Promise.all(
+    await samlDrAll(
       rows.map(async (row) => {
         // The SQL restore intentionally omitted quarantined work, so its sidecar must do the same.
         if (phase8RestoreHoldReason(datasetId, row.rowJson) !== null) return;

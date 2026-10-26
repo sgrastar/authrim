@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { D1Database } from '@cloudflare/workers-types';
 import { createD1Adapter } from '@authrim/ar-lib-core';
 import {
@@ -87,7 +88,7 @@ async function mapWithConcurrency<T>(
       await action(values[index]);
     }
   });
-  await Promise.all(workers);
+  await samlDrAll(workers);
 }
 
 export class PluginRunnerScheduler {

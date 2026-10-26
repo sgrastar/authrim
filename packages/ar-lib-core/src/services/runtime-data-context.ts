@@ -10,12 +10,15 @@ import {
   loadVerifiedLookupBucketAssignmentProvider,
   loadVerifiedLookupHmacKeyState,
   LookupRouteResolver,
+  LookupDirectoryRepository,
+  mergeRotatingLookupMemberships,
   resolveLookupHmacKeys,
   type ResolvedLookupHmacKeys,
   type ResolvedLookupMembership,
   type ResolvedLookupTarget,
   type LookupIdentifierKind,
 } from './lookup-directory';
+import { createD1ConsistencyRequest } from './control-plane';
 import {
   resolveTenantDatabaseSourceFromRegistry,
   type ResolvedTenantDatabaseSource,
@@ -590,6 +593,79 @@ export async function resolveAccountDataContextByIdentifier(
     userCacheScope,
     piiCacheMode: piiCacheMode(env),
   };
+}
+
+/**
+ * Read the actual primary Lookup membership for a held DR boundary. Signed registry documents
+ * locate its shard; neither runtime membership caches nor KV route payloads are accepted as the
+ * account authority. The caller pins the returned targets to its sealed database inventory.
+ * Suspended/locked accounts are intentionally retained; this is not an authentication decision.
+ */
+export async function resolveAccountRouteForSamlDrSnapshot(
+  env: Env,
+  input: { tenantId: string; accountId: string; accountRouteGeneration: number; nowMs: number }
+): Promise<ResolvedLookupMembership['routeProjection']> {
+  if (
+    env.ENABLE_SAML_DR_EXPORT !== 'true' ||
+    env.RUNTIME_DATA_PORTS ||
+    !SAFE_ID.test(input.tenantId) ||
+    normalizeAccountId(input.accountId) !== input.accountId ||
+    !Number.isSafeInteger(input.accountRouteGeneration) ||
+    input.accountRouteGeneration < 1 ||
+    !Number.isSafeInteger(input.nowMs) ||
+    input.nowMs < 0
+  )
+    throw new Error('saml_dr_account_route_invalid');
+  const runtime = requiredEnvironment(env);
+  const verified = {
+    store: runtime.store,
+    environmentId: runtime.environmentId,
+    publicJwks: runtime.publicJwks,
+    now: Math.floor(input.nowMs / 1000),
+  };
+  const [state, assignments] = await Promise.all([
+    loadVerifiedLookupHmacKeyState(verified),
+    loadVerifiedLookupBucketAssignmentProvider(verified),
+  ]);
+  const keys = await resolveLookupHmacKeys({
+    state,
+    slotA: env.LOOKUP_HMAC_KEY_SLOT_A,
+    slotB: env.LOOKUP_HMAC_KEY_SLOT_B,
+  });
+  const indexes = await createLookupBlindIndexes('account_id', input.accountId, keys.readKeys);
+  const resultSets = await Promise.all(
+    indexes.map(async (index) => {
+      const assignment = await assignments.resolveActiveAssignment(index.virtualBucket);
+      if (
+        assignment.state !== 'active' ||
+        assignment.virtualBucket !== index.virtualBucket ||
+        !/^[A-Z][A-Z0-9_]{0,127}$/u.test(assignment.bindingRef)
+      )
+        throw new Error('saml_dr_account_route_invalid');
+      const binding = (env as unknown as Record<string, unknown>)[assignment.bindingRef] as
+        | D1Database
+        | undefined;
+      if (!binding || typeof binding.withSession !== 'function')
+        throw new Error('saml_dr_account_route_invalid');
+      return (
+        await new LookupDirectoryRepository(binding).findActiveMemberships(
+          index,
+          createD1ConsistencyRequest('primary_required')
+        )
+      ).memberships;
+    })
+  );
+  const memberships = mergeRotatingLookupMemberships(resultSets).filter(
+    (membership) =>
+      membership.tenantId === input.tenantId && membership.accountId === input.accountId
+  );
+  if (
+    memberships.length !== 1 ||
+    memberships[0].accountRouteGeneration !== input.accountRouteGeneration ||
+    memberships[0].routeProjection.accountRouteGeneration !== input.accountRouteGeneration
+  )
+    throw new Error('saml_dr_account_route_invalid');
+  return structuredClone(memberships[0].routeProjection);
 }
 
 export async function resolveAccountCoreDataContext(

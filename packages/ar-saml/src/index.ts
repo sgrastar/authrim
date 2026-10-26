@@ -1,3 +1,7 @@
+import {
+  runSamlDrCoveredFetch,
+  runSamlDrCoveredOperation,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * Authrim SAML 2.0 Worker
  *
@@ -324,8 +328,14 @@ export { app, handleScheduled };
 
 export default {
   fetch(request: Request, env?: Env, ctx?: ExecutionContext): Promise<Response> {
-    return Promise.resolve(app.fetch(request, env, ctx));
+    return runSamlDrCoveredFetch(env, ctx, (coveredEnv, coveredContext) =>
+      Promise.resolve(app.fetch(request, coveredEnv, coveredContext))
+    );
   },
-  scheduled: handleScheduled,
+  scheduled(controller: Parameters<typeof handleScheduled>[0], env: Env, ctx: ExecutionContext) {
+    return runSamlDrCoveredOperation(env, ctx, (coveredEnv, coveredContext) =>
+      handleScheduled(controller, coveredEnv, coveredContext ?? ctx)
+    );
+  },
 };
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

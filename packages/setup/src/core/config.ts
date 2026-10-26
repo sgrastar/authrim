@@ -311,6 +311,8 @@ export const EmailFeatureSchema = z.object({
 
 export const FeaturesConfigSchema = z
   .object({
+    /** Experimental coordinated SAML DR source export; requires initialized source authorities. */
+    samlDrExport: z.object({ enabled: z.boolean().default(false) }).optional(),
     queue: QueueFeatureSchema.prefault({}),
     r2: R2FeatureSchema.prefault({}),
     email: EmailFeatureSchema.prefault({}),

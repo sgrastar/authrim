@@ -16,6 +16,7 @@
  * @see docs/architecture/pii-separation.md
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import {
   createAuditLogFromContext,
@@ -460,7 +461,7 @@ async function cleanupTombstonesForScope(
     const deleteCondition = 'WHERE tenant_id = ? AND retention_until < ?';
     const deleteParams = [tenantId, now];
     const deleteSql = `DELETE FROM users_pii_tombstone ${deleteCondition}`;
-    await Promise.all(adapters.map((adapter) => adapter.execute(deleteSql, deleteParams)));
+    await samlDrAll(adapters.map((adapter) => adapter.execute(deleteSql, deleteParams)));
 
     return c.json({
       dryRun: false,

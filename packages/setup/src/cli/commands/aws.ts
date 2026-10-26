@@ -13,6 +13,7 @@ export interface AwsSetupOptions {
   json?: boolean;
   issuerHost?: string;
   out?: string;
+  config?: string;
 }
 
 interface AwsSetupDependencies {
@@ -41,7 +42,7 @@ async function requireScript(rootDir: string, name: string): Promise<string> {
   return script;
 }
 
-/** Check before creating a local plan. Never invokes an AWS mutation or login command. */
+/** Checks stay read-only. A config creates a pinned executable plan locally; apply is separate. */
 export async function runAwsSetupCommand(
   mode: 'check' | 'plan',
   options: AwsSetupOptions,
@@ -51,6 +52,32 @@ export async function runAwsSetupCommand(
     dependencies.reportError ?? ((message) => process.stderr.write(`${message}\n`));
   const rootDir = resolve(options.source ?? process.cwd());
   const runScript = dependencies.runScript ?? executeScript;
+  if (mode === 'plan' && options.config) {
+    try {
+      if (!options.out) throw new Error('aws_plan_output_missing');
+      const script = await requireScript(rootDir, 'setup-execute.mjs');
+      return await runScript(
+        script,
+        [
+          'plan',
+          '--config',
+          resolve(options.config),
+          '--out',
+          resolve(options.out),
+          '--account-id',
+          options.accountId,
+          '--region',
+          options.region,
+        ],
+        rootDir
+      );
+    } catch {
+      reportError(
+        'AWSセットアップの実行計画を作成できませんでした。ソースと設定ファイルを確認してください。'
+      );
+      return 2;
+    }
+  }
   let checkScript: string;
   let planScript: string | undefined;
   try {
@@ -129,7 +156,80 @@ export function registerAwsCommands(program: Command): void {
   )
     .requiredOption('--out <path>', 'New plan file (existing files are never overwritten)')
     .option('--issuer-host <hostname>', 'Existing SAML issuer hostname')
+    .option('--config <path>', 'Public deployment config; creates an executable plan locally')
     .action(async (options: AwsSetupOptions) => {
       process.exitCode = await runAwsSetupCommand('plan', options);
     });
+  for (const mode of ['apply', 'resume', 'status'] as const) {
+    const command = aws
+      .command(mode)
+      .description(
+        mode === 'status'
+          ? 'Read saved AWS deployment progress'
+          : `${mode === 'apply' ? 'Start' : 'Resume'} a pinned AWS deployment (no Cloudflare or DNS changes)`
+      )
+      .requiredOption('--state <path>', 'Private durable execution state file')
+      .option('--source <path>', 'Authrim source repository');
+    if (mode !== 'status')
+      command
+        .requiredOption('--plan <path>', 'Executable plan created with aws plan --config')
+        .requiredOption('--plan-sha256 <sha256>', 'Trusted digest returned by the plan command')
+        .addOption(
+          new Option('--through <stage>', 'Stop after this stage')
+            .choices([
+              'bootstrap',
+              'foundation',
+              'access',
+              'endpoint',
+              'access-bind',
+              'prepare',
+              'upload',
+              'database',
+              'initialize',
+              'restore',
+              'verify',
+              'sp-prepare',
+              'manifest',
+              'runtime-bind',
+              'workload',
+              'complete',
+            ])
+            .default('complete')
+        );
+    command.action(async (options: AwsExecutionOptions) => {
+      process.exitCode = await runAwsExecutionCommand(mode, options);
+    });
+  }
+}
+
+export interface AwsExecutionOptions {
+  source?: string;
+  state: string;
+  plan?: string;
+  planSha256?: string;
+  through?: string;
+}
+
+/** Only this explicit command enters the AWS writer; it never launches a login or arbitrary shell. */
+export async function runAwsExecutionCommand(
+  mode: 'apply' | 'resume' | 'status',
+  options: AwsExecutionOptions,
+  dependencies: AwsSetupDependencies = {}
+): Promise<number> {
+  try {
+    const root = resolve(options.source ?? process.cwd());
+    const script = await requireScript(root, 'setup-execute.mjs');
+    const args = [mode, '--state', resolve(options.state)];
+    if (mode !== 'status') {
+      if (!options.plan || !options.planSha256) throw new Error('aws_plan_missing');
+      args.push('--plan', resolve(options.plan), '--plan-sha256', options.planSha256);
+      if (options.through) args.push('--through', options.through);
+    }
+    return await (dependencies.runScript ?? executeScript)(script, args, root);
+  } catch {
+    (dependencies.reportError ?? ((message) => process.stderr.write(`${message}\n`)))(
+      'AWSセットアップを実行できませんでした。計画・状態ファイルとソースの配置を確認してください。'
+    );
+    return 2;
+  }
 }

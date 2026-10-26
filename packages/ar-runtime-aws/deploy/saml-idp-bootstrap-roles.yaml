@@ -1,7 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >-
-  Authrim SAML DR deployment roles and serving-role permissions boundary. This
-  bootstrap stack creates no application resources or long-lived credentials.
+Description: Authrim deployment roles and separate runtime/maintenance boundaries; no application or credentials.
 
 Metadata:
   AWSToolsMetrics:
@@ -9,9 +7,9 @@ Metadata:
   com.aws.cloudformation.Context:
     arch: Separate deployment roles and independent serving/maintenance boundaries.
     must:
-      - Keep this stack under a separately controlled bootstrap administrator; neither service role can edit it.
-      - Bind the exact asset bucket, object prefix, and runtime secret after foundation creation and before workload creation.
-      - Supply CAPABILITY_NAMED_IAM when creating or updating this stack and the workload stack.
+      - Bootstrap administrator only; service roles cannot edit it.
+      - Bind exact foundation outputs before workload creation.
+      - Requires CAPABILITY_NAMED_IAM.
 
 Parameters:
   OperatorPrincipalArn:
@@ -35,27 +33,23 @@ Parameters:
     Default: authrim-dr-foundation
     MaxLength: 28
     AllowedPattern: '^[A-Za-z][A-Za-z0-9-]{0,127}$'
-    Description: Exact foundation stack permitted to use the foundation service role.
+    Description: Foundation stack name.
   WorkloadStackName:
     Type: String
     Default: authrim-dr-saml
     MaxLength: 56
     AllowedPattern: '^[A-Za-z][A-Za-z0-9-]{0,127}$'
-    Description: Exact one-issuer workload stack permitted to use the workload service role.
+    Description: Single-issuer workload stack name.
   AssetsBucketName:
     Type: String
     Default: ''
     AllowedPattern: '^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
-    Description: >-
-      Exact AssetsBucketName foundation output. Empty until foundation is created;
-      serving S3 reads remain denied while empty.
+    Description: Exact foundation bucket; empty denies serving S3 reads.
   AssetObjectPrefix:
     Type: String
     Default: ''
     AllowedPattern: "^$|^[A-Za-z0-9!_.'()-]+(/[A-Za-z0-9!_.'()-]+)*/$"
-    Description: >-
-      Pinned S3 key prefix containing the Lambda ZIP, runtime manifest, backup parts,
-      and supplement for this workload. Empty keeps all S3 reads denied.
+    Description: Workload ZIP, manifest and backup prefix; empty denies serving S3 reads.
   RuntimeSecretArn:
     Type: String
     Default: ''
@@ -1023,7 +1017,7 @@ Resources:
     Condition: HasDbBootstrapBinding
     Metadata:
       com.aws.cloudformation.Context:
-        why: Allows scoped maintenance operations.
+        why: Allows scoped setup inspection and maintenance.
         must:
           - No master-secret access or serving changes.
     Properties:
@@ -1067,8 +1061,14 @@ Resources:
               - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${DbBootstrapStackName}/job'
               - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${DbBootstrapStackName}/job:*'
           - Effect: Allow
-            Action: secretsmanager:PutSecretValue
+            Action: [secretsmanager:PutSecretValue, secretsmanager:DescribeSecret]
             Resource: !Ref DbBootstrapJobConfigSecretArn
+          - Effect: Allow
+            Action: s3:GetBucketVersioning
+            Resource: !Sub 'arn:${AWS::Partition}:s3:::${DbBootstrapAssetsBucketName}'
+          - Effect: Allow
+            Action: lambda:GetFunctionConfiguration
+            Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${WorkloadStackName}-*'
 
 Outputs:
   DbBootstrapCfnServiceRoleArn:

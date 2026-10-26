@@ -15,6 +15,7 @@
  * that could not be read, the time after the response running out) is retried by the scheduled
  * run.
  */
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   createAuditLog,
   createLogger,
@@ -119,7 +120,7 @@ async function mapConcurrently<T, R>(
 ): Promise<R[]> {
   const results: R[] = [];
   let next = 0;
-  await Promise.all(
+  await samlDrAll(
     Array.from({ length: Math.min(limit, items.length) }, async () => {
       while (next < items.length) {
         const index = next++;
@@ -187,7 +188,7 @@ export async function auditSessionEndLogoutStarted(
   for (const { userId } of params.sessions) {
     sessionCounts.set(userId, (sessionCounts.get(userId) ?? 0) + 1);
   }
-  await Promise.all(
+  await samlDrAll(
     [...sessionCounts].map(([userId, sessionCount]) =>
       createAuditLog(env, {
         tenantId: params.tenantId,
@@ -354,7 +355,7 @@ export async function sendAdminSessionEndLogout(
     })
   );
 
-  const [backchannel, webhook] = await Promise.all([
+  const [backchannel, webhook] = await samlDrAll([
     sendBackchannelLogoutFanout(env, {
       tenantId,
       issuer,
@@ -382,7 +383,7 @@ export async function sendAdminSessionEndLogout(
       },
     }),
     sendLogoutWebhookFanout(env, { issuer, sessions, config: webhookConfig, log }),
-    Promise.all(audits),
+    samlDrAll(audits),
   ]);
 
   // A session whose sending broke off may have clients not told: the job is retried (a relying
@@ -452,7 +453,7 @@ export async function auditSessionEndLogoutFailed(
     sessionCounts.set(auditUserId, (sessionCounts.get(auditUserId) ?? 0) + 1);
   }
   const entries = sessionCounts.size > 0 ? [...sessionCounts] : [['system', 0] as const];
-  await Promise.all(
+  await samlDrAll(
     entries.map(([userId, sessionCount]) =>
       createAuditLog(env, {
         tenantId: job.tenant_id,

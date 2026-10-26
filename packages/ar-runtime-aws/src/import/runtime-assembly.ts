@@ -1,3 +1,9 @@
+import { SAML_DR_RUNTIME_STATE_DATASET } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-snapshot';
+import {
+  readEmbeddedSamlDrCapture,
+  buildAwsSamlSupplementFromFrozenCapture,
+} from './supplement-collector';
+import { canonicalRestoreJson } from './restore-evidence';
 import type { SAMLSPConfig } from '@authrim/ar-lib-core';
 import {
   createLookupBlindIndex,
@@ -31,6 +37,7 @@ import { readVerifiedRows, rowInteger, rowNullableText, rowText } from './verifi
 const HEX_SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_CATEGORY = /^[a-zA-Z0-9_-]{1,128}$/u;
 const CONSUMED_NON_DATABASE_DATASETS = new Set([
+  SAML_DR_RUNTIME_STATE_DATASET.id,
   'federation.saml_local_signing_state',
   'credentials.key_manager_tenant_state',
 ]);
@@ -482,6 +489,18 @@ export async function assembleAwsSamlTenantFromBackup(
   input: AssembleAwsSamlTenantInput
 ): Promise<AwsTenantRuntime> {
   sameManifest(input);
+  if (input.backup.manifest.datasets.some(({ id }) => id === SAML_DR_RUNTIME_STATE_DATASET.id)) {
+    const embedded = await buildAwsSamlSupplementFromFrozenCapture({
+      backup: input.backup,
+      capture: await readEmbeddedSamlDrCapture(input.backup),
+    });
+    const { receipt, ...payload } = input.supplement;
+    if (
+      canonicalRestoreJson(receipt) !== canonicalRestoreJson(embedded.receipt) ||
+      canonicalRestoreJson(payload) !== canonicalRestoreJson(embedded.payload)
+    )
+      invalid();
+  }
   assertCompleteDatasetCoverage(input);
   await input.assertSnapshotReady();
   const saml = await signingBundle(input);

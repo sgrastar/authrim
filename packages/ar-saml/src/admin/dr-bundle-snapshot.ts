@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { AuthrimDRBundle } from '@authrim/ar-lib-core';
 import {
   assertDRBundleContainsNoPrivateMaterial,
@@ -250,7 +251,7 @@ export async function writeSAMLDRBundleArtifactsToR2(
   artifacts: SAMLDRBundleArtifacts
 ): Promise<void> {
   const objects = artifacts.webhookEvent.storage.objects;
-  await Promise.all([
+  await samlDrAll([
     putJsonObject(bucket, objects[0], artifacts.bundleJson),
     putJsonObject(bucket, objects[1], artifacts.manifestJson),
     putJsonObject(bucket, objects[2], artifacts.checksumsJson),

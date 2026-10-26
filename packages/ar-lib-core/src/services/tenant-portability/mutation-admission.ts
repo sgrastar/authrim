@@ -8,10 +8,8 @@ export const TENANT_BACKUP_LEGACY_BOUNDARY_DEADLINE_MS = 2_000;
 export const TENANT_BACKUP_INTERMEDIATE_BOUNDARY_DEADLINE_MS = 15_000;
 export const TENANT_BACKUP_LONG_BOUNDARY_DEADLINE_MS = 60_000;
 /**
- * How long an incomplete permit keeps a boundary from being held. A writer whose Worker stopped
- * mid-effect (a cancelled waitUntil, an evicted isolate) never completes its permit; without a
- * lease that permit would refuse every later boundary of the environment. No Worker invocation
- * that holds a permit runs this long: cron and queue invocations end within 15 minutes.
+ * Legacy permit lease. SAML DR strict admission never treats age as proof that a writer stopped:
+ * open requests and RPCs may still be active, so their permits require explicit completion.
  */
 export const TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS = 20 * 60 * 1000;
 export interface TenantMutationBoundary {
@@ -40,7 +38,8 @@ export class TenantBackupMutationAdmission {
   constructor(
     private readonly database: Database,
     private readonly environmentId = 'legacy',
-    private readonly databaseClock = false
+    private readonly databaseClock = false,
+    private readonly strictIncompletePermits = false
   ) {
     validate(0, environmentId);
   }
@@ -156,7 +155,7 @@ export class TenantBackupMutationAdmission {
        AND state IN ('draining','held') AND (state='draining' OR held_at IS NOT NULL)
        AND created_at<=? AND deadline_at>${sqliteBoundaryClockParameter(this.databaseClock)}
        AND NOT EXISTS (SELECT 1 FROM tenant_backup_mutation_permits WHERE ((environment_id=? AND (tenant_id=? OR scope='environment')) OR (?!='legacy' AND environment_id='legacy')) AND completed_at IS NULL
-         AND created_at>${sqliteBoundaryClockParameter(this.databaseClock)}-${TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS})
+         ${this.strictIncompletePermits ? '' : `AND created_at>${sqliteBoundaryClockParameter(this.databaseClock)}-${TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS}`})
        RETURNING *`,
       [
         now,
@@ -168,7 +167,7 @@ export class TenantBackupMutationAdmission {
         this.environmentId,
         tenantId,
         this.environmentId,
-        now,
+        ...(this.strictIncompletePermits ? [] : [now]),
       ]
     );
   }

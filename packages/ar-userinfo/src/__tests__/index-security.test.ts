@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
@@ -53,7 +53,9 @@ describe('userinfo service middleware boundaries', () => {
     mocks.rateLimitMiddleware.mockImplementation(
       () => async (_c: unknown, next: () => Promise<void>) => next()
     );
-    mocks.userinfoHandler.mockImplementation((c) => c.json({ sub: 'user-1' }));
+    mocks.userinfoHandler.mockImplementation((c: Context<{ Bindings: Env }>) =>
+      c.json({ sub: 'user-1' })
+    );
   });
 
   it.each(['/userinfo', '/api/protected/customer-profiles/user-1'])(
@@ -93,5 +95,41 @@ describe('userinfo service middleware boundaries', () => {
       error_description: 'An unexpected error occurred',
     });
     expect(text).not.toContain('database password leaked');
+  });
+});
+
+describe('userinfo deferred source effects', () => {
+  it('retains admission until a handler-owned deferred write completes', async () => {
+    let finish!: () => void;
+    const write = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const complete = vi.fn(async () => undefined);
+    const acquire = vi.fn(async () => ({ admitted: true }));
+    mocks.userinfoHandler.mockImplementation((c: Context<{ Bindings: Env }>) => {
+      c.executionCtx.waitUntil(write);
+      return c.json({ sub: 'user-1' });
+    });
+    const pending = app.fetch(
+      new Request('https://issuer.example/userinfo'),
+      {
+        ENABLE_RATE_LIMIT: 'false',
+        ENABLE_SAML_DR_EXPORT: 'true',
+        SAML_DR_MUTATION_CONTROL: {
+          acquireEnvironmentBackupMutationPermit: acquire,
+          completeEnvironmentBackupMutationPermit: complete,
+        },
+      } as unknown as Env,
+      {
+        waitUntil: vi.fn(),
+        passThroughOnException: vi.fn(),
+        props: {},
+      } as unknown as ExecutionContext
+    );
+    await vi.waitFor(() => expect(acquire).toHaveBeenCalledOnce());
+    expect(complete).not.toHaveBeenCalled();
+    finish();
+    expect((await pending).status).toBe(200);
+    expect(complete).toHaveBeenCalledOnce();
   });
 });

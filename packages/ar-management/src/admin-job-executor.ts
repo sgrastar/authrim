@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { SUPPORT_OPS_LOGOUT_JOB_TYPE } from './support-ops-job-evidence';
 import type {
   AccountAuthenticationLifecycle,
@@ -1920,7 +1921,7 @@ async function processBulkUserUpdateJob(
     if (target.authentication === 'active') {
       // Authentication states not initialized yet start from the accounts as they are now (as a
       // single activation does), not from the accounts this job is about to activate.
-      await Promise.all(
+      await samlDrAll(
         ids.map((userId) => initializeFromAccount(env, adapter, job.tenant_id, userId))
       );
       await accounts(ids);

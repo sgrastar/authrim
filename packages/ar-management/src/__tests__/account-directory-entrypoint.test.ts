@@ -16,6 +16,15 @@ function worker(
 }
 
 describe('AccountDirectoryEntrypoint', () => {
+  it.each(['publishAccountDirectory', 'removeAccountDirectory'] as const)(
+    'requires DR admission for %s even without the optional backup wrapping key',
+    async (method) => {
+      await expect(worker({}, { ENABLE_SAML_DR_EXPORT: 'true' })[method]({})).rejects.toThrow(
+        'saml_dr_writer_unavailable'
+      );
+    }
+  );
+
   it('rejects unauthorized or cross-environment caller props before storage access', async () => {
     const get = vi.fn(async () => null);
     await expect(

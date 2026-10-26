@@ -1,6 +1,6 @@
 import type { ControlServiceBinding } from '../control-plane/control-plane-contracts';
 
-type MutationControl = Pick<
+export type TenantBackupMutationControl = Pick<
   ControlServiceBinding,
   | 'acquireTenantBackupMutationPermit'
   | 'completeTenantBackupMutationPermit'
@@ -48,13 +48,23 @@ export class TenantBackupMutationUnavailableError extends Error {
 export async function runTenantBackupCoveredEffect<T>(
   input: {
     TENANT_BACKUP_WRAPPING_KEY?: string;
-    CONTROL?: MutationControl;
+    CONTROL?: TenantBackupMutationControl;
   } & CoverageCarrier,
   scope: TenantBackupMutationCoverage,
   run: () => Promise<T>
 ): Promise<T> {
   if (hasTenantBackupMutationCoverage(input, scope)) return run();
   if (!input.TENANT_BACKUP_WRAPPING_KEY) return run();
+  return runRequiredTenantBackupCoveredEffect(input, scope, run);
+}
+
+/** Admission required by an installed runtime contract; no backup encryption key is needed. */
+export async function runRequiredTenantBackupCoveredEffect<T>(
+  input: { CONTROL?: TenantBackupMutationControl } & CoverageCarrier,
+  scope: TenantBackupMutationCoverage,
+  run: () => Promise<T>
+): Promise<T> {
+  if (hasTenantBackupMutationCoverage(input, scope)) return run();
   const permitId = crypto.randomUUID();
   const control = input.CONTROL;
   const tenantScope = 'tenantId' in scope;

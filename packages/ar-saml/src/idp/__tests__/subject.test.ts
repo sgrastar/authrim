@@ -461,3 +461,19 @@ describe('resolveSAMLNameIDFormat', () => {
     ).toThrow(SAMLNameIDPolicyError);
   });
 });
+
+describe('opt-in persistent NameID authority', () => {
+  it('rejects a missing strong authority instead of silently falling back to KV', () => {
+    const fallback = { get: async () => 'legacy', put: async () => {} };
+    expect(() =>
+      resolveSAMLPersistentNameIDRegistryStore({
+        ENABLE_SAML_DR_EXPORT: 'true',
+        KV: fallback,
+        STATE_STORE: fallback,
+      })
+    ).toThrow('saml_dr_nameid_unavailable');
+    expect(
+      resolveSAMLPersistentNameIDRegistryStore({ ENABLE_SAML_DR_EXPORT: 'false', KV: fallback })
+    ).toBe(fallback);
+  });
+});

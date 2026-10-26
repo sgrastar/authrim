@@ -3,6 +3,7 @@
  * User management, client management, and statistics for administrative dashboard
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { getCanonicalAccountStatus, transitionAccountLifecycle } from './account-status';
@@ -1374,7 +1375,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
           'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
           [tenantId, userId]
         );
-        await Promise.all(
+        await samlDrAll(
           sessions.map((session) =>
             target.core.execute(
               'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
@@ -1383,7 +1384,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
           )
         );
 
-        await Promise.all([
+        await samlDrAll([
           target.core.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
             tenantId,
             userId,

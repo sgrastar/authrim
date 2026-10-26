@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env, TotpCredential, TotpProfile } from '@authrim/ar-lib-core';
@@ -1375,7 +1376,7 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       });
 
       c.executionCtx.waitUntil(
-        Promise.all([
+        samlDrAll([
           authCtx.repositories.totp.markUsed(verifiedCredentialId, userId, verifiedTimeStep),
           runtimeUsers.touchLastLogin(userId),
         ]).catch((error: unknown) => {

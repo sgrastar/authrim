@@ -42,7 +42,19 @@ describe('AWS supplement collector plan', () => {
       TEST_BACKUP_PASSPHRASE: 'synthetic-passphrase',
     });
     expect(resolved.backup.passphrase).toBe('synthetic-passphrase');
-    expect(resolved.capture.expectedSha256).toBe('d'.repeat(64));
+    expect(resolved.capture).toEqual({
+      path: '/private/tmp/capture.json',
+      expectedSha256: 'd'.repeat(64),
+    });
+  });
+
+  it('accepts an embedded capture without any sidecar path or hash', () => {
+    const input = plan();
+    input.capture = { source: 'bundle' };
+    expect(
+      resolveAwsSupplementCollectorPlan(input, { TEST_BACKUP_PASSPHRASE: 'synthetic-passphrase' })
+        .capture
+    ).toEqual({ source: 'bundle' });
   });
 
   it('rejects missing secret and inline secret fields', () => {

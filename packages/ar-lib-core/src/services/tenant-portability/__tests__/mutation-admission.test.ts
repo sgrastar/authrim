@@ -161,6 +161,23 @@ it('never treats an unresolved permit as complete or extends a retried admission
   await restarted.complete('a', 'unknown-completion', 5105);
   expect((await restarted.hold('a', 'retry-boundary', 5106))?.state).toBe('held');
 });
+it.each(['tenant', 'environment'] as const)(
+  'strict SAML DR retains an old uncompleted %s permit until explicit completion',
+  async (scope) => {
+    const strict = new TenantBackupMutationAdmission(adapter, 'legacy', false, true);
+    const acquire =
+      scope === 'tenant'
+        ? strict.acquire('a', 'still-running', 1)
+        : strict.acquireEnvironment('still-running', 1);
+    expect(await acquire).toBe(true);
+    const later = TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS * 10;
+    expect(await strict.begin({ ...boundary, now: later })).not.toBeNull();
+    expect(await strict.hold('a', 'boundary', later + 1)).toBeNull();
+    if (scope === 'tenant') await strict.complete('a', 'still-running', later + 2);
+    else await strict.completeEnvironment('still-running', later + 2);
+    expect(await strict.hold('a', 'boundary', later + 3)).toMatchObject({ state: 'held' });
+  }
+);
 it('rejects overlapping attempts, changed identity and stale completion reuse', async () => {
   await admission.begin(boundary);
   expect(await admission.begin({ ...boundary, id: 'competing', now: 101 })).toBeNull();

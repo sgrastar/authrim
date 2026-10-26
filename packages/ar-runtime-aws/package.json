@@ -13,12 +13,14 @@
     "rehearsal:fixture": "node dist/synthetic-backup-cli.mjs",
     "setup:plan": "node scripts/setup-plan.mjs",
     "setup:check": "node scripts/aws-preflight.mjs",
+    "setup:execute": "node scripts/setup-execute.mjs",
+    "test:setup-executor": "node --test scripts/setup-executor.test.mjs",
     "test:setup-plan": "node --test scripts/setup-plan.test.mjs",
     "test:setup-preflight": "node --test scripts/aws-preflight.test.mjs",
     "test:packaging": "node --test scripts/package-serving.test.mjs",
     "test:browser-deployment": "node --test scripts/browser-deployment.test.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --fileParallelism=false && node --test scripts/setup-plan.test.mjs scripts/aws-preflight.test.mjs scripts/package-serving.test.mjs scripts/browser-deployment.test.mjs",
+    "test": "vitest run --fileParallelism=false && node --test scripts/setup-plan.test.mjs scripts/aws-preflight.test.mjs scripts/package-serving.test.mjs scripts/browser-deployment.test.mjs scripts/setup-executor.test.mjs",
     "lint": "eslint src --pass-on-unpruned-suppressions"
   },
   "dependencies": {

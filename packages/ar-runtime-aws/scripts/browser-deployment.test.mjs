@@ -10,6 +10,66 @@ const access = parse(
   await readFile(new URL('../deploy/saml-browser-access.yaml', import.meta.url), 'utf8')
 );
 const resources = template.Resources;
+const bootstrapBody = await readFile(
+  new URL('../deploy/saml-idp-bootstrap-roles.yaml', import.meta.url),
+  'utf8'
+);
+const bootstrapOperator = parse(
+  bootstrapBody.slice(bootstrapBody.indexOf('  DbBootstrapOperatorPolicy:')).split('\nOutputs:')[0],
+  {
+    customTags: [
+      { tag: '!Ref', resolve: (value) => ({ Ref: value }) },
+      { tag: '!Sub', resolve: (value) => ({ 'Fn::Sub': value }) },
+      { tag: '!GetAtt', resolve: (value) => ({ 'Fn::GetAtt': value.split('.') }) },
+    ],
+  }
+).DbBootstrapOperatorPolicy.Properties.PolicyDocument.Statement;
+
+test('setup upload and verification reads are granted only on the configured resources', () => {
+  const browser = access.Resources.BrowserOperatorPolicy.Properties.PolicyDocument.Statement;
+  for (const [statements, bucket] of [
+    [browser, 'AssetsBucketName'],
+    [bootstrapOperator, 'DbBootstrapAssetsBucketName'],
+  ]) {
+    assert.deepEqual(
+      statements.filter((statement) => statement.Action === 's3:GetBucketVersioning'),
+      [
+        {
+          Effect: 'Allow',
+          Action: 's3:GetBucketVersioning',
+          Resource: { 'Fn::Sub': `arn:\${AWS::Partition}:s3:::\${${bucket}}` },
+        },
+      ]
+    );
+    assert.ok(
+      !statements.some((statement) =>
+        (JSON.stringify(statement.Action) ?? '').includes('secretsmanager:GetSecretValue')
+      )
+    );
+  }
+  assert.deepEqual(
+    bootstrapOperator.find((statement) =>
+      (JSON.stringify(statement.Action) ?? '').includes('secretsmanager:DescribeSecret')
+    ),
+    {
+      Effect: 'Allow',
+      Action: ['secretsmanager:PutSecretValue', 'secretsmanager:DescribeSecret'],
+      Resource: { Ref: 'DbBootstrapJobConfigSecretArn' },
+    }
+  );
+  assert.deepEqual(
+    bootstrapOperator.find((statement) => statement.Action === 'lambda:GetFunctionConfiguration'),
+    {
+      Effect: 'Allow',
+      Action: 'lambda:GetFunctionConfiguration',
+      Resource: {
+        'Fn::Sub':
+          'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${WorkloadStackName}-*',
+      },
+    }
+  );
+  assert.ok(Buffer.byteLength(bootstrapBody) <= 51_200);
+});
 const routes = Object.entries(resources).filter(
   ([, resource]) => resource.Type === 'AWS::ApiGatewayV2::Route'
 );

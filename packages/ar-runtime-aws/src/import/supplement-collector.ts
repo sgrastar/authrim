@@ -8,6 +8,11 @@ import {
   validateAccountRouteProjection,
 } from '@authrim/ar-lib-core';
 import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
+import {
+  SAML_DR_RUNTIME_STATE_DATASET,
+  type SamlDrFrozenSourceCapture,
+  type SamlDrSnapshotPayload,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-snapshot';
 import { buildCoreAccountRouteGenerations } from './core-route-generations';
 import type { VerifiedTenantBackupV2 } from './backup-reader';
 import {
@@ -15,7 +20,7 @@ import {
   canonicalRestoreJson,
   restoreEvidenceDigest,
 } from './restore-evidence';
-import { deriveAwsStateSourceExpectations } from './restore-offline';
+import { deriveAwsStateSourceExpectations } from './state-source-expectations';
 import type { VerifiedAwsSamlSupplement } from './runtime-assembly-input';
 import {
   assertVerifiedAwsStateSource,
@@ -23,37 +28,16 @@ import {
   type VerifiedAwsStateSupplement,
 } from './state-restore';
 import { readVerifiedRows, rowInteger, rowNullableText, rowText } from './verified-rows';
+import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CATEGORY = /^[A-Za-z0-9_-]{1,128}$/u;
 const MAX_CAPTURE_BYTES = 256 * 1024 * 1024;
 
-type SourceCapturePayload = Omit<VerifiedAwsSamlSupplement, 'receipt' | 'state'> & {
-  state: Omit<VerifiedAwsStateSupplement, 'receipt'>;
-};
+type SourceCapturePayload = SamlDrSnapshotPayload;
 
-/**
- * A separately pinned, frozen source capture. Its provenance is supplied by the operator;
- * this shape alone cannot prove that Cloudflare read it under the bundle's boundary hold.
- */
-export interface AwsSamlFrozenSourceCapture {
-  formatVersion: 1;
-  source: Pick<
-    TenantBundleManifest,
-    'bundleId' | 'snapshotId' | 'boundaryUnixMs' | 'inventoryDigestSha256' | 'source'
-  >;
-  completeness: {
-    accountAuthStates: true;
-    passkeyCounters: true;
-    persistentNameIds: true;
-    sourceLoginUi: true;
-    platformDestinationProfiles: true;
-    accountRoutes: true;
-    platformSettings: true;
-    sourceRuntimeSettings: true;
-  };
-  payload: SourceCapturePayload;
-}
+/** Compatibility alias; the snapshot contract is shared by all runtime backends. */
+export type AwsSamlFrozenSourceCapture = SamlDrFrozenSourceCapture;
 
 export interface AwsSamlCollectedSupplement {
   formatVersion: 1;
@@ -268,14 +252,55 @@ export async function buildAwsSamlSupplementFromFrozenCapture(input: {
   }
 }
 
-/** Reads a separately pinned capture and writes a mode-0600, non-overwriting import input. */
+/** Extract only the installed, authenticated logical state dataset from a verified bundle. */
+export async function readEmbeddedSamlDrCapture(
+  backup: VerifiedTenantBackupV2
+): Promise<SamlDrFrozenSourceCapture> {
+  try {
+    const expected = SAML_DR_RUNTIME_STATE_DATASET;
+    const found = backup.manifest.datasets.filter(({ id }) => id === expected.id);
+    if (found.length !== 1) invalid();
+    for (const key of Object.keys(expected) as Array<keyof typeof expected>)
+      if (found[0][key] !== expected[key]) invalid();
+    const dataset = backup.dataset(expected.id);
+    if (dataset.rows !== 1 || dataset.bytes > MAX_CAPTURE_BYTES) invalid();
+    const row = await dataset.readNextRow(null);
+    if (!row || !row.nextCursor || (await dataset.readNextRow(row.nextCursor)) !== null) invalid();
+    const value = JSON.parse(row.rowJson) as Record<string, unknown>;
+    exactKeys(value, ['tenant_id', 'capture_json']);
+    if (rowText(value as PortableSqliteRow, 'tenant_id') !== backup.manifest.source.tenantId)
+      invalid();
+    const raw = rowText(value as PortableSqliteRow, 'capture_json');
+    if (new TextEncoder().encode(raw).byteLength > MAX_CAPTURE_BYTES) invalid();
+    const capture = JSON.parse(raw) as SamlDrFrozenSourceCapture;
+    if (canonicalRestoreJson(capture) !== raw) invalid();
+    captureIdentity(capture, backup.manifest);
+    return capture;
+  } catch {
+    return invalid();
+  }
+}
+
+/** Derive a supplement from the same authenticated backup; no sidecar provenance is needed. */
+export async function collectAwsSamlSupplementFromBackup(input: {
+  backup: VerifiedTenantBackupV2;
+  outputPath: string;
+}): Promise<AwsSamlSupplementCollectionReceipt> {
+  const capture = await readEmbeddedSamlDrCapture(input.backup);
+  const supplement = await buildAwsSamlSupplementFromFrozenCapture({
+    backup: input.backup,
+    capture,
+  });
+  return writeCollectedSupplement(input.outputPath, supplement);
+}
+
+/** Reads a separately pinned legacy capture without changing its trust requirements. */
 export async function collectAwsSamlSupplementFromPinnedCapture(input: {
   backup: VerifiedTenantBackupV2;
   capturePath: string;
   expectedCaptureSha256: string;
   outputPath: string;
 }): Promise<AwsSamlSupplementCollectionReceipt> {
-  let created: { dev: bigint; ino: bigint } | null = null;
   try {
     if (!SHA256.test(input.expectedCaptureSha256)) invalid();
     const sourceBefore = await lstat(input.capturePath, { bigint: true });
@@ -299,13 +324,25 @@ export async function collectAwsSamlSupplementFromPinnedCapture(input: {
       backup: input.backup,
       capture,
     });
+    return await writeCollectedSupplement(input.outputPath, supplement);
+  } catch {
+    return invalid();
+  }
+}
+
+async function writeCollectedSupplement(
+  outputPath: string,
+  supplement: AwsSamlCollectedSupplement
+): Promise<AwsSamlSupplementCollectionReceipt> {
+  let created: { dev: bigint; ino: bigint } | null = null;
+  try {
     const output = canonicalRestoreJson(supplement);
     const outputBytes = new TextEncoder().encode(output);
     if (outputBytes.length > MAX_CAPTURE_BYTES) invalid();
-    if (!isAbsolute(input.outputPath) || resolve(input.outputPath) !== input.outputPath) invalid();
-    if ((await realpath(dirname(input.outputPath))) !== dirname(input.outputPath)) invalid();
+    if (!isAbsolute(outputPath) || resolve(outputPath) !== outputPath) invalid();
+    if ((await realpath(dirname(outputPath))) !== dirname(outputPath)) invalid();
     const file = await open(
-      input.outputPath,
+      outputPath,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
       0o600
     );
@@ -318,9 +355,9 @@ export async function collectAwsSamlSupplementFromPinnedCapture(input: {
       await file.close();
     }
     const outputSha256 = createHash('sha256').update(outputBytes).digest('hex');
-    await readPinnedRestoreFile(input.outputPath, outputSha256, MAX_CAPTURE_BYTES);
+    await readPinnedRestoreFile(outputPath, outputSha256, MAX_CAPTURE_BYTES);
     return {
-      outputPath: input.outputPath,
+      outputPath: outputPath,
       outputSha256,
       supplementSha256: supplement.receipt.supplementSha256,
       tenantId: supplement.receipt.tenantId,
@@ -332,9 +369,9 @@ export async function collectAwsSamlSupplementFromPinnedCapture(input: {
     };
   } catch {
     if (created) {
-      const observed = await lstat(input.outputPath, { bigint: true }).catch(() => null);
+      const observed = await lstat(outputPath, { bigint: true }).catch(() => null);
       if (observed?.dev === created.dev && observed.ino === created.ino) {
-        await unlink(input.outputPath).catch(() => undefined);
+        await unlink(outputPath).catch(() => undefined);
       }
     }
     return invalid();

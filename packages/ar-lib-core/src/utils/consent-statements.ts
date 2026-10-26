@@ -12,6 +12,8 @@
  */
 
 import type { DatabaseAdapter } from '../db';
+import type { Env } from '../types/env';
+import { readSamlDrConsentIpSalt } from '../services/tenant-portability/saml-dr-runtime-settings';
 import type {
   ConsentStatement,
   ConsentStatementVersion,
@@ -1563,10 +1565,13 @@ export async function computeContentHash(
 export async function hashIpAddress(
   ip: string,
   tenantId: string,
-  kv: KVNamespace | null
+  kv: KVNamespace | null,
+  env?: Pick<Env, 'ENABLE_SAML_DR_EXPORT' | 'KEY_MANAGER'>
 ): Promise<string> {
   let salt = '';
-  if (kv) {
+  if (env?.ENABLE_SAML_DR_EXPORT === 'true') {
+    salt = await readSamlDrConsentIpSalt(env, tenantId);
+  } else if (kv) {
     try {
       const storedSalt = await kv.get(`consent:ip_salt:${tenantId}`);
       if (storedSalt) {

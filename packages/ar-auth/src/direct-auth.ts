@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * Direct Authentication API Handlers
  *
@@ -1952,7 +1953,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     }
 
     c.executionCtx.waitUntil(
-      Promise.all([
+      samlDrAll([
         authCtx.repositories.passkey.mirrorCounterAfterAuth(
           passkey.id,
           authenticationInfo.newCounter

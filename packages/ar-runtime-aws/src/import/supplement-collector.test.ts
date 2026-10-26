@@ -1,3 +1,4 @@
+import { SAML_DR_RUNTIME_STATE_DATASET } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-snapshot';
 import { createHash } from 'node:crypto';
 import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,8 @@ import { canonicalRestoreJson, readVerifiedAwsSamlSupplement } from './restore-e
 import {
   buildAwsSamlSupplementFromFrozenCapture,
   collectAwsSamlSupplementFromPinnedCapture,
+  collectAwsSamlSupplementFromBackup,
+  readEmbeddedSamlDrCapture,
   type AwsSamlFrozenSourceCapture,
 } from './supplement-collector';
 
@@ -305,4 +308,80 @@ describe('offline AWS supplement collector', () => {
       })
     ).rejects.toThrow('aws_supplement_collector_invalid');
   });
+});
+
+function embeddedBackup(
+  value: AwsSamlFrozenSourceCapture = capture(),
+  tenantId = TENANT,
+  raw?: string
+): VerifiedTenantBackupV2 {
+  const source = backup();
+  const row = canonicalRestoreJson({
+    tenant_id: textCell(tenantId),
+    capture_json: textCell(raw ?? canonicalRestoreJson(value)),
+  });
+  return {
+    ...source,
+    manifest: { ...manifest, datasets: [...manifest.datasets, SAML_DR_RUNTIME_STATE_DATASET] },
+    dataset(id) {
+      if (id !== SAML_DR_RUNTIME_STATE_DATASET.id) return source.dataset(id);
+      return {
+        id,
+        rows: 1,
+        bytes: new TextEncoder().encode(row).byteLength,
+        readNextRow: async (cursor) => (cursor === null ? { rowJson: row, nextCursor: '1' } : null),
+      };
+    },
+  };
+}
+
+describe('authenticated embedded SAML state', () => {
+  it('reads the shared logical dataset from its authenticated source manifest', async () => {
+    await expect(readEmbeddedSamlDrCapture(embeddedBackup())).resolves.toEqual(capture());
+  });
+  it('writes the same pinned 0600 supplement as the legacy capture path', async () => {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'authrim-embedded-')));
+    try {
+      const outputPath = join(directory, 'supplement.json');
+      const collected = await collectAwsSamlSupplementFromBackup({
+        backup: embeddedBackup(),
+        outputPath,
+      });
+      expect((await stat(outputPath)).mode & 0o777).toBe(0o600);
+      const verified = await readVerifiedAwsSamlSupplement({
+        path: outputPath,
+        expectedSha256: collected.outputSha256,
+        manifest,
+      });
+      expect(verified.state.accountAuthStates).toHaveLength(1);
+      await expect(
+        collectAwsSamlSupplementFromBackup({ backup: embeddedBackup(), outputPath })
+      ).rejects.toThrow('aws_supplement_collector_invalid');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  it.each(['tenant', 'source', 'canonical', 'descriptor', 'rows', 'missing'])(
+    'rejects %s mismatch without accepting a sidecar override',
+    async (kind) => {
+      const value = capture();
+      if (kind === 'source') value.source.snapshotId = 'another-snapshot';
+      const input = embeddedBackup(
+        value,
+        kind === 'tenant' ? 'tenant-b' : TENANT,
+        kind === 'canonical' ? JSON.stringify(value, null, 2) : undefined
+      );
+      if (kind === 'descriptor')
+        input.manifest.datasets = [
+          ...manifest.datasets,
+          { ...SAML_DR_RUNTIME_STATE_DATASET, schemaVersion: 2 },
+        ];
+      if (kind === 'missing') input.manifest.datasets = manifest.datasets;
+      if (kind === 'rows') {
+        const original = input.dataset.bind(input);
+        input.dataset = (id) => ({ ...original(id), rows: 2 });
+      }
+      await expect(readEmbeddedSamlDrCapture(input)).rejects.toThrow();
+    }
+  );
 });

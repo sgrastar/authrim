@@ -6,7 +6,10 @@ import {
   type VerifiedTenantBackupV2,
 } from './backup-reader';
 import { canonicalRestoreJson, readPinnedRestoreFile } from './restore-evidence';
-import { collectAwsSamlSupplementFromPinnedCapture } from './supplement-collector';
+import {
+  collectAwsSamlSupplementFromBackup,
+  collectAwsSamlSupplementFromPinnedCapture,
+} from './supplement-collector';
 
 /** The plan is independently hash-pinned; secrets are referenced only by environment name. */
 export interface AwsSupplementCollectorPlan {
@@ -14,7 +17,7 @@ export interface AwsSupplementCollectorPlan {
   backup: Omit<OpenVerifiedTenantBackupV2Input, 'passphrase' | 'signal' | 'nowMs'> & {
     passphraseEnv: string;
   };
-  capture: { path: string; expectedSha256: string };
+  capture: { path: string; expectedSha256: string } | { source: 'bundle' };
   outputPath: string;
 }
 
@@ -50,13 +53,19 @@ export function resolveAwsSupplementCollectorPlan(
       'maxSnapshotAgeMs',
       'passphraseEnv',
     ]);
-    exactKeys(plan.capture, ['path', 'expectedSha256']);
+    if (!plan.capture || typeof plan.capture !== 'object') invalid();
+    if ('source' in plan.capture) {
+      exactKeys(plan.capture, ['source']);
+      if (plan.capture.source !== 'bundle') invalid();
+    } else {
+      exactKeys(plan.capture, ['path', 'expectedSha256']);
+      if (typeof plan.capture.path !== 'string' || typeof plan.capture.expectedSha256 !== 'string')
+        invalid();
+    }
     if (
       plan.formatVersion !== 1 ||
       !Array.isArray(plan.backup.partPaths) ||
       typeof plan.outputPath !== 'string' ||
-      typeof plan.capture.path !== 'string' ||
-      typeof plan.capture.expectedSha256 !== 'string' ||
       typeof plan.backup.passphraseEnv !== 'string' ||
       !/^[A-Z][A-Z0-9_]{0,127}$/u.test(plan.backup.passphraseEnv)
     )
@@ -92,12 +101,15 @@ export async function runAwsSupplementCollectorCli(args: readonly string[]): Pro
     if (canonicalRestoreJson(plan) !== raw) invalid();
     const input = resolveAwsSupplementCollectorPlan(plan, process.env);
     backup = await openVerifiedTenantBackupV2(input.backup);
-    const receipt = await collectAwsSamlSupplementFromPinnedCapture({
-      backup,
-      capturePath: input.capture.path,
-      expectedCaptureSha256: input.capture.expectedSha256,
-      outputPath: input.outputPath,
-    });
+    const receipt =
+      'source' in input.capture
+        ? await collectAwsSamlSupplementFromBackup({ backup, outputPath: input.outputPath })
+        : await collectAwsSamlSupplementFromPinnedCapture({
+            backup,
+            capturePath: input.capture.path,
+            expectedCaptureSha256: input.capture.expectedSha256,
+            outputPath: input.outputPath,
+          });
     const identity = await lstat(receipt.outputPath, { bigint: true });
     createdOutput = { path: receipt.outputPath, dev: identity.dev, ino: identity.ino };
     await backup.close();

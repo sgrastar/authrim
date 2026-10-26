@@ -1,18 +1,17 @@
 import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
-import type { AccountRouteProjection } from '@authrim/ar-lib-core/services/control-plane/control-plane-contracts';
 import type { LookupBlindIndexKey } from '@authrim/ar-lib-core/services/lookup-directory/blind-index';
-import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import type { AuditRuntimePorts } from '@authrim/ar-lib-core/types/audit-runtime-ports';
 import type { VerifiedTenantBackupV2 } from './backup-reader';
 import type { PostgresFamilyRestoreReceipt } from './postgres-restore';
 import type { VerifiedAwsStateSupplement, AwsStateRestoreReceipt } from './state-restore';
 import type { PostgresQueryClient } from '../storage/postgres-transient-state';
+import type { SamlDrSnapshotPayload } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-snapshot';
 
 /**
  * Operator-protected evidence for values intentionally absent from a tenant bundle. The caller
  * verifies its separate receipt before passing it here; assembly also checks the pinned identity.
  */
-export interface VerifiedAwsSamlSupplement {
+export interface VerifiedAwsSamlSupplement extends Omit<SamlDrSnapshotPayload, 'state'> {
   receipt: {
     tenantId: string;
     issuer: string;
@@ -23,28 +22,8 @@ export interface VerifiedAwsSamlSupplement {
     /** Digest of the canonical, separately authenticated supplement payload. */
     supplementSha256: string;
   };
-  /** Setup-managed source client and origin are excluded from the portable tenant SQL datasets. */
-  sourceLoginUi: {
-    client: PortableSqliteRow;
-    origins: readonly PortableSqliteRow[];
-  };
-  /** Platform-owned destination profiles referenced by an imported tenant mapping. */
-  platformDestinationProfiles: {
-    profiles: readonly PortableSqliteRow[];
-    versions: readonly PortableSqliteRow[];
-  };
-  /** Independently authenticated, complete state inventory restored by the coordinator. */
+  /** Complete state with its independently checked restore receipt. */
   state: VerifiedAwsStateSupplement;
-  /** An independently pinned route for each active account in the source Core snapshot. */
-  accountRoutes: Readonly<Record<string, AccountRouteProjection>>;
-  /** Platform-owned settings inherited by the source tenant, keyed by category. */
-  platformSettings: Readonly<Record<string, { documentJson: string; version: string }>>;
-  /** The source deployment flag must be captured explicitly, even when tenant settings allow Flow. */
-  sourceFlowRuntimeEnabled: boolean;
-  /** Source KV secret; do not manufacture a new salt from the tenant ID. */
-  consentIpSalt: string;
-  /** Only for a source deployment that used PAIRWISE_SALT instead of KeyManager. */
-  sourcePairwiseFallbackSecret?: string;
 }
 
 /** Databases stay in staging until both family restores and all supplement imports have succeeded. */

@@ -1,3 +1,4 @@
+import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
@@ -842,7 +843,12 @@ app.onError((err, c) => {
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 
-// Export for Cloudflare Workers
+// Preserve Hono's request helper and the default path when the opt-in flag is absent.
+const unguardedFetch = app.fetch.bind(app);
+app.fetch = (request, env, context) =>
+  runSamlDrCoveredFetch(env, context, (coveredEnv, coveredContext) =>
+    Promise.resolve(unguardedFetch(request, coveredEnv, coveredContext))
+  );
 export default app;
 export { DirectoryConnectorRelay } from './directory-connector-relay';
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

@@ -438,3 +438,53 @@ describe('CloudflareControlApiClient', () => {
     }
   });
 });
+
+describe('source writer inventory API reads', () => {
+  it('reads exact immutable version details using only the Workers token', async () => {
+    const detail = {
+      id: 'version-a',
+      resources: { bindings: [], script: { handlers: ['fetch'] } },
+    };
+    const fetcher = vi
+      .fn<NonNullable<ConstructorParameters<typeof CloudflareControlApiClient>[0]['fetcher']>>()
+      .mockResolvedValue(success(detail));
+    const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
+    await expect(client.getWorkerVersion('worker/name', 'version/id')).resolves.toEqual(detail);
+    expect(fetcher.mock.calls[0]?.[0]).toBe(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/worker%2Fname/versions/version%2Fid`
+    );
+    expect(new Headers(fetcher.mock.calls[0]?.[1].headers).get('Authorization')).toBe(
+      'Bearer workers-token'
+    );
+  });
+  it('returns every account script without prefix or tag filtering', async () => {
+    const scripts = [{ id: 'test-ar-auth' }, { id: 'unrelated-writer' }];
+    const fetcher = vi
+      .fn<NonNullable<ConstructorParameters<typeof CloudflareControlApiClient>[0]['fetcher']>>()
+      .mockResolvedValue(success(scripts));
+    const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
+    await expect(client.listWorkerScriptsForInventory(100)).resolves.toEqual(scripts);
+    expect(fetcher.mock.calls[0]?.[0]).toBe(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`
+    );
+  });
+  it.each([
+    [[{ id: 'valid' }, { id: '' }], undefined],
+    [[{ id: 'duplicate' }, { id: 'duplicate' }], undefined],
+    [[{ id: 'one' }, { id: 'two' }], undefined],
+    [[{ id: 'one' }], { total_pages: 2 }],
+    [[{ id: 'one' }], { total_count: 2 }],
+    [[{ id: 'one' }], { count: 2 }],
+  ])('fails closed for malformed, over-limit or incomplete inventories', async (scripts, info) => {
+    const client = new CloudflareControlApiClient({
+      accountId,
+      tokens,
+      fetcher: vi
+        .fn()
+        .mockResolvedValue(success(scripts, info as Record<string, unknown> | undefined)),
+    });
+    await expect(client.listWorkerScriptsForInventory(1)).rejects.toThrow(
+      'cloudflare_workers_inventory_incomplete'
+    );
+  });
+});

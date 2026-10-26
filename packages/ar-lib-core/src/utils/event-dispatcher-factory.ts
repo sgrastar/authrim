@@ -1,3 +1,4 @@
+import { samlDrTrackEffect } from '../services/tenant-portability/saml-dr-writer';
 /**
  * Event Dispatcher Factory
  *
@@ -337,7 +338,15 @@ export async function createEventDispatcherFromEnv(
  * @param options - Publish options
  * @returns Publish result
  */
-export async function publishEvent<T = unknown>(
+export function publishEvent<T = unknown>(
+  c: Context<{ Bindings: Env }>,
+  payload: EventPublishPayload<T>,
+  options?: EventPublishOptions
+): Promise<EventPublishResult> {
+  return samlDrTrackEffect(publishEventOwned(c, payload, options));
+}
+
+async function publishEventOwned<T = unknown>(
   c: Context<{ Bindings: Env }>,
   payload: EventPublishPayload<T>,
   options?: EventPublishOptions

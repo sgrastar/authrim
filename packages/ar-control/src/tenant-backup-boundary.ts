@@ -80,6 +80,7 @@ async function admitBoundaryBatch(input: {
   participants: readonly BackupBoundaryParticipant[];
   now: number;
   databaseClock: boolean;
+  strictIncompletePermits: boolean;
 }): Promise<TenantMutationBoundary | null> {
   const clock = sqliteBoundaryClockParameter(input.databaseClock);
   const participantsJson = JSON.stringify(
@@ -147,7 +148,7 @@ async function admitBoundaryBatch(input: {
          AND NOT EXISTS (SELECT 1 FROM tenant_backup_mutation_permits
            WHERE ((environment_id=? AND (tenant_id=? OR scope='environment'))
              OR (?!='legacy' AND environment_id='legacy')) AND completed_at IS NULL
-             AND created_at>${clock}-${TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS})
+             ${input.strictIncompletePermits ? '' : `AND created_at>${clock}-${TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS}`})
          RETURNING *`
       )
       .bind(
@@ -160,7 +161,7 @@ async function admitBoundaryBatch(input: {
         input.environmentId,
         input.tenantId,
         input.environmentId,
-        input.now
+        ...(input.strictIncompletePermits ? [] : [input.now])
       ),
   ]);
   const held = results[3]?.results?.[0] as TenantMutationBoundary | undefined;
@@ -175,6 +176,8 @@ export async function controlTenantBackupBoundary(input: {
   request: unknown;
   /** Deterministic storage-test clock. Production entrypoints omit this field. */
   now?: number;
+  /** Opt-in SAML DR requires explicit completion of every admitted writer. */
+  strictIncompletePermits?: boolean;
 }): Promise<TenantBackupBoundaryResponse> {
   const parsed = request(input.request);
   const now = input.now ?? Date.now();
@@ -205,7 +208,12 @@ export async function controlTenantBackupBoundary(input: {
       return { success: result.success, rowsAffected: result.meta.changes ?? 0 };
     },
   };
-  const admission = new TenantBackupMutationAdmission(database, input.environmentId, databaseClock);
+  const admission = new TenantBackupMutationAdmission(
+    database,
+    input.environmentId,
+    databaseClock,
+    input.strictIncompletePermits === true
+  );
   const receipts = new TenantBackupBoundaryReceipts(database, databaseClock);
   const identity = {
     environmentId: input.environmentId,
@@ -235,6 +243,7 @@ export async function controlTenantBackupBoundary(input: {
         participants: parsed.participants,
         now,
         databaseClock,
+        strictIncompletePermits: input.strictIncompletePermits === true,
       });
       break;
     }

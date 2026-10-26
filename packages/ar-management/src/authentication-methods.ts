@@ -21,6 +21,7 @@
  *   - Short cache TTL to balance Login UI performance and Admin UI update propagation
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type {
   Env,
@@ -2416,7 +2417,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       humanVerification,
       externalProviderUsage,
     ] = await measureAuthenticationMethodsTiming(timing, 'fanout', () =>
-      Promise.all([
+      samlDrAll([
         samlAvailabilityPromise,
         bridgeProvidersPromise,
         samlAvailabilityPromise.then(({ enabled }) =>
@@ -2554,7 +2555,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       timing,
       'ui_config',
       () =>
-        Promise.all([
+        samlDrAll([
           getLoginUISettings(env, tenantId, requestedClientId),
           resolveSelfServiceUIConfig(env, tenantId),
           resolveCacheTTL(env, tenantId),

@@ -3,6 +3,7 @@
  * tenant metadata database; the accounts a cohort selects in each of the tenant's account
  * databases.
  */
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import {
   createAuthContextFromHono,
@@ -133,7 +134,7 @@ export async function mapAccountStores<R>(
       results[index] = await mapper(stores[index]!, index);
     }
   };
-  await Promise.all(
+  await samlDrAll(
     Array.from({ length: Math.min(ACCOUNT_STORE_CONCURRENCY, stores.length) }, worker)
   );
   return results;
