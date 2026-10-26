@@ -4,6 +4,26 @@
  * are fixed and used the same on every page. Spread into `../ja.ts`.
  */
 export const jaMappingConsole = {
+	'mc.page.appTitle': 'アプリに渡す利用者情報',
+	'mc.page.setTitle': '利用者情報の変換ルールを編集',
+	'mc.page.setsDesc':
+		'利用者の属性を、アプリが受け取る項目へ対応付けるルールを管理します。たとえば、部署の属性を department という項目名で渡せます。ルールのまとまりを「マッピングセット」と呼びます。',
+	'mc.hist.appDesc':
+		'このアプリで使うルールの指定について、変更前後の内容と変更者を確認します。影響を確かめて、選んだ変更の前の設定へ戻せます。セット内の変換ルールの編集履歴は含みません。',
+	'mc.nav.back': '戻る',
+	'mc.nav.editSet': 'セットを編集',
+	'mc.nav.tenants': 'テナント',
+	'mc.nav.sets': 'マッピングセット',
+	'mc.nav.mapping': 'ルールの選択',
+	'mc.nav.test': '送信内容のテスト',
+	'mc.nav.history': '変更履歴',
+	'mc.nav.platform': 'プラットフォーム',
+	'mc.nav.searchTenants': 'テナントを検索',
+	'mc.nav.searchSets': 'セットを検索',
+	'mc.nav.changeDefault': 'マッピング既定を変更',
+	'mc.nav.tenantsDescription':
+		'各テナントのアプリが標準で使う、利用者情報の変換ルールを確認します。対象を選ぶと、既定のルールをまとめて変更できます。アプリごとの個別指定は変わりません。',
+
 	'mc.loading': '読み込み中',
 	'mc.loadFailed': '読み込めませんでした。もう一度お試しください。',
 	'mc.retry': 'もう一度読み込む',
@@ -112,8 +132,8 @@ export const jaMappingConsole = {
 
 	'mc.ex.title': 'クレームを調べる',
 	'mc.ex.desc':
-		'テスト用の利用者でこのアプリにログインしたとき、ID トークンに入るクレームと、入らないクレームの理由を、段ごとに出します。値は出さず、有無だけを出します。',
-	'mc.ex.form': '調べる対象',
+		'テスト用の利用者で、このアプリに渡される項目と、渡されない理由を確かめます。送り先と同意条件を変えて比較できます。値そのものは表示しません。設定は変更されません。',
+	'mc.ex.form': 'テスト条件',
 	'mc.ex.app': 'アプリ',
 	'mc.ex.user': 'テスト用の利用者',
 	'mc.ex.userHint':
@@ -127,10 +147,11 @@ export const jaMappingConsole = {
 	'mc.ex.stoppedOther': 'このアプリにはトークンを発行しません。理由のコード: {code}',
 	'mc.ex.stoppedClaim': '値が拒まれたクレーム: {claim}',
 	'mc.ex.implicit': '以前は暗黙に有効だったマッピングが、いまは有効になっていません: {sets}',
-	'mc.ex.run': '調べる',
-	'mc.ex.stale': '選び直したので、もう一度「調べる」を押してください。',
+	'mc.ex.run': '送信内容を確認',
+	'mc.ex.stale': '条件を変えたので、もう一度「送信内容を確認」を押してください。',
 	'mc.ex.resultFor': '{app}・{user} の結果',
-	'mc.ex.prompt': 'アプリとテスト用の利用者を選んで「調べる」を押してください。',
+	'mc.ex.prompt':
+		'テスト用の利用者と条件を選んで「送信内容を確認」を押してください。現在開いているアプリへの送信結果を表示します。',
 	'mc.ex.stage.selection': '1. 使うマッピング',
 	'mc.ex.stage.values': '2. 元の値の有無',
 	'mc.ex.stage.filter': '3. スコープと同意による絞り込み',
@@ -185,7 +206,7 @@ export const jaMappingConsole = {
 
 	'mc.ch.title': 'セットの編集',
 	'mc.ch.desc':
-		'保存する前に、このセットを使っているアプリごとに、受け取るクレームの変化を確かめられます。',
+		'どの利用者属性を、どの項目名でアプリへ渡すか編集します。たとえば「部署 → department」の対応を変更できます。保存すると、このセットを使うアプリにも反映されます。保存前に影響を確認できます。',
 	'mc.ch.usedBy': 'このセットを使っているアプリ: {count} 件',
 	'mc.ch.mapping': 'クレームのマッピング',
 	'mc.ch.claim': '送るクレーム',
@@ -234,8 +255,8 @@ export const jaMappingConsole = {
 
 	'mc.app.title': '{app} の ID マッピング',
 	'mc.app.desc':
-		'このアプリの ID トークンと UserInfo に、どのマッピングを使うかです。何も指定しなければ、テナント既定に従います。',
-	'mc.app.current': '現在有効なもの',
+		'このアプリに渡す所属・部署などの利用者情報に、どの変換ルールを使うか設定します。テナントの既定に従うか、このアプリだけ別のルールを使うか、追加の変換を使わないかを選びます。',
+	'mc.app.current': '保存済みの設定で使われるルール',
 	'mc.app.choice': 'このアプリでの指定',
 	'mc.app.follow': 'テナント既定に従う',
 	'mc.app.follow.desc':
@@ -247,13 +268,13 @@ export const jaMappingConsole = {
 		'マッピングを使わず、標準のクレームだけを送ります。既定が変わっても、このアプリは変わりません。',
 	'mc.app.set': 'このアプリのセット',
 	'mc.app.setRequired': 'セットを選んでください。',
-	'mc.app.would': 'この指定で有効になるもの',
+	'mc.app.would': '選択肢ごとに使われるルール',
 	'mc.app.save': '変更を保存',
 	'mc.app.saved': '保存しました。',
 
-	'mc.hist.title': 'マッピングの既定の履歴',
+	'mc.hist.title': 'マッピング設定の変更履歴',
 	'mc.hist.desc':
-		'テナント既定とアプリの指定の変更です。1 つを選んで、その変更の前の状態に戻せます。',
+		'このテナントの既定ルールと、各アプリの個別指定の変更を確認します。変更前後の内容と影響を確かめて、選んだ変更の前の設定へ戻せます。セット内の変換ルールの編集履歴は含みません。',
 	'mc.hist.col.when': '日時',
 	'mc.hist.col.who': '変更した人',
 	'mc.hist.col.level': '変わった段',

@@ -3,21 +3,19 @@
 	import { userEvent, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import AppMappingChoice from './AppMappingChoice.svelte';
+	import MappingPageContent from './MappingPageContent.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Mapping/An app’s mapping (MAP-03)',
-		component: AppMappingChoice,
-		// draft: not wired to a route. api-pending: what each choice would give, unsaved
-		// (POST /api/admin/identity-mapping/preview-effective), does not exist yet. The current
-		// state (effective) and saving the choice (PUT /api/admin/clients/{id}) do.
-		tags: ['autodocs', 'draft', 'api-pending'],
+		title: 'Pages/Mapping/Applications/Mapping',
+		component: MappingPageContent,
+		// UI prototype: in-memory data, not connected to the deployed Admin API.
+		tags: ['autodocs', 'draft'],
 		parameters: {
 			layout: 'fullscreen',
 			docs: {
 				description: {
 					component:
-						'An app → Identity mapping (tenant admins, app developers). What applies now and how each level decided it; then the app’s choice — follow the tenant default (Not set), a set for this app only (App-specific), or no mapping (Not used) — with what each choice would give, from the API.'
+						'Service flows → selected app → user information. Content for the existing Shell; integration into the full service-flow detail is pending. What applies now and how each level decided it; then the app’s choice — follow the tenant default (Not set), a set for this app only (App-specific), or no mapping (Not used) — with what each choice would give, from the API.'
 				}
 			}
 		}
@@ -26,7 +24,8 @@
 
 <Story name="Follows the tenant default">
 	{#snippet template()}
-		<AppMappingChoice
+		<MappingPageContent
+			page="app"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			clientId="app_library"
@@ -36,7 +35,8 @@
 
 <Story name="App-specific set">
 	{#snippet template()}
-		<AppMappingChoice
+		<MappingPageContent
+			page="app"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			clientId="app_intranet"
@@ -46,7 +46,8 @@
 
 <Story name="Not used">
 	{#snippet template()}
-		<AppMappingChoice
+		<MappingPageContent
+			page="app"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			clientId="app_conformance"
@@ -68,7 +69,8 @@
 	}}
 >
 	{#snippet template()}
-		<AppMappingChoice
+		<MappingPageContent
+			page="app"
 			client={createFakeIdentityMapping()}
 			tenantId={DEMO_TENANT}
 			clientId="app_library"

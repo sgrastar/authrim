@@ -43,12 +43,17 @@
 		onsave: (value: T) => Promise<void> | void;
 		/** Show the save bar. Off for forms with their own Save button. */
 		bar?: boolean;
+		/** In-place page navigation must also protect unsaved work and running saves. */
+		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
 		children: Snippet<[SaveControls]>;
 	}
 
-	let { draft, onsave, bar = true, children }: Props = $props();
+	let { draft, onsave, bar = true, onstate, children }: Props = $props();
 
 	let saving = $state(false);
+	$effect(() => {
+		onstate?.({ dirty: draft.dirty, saving });
+	});
 	/** Fields that currently hold something that cannot be saved. */
 	const invalidFields = new SvelteSet<symbol>();
 	const invalid = $derived(invalidFields.size > 0);

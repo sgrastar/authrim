@@ -11,13 +11,12 @@
 	import Card from '$lib/ui/patterns/Card.svelte';
 	import DataTable from '$lib/ui/patterns/DataTable.svelte';
 	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
 	import RadioGroup from '$lib/ui/primitives/RadioGroup.svelte';
 	import Select from '$lib/ui/primitives/Select.svelte';
 	import { Draft } from '$lib/ui/save/draft.svelte';
 	import SaveScope from '$lib/ui/save/SaveScope.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import MappingSection from './MappingSection.svelte';
 	import ChainList from './ChainList.svelte';
 	import SourceLabel from './SourceLabel.svelte';
 
@@ -28,12 +27,14 @@
 	 * "follow" and "not used" are told apart by what they actually do, not by wording alone.
 	 */
 	interface Props {
+		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
 		client: IdentityMappingClient;
 		tenantId: string;
 		clientId: string;
+		onset?: (setId: string) => void;
 	}
 
-	let { client, tenantId, clientId }: Props = $props();
+	let { client, tenantId, clientId, onstate, onset }: Props = $props();
 
 	type Mode = 'follow' | 'own' | 'none';
 	interface Choice {
@@ -128,12 +129,7 @@
 	]);
 </script>
 
-<Page>
-	<PageHeader
-		title={t('mc.app.title', { app: app?.name ?? clientId })}
-		description={t('mc.app.desc')}
-	/>
-
+<MappingSection>
 	{#if loadError}
 		<Callout tone="warning" live>
 			{t('mc.loadFailed')}
@@ -145,11 +141,19 @@
 		<Card title={t('mc.app.current')}>
 			<div class="form">
 				<SourceLabel selection={effective.selection} labelled />
+				{#if effective.selection.kind === 'bound' && onset}
+					<Button
+						variant="secondary"
+						onclick={() => {
+							if (effective?.selection.kind === 'bound') onset?.(effective.selection.setId);
+						}}>{t('mc.nav.editSet')}</Button
+					>
+				{/if}
 				<ChainList chain={effective.chain} selection={effective.selection} />
 			</div>
 		</Card>
 
-		<SaveScope {draft} onsave={save}>
+		<SaveScope {draft} {onstate} onsave={save}>
 			<Card title={t('mc.app.choice')}>
 				<div class="form">
 					<RadioGroup
@@ -203,7 +207,7 @@
 			</Card>
 		</SaveScope>
 	{/if}
-</Page>
+</MappingSection>
 
 <style>
 	.form {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick, untrack } from 'svelte';
 	import {
 		IDENTITY_MAPPING_CATEGORY,
 		OIDC_DEFAULT_SET_KEY,
@@ -18,13 +19,12 @@
 	import DataTable from '$lib/ui/patterns/DataTable.svelte';
 	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
 	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
 	import Badge from '$lib/ui/primitives/Badge.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
 	import RadioGroup from '$lib/ui/primitives/RadioGroup.svelte';
 	import Select from '$lib/ui/primitives/Select.svelte';
 	import TextField from '$lib/ui/primitives/TextField.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import MappingSection from './MappingSection.svelte';
 	import { chainValueText, label } from './labels';
 	import SourceLabel from './SourceLabel.svelte';
 
@@ -36,11 +36,15 @@
 	 */
 	interface Props {
 		client: IdentityMappingClient;
+		active?: boolean;
+		refresh?: number;
 		/** Opens the claim-change preview (MAP-05) for the chosen set. */
 		onpreview?: (setId: string) => void;
+		ontenant?: (tenantId: string, name: string) => void;
+		onbusy?: (busy: boolean) => void;
 	}
 
-	let { client, onpreview }: Props = $props();
+	let { client, onpreview, ontenant, onbusy, active = true, refresh = 0 }: Props = $props();
 
 	let overview = $state<PlatformTenantsOverview | null>(null);
 	let sets = $state<MappingSetSummary[]>([]);
@@ -49,6 +53,14 @@
 	let setId = $state('');
 	let policy = $state<'skip' | 'overwrite'>('skip');
 	let selected = $state<string[]>([]);
+	let editing = $state(false);
+	let editor = $state<HTMLDivElement>();
+	async function openEditor() {
+		editing = true;
+		await tick();
+		editor?.querySelector('select')?.focus();
+	}
+	let search = $state('');
 
 	/** What one check or run is about: fixed when it is sent, so later edits do not change it. */
 	interface Operation {
@@ -68,6 +80,9 @@
 	let confirmError = $state('');
 	let running = $state(false);
 	let retrying = $state(false);
+	$effect(() => {
+		onbusy?.(running || retrying);
+	});
 	let result = $state<BulkApplyResponse<BulkApplyResult> | null>(null);
 	let actionError = $state('');
 
@@ -85,19 +100,43 @@
 		return { ...page, tenants: rows, next_cursor: null };
 	}
 
-	async function load() {
+	let generation = 0;
+	async function load(reconcile = false) {
+		const mine = ++generation;
 		loadError = false;
 		try {
 			const [next, list] = await Promise.all([readAllTenants(), client.sets('platform')]);
+			if (mine !== generation) return;
+			if (reconcile && overview && JSON.stringify(overview) !== JSON.stringify(next)) {
+				preview = null;
+				previewed = null;
+			}
 			overview = next;
 			sets = list.sets.filter((set) => set.owner === 'platform' && set.enabled);
 		} catch {
-			loadError = true;
+			if (mine === generation) loadError = true;
 		}
 	}
 
+	let lastRefresh = 0;
+	let checkGeneration = 0;
 	$effect(() => {
-		void load();
+		const revision = refresh;
+		void client;
+		++checkGeneration;
+		checking = false;
+		if (!active) return;
+		untrack(() => {
+			if (revision !== lastRefresh) {
+				preview = null;
+				previewed = null;
+			}
+			lastRefresh = revision;
+			void load(true);
+		});
+		return () => {
+			++generation;
+		};
 	});
 
 	const signature = $derived(`${setId}|${policy}|${[...selected].sort().join(',')}`);
@@ -191,6 +230,7 @@
 	async function check() {
 		// One thing at a time: a check while a run is going would mix their results.
 		if (running || retrying) return;
+		const mine = ++checkGeneration;
 		const operation: Operation = { setId, policy, signature };
 		const tenantIds = [...selected];
 		checking = true;
@@ -200,15 +240,15 @@
 				client.bulkPreview(request('preview', batch, operation))
 			);
 			// An answer for a choice changed meanwhile is not shown as the current one.
-			if (operation.signature !== signature) return;
+			if (mine !== checkGeneration || !active || operation.signature !== signature) return;
 			preview = answer;
 			previewed = operation;
 			result = null;
 			unsent = [];
 		} catch {
-			actionError = t('mc.actionFailed');
+			if (mine === checkGeneration) actionError = t('mc.actionFailed');
 		} finally {
-			checking = false;
+			if (mine === checkGeneration) checking = false;
 		}
 	}
 
@@ -308,120 +348,47 @@
 		overview?.tenants.find((row) => row.tenant_id === id)?.display_name ?? id;
 </script>
 
-<Page width="wide">
-	<PageHeader title={t('mc.ro.title')} description={t('mc.ro.desc')} />
-
+<MappingSection>
 	{#if loadError}
 		<Callout tone="warning" live>
 			{t('mc.loadFailed')}
-			<Button variant="secondary" size="sm" onclick={load}>{t('mc.retry')}</Button>
+			<Button variant="secondary" size="sm" onclick={() => load(true)}>{t('mc.retry')}</Button>
 		</Callout>
 	{:else if !overview}
 		<LoadingState label={t('mc.loading')} />
 	{:else}
-		<Card title={t('mc.ro.setCard')}>
-			<div class="form">
-				<p class="muted">
-					{t('mc.ro.platformDefault', { value: chainValueText(overview.platform_default) })}
-				</p>
-				<Select
-					label={t('mc.ro.setLabel')}
-					hint={t('mc.ro.setHint')}
-					placeholder={t('mc.ro.choose')}
-					options={sets.map((s) => ({ value: s.id, label: s.display_name ?? s.id }))}
-					bind:value={setId}
-				/>
-				<RadioGroup
-					label={t('mc.ro.existing')}
-					orientation="horizontal"
-					options={[
-						{ value: 'skip', label: t('mc.ro.existing.skip') },
-						{ value: 'overwrite', label: t('mc.ro.existing.overwrite') }
-					]}
-					value={policy}
-					onchange={(value) => (policy = value === 'overwrite' ? 'overwrite' : 'skip')}
-				/>
-			</div>
-		</Card>
+		<TextField label={t('mc.nav.searchTenants')} bind:value={search} />
 
-		<Card title={t('mc.ro.tenants')} flush>
-			<DataTable
-				caption={t('mc.ro.tenants')}
-				selectable
-				bind:selected
-				rowLabel={(row) => row.display_name}
-				columns={[
-					{ key: 'tenant', label: t('mc.ro.col.tenant'), width: '14%' },
-					{ key: 'default', label: t('mc.ro.col.default'), width: '18%' },
-					{ key: 'source', label: t('mc.ro.col.source'), width: '24%' },
-					{ key: 'apps', label: t('mc.ro.col.apps'), width: '8%', align: 'end' },
-					{ key: 'plan', label: t('mc.ro.col.plan') },
-					{ key: 'result', label: t('mc.ro.col.result'), width: '16%' }
-				]}
-				rows={overview.tenants}
-				rowKey={(row) => row.tenant_id}
+		{#if editing && selected.length > 0}
+			<Card title={t('mc.ro.setCard')}>
+				<div class="form" bind:this={editor}>
+					<p class="muted">
+						{t('mc.ro.platformDefault', { value: chainValueText(overview.platform_default) })}
+					</p>
+					<Select
+						label={t('mc.ro.setLabel')}
+						hint={t('mc.ro.setHint')}
+						placeholder={t('mc.ro.choose')}
+						options={sets.map((s) => ({ value: s.id, label: s.display_name ?? s.id }))}
+						bind:value={setId}
+					/>
+					<RadioGroup
+						label={t('mc.ro.existing')}
+						orientation="horizontal"
+						options={[
+							{ value: 'skip', label: t('mc.ro.existing.skip') },
+							{ value: 'overwrite', label: t('mc.ro.existing.overwrite') }
+						]}
+						value={policy}
+						onchange={(value) => (policy = value === 'overwrite' ? 'overwrite' : 'skip')}
+					/>
+				</div>
+			</Card>
+
+			<Button disabled={!setId || running || retrying} loading={checking} onclick={check}
+				>{t('mc.ro.check')}</Button
 			>
-				{#snippet bulkActions()}
-					<Button
-						size="sm"
-						variant="secondary"
-						disabled={!setId || running || retrying}
-						loading={checking}
-						onclick={check}
-					>
-						{t('mc.ro.check')}
-					</Button>
-				{/snippet}
-				{#snippet cell(row, column)}
-					{#if column.key === 'tenant'}
-						<strong>{row.display_name}</strong>
-					{:else if column.key === 'default'}
-						{#if row.tenant_default}
-							<span class:muted={row.tenant_default.state === 'unset'}>
-								{chainValueText(row.tenant_default)}
-							</span>
-						{:else}
-							<span class="muted">—</span>
-						{/if}
-					{:else if column.key === 'source'}
-						<SourceLabel selection={row.effective} />
-					{:else if column.key === 'apps'}
-						{#if row.apps}
-							{num(row.apps.total)}
-						{:else}
-							<span class="muted">—</span>
-						{/if}
-					{:else if column.key === 'plan'}
-						{@const plan = stale ? undefined : planOf.get(row.tenant_id)}
-						{#if plan?.status === 'ready' && impact(plan) === null}
-							{t('mc.ro.plan.uncounted')}
-						{:else if plan?.status === 'ready'}
-							{t('mc.ro.plan.apply', { count: impact(plan)?.apps_following_default ?? 0 })}
-						{:else if plan}
-							<span class="muted">
-								{label('mc.ro.reason.', plan.changes[0]?.reason ?? plan.reason ?? '')}
-							</span>
-						{/if}
-					{:else}
-						{@const outcome = resultOf.get(row.tenant_id)}
-						{#if unsent.includes(row.tenant_id)}
-							<Badge tone="warning">{t('mc.ro.status.unsent')}</Badge>
-						{:else if outcome}
-							<span class="stack">
-								<Badge tone={statusTone(outcome.status)}>
-									{label('mc.ro.status.', outcome.status)}
-								</Badge>
-								{#if !succeeded(outcome.status)}
-									<span class="muted">
-										{label('mc.ro.reason.', outcome.changes[0]?.reason ?? outcome.reason ?? '')}
-									</span>
-								{/if}
-							</span>
-						{/if}
-					{/if}
-				{/snippet}
-			</DataTable>
-		</Card>
+		{/if}
 
 		{#if actionError}
 			<Callout tone="warning" live>{actionError}</Callout>
@@ -517,8 +484,88 @@
 				</div>
 			</Card>
 		{/if}
+		<Card title={t('mc.ro.tenants')} flush>
+			<DataTable
+				caption={t('mc.ro.tenants')}
+				selectable
+				bind:selected
+				rowLabel={(row) => row.display_name}
+				columns={[
+					{ key: 'tenant', label: t('mc.ro.col.tenant'), width: '14%' },
+					{ key: 'default', label: t('mc.ro.col.default'), width: '18%' },
+					{ key: 'source', label: t('mc.ro.col.source'), width: '24%' },
+					{ key: 'apps', label: t('mc.ro.col.apps'), width: '8%', align: 'end' },
+					{ key: 'plan', label: t('mc.ro.col.plan') },
+					{ key: 'result', label: t('mc.ro.col.result'), width: '16%' }
+				]}
+				rows={overview.tenants.filter((row) =>
+					row.display_name.toLowerCase().includes(search.toLowerCase())
+				)}
+				rowKey={(row) => row.tenant_id}
+			>
+				{#snippet bulkActions()}
+					<Button size="sm" variant="secondary" disabled={running || retrying} onclick={openEditor}
+						>{t('mc.nav.changeDefault')}</Button
+					>
+				{/snippet}
+				{#snippet cell(row, column)}
+					{#if column.key === 'tenant'}
+						{#if ontenant}<Button
+								size="sm"
+								variant="ghost"
+								disabled={running || retrying}
+								onclick={() => ontenant?.(row.tenant_id, row.display_name)}
+								>{row.display_name}</Button
+							>{:else}<strong>{row.display_name}</strong>{/if}
+					{:else if column.key === 'default'}
+						{#if row.tenant_default}
+							<span class:muted={row.tenant_default.state === 'unset'}>
+								{chainValueText(row.tenant_default)}
+							</span>
+						{:else}
+							<span class="muted">—</span>
+						{/if}
+					{:else if column.key === 'source'}
+						<SourceLabel selection={row.effective} />
+					{:else if column.key === 'apps'}
+						{#if row.apps}
+							{num(row.apps.total)}
+						{:else}
+							<span class="muted">—</span>
+						{/if}
+					{:else if column.key === 'plan'}
+						{@const plan = stale ? undefined : planOf.get(row.tenant_id)}
+						{#if plan?.status === 'ready' && impact(plan) === null}
+							{t('mc.ro.plan.uncounted')}
+						{:else if plan?.status === 'ready'}
+							{t('mc.ro.plan.apply', { count: impact(plan)?.apps_following_default ?? 0 })}
+						{:else if plan}
+							<span class="muted">
+								{label('mc.ro.reason.', plan.changes[0]?.reason ?? plan.reason ?? '')}
+							</span>
+						{/if}
+					{:else}
+						{@const outcome = resultOf.get(row.tenant_id)}
+						{#if unsent.includes(row.tenant_id)}
+							<Badge tone="warning">{t('mc.ro.status.unsent')}</Badge>
+						{:else if outcome}
+							<span class="stack">
+								<Badge tone={statusTone(outcome.status)}>
+									{label('mc.ro.status.', outcome.status)}
+								</Badge>
+								{#if !succeeded(outcome.status)}
+									<span class="muted">
+										{label('mc.ro.reason.', outcome.changes[0]?.reason ?? outcome.reason ?? '')}
+									</span>
+								{/if}
+							</span>
+						{/if}
+					{/if}
+				{/snippet}
+			</DataTable>
+		</Card>
 	{/if}
-</Page>
+</MappingSection>
 
 <FormDialog
 	open={confirming}
