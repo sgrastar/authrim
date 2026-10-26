@@ -1,3 +1,4 @@
+import { boundedLogArchiveBytes, decodeLogArchiveBody } from './log-archive-body';
 /** Read-only view of complete log rows in D1 and their encrypted R2 archives. */
 import type { Context } from 'hono';
 import {
@@ -82,34 +83,6 @@ interface ArchiveCatalogRow {
 export interface LogReadWindow {
   fromMs?: number;
   toMs?: number;
-}
-
-async function boundedBytes(stream: ReadableStream<unknown>, maximum: number): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const parts: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (!(value instanceof Uint8Array)) incomplete();
-      size += value.length;
-      if (size > maximum) incomplete();
-      parts.push(value);
-    }
-  } catch (error) {
-    await reader.cancel().catch(() => undefined);
-    throw error;
-  } finally {
-    reader.releaseLock();
-  }
-  const result = new Uint8Array(size);
-  let offset = 0;
-  for (const part of parts) {
-    result.set(part, offset);
-    offset += part.length;
-  }
-  return result;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -265,7 +238,7 @@ export async function readArchivedLogRows(input: {
       if (storedBytes > MAX_STORED_BYTES) incomplete();
       const body = await env.AUDIT_ARCHIVE.get(chunk.object_key);
       if (!body || body.size !== chunk.byte_count) incomplete();
-      const stored = await boundedBytes(body.body, chunk.byte_count);
+      const stored = await boundedLogArchiveBytes(body.body, chunk.byte_count);
       if (stored.length !== chunk.byte_count) incomplete();
       const checksum = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', stored)))
         .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -293,14 +266,12 @@ export async function readArchivedLogRows(input: {
       });
       if (
         decoded.compression !== chunk.compression ||
-        !['none', 'gzip_block'].includes(decoded.compression)
+        (decoded.compression !== 'none' && decoded.compression !== 'gzip_block')
       )
         incomplete();
-      const stream = new Blob([decoded.body]).stream();
-      const bytes = await boundedBytes(
-        decoded.compression === 'gzip_block'
-          ? stream.pipeThrough(new DecompressionStream('gzip'))
-          : stream,
+      const bytes = await decodeLogArchiveBody(
+        decoded.body,
+        decoded.compression,
         MAX_DECODED_BYTES - decodedBytes
       );
       decodedBytes += bytes.length;
