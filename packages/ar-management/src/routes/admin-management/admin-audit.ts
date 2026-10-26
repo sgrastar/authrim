@@ -1,3 +1,10 @@
+import { logQueryErrorResponse } from '../../log-archive-query';
+import {
+  createLogReadAdapter,
+  logDetailWindow,
+  logPageRequest,
+  type LogPageRequest,
+} from '../../log-read-adapter';
 /**
  * Admin Audit Log API
  *
@@ -46,9 +53,18 @@ adminAuditRouter.use(
 /**
  * Helper to get DB_ADMIN adapter
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getAdminAdapter(c: Context<any, any, any>) {
-  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
+function getAdminLogRead(c: AdminContext, page?: LogPageRequest) {
+  return createLogReadAdapter({
+    env: c.env,
+    tenantId: getTenantIdFromContext(c),
+    adapter: requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management'),
+    dataset: 'admin.admin_audit_log',
+    page,
+    ...(c.req.param('id') ? logDetailWindow(c) : {}),
+  });
+}
+function getAdminAdapter(c: AdminContext) {
+  return getAdminLogRead(c).adapter;
 }
 
 function getMetadataString(
@@ -127,7 +143,15 @@ function buildAuditActorView(
  */
 export async function listAdminAuditLogs(c: AdminContext) {
   try {
-    const adapter = getAdminAdapter(c);
+    const logRead = getAdminLogRead(
+      c,
+      logPageRequest(
+        c,
+        getTenantIdFromContext(c),
+        Math.min(Number(c.req.query('limit') || 50), 100)
+      )
+    );
+    const adapter = logRead.adapter;
     const auditRepo = new AdminAuditLogRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
 
@@ -137,6 +161,7 @@ export async function listAdminAuditLogs(c: AdminContext) {
     const adminUserId = c.req.query('admin_user_id');
     const action = c.req.query('action');
     const resourceType = c.req.query('resource_type');
+    const resourceId = c.req.query('resource_id');
     const result = c.req.query('result') as 'success' | 'failure' | undefined;
     const severity = c.req.query('severity') as
       | 'debug'
@@ -172,6 +197,7 @@ export async function listAdminAuditLogs(c: AdminContext) {
         admin_user_id: adminUserId,
         action,
         resource_type: resourceType,
+        resource_id: resourceId,
         result,
         severity,
         from_timestamp: startTimestamp,
@@ -200,6 +226,8 @@ export async function listAdminAuditLogs(c: AdminContext) {
       })
     );
 
+    const archivePage = logRead.pagination();
+    if (archivePage) return c.json({ items: enrichedItems, pagination: archivePage });
     return c.json({
       items: enrichedItems,
       total: logs.total,
@@ -208,6 +236,8 @@ export async function listAdminAuditLogs(c: AdminContext) {
       totalPages: logs.totalPages,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -296,6 +326,8 @@ adminAuditRouter.get('/:id', async (c) => {
       ...buildAuditActorView(log, adminUser?.name ?? null),
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -322,6 +354,8 @@ adminAuditRouter.get('/actions/list', async (c) => {
       total: actions.length,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -348,6 +382,8 @@ adminAuditRouter.get('/resource-types/list', async (c) => {
       total: resourceTypes.length,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -425,6 +461,8 @@ adminAuditRouter.get('/stats/summary', async (c) => {
       })),
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -435,7 +473,15 @@ adminAuditRouter.get('/stats/summary', async (c) => {
  */
 adminAuditRouter.get('/user/:userId', async (c) => {
   try {
-    const adapter = getAdminAdapter(c);
+    const logRead = getAdminLogRead(
+      c,
+      logPageRequest(
+        c,
+        getTenantIdFromContext(c),
+        Math.min(Number(c.req.query('limit') || 50), 100)
+      )
+    );
+    const adapter = logRead.adapter;
     const auditRepo = new AdminAuditLogRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
 
@@ -454,6 +500,8 @@ adminAuditRouter.get('/user/:userId', async (c) => {
       }
     );
 
+    const archivePage = logRead.pagination();
+    if (archivePage) return c.json({ items: logs.items, pagination: archivePage });
     return c.json({
       items: logs.items,
       total: logs.total,
@@ -462,6 +510,8 @@ adminAuditRouter.get('/user/:userId', async (c) => {
       totalPages: logs.totalPages,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

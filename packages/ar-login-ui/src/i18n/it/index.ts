@@ -168,6 +168,8 @@ const it = createTranslation({
 	account_actionFailed: 'Operazione non riuscita',
 	account_remainingLoginMethodRequired:
 		'Aggiungi un altro metodo di accesso prima di eliminare questo.',
+	account_activityIncomplete: 'I risultati delle attività sono incompleti. Riprova più tardi.',
+	account_activityLoadMore: 'Carica attività precedenti',
 	account_activityTitle: 'Attività',
 	account_operationNameUpdated: 'Nome modificato',
 	account_operationPasskeyCreated: 'Passkey aggiunta',

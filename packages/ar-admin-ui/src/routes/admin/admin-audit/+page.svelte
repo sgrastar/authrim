@@ -1,5 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { LogPager } from '$lib/admin/log-pager.svelte';
+	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	const logPager = new LogPager();
+	let loadGeneration = 0;
+	import { onMount, untrack } from 'svelte';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	let loadedTenantId = '';
 	import {
 		adminAdminAuditAPI,
 		type AdminAuditLogEntry,
@@ -27,6 +33,7 @@
 	// Statistics
 	let stats: AdminAuditLogStats | null = $state(null);
 	let statsLoading = $state(false);
+	let statsError = $state('');
 	let showStats = $state(true);
 
 	// Filter state
@@ -57,6 +64,7 @@
 	let detailError = $state('');
 
 	async function loadAuditLogs() {
+		const mine = ++loadGeneration;
 		loading = true;
 		error = '';
 
@@ -89,24 +97,37 @@
 				params.end_date = new Date(endDateParsed + 86399999).toISOString();
 			}
 
+			logPager.prepare(JSON.stringify([settingsContext.tenantId, { ...params, page: undefined }]));
+			params.cursor = logPager.cursor;
 			const response = await adminAdminAuditAPI.list(params);
+			if (mine !== loadGeneration) return;
 			entries = response.items;
-			total = response.total;
-			totalPages = response.totalPages;
+			if ('pagination' in response) {
+				logPager.info = response.pagination;
+				total = 0;
+				totalPages = 0;
+			} else {
+				logPager.info = undefined;
+				total = response.total;
+				totalPages = response.totalPages;
+			}
 		} catch (err) {
+			if (mine !== loadGeneration) return;
 			console.error('Failed to load admin audit logs:', err);
-			error = $LL.admin_admin_audit_load_failed();
+			error = err instanceof Error ? err.message : $LL.admin_admin_audit_load_failed();
 		} finally {
-			loading = false;
+			if (mine === loadGeneration) loading = false;
 		}
 	}
 
 	async function loadFilterOptions() {
+		const mine = loadGeneration;
 		try {
 			const [actionsResponse, resourceTypesResponse] = await Promise.all([
 				adminAdminAuditAPI.listActions(),
 				adminAdminAuditAPI.listResourceTypes()
 			]);
+			if (mine !== loadGeneration) return;
 			availableActions = actionsResponse.items;
 			availableResourceTypes = resourceTypesResponse.items;
 		} catch (err) {
@@ -115,20 +136,34 @@
 	}
 
 	async function loadStats() {
+		const mine = loadGeneration;
 		statsLoading = true;
+		stats = null;
+		statsError = '';
 		try {
-			stats = await adminAdminAuditAPI.getStats(7);
+			const response = await adminAdminAuditAPI.getStats(7);
+			if (mine !== loadGeneration) return;
+			stats = response;
 		} catch (err) {
-			console.error('Failed to load stats:', err);
+			if (mine !== loadGeneration) return;
+			stats = null;
+			statsError = err instanceof Error ? err.message : $LL.admin_admin_audit_load_failed();
 		} finally {
-			statsLoading = false;
+			if (mine === loadGeneration) statsLoading = false;
 		}
 	}
 
-	onMount(() => {
-		loadAuditLogs();
-		loadFilterOptions();
-		loadStats();
+	onMount(async () => {
+		await settingsContext.initialize();
+	});
+	$effect(() => {
+		const tenantId = settingsContext.tenantId;
+		if (!tenantId || tenantId === loadedTenantId) return;
+		loadedTenantId = tenantId;
+		currentPage = 1;
+		untrack(() => {
+			void Promise.all([loadAuditLogs(), loadFilterOptions(), loadStats()]);
+		});
 	});
 
 	function handleSearchInput() {
@@ -203,7 +238,7 @@
 		detailLoading = true;
 		detailError = '';
 		try {
-			selectedEntry = await adminAdminAuditAPI.get(entry.id);
+			selectedEntry = await adminAdminAuditAPI.get(entry.id, entry.created_at);
 		} catch (err) {
 			console.error('Failed to load admin audit log detail:', err);
 			detailError = err instanceof Error ? err.message : $LL.admin_admin_audit_detail_load_failed();
@@ -268,6 +303,7 @@
 
 	<!-- Statistics Panel -->
 	{#if showStats}
+		{#if statsError}<div class="alert alert-error" role="alert">{statsError}</div>{/if}
 		<div class="stats-grid">
 			{#if statsLoading}
 				<div class="stat-card">
@@ -519,7 +555,14 @@
 		</AdminSection>
 
 		<!-- Pagination -->
-		{#if totalPages > 1}
+		{#if logPager.info}
+			<LogCursorPager
+				pager={logPager}
+				label={$LL.admin_admin_audit_title()}
+				{loading}
+				reload={loadAuditLogs}
+			/>
+		{:else if totalPages > 1}
 			<AdminPagination
 				label={$LL.admin_admin_audit_title()}
 				info={$LL.admin_admin_audit_pagination({

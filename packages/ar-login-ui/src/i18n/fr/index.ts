@@ -156,6 +156,8 @@ const fr = createTranslation({
 	account_actionFailed: 'L’opération a échoué',
 	account_remainingLoginMethodRequired:
 		'Ajoutez une autre méthode de connexion avant de supprimer celle-ci.',
+	account_activityIncomplete: 'Les résultats de l’activité sont incomplets. Réessayez plus tard.',
+	account_activityLoadMore: 'Charger les activités plus anciennes',
 	account_activityTitle: 'Activité',
 	account_operationNameUpdated: 'Nom modifié',
 	account_operationPasskeyCreated: 'Passkey ajoutée',

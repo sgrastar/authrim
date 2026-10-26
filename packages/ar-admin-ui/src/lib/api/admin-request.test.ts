@@ -7,6 +7,7 @@ vi.mock('$app/environment', () => ({ browser: true }));
 import { adminFetch, buildAdminHeaders } from './admin-request';
 import { settingsContext } from '$lib/stores/settings-context.svelte';
 import { adminAuth } from '$lib/stores/admin-auth.svelte';
+import { setLocale } from '$i18n/i18n-svelte';
 
 describe('buildAdminHeaders', () => {
 	beforeEach(() => {
@@ -16,6 +17,23 @@ describe('buildAdminHeaders', () => {
 		adminAuth.clearAuth();
 		vi.restoreAllMocks();
 	});
+
+	it.each(['en', 'ja'] as const)(
+		'reports incomplete logs in %s without retrying or returning an empty success',
+		async (locale) => {
+			setLocale(locale);
+			const fetchMock = vi
+				.fn()
+				.mockResolvedValue(
+					Response.json({ error: 'log_query_incomplete', complete: false }, { status: 503 })
+				);
+			vi.stubGlobal('fetch', fetchMock);
+			await expect(adminFetch('/api/admin/stats/auth')).rejects.toThrow(
+				locale === 'ja' ? 'ログの取得が不完全' : 'Log results are incomplete'
+			);
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+		}
+	);
 
 	it('repairs a persisted client scope that no longer has a selected client', async () => {
 		adminAuth.setAuthenticated({

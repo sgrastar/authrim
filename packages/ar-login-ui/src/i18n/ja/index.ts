@@ -169,6 +169,8 @@ const ja = {
 	account_actionFailed: '操作に失敗しました',
 	account_remainingLoginMethodRequired:
 		'この認証方式を削除する前に、別のログイン手段を追加してください。',
+	account_activityIncomplete: '操作履歴の取得が不完全です。時間をおいて再試行してください。',
+	account_activityLoadMore: '過去の操作を読み込む',
 	account_activityTitle: 'アクティビティ',
 	account_operationNameUpdated: '名前を変更',
 	account_operationPasskeyCreated: 'Passkeyを追加',

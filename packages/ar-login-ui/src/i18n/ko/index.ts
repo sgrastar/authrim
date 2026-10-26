@@ -148,6 +148,8 @@ const ko = createTranslation({
 	account_reauthTotpCodePlaceholder: '6자리 또는 8자리 코드',
 	account_actionFailed: '작업에 실패했습니다',
 	account_remainingLoginMethodRequired: '이 방법을 삭제하기 전에 다른 로그인 방법을 추가하세요.',
+	account_activityIncomplete: '활동 내역을 모두 불러오지 못했습니다. 나중에 다시 시도해 주세요.',
+	account_activityLoadMore: '이전 활동 불러오기',
 	account_activityTitle: '활동',
 	account_operationNameUpdated: '이름 변경됨',
 	account_operationPasskeyCreated: 'Passkey 추가됨',

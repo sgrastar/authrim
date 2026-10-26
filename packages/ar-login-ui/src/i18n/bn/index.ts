@@ -169,6 +169,8 @@ const translation = {
 	account_reauthTotpCodePlaceholder: '৬ বা ৮ অঙ্কের কোড',
 	account_actionFailed: 'অপারেশন ব্যর্থ',
 	account_remainingLoginMethodRequired: 'এই পদ্ধতি মুছে ফেলার আগে আরেকটি লগইন পদ্ধতি যোগ করুন।',
+	account_activityIncomplete: 'কার্যকলাপের ফলাফল অসম্পূর্ণ। পরে আবার চেষ্টা করুন।',
+	account_activityLoadMore: 'আগের কার্যকলাপ লোড করুন',
 	account_activityTitle: 'কার্যকলাপ',
 	account_operationNameUpdated: 'নাম পরিবর্তন করা হয়েছে',
 	account_operationPasskeyCreated: 'পাসকি যোগ করা হয়েছে',

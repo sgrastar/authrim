@@ -1,3 +1,4 @@
+import { logDetailQuery, type LogCursorPagination } from './log-pagination';
 /**
  * Admin Access Trace API Client
  *
@@ -95,6 +96,7 @@ export const adminAccessTraceAPI = {
 	 * List access trace entries
 	 */
 	async listEntries(params?: {
+		cursor?: string;
 		subject_id?: string;
 		permission?: string;
 		allowed?: boolean;
@@ -103,7 +105,7 @@ export const adminAccessTraceAPI = {
 		end_time?: number;
 		page?: number;
 		limit?: number;
-	}): Promise<{ entries: AccessTraceEntry[]; pagination: PaginationInfo }> {
+	}): Promise<{ entries: AccessTraceEntry[]; pagination: PaginationInfo | LogCursorPagination }> {
 		const searchParams = new URLSearchParams();
 		if (params?.subject_id) searchParams.set('subject_id', params.subject_id);
 		if (params?.permission) searchParams.set('permission', params.permission);
@@ -111,6 +113,7 @@ export const adminAccessTraceAPI = {
 		if (params?.final_decision) searchParams.set('final_decision', params.final_decision);
 		if (params?.start_time) searchParams.set('start_time', params.start_time.toString());
 		if (params?.end_time) searchParams.set('end_time', params.end_time.toString());
+		if (params?.cursor) searchParams.set('cursor', params.cursor);
 		if (params?.page) searchParams.set('page', params.page.toString());
 		if (params?.limit) searchParams.set('limit', params.limit.toString());
 
@@ -129,10 +132,13 @@ export const adminAccessTraceAPI = {
 	/**
 	 * Get access trace entry by ID
 	 */
-	async getEntry(id: string): Promise<{ entry: AccessTraceEntry }> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/access-trace/${id}`, {
-			method: 'GET'
-		});
+	async getEntry(id: string, eventAt?: number): Promise<{ entry: AccessTraceEntry }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/access-trace/${encodeURIComponent(id)}${logDetailQuery(eventAt)}`,
+			{
+				method: 'GET'
+			}
+		);
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

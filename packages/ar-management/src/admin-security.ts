@@ -1,3 +1,4 @@
+import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin Security API Endpoints
  *
@@ -492,6 +493,8 @@ export async function adminSecurityAlertsListHandler(c: Context<{ Bindings: Env 
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to list security alerts', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -603,6 +606,8 @@ export async function adminSecurityAlertAcknowledgeHandler(c: Context<{ Bindings
       acknowledged_by: acknowledgedBy,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to acknowledge security alert', { alertId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -817,6 +822,8 @@ export async function adminSecuritySuspiciousActivitiesHandler(c: Context<{ Bind
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to list suspicious activities', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1007,6 +1014,8 @@ export async function adminSecurityThreatsHandler(c: Context<{ Bindings: Env }>)
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to list threats', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1151,6 +1160,8 @@ export async function adminSecurityIpReputationHandler(c: Context<{ Bindings: En
       checked_at: new Date().toISOString(),
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to check IP reputation', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

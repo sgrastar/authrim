@@ -34,6 +34,8 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { isAgentMcpEnabled, type AgentManagementEnv } from '../../agent-downscope-auth';
+import { createLogReadAdapter, logPageRequest } from '../../log-read-adapter';
+import { logQueryErrorResponse } from '../../log-archive-query';
 
 type AgentGrantContext = Context<{
   Bindings: AgentManagementEnv;
@@ -294,19 +296,37 @@ agentGrantsRouter.get('/:id/audit', async (c) => {
   const id = c.req.param('id');
   const grant = await repository.getGrant(tenantId(c), id);
   if (!grant) return error(c, 404, 'AGENT_GRANT_NOT_FOUND');
-  const events = await repository.listGrantAudit(tenantId(c), id, limit);
-  return c.json({
-    events: events.map((event) => ({
-      id: event.id,
-      action: event.action,
-      result: event.result,
-      severity: event.severity,
-      actor_type: event.actorType ?? null,
-      actor_sub: event.actorSub ?? null,
-      metadata: event.metadata,
-      created_at: event.createdAt,
-    })),
-  });
+  try {
+    const read = createLogReadAdapter({
+      env: c.env,
+      tenantId: tenantId(c),
+      adapter: requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-audit-read'),
+      dataset: 'admin.admin_audit_log',
+      page: logPageRequest(c, tenantId(c), Math.min(limit, 200)),
+    });
+    const events = await new AdminAgentAccessRepository(read.adapter).listGrantAudit(
+      tenantId(c),
+      id,
+      limit
+    );
+    return c.json({
+      events: events.map((event) => ({
+        id: event.id,
+        action: event.action,
+        result: event.result,
+        severity: event.severity,
+        actor_type: event.actorType ?? null,
+        actor_sub: event.actorSub ?? null,
+        metadata: event.metadata,
+        created_at: event.createdAt,
+      })),
+      ...(read.pagination() ? { pagination: read.pagination() } : {}),
+    });
+  } catch (cause) {
+    const incomplete = logQueryErrorResponse(c, cause);
+    if (incomplete) return incomplete;
+    throw cause;
+  }
 });
 
 agentGrantsRouter.post('/:id/preauthorize', async (c) => {

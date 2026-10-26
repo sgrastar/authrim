@@ -1,3 +1,4 @@
+import { getLocale } from '$i18n/i18n-svelte';
 import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -103,6 +104,13 @@ export async function adminFetch(
 			.clone()
 			.json()
 			.catch(() => null)) as { error?: unknown; extensions?: Record<string, unknown> } | null;
+		if (body?.error === 'log_query_incomplete') {
+			throw new Error(
+				getLocale() === 'ja'
+					? 'ログの取得が不完全です。集計結果は確定できません。期間を絞るか、時間をおいて再試行してください。'
+					: 'Log results are incomplete. Statistics could not be confirmed. Narrow the period or retry later.'
+			);
+		}
 		if (
 			body?.error !== 'temporarily_unavailable' ||
 			body.extensions?.reason !== 'tenant_placement_write_fence' ||

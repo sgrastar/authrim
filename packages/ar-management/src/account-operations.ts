@@ -1,3 +1,5 @@
+import { createLogReadAdapter, logPageRequest } from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { createAuthContextFromHono, getTenantIdFromContext } from '@authrim/ar-lib-core';
@@ -51,26 +53,40 @@ export async function listAccountOperationsHandler(
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
   const limit = normalizeLimit(c.req.query('limit'));
-  const rows = await authCtx.coreAdapter.query<AccountOperationRow>(
-    `SELECT id, action, resource_type, resource_id, metadata_json, created_at
+  try {
+    const logRead = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      adapter: authCtx.coreAdapter,
+      dataset: 'core.audit_log',
+      page: c.env.DB_ADMIN ? logPageRequest(c, tenantId, limit) : undefined,
+    });
+    const rows = await logRead.adapter.query<AccountOperationRow>(
+      `SELECT id, action, resource_type, resource_id, metadata_json, created_at
        FROM audit_log
       WHERE tenant_id = ? AND user_id = ? AND action LIKE 'account.%'
       ORDER BY created_at DESC
       LIMIT ?`,
-    [tenantId, accountSession.userId, limit]
-  );
+      [tenantId, accountSession.userId, limit]
+    );
 
-  return c.json({
-    operations: rows.map((row) => {
-      const metadata = parseMetadata(row.metadata_json);
-      return {
-        id: row.id,
-        action: row.action,
-        resource_type: row.resource_type,
-        resource_id: row.resource_id,
-        created_at: row.created_at,
-        ...(metadata && { metadata }),
-      };
-    }),
-  });
+    return c.json({
+      ...(logRead.pagination() ? { pagination: logRead.pagination() } : {}),
+      operations: rows.map((row) => {
+        const metadata = parseMetadata(row.metadata_json);
+        return {
+          id: row.id,
+          action: row.action,
+          resource_type: row.resource_type,
+          resource_id: row.resource_id,
+          created_at: row.created_at,
+          ...(metadata && { metadata }),
+        };
+      }),
+    });
+  } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
+    throw error;
+  }
 }

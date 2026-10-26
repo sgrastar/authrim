@@ -16,6 +16,18 @@ import {
   type LogChunkCompression,
 } from '@authrim/ar-lib-logging/contract';
 import { createLoggingTenantKeyResolverFromSource } from './logging-tenant-key';
+import {
+  readArchivedLogRows,
+  LogQueryIncompleteError,
+  LogQueryInvalidRequestError,
+  type LogSqlRow,
+} from './log-archive-query';
+import {
+  cursorText,
+  decodeCursor,
+  type LogPageRequest,
+  type LogCursorPagination,
+} from './log-read-adapter';
 
 const AUDIT_ARCHIVE_OBJECT_READ_MAX_BYTES = 64 * 1024 * 1024;
 type ArchiveEventCategory = EventLogEntry['eventCategory'];
@@ -53,12 +65,14 @@ export interface AuditArchiveListOptions {
   anonymizedUserId?: string;
   resourceType?: string;
   resourceId?: string;
+  cursorPage?: LogPageRequest;
 }
 
 export interface AuditArchiveListResult {
   entries: EventLogEntry[];
   total: number;
   totalPages: number;
+  pagination?: LogCursorPagination;
 }
 
 interface ArchiveRecordIndexRow {
@@ -356,16 +370,52 @@ function matchesFilters(entry: EventLogEntry, options: AuditArchiveListOptions):
   if (options.eventType && entry.eventType !== options.eventType) return false;
   if (options.anonymizedUserId && entry.anonymizedUserId !== options.anonymizedUserId) return false;
   if (!options.resourceType && !options.resourceId) return true;
-  const details = entry.detailsJson
-    ? (JSON.parse(entry.detailsJson) as Record<string, unknown>)
-    : {};
+  let details: Record<string, unknown> = {};
+  try {
+    const value: unknown = entry.detailsJson ? JSON.parse(entry.detailsJson) : {};
+    if (value && typeof value === 'object' && !Array.isArray(value))
+      details = value as Record<string, unknown>;
+  } catch {
+    throw new LogQueryIncompleteError();
+  }
   const resource =
     details.resource && typeof details.resource === 'object'
       ? (details.resource as Record<string, unknown>)
       : {};
-  if (options.resourceType && resource.type !== options.resourceType) return false;
-  if (options.resourceId && resource.id !== options.resourceId) return false;
+  if (
+    options.resourceType &&
+    ![details.resourceType, details.resource_type, resource.type].includes(options.resourceType)
+  )
+    return false;
+  if (
+    options.resourceId &&
+    ![details.resourceId, details.resource_id, resource.id].includes(options.resourceId)
+  )
+    return false;
   return true;
+}
+
+function wholeRowEvent(row: LogSqlRow, tenantId: string): EventLogEntry {
+  return {
+    id: String(row.id),
+    tenantId,
+    eventType: String(row.event_type),
+    eventCategory: row.event_category as EventLogEntry['eventCategory'],
+    result: row.result as EventLogEntry['result'],
+    severity: row.severity as EventLogEntry['severity'],
+    createdAt: Number(row.created_at),
+    ...(typeof row.anonymized_user_id === 'string'
+      ? { anonymizedUserId: row.anonymized_user_id }
+      : {}),
+    ...(typeof row.client_id === 'string' ? { clientId: row.client_id } : {}),
+    ...(typeof row.request_id === 'string' ? { requestId: row.request_id } : {}),
+    ...(typeof row.session_id === 'string' ? { sessionId: row.session_id } : {}),
+    ...(typeof row.error_code === 'string' ? { errorCode: row.error_code } : {}),
+    ...(typeof row.error_message === 'string' ? { errorMessage: row.error_message } : {}),
+    ...(typeof row.details_json === 'string' ? { detailsJson: row.details_json } : {}),
+    ...(typeof row.details_r2_key === 'string' ? { detailsR2Key: row.details_r2_key } : {}),
+    ...(typeof row.duration_ms === 'number' ? { durationMs: row.duration_ms } : {}),
+  };
 }
 
 export async function listArchiveAuditEvents(
@@ -377,9 +427,64 @@ export async function listArchiveAuditEvents(
     context,
     await listIndexRows(context, tenantKey, options)
   );
-  const entries = records
+  const legacy = records
     .map((record) => archiveRecordToEvent(record, options.tenantId))
     .filter((entry) => matchesFilters(entry, options));
+  const page = options.cursorPage;
+  const cursor = decodeCursor(page?.cursor, page?.scope ?? '');
+  const combine = (rows: readonly LogSqlRow[]) => {
+    const byId = new Map(legacy.map((entry) => [entry.id, entry]));
+    for (const row of rows) byId.set(String(row.id), wholeRowEvent(row, options.tenantId));
+    return [...byId.values()]
+      .filter(
+        (entry) =>
+          matchesFilters(entry, options) &&
+          (!cursor ||
+            entry.createdAt < cursor.at ||
+            (entry.createdAt === cursor.at && entry.id < cursor.id))
+      )
+      .sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  };
+  const whole = await readArchivedLogRows({
+    env: context.env,
+    tenantId: options.tenantId,
+    dataset: 'core.event_log',
+    window: {
+      fromMs: options.startTime,
+      toMs: Math.min(
+        options.endTime === undefined ? Number.MAX_SAFE_INTEGER : options.endTime - 1,
+        cursor?.at ?? Number.MAX_SAFE_INTEGER
+      ),
+    },
+    canStop: page
+      ? async (rows, next) => {
+          const tail = combine(rows)[options.limit];
+          return !!tail && (next === null || next < tail.createdAt);
+        }
+      : undefined,
+  });
+  const entries = combine(whole);
+  if (page || whole.length || cursor) {
+    if (options.page !== 1)
+      throw new LogQueryInvalidRequestError('Archived log lists use cursors; start with page 1.');
+    const selected = entries.slice(0, options.limit);
+    const last = selected.at(-1);
+    const hasMore = entries.length > options.limit;
+    return {
+      entries: selected,
+      total: 0,
+      totalPages: 0,
+      pagination: {
+        mode: 'cursor',
+        limit: options.limit,
+        has_more: hasMore,
+        next_cursor:
+          hasMore && last
+            ? cursorText({ v: 1, scope: page?.scope ?? '', at: last.createdAt, id: last.id })
+            : null,
+      },
+    };
+  }
   const offset = (options.page - 1) * options.limit;
   return {
     entries: entries.slice(offset, offset + options.limit),
@@ -391,8 +496,19 @@ export async function listArchiveAuditEvents(
 export async function getArchiveAuditEventById(
   context: AuditArchiveQueryContext,
   tenantId: string,
-  entryId: string
+  entryId: string,
+  eventAt?: number
 ): Promise<EventLogEntry | null> {
+  if (eventAt !== undefined) {
+    const whole = await readArchivedLogRows({
+      env: context.env,
+      tenantId,
+      dataset: 'core.event_log',
+      window: { fromMs: eventAt, toMs: eventAt },
+    });
+    const found = whole.find((row) => row.id === entryId);
+    if (found) return wholeRowEvent(found, tenantId);
+  }
   const tenantKey = await resolveTenantKey(context, tenantId);
   const rows = await listIndexRows(context, tenantKey, { tenantId, page: 1, limit: 1 }, entryId);
   const record = (await decodeArchiveRows(context, rows))[0];

@@ -140,6 +140,8 @@ const zhTW = createTranslation({
 	account_reauthTotpCodePlaceholder: '6 位或 8 位代碼',
 	account_actionFailed: '操作失敗',
 	account_remainingLoginMethodRequired: '刪除此方式前，請先新增另一種登入方式。',
+	account_activityIncomplete: '未能完整取得活動記錄，請稍後再試。',
+	account_activityLoadMore: '載入更早的活動',
 	account_activityTitle: '活動記錄',
 	account_operationNameUpdated: '姓名已變更',
 	account_operationPasskeyCreated: '已新增 Passkey',
