@@ -3,6 +3,8 @@
 	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
 	const logPager = new LogPager();
 	let loadGeneration = 0;
+	let statsGeneration = 0;
+	let optionsGeneration = 0;
 	import { onMount, untrack } from 'svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	let loadedTenantId = '';
@@ -121,13 +123,14 @@
 	}
 
 	async function loadFilterOptions() {
-		const mine = loadGeneration;
+		const mine = ++optionsGeneration;
+		const tenantId = settingsContext.tenantId;
 		try {
 			const [actionsResponse, resourceTypesResponse] = await Promise.all([
 				adminAdminAuditAPI.listActions(),
 				adminAdminAuditAPI.listResourceTypes()
 			]);
-			if (mine !== loadGeneration) return;
+			if (mine !== optionsGeneration || tenantId !== settingsContext.tenantId) return;
 			availableActions = actionsResponse.items;
 			availableResourceTypes = resourceTypesResponse.items;
 		} catch (err) {
@@ -136,20 +139,21 @@
 	}
 
 	async function loadStats() {
-		const mine = loadGeneration;
+		const mine = ++statsGeneration;
+		const tenantId = settingsContext.tenantId;
 		statsLoading = true;
 		stats = null;
 		statsError = '';
 		try {
 			const response = await adminAdminAuditAPI.getStats(7);
-			if (mine !== loadGeneration) return;
+			if (mine !== statsGeneration || tenantId !== settingsContext.tenantId) return;
 			stats = response;
 		} catch (err) {
-			if (mine !== loadGeneration) return;
+			if (mine !== statsGeneration || tenantId !== settingsContext.tenantId) return;
 			stats = null;
 			statsError = err instanceof Error ? err.message : $LL.admin_admin_audit_load_failed();
 		} finally {
-			if (mine === loadGeneration) statsLoading = false;
+			if (mine === statsGeneration && tenantId === settingsContext.tenantId) statsLoading = false;
 		}
 	}
 
