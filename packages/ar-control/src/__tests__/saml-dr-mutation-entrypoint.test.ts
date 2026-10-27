@@ -6,6 +6,7 @@ import {
   type SamlDrMutationProps,
 } from '../saml-dr-mutation-entrypoint';
 import { samlDrWaitUntil } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import { SAML_DR_WRITER_COMPONENTS } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer-contract';
 import type { ControlEnv } from '../types';
 
 const permit = vi.hoisted(() => vi.fn());
@@ -27,6 +28,13 @@ beforeEach(() => {
   permit.mockReset();
 });
 describe('narrow SAML DR Control admission', () => {
+  it('admits every writer component of the contract except Control itself', () => {
+    // Control's own writers use the local adapter; every other component reaches Control by RPC.
+    expect([...SAML_DR_MUTATION_CALLERS].sort()).toEqual(
+      SAML_DR_WRITER_COMPONENTS.filter((component) => component !== 'ar-control').sort()
+    );
+  });
+
   it.each(SAML_DR_MUTATION_CALLERS)('admits only an environment permit for %s', async (caller) => {
     permit.mockResolvedValue({ admitted: true });
     const request = { permitId: 'test-permit' };

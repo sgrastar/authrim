@@ -80,6 +80,44 @@ describe('opt-in SAML source writer guard', () => {
     expect(effect).not.toHaveBeenCalled();
     expect(control.completeEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
   });
+  it('takes the replication permit only after the backup admission, so a denied admission leaves none open', async () => {
+    const { env, control } = fixture();
+    control.acquireEnvironmentBackupMutationPermit.mockResolvedValue({ admitted: false });
+    const authority = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { payload: Record<string, unknown> };
+      return Response.json(body.payload);
+    });
+    vi.stubGlobal('fetch', authority);
+    try {
+      const effect = vi.fn(async () => new Response('ok'));
+      const result = await runSamlDrCoveredFetch(
+        {
+          ...env,
+          AUTHRIM_REPLICATION_WRITER: JSON.stringify({
+            version: 2,
+            endpoint: 'https://authority.example.test/replication/v1/rpc',
+            credentialId: 'aws-writer',
+            pairId: 'pair-a',
+            environmentId: 'environment-a',
+            deploymentId: 'aws-a',
+            epoch: 2,
+            generationId: 'group-a',
+          }),
+          AUTHRIM_REPLICATION_WRITER_SECRET: 'a'.repeat(64),
+        },
+        undefined,
+        effect
+      );
+      expect(result.status).toBe(503);
+      expect(effect).not.toHaveBeenCalled();
+      // Nothing was written, so the authority must not have been asked for a permit it could
+      // never be told to close.
+      expect(authority).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('drains all effects and completes after a deferred failure without disclosing it', async () => {
     const { env, context, order } = fixture();
     const response = await runSamlDrCoveredFetch(env, context, async (_env, ctx) => {

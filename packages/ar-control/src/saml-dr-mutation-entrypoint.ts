@@ -10,6 +10,8 @@ export const SAML_DR_MUTATION_CALLERS = [
   'ar-auth',
   'ar-saml',
   'ar-lib-core',
+  'ar-router',
+  'ar-discovery',
   'ar-management',
   'ar-userinfo',
   'ar-token',

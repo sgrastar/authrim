@@ -151,15 +151,16 @@ export async function runSamlDrCoveredOperation<
       }
     });
   };
-  return runReplicationWriterOperation(env, () =>
-    backupEnabled
-      ? runRequiredTenantBackupCoveredEffect(
-          { CONTROL: env.SAML_DR_MUTATION_CONTROL },
-          coverage,
-          runOwned
-        )
-      : runOwned()
-  );
+  // The backup admission comes first. Its refusal happens before any write, while an exception
+  // inside the replication permit is kept as an unconfirmed write: a refusal that came after
+  // the permit would leave it open and block a later switch of the primary.
+  return backupEnabled
+    ? runRequiredTenantBackupCoveredEffect(
+        { CONTROL: env.SAML_DR_MUTATION_CONTROL },
+        coverage,
+        () => runReplicationWriterOperation(env, runOwned)
+      )
+    : runReplicationWriterOperation(env, runOwned);
 }
 
 export async function runSamlDrCoveredFetch<
