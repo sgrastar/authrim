@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type {
   ApprovalApproverSubjectType,
@@ -134,7 +135,7 @@ export async function syncElevationGrantsForRequest(
   }
 
   if (['cancelled', 'denied', 'expired'].includes(request.status)) {
-    await Promise.all(
+    await samlDrAll(
       activeGrants.map((grant) =>
         grantRepo.updateElevationGrantStatus(grant.id, 'revoked', {
           revokedAt: Date.now(),

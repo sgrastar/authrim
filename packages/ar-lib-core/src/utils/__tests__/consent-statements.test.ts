@@ -1162,6 +1162,35 @@ describe('Consent Statements Utility', () => {
       expect(trustPolicyQuery?.[1]).toEqual(['default', 'oidc_client', 'client-1']);
     });
 
+    it('recognizes PostgreSQL bigint trust flags without accepting malformed values', async () => {
+      const adapter = createMockAdapter({
+        queryResults: new Map([
+          [
+            'client_trust_policies',
+            [
+              {
+                target_type: 'saml_sp',
+                target_id: 'https://sp.example.test',
+                first_party: '1',
+                trusted: '1',
+                skip_authorization_consent: 'false',
+              },
+            ],
+          ],
+        ]),
+      });
+
+      await expect(
+        resolveClientTrustPolicy(adapter, 'tenant-a', 'saml_sp', 'https://sp.example.test')
+      ).resolves.toEqual({
+        target_type: 'saml_sp',
+        target_id: 'https://sp.example.test',
+        first_party: true,
+        trusted: true,
+        skip_authorization_consent: false,
+      });
+    });
+
     it('should resolve login sign-in confirmation policy', async () => {
       const adapter = createMockAdapter({
         queryResults: new Map([

@@ -1,11 +1,15 @@
 import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../db';
 import type { RuntimeProfileResolverEnv } from './runtime-profile-resolver';
+import type { RuntimeDataPorts } from '../types/runtime-data-ports';
+import type { Env } from '../types/env';
+import { resolveTenantMetadataContext } from './runtime-data-context';
 import {
   resolveTenantDatabaseSourceFromRegistry,
   type TenantDatabaseRequestCache,
 } from './tenant-database-resolver';
 
 export interface AuthCorePersistenceEnv extends RuntimeProfileResolverEnv {
+  RUNTIME_DATA_PORTS?: RuntimeDataPorts;
   DB: DatabaseSource;
   DB_PII?: DatabaseSource;
   DB_ADMIN?: DatabaseSource;
@@ -25,6 +29,10 @@ export async function resolveAuthCorePersistenceSourceFromEnv(
   options: AuthCorePersistenceResolveOptions = {}
 ): Promise<DatabaseSource> {
   if (options.tenantId) {
+    if (env.RUNTIME_DATA_PORTS) {
+      const metadata = await resolveTenantMetadataContext(env as Env, options.tenantId);
+      return metadata.coreDb;
+    }
     const resolved = await resolveTenantDatabaseSourceFromRegistry(env, {
       tenantId: options.tenantId,
       role: 'tenant_core',

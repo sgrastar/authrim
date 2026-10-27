@@ -743,7 +743,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('class="setup-masthead"');
     expect(html).toContain('class="setup-wordmark">Authrim<sup>SETUP</sup>');
     expect(html).toContain('class="setup-hero setup-enter"');
-    expect(html).toContain('class="setup-prereq-section setup-section-enter"');
+    expect(html).toContain('id="section-platform" class="setup-start-section setup-section-enter"');
+    expect(html).toContain('id="section-prerequisites" class="setup-prereq-section hidden"');
     expect(html).toContain('function replaySetupEntrance(section)');
     expect(html).toContain("hero.classList.add('setup-enter')");
     expect(html).toContain("section.classList.add('setup-section-enter')");

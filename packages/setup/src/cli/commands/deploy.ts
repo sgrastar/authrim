@@ -2048,7 +2048,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const keysDir = getResolvedKeysDir();
       deploymentSecrets = await loadDeploySecretsFromKeys(
         existsSync(keysDir) ? keysDir : undefined,
-        componentsToDeply
+        componentsToDeply,
+        { replicationWriter: config.features.replicationWriter !== undefined }
       );
       deploymentSecrets = { ...deploymentSecrets, ...promptedDirectControlSecrets };
     }
@@ -2963,6 +2964,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         ])
       ),
       secrets: deploymentSecrets,
+      replicationWriter: config.features.replicationWriter !== undefined,
       ...lookupHmacDeployOptions(currentLock.controlKeyState?.lookupHmac),
       automaticProvisioning: automaticProvisioning && pendingControlTokenBootstrap === null,
       cloudflareAccountId: config.cloudflare?.accountId,

@@ -1271,6 +1271,46 @@ export function generateWranglerConfig(
   // special-case routing (e.g. /api/auth/authentication-methods, /api/admin/setup-token/*)
   // is bypassed by Cloudflare route precedence.
 
+  if (config.features.samlDrExport?.enabled === true) {
+    wranglerConfig.vars['ENABLE_SAML_DR_EXPORT'] = 'true';
+    wranglerConfig.vars['AUTHRIM_ENVIRONMENT_NAME'] = env;
+    wranglerConfig.vars['AUTHRIM_WORKER_SCRIPT_NAME'] = workerName;
+    wranglerConfig.version_metadata = { binding: 'CONTROL_SMOKE_VERSION' };
+    if (component !== 'ar-control') {
+      wranglerConfig.services ??= [];
+      wranglerConfig.services.push({
+        binding: 'SAML_DR_MUTATION_CONTROL',
+        service: `${env}-ar-control`,
+        entrypoint: 'SamlDrMutationEntrypoint',
+        props: { caller: component, audience: 'authrim-saml-dr-mutation-v1', environmentId: env },
+      });
+    } else if (options.includeControlSmokeBindings !== false) {
+      wranglerConfig.services ??= [];
+      for (const targetComponent of ['ar-control', 'ar-router'] as const) {
+        wranglerConfig.services.push({
+          binding: `SMOKE_${targetComponent.replaceAll('-', '_').toUpperCase()}`,
+          service: `${env}-${targetComponent}`,
+          entrypoint: 'RuntimeSmokeEntrypoint',
+          props: {
+            caller: 'ar-control',
+            audience: 'authrim-runtime-smoke-v1',
+            environmentId: env,
+            targetWorker: `${env}-${targetComponent}`,
+          },
+        });
+      }
+    }
+  }
+
+  if (config.features.replicationWriter !== undefined) {
+    if (config.features.samlDrExport?.enabled !== true)
+      throw new Error('replication_requires_coordinated_export');
+    // Every Worker, including the DO host and Control, receives the same environment-wide fence.
+    wranglerConfig.vars['AUTHRIM_REPLICATION_WRITER'] = JSON.stringify(
+      config.features.replicationWriter
+    );
+  }
+
   if (options.local) {
     applyLocalDevelopmentShape(wranglerConfig, env, component, options.local);
   }

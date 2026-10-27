@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type {
   DatabaseAdapter,
@@ -3747,7 +3748,7 @@ async function handleAuthorizationCodeGrant(
 
   // Publish token events (non-blocking, use waitUntil to ensure completion)
   c.executionCtx.waitUntil(
-    Promise.all([
+    samlDrAll([
       publishEvent(c, {
         type: TOKEN_EVENTS.ACCESS_ISSUED,
         tenantId,
@@ -4689,7 +4690,7 @@ async function handleRefreshTokenGrant(
       })
     );
   }
-  c.executionCtx.waitUntil(Promise.all(eventPromises));
+  c.executionCtx.waitUntil(samlDrAll(eventPromises));
 
   // Return token response
   c.header('Cache-Control', 'no-store');
@@ -5691,7 +5692,7 @@ async function handleDeviceCodeGrant(
       })
     );
   }
-  c.executionCtx.waitUntil(Promise.all(deviceEventPromises));
+  c.executionCtx.waitUntil(samlDrAll(deviceEventPromises));
 
   // Return token response
   c.header('Cache-Control', 'no-store');
@@ -6392,7 +6393,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       })
     );
   }
-  c.executionCtx.waitUntil(Promise.all(cibaEventPromises));
+  c.executionCtx.waitUntil(samlDrAll(cibaEventPromises));
 
   // Return token response
   c.header('Cache-Control', 'no-store');
@@ -8778,7 +8779,7 @@ async function handleNativeSSOTokenExchange(
   // Publish token events (non-blocking, use waitUntil to ensure completion)
   const nowEpoch = Math.floor(Date.now() / 1000);
   c.executionCtx.waitUntil(
-    Promise.all([
+    samlDrAll([
       publishEvent(c, {
         type: TOKEN_EVENTS.ACCESS_ISSUED,
         tenantId,

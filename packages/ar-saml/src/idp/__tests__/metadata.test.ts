@@ -91,6 +91,23 @@ describe('IdP metadata', () => {
     ]);
   });
 
+  it('omits unsupported logout endpoints for an IdP-only runtime', () => {
+    const xml = buildIdPMetadata({
+      entityId: 'https://idp.example.com/saml/idp',
+      issuerUrl: 'https://idp.example.com',
+      signingCertificates: [
+        {
+          slot: 'active',
+          certificate: '-----BEGIN CERTIFICATE-----\nACTIVECERT\n-----END CERTIFICATE-----',
+        },
+      ],
+      includeSLO: false,
+    });
+
+    expect(xml).not.toContain('SingleLogoutService');
+    expect(xml).toContain('SingleSignOnService');
+  });
+
   it('orders IDPSSODescriptor children according to SAML metadata schema', () => {
     const xml = buildIdPMetadata({
       entityId: 'https://idp.example.com/saml/idp',

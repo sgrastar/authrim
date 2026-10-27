@@ -406,6 +406,10 @@
             {
               "path": "051_identity_mapping_failures.sql",
               "checksum": "267b99dcd63f0b73ba22de7a1a8aabadb4c6c103497bcf6f1280aa5a916d6025"
+            },
+            {
+              "path": "052_tenant_backup_replication_grants.sql",
+              "checksum": "2ffad2b50ebb711bfb7bfab5a14aa657bf67ecfdbab640d10409f53b8322b34b"
             }
           ]
         },
@@ -576,6 +580,14 @@
             {
               "path": "012_flow_audit_sign_in_attempts.sql",
               "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
+            },
+            {
+              "path": "013_saml_passkey_configuration_and_route_generation.sql",
+              "checksum": "2d82407f3ff17044028b444bb1b62fabcd08bb169528b6429750fef266bd1f02"
+            },
+            {
+              "path": "014_saml_replication_account_bookkeeping.sql",
+              "checksum": "d5e422efc5db61c2d9ecb674c0a7f8b0b3efec5819a6986a874b0c200ebb5a1e"
             }
           ]
         },
@@ -1023,6 +1035,10 @@
         {
           "path": "051_identity_mapping_failures.sql",
           "checksum": "267b99dcd63f0b73ba22de7a1a8aabadb4c6c103497bcf6f1280aa5a916d6025"
+        },
+        {
+          "path": "052_tenant_backup_replication_grants.sql",
+          "checksum": "2ffad2b50ebb711bfb7bfab5a14aa657bf67ecfdbab640d10409f53b8322b34b"
         }
       ]
     },
@@ -1209,6 +1225,14 @@
         {
           "path": "012_flow_audit_sign_in_attempts.sql",
           "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
+        },
+        {
+          "path": "013_saml_passkey_configuration_and_route_generation.sql",
+          "checksum": "2d82407f3ff17044028b444bb1b62fabcd08bb169528b6429750fef266bd1f02"
+        },
+        {
+          "path": "014_saml_replication_account_bookkeeping.sql",
+          "checksum": "d5e422efc5db61c2d9ecb674c0a7f8b0b3efec5819a6986a874b0c200ebb5a1e"
         }
       ]
     },

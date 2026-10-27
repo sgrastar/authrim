@@ -391,6 +391,73 @@ it('scopes permits to the authenticated environment, tenant and caller and permi
     await expect(
       startTenantBackupSnapshotBoundary(leasedClient('within-lease', 'ab'.repeat(32)))
     ).rejects.toThrow('backup_snapshot_boundary_failed:backup_boundary_writers_pending');
+
+    // Opt-in strict SAML DR cannot infer that an old invocation stopped from its permit age.
+    const strictNow = later + TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS * 10;
+    const strictRequest = {
+      tenantId: 'tenant',
+      operationId: 'strict-old-permits',
+      boundaryId: '12'.repeat(32),
+      inventoryDigest: 'ab'.repeat(32),
+    };
+    const strictRpc = { ...rpc, now: strictNow, strictIncompletePermits: true };
+    expect(
+      (
+        await controlTenantBackupBoundary({
+          ...strictRpc,
+          request: {
+            ...strictRequest,
+            action: 'admit',
+            participants: physical,
+          },
+        })
+      ).boundary
+    ).toBeNull();
+    expect(
+      (
+        await controlTenantBackupBoundary({
+          ...strictRpc,
+          request: {
+            ...strictRequest,
+            action: 'hold',
+          },
+        })
+      ).boundary
+    ).toBeNull();
+    // Only explicit completion lets either held-boundary path proceed.
+    sql
+      .prepare(
+        'UPDATE tenant_backup_mutation_permits SET completed_at=? WHERE completed_at IS NULL'
+      )
+      .run(strictNow);
+    expect(
+      (
+        await controlTenantBackupBoundary({
+          ...strictRpc,
+          request: {
+            ...strictRequest,
+            action: 'hold',
+          },
+        })
+      ).boundary?.state
+    ).toBe('held');
+    await controlTenantBackupBoundary({
+      ...strictRpc,
+      request: { ...strictRequest, action: 'abort' },
+    });
+    expect(
+      (
+        await controlTenantBackupBoundary({
+          ...strictRpc,
+          request: {
+            ...strictRequest,
+            boundaryId: '13'.repeat(32),
+            action: 'admit',
+            participants: physical,
+          },
+        })
+      ).boundary?.state
+    ).toBe('held');
   } finally {
     sql.close();
   }

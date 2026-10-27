@@ -2,7 +2,6 @@
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Icon from '$lib/ui/icons/Icon.svelte';
 	import IconButton from '$lib/ui/primitives/IconButton.svelte';
-	import LanguageSwitch from './LanguageSwitch.svelte';
 	import type { DrawerSection } from './shell-model';
 
 	/**
@@ -86,10 +85,6 @@
 				</div>
 			{/each}
 		</nav>
-		<div class="drawer__foot">
-			<span>{t('app.language')}</span>
-			<LanguageSwitch />
-		</div>
 	</div>
 </dialog>
 
@@ -207,18 +202,6 @@
 		background: var(--bg-hover);
 		color: var(--text-primary);
 		font-weight: var(--fw-semibold);
-	}
-
-	.drawer__foot {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 10px;
-		margin-top: 18px;
-		padding: 14px 16px 0;
-		border-top: 1px solid var(--border);
-		color: var(--text-muted);
-		font-size: var(--fs-small);
 	}
 
 	@keyframes drawer-in {

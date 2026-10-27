@@ -1,3 +1,4 @@
+import type { SamlDrWriterInventoryReceipt } from '../tenant-portability/saml-dr-writer-contract';
 import type {
   TenantBackupBoundaryRequest,
   TenantBackupBoundaryResponse,
@@ -1414,6 +1415,18 @@ export interface ControlPluginResourceCleanupView {
 }
 
 export interface ControlServiceBinding {
+  getEnvironmentReplicationInventory?(input: Record<string, never>): Promise<{
+    environmentId: string;
+    complete: true;
+    pendingOperations: boolean;
+    tenants: Array<{ tenantId: string; policyState: string; policyGeneration: number }>;
+  }>;
+
+  /** Read-only deployed writer evidence; no caller-supplied readiness attestations. */
+  inspectSamlDrWriterCoverage?(input: {
+    tenantId: string;
+    expectedReceipt?: SamlDrWriterInventoryReceipt;
+  }): Promise<SamlDrWriterInventoryReceipt>;
   /** Rebuild runtime registry snapshots required before a restored tenant can be activated. */
   publishTenantBackupRuntimeState?(): Promise<{
     lookupRegistry: { generation: number; status: 'published' | 'unchanged' | 'resumed' };

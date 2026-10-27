@@ -10,6 +10,7 @@
  * - DELETE /api/admin/users/:userId/device-secrets - Revoke all device secrets for a user
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -335,7 +336,7 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
     const tenantId = getTenantIdFromContext(c);
     const repos = await userDeviceSecretRepositories(c.env, tenantId, userId);
     const revokedCount = (
-      await Promise.all(repos.map((repo) => repo.revokeByUserId(userId, tenantId, reason)))
+      await samlDrAll(repos.map((repo) => repo.revokeByUserId(userId, tenantId, reason)))
     ).reduce((total, count) => total + count, 0);
 
     await createAuditLogFromContext(c, 'device_secret.revoke_all', 'user', userId, {
@@ -371,7 +372,7 @@ export async function cleanupExpiredDeviceSecrets(
   try {
     // Expired secrets are in every core database of the tenant.
     const repos = await tenantDeviceSecretRepositories(c.env, getTenantIdFromContext(c));
-    const cleanedCount = (await Promise.all(repos.map((repo) => repo.cleanupExpired()))).reduce(
+    const cleanedCount = (await samlDrAll(repos.map((repo) => repo.cleanupExpired()))).reduce(
       (total, count) => total + count,
       0
     );

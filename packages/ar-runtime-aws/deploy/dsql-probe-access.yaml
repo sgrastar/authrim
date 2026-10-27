@@ -1,0 +1,54 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Exact-cluster SQL access for the isolated Authrim DSQL compatibility probe;
+  preserves existing operator policies and grants no infrastructure or IAM management.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: An administrator applies this separate access stack after verifying the probe cluster.
+    must:
+      - Verify the cluster belongs to the synthetic-only compatibility stack before deployment.
+      - Use a dedicated Authrim DR operator role; never attach this policy to serving roles.
+      - Do not modify the existing operator trust policy or its bootstrap-managed policies.
+      - Use the exact cluster identifier in this account and Region; no wildcard grants.
+
+Parameters:
+  ProbeClusterId:
+    Type: String
+    AllowedPattern: '[a-z0-9]{26}'
+    Description: Identifier returned by the isolated compatibility-test cluster stack.
+  ProbeOperatorRoleName:
+    Type: String
+    AllowedPattern: 'authrim-dr-[a-z0-9-]{1,32}-operator'
+    Description: Existing dedicated operator role name, without its IAM path or ARN.
+
+Resources:
+  ProbeSqlAccess:
+    Type: AWS::IAM::RolePolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Runs synthetic SQL as the existing operator after the administrator creates the cluster.
+        must:
+          - Allow DbConnectAdmin only on the selected test cluster.
+          - Grant no IAM, cluster lifecycle, DNS, RDS, or Cloudflare permissions.
+          - Keep this removable policy separate from existing bootstrap policies.
+    Properties:
+      PolicyName: !Sub 'authrim-dsql-probe-${ProbeClusterId}'
+      RoleName: !Ref ProbeOperatorRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ConnectOnlyToSyntheticProbeCluster
+            Effect: Allow
+            Action: dsql:DbConnectAdmin
+            Resource: !Sub 'arn:${AWS::Partition}:dsql:${AWS::Region}:${AWS::AccountId}:cluster/${ProbeClusterId}'
+
+Outputs:
+  ProbeClusterArn:
+    Description: Exact cluster granted to the operator for synthetic SQL only.
+    Value: !Sub 'arn:${AWS::Partition}:dsql:${AWS::Region}:${AWS::AccountId}:cluster/${ProbeClusterId}'
+  OperatorPolicyName:
+    Description: Separate inline policy owned by this access stack.
+    Value: !Sub 'authrim-dsql-probe-${ProbeClusterId}'

@@ -5,6 +5,7 @@ import {
   type CloudflareControlOperation,
   type CloudflareControlTokens,
   type CloudflareWorkerSettings,
+  type CloudflareWorkerBinding,
 } from './cloudflare-worker-settings';
 
 const CLOUDFLARE_API_ORIGIN = 'https://api.cloudflare.com';
@@ -92,6 +93,19 @@ export interface CloudflareWorkerVersion {
   id?: string;
   number?: number;
   metadata?: Record<string, unknown>;
+}
+
+/** Immutable version detail; never substitute the script's mutable current settings. */
+export interface CloudflareWorkerVersionDetail extends CloudflareWorkerVersion {
+  resources: {
+    bindings?: CloudflareWorkerBinding[];
+    script?: {
+      etag?: string;
+      handlers?: string[];
+      named_handlers?: Array<{ name?: string; handlers?: string[] }>;
+    };
+    script_runtime?: Record<string, unknown>;
+  };
 }
 
 export interface CloudflareWorkerScript {
@@ -536,6 +550,32 @@ export class CloudflareControlApiClient {
     );
   }
 
+  /** Unfiltered account inventory. Malformed, duplicate or truncated results cannot prove coverage. */
+  async listWorkerScriptsForInventory(maximumScripts: number): Promise<CloudflareWorkerScript[]> {
+    if (!Number.isSafeInteger(maximumScripts) || maximumScripts < 1 || maximumScripts > 500)
+      throw new Error('cloudflare_workers_inventory_limit_invalid');
+    const { result, resultInfo } = await this.requestEnvelope<CloudflareWorkerScript[]>(
+      'workers.script.list',
+      '/workers/scripts'
+    );
+    if (
+      !Array.isArray(result) ||
+      result.length > maximumScripts ||
+      result.some(
+        (script) =>
+          !script ||
+          typeof script.id !== 'string' ||
+          !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(script.id)
+      ) ||
+      new Set(result.map((script) => script.id)).size !== result.length ||
+      (resultInfo?.total_pages !== undefined && resultInfo.total_pages > 1) ||
+      (resultInfo?.total_count !== undefined && resultInfo.total_count !== result.length) ||
+      (resultInfo?.count !== undefined && resultInfo.count !== result.length)
+    )
+      throw new Error('cloudflare_workers_inventory_incomplete');
+    return result;
+  }
+
   getWorkersSubdomain(): Promise<CloudflareWorkersSubdomain> {
     return this.request('workers.subdomain.get', '/workers/subdomain');
   }
@@ -572,6 +612,13 @@ export class CloudflareControlApiClient {
       `/workers/scripts/${encodePathComponent(scriptName, 'script_name')}/versions?deployable=true`
     );
     return result.items ?? [];
+  }
+
+  getWorkerVersion(scriptName: string, versionId: string): Promise<CloudflareWorkerVersionDetail> {
+    return this.request(
+      'workers.version.get',
+      `/workers/scripts/${encodePathComponent(scriptName, 'script_name')}/versions/${encodePathComponent(versionId, 'version_id')}`
+    );
   }
 
   async listWorkerDeployments(scriptName: string): Promise<CloudflareWorkerDeployment[]> {

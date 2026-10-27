@@ -6,6 +6,7 @@
  * issues short-lived elevation grants when a request reaches full approval.
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { legacyUrlString, z } from '../../zod';
@@ -1399,7 +1400,7 @@ adminApprovalsRouter.post('/:requestId/cancel', async (c) => {
     }
 
     const approvals = await approvalRepo.listApprovalsForRequest(request.id);
-    await Promise.all(
+    await samlDrAll(
       approvals
         .filter((approval) => approval.status === 'pending' || approval.status === 'approved')
         .map((approval) =>

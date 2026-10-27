@@ -18,6 +18,7 @@ export type CloudflareControlOperation =
   | 'workers.settings.get'
   | 'workers.settings.patch'
   | 'workers.version.list'
+  | 'workers.version.get'
   | 'kv.namespace.create'
   | 'kv.namespace.delete'
   | 'kv.namespace.list'
@@ -71,6 +72,7 @@ const TOKEN_KIND_BY_OPERATION: Readonly<
   'workers.settings.get': 'workers',
   'workers.settings.patch': 'workers',
   'workers.version.list': 'workers',
+  'workers.version.get': 'workers',
   'kv.namespace.create': 'kv',
   'kv.namespace.delete': 'kv',
   'kv.namespace.list': 'kv',

@@ -1,3 +1,9 @@
+import {
+  SAML_DR_WRITER_COMPONENTS,
+  samlDrWriterContractDigest,
+  samlDrWriterSurfaces,
+  type SamlDrWriterProbe,
+} from '../services/tenant-portability/saml-dr-writer-contract.js';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { decodeProtectedHeader } from 'jose';
 import {
@@ -177,6 +183,47 @@ export class RuntimeSmokeEntrypoint extends WorkerEntrypoint<
         'X-Content-Type-Options': 'nosniff',
       },
     });
+  }
+
+  /** Read-only installed-code capability probe; all authority comes from binding props and code. */
+  async inspectSamlDrWriter(): Promise<SamlDrWriterProbe> {
+    const identity = authorizedIdentity(this.env, this.ctx.props);
+    const component = SAML_DR_WRITER_COMPONENTS.find(
+      (candidate) => identity.targetWorker === `${identity.environmentId}-${candidate}`
+    );
+    const versionId = this.env.CONTROL_SMOKE_VERSION?.id;
+    if (!component || typeof versionId !== 'string' || !versionId.trim())
+      throw new Error('saml_dr_writer_identity_unavailable');
+    if (this.env.ENABLE_SAML_DR_EXPORT !== 'true') throw new Error('saml_dr_writer_disabled');
+    if (component === 'ar-control') {
+      const database = this.env.CONTROL_DB;
+      if (
+        !database ||
+        typeof database !== 'object' ||
+        typeof (database as { prepare?: unknown }).prepare !== 'function'
+      )
+        throw new Error('saml_dr_writer_admission_unavailable');
+    } else {
+      const admission = this.env.SAML_DR_MUTATION_CONTROL;
+      if (
+        !admission ||
+        typeof admission !== 'object' ||
+        typeof (admission as { acquireEnvironmentBackupMutationPermit?: unknown })
+          .acquireEnvironmentBackupMutationPermit !== 'function' ||
+        typeof (admission as { completeEnvironmentBackupMutationPermit?: unknown })
+          .completeEnvironmentBackupMutationPermit !== 'function'
+      )
+        throw new Error('saml_dr_writer_admission_unavailable');
+    }
+    return {
+      formatVersion: 1,
+      environmentId: identity.environmentId,
+      workerName: identity.targetWorker,
+      component,
+      versionId,
+      contractDigest: await samlDrWriterContractDigest(component),
+      surfaces: [...samlDrWriterSurfaces(component)],
+    };
   }
 
   async smokeTenantBinding(token: unknown): Promise<RuntimeSmokeResult> {

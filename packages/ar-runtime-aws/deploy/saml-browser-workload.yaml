@@ -1,0 +1,1313 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description:
+  Synthetic browser SAML rehearsal on a separate AWS default HTTPS API. Phase one reserves
+  the origin; phase two serves IdP and test SP. No DNS or foundation changes.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    must:
+      - Keep the API identity stable before generating the host-bound fixture.
+      - Deploy only synthetic data; no real customer certificates or accounts.
+      - Reuse existing private subnets and bootstrap security group without network changes.
+      - Never enable the original foundation API.
+Parameters:
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'
+    Description: Exact selected foundation auth-state table ARN; empty preserves PostgreSQL state.
+  DeployWorkload:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'false'
+      - 'true'
+    Description:
+      False creates an empty API and retained diagnostic log groups. Set true only after restore and access-stack ApiId binding.
+      Do not toggle back to pause traffic.
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  BootstrapSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DatabaseHost:
+    Type: String
+    AllowedPattern: ^[a-z0-9][a-z0-9.-]+\.rds\.amazonaws\.com$
+  AssetsBucketName:
+    Type: String
+    AllowedPattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+  AssetPrefix:
+    Type: String
+    Default: browser/20261026/
+    AllowedPattern: ^[A-Za-z0-9!_.()-]+(/[A-Za-z0-9!_.()-]+)*/$
+  BucketOwnerAccountId:
+    Type: String
+    AllowedPattern: ^[0-9]{12}$
+  RuntimeSecretArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$
+  RuntimeSecretVersionId:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^[A-Za-z0-9-]{32,64}$
+  BrowserSpSecretArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$
+  BrowserSpSecretVersionId:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^[A-Za-z0-9-]{32,64}$
+  IdpPermissionsBoundaryArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^arn:(aws|aws-cn|aws-us-gov):iam::[0-9]{12}:policy/authrim-dr/boundary/[A-Za-z0-9+=,.@_-]+$
+  SpPermissionsBoundaryArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^arn:(aws|aws-cn|aws-us-gov):iam::[0-9]{12}:policy/authrim-dr/boundary/[A-Za-z0-9+=,.@_-]+$
+  ManifestKey:
+    Type: String
+    Default: ''
+  ManifestVersionId:
+    Type: String
+    Default: ''
+  ManifestSha256:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^[0-9a-f]{64}$
+  IdpArtifactKey:
+    Type: String
+    Default: ''
+  IdpArtifactObjectVersion:
+    Type: String
+    Default: ''
+  SpArtifactKey:
+    Type: String
+    Default: ''
+  SpArtifactObjectVersion:
+    Type: String
+    Default: ''
+  ReservedConcurrency:
+    Type: Number
+    Default: 2
+    MinValue: 0
+    MaxValue: 5
+    Description: Per function. Set zero to pause requests without deleting resources.
+  ApiRateLimit:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 20
+  ApiBurstLimit:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 40
+Rules:
+  RequirePreparedInputs:
+    RuleCondition:
+      Fn::Equals:
+        - Ref: DeployWorkload
+        - 'true'
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: RuntimeSecretArn
+                - ''
+        AssertDescription: RuntimeSecretArn must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: RuntimeSecretVersionId
+                - ''
+        AssertDescription: RuntimeSecretVersionId must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: BrowserSpSecretArn
+                - ''
+        AssertDescription: BrowserSpSecretArn must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: BrowserSpSecretVersionId
+                - ''
+        AssertDescription: BrowserSpSecretVersionId must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: IdpPermissionsBoundaryArn
+                - ''
+        AssertDescription: IdpPermissionsBoundaryArn must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: SpPermissionsBoundaryArn
+                - ''
+        AssertDescription: SpPermissionsBoundaryArn must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: ManifestKey
+                - ''
+        AssertDescription: ManifestKey must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: ManifestVersionId
+                - ''
+        AssertDescription: ManifestVersionId must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: ManifestSha256
+                - ''
+        AssertDescription: ManifestSha256 must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: IdpArtifactKey
+                - ''
+        AssertDescription: IdpArtifactKey must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: IdpArtifactObjectVersion
+                - ''
+        AssertDescription: IdpArtifactObjectVersion must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: SpArtifactKey
+                - ''
+        AssertDescription: SpArtifactKey must be pinned before publishing routes.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: SpArtifactObjectVersion
+                - ''
+        AssertDescription: SpArtifactObjectVersion must be pinned before publishing routes.
+Conditions:
+  HasAuthStateTable:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AuthStateTableArn
+          - ''
+  HasWorkload:
+    Fn::Equals:
+      - Ref: DeployWorkload
+      - 'true'
+  HasIdpSecret:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: RuntimeSecretArn
+          - ''
+  HasSpSecret:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: BrowserSpSecretArn
+          - ''
+Resources:
+  BrowserApi:
+    Type: AWS::ApiGatewayV2::Api
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Reserves an AWS-owned HTTPS origin before host-bound WebAuthn/SAML fixture generation.
+        must:
+          - 'Do not use Target or quick-create: phase one has no integration, route or stage.'
+          - Keep this API ID, HTTP protocol and default endpoint; no custom domain or DNS record.
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-synthetic
+      ProtocolType: HTTP
+      DisableExecuteApiEndpoint: false
+      Tags:
+        authrim:stack:
+          Ref: AWS::StackName
+  IdpLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Stores redacted idp diagnostics only.
+        must:
+          - No assertions, cookies, secrets, bodies or PII in logs.
+    Properties:
+      LogGroupName:
+        Fn::Sub: /authrim/aws-browser/${AWS::StackName}/idp
+      RetentionInDays: 14
+  IdpRole:
+    Type: AWS::IAM::Role
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Runs idp with separate, version-pinned serving permissions.
+        must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
+          - No master secret, input fixture secret, secret writes or database initialization.
+          - SP uses only state DB credentials; IdP uses its own isolated runtime credentials.
+          - Phase-one empty parameters are unreachable while HasWorkload is false; RequirePreparedInputs
+            rejects them before phase two.
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1030
+    Properties:
+      Path: /authrim-dr/browser/
+      RoleName:
+        Fn::Sub: ${AWS::StackName}-idp
+      PermissionsBoundary:
+        Ref: IdpPermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: isolated-synthetic-serving
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Fn::If:
+                  - HasAuthStateTable
+                  - Sid: SelectedAuthState
+                    Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:UpdateItem
+                      - dynamodb:ConditionCheckItem
+                      - dynamodb:Query
+                      - dynamodb:Scan
+                      - dynamodb:DescribeTable
+                    Resource:
+                      Ref: AuthStateTableArn
+                  - Ref: AWS::NoValue
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${AWS::StackName}/idp:*
+              - Fn::If:
+                  - HasIdpSecret
+                  - Effect: Allow
+                    Action: secretsmanager:GetSecretValue
+                    Resource:
+                      Ref: RuntimeSecretArn
+                    Condition:
+                      StringEquals:
+                        secretsmanager:VersionId:
+                          Ref: RuntimeSecretVersionId
+                  - Ref: AWS::NoValue
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${AssetsBucketName}/${AssetPrefix}*
+              - Effect: Deny
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'
+                Condition:
+                  ArnEquals:
+                    lambda:SourceFunctionArn:
+                      Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-idp
+  IdpFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Serves only the synthetic idp browser rehearsal.
+        must:
+          - No migration, restore, administration, Cloudflare calls or DNS writes.
+          - Do not bundle maintenance handlers or fixture private passkey material in serving ZIPs.
+          - Phase-one empty parameters are unreachable while HasWorkload is false; RequirePreparedInputs
+            rejects them before phase two.
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1030
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-idp
+      Description: Authrim synthetic browser idp rehearsal
+      Runtime: nodejs24.x
+      Architectures:
+        - arm64
+      Handler: lambda.handler
+      Role:
+        Fn::GetAtt:
+          - IdpRole
+          - Arn
+      Code:
+        S3Bucket:
+          Ref: AssetsBucketName
+        S3Key:
+          Ref: IdpArtifactKey
+        S3ObjectVersion:
+          Ref: IdpArtifactObjectVersion
+      MemorySize: 2048
+      Timeout: 30
+      EphemeralStorage:
+        Size: 1024
+      ReservedConcurrentExecutions:
+        Ref: ReservedConcurrency
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: BootstrapSecurityGroupId
+        SubnetIds:
+          Ref: PrivateSubnetIds
+      Environment:
+        Variables:
+          NODE_EXTRA_CA_CERTS: /var/task/certs/rds-ca.pem
+          AUTHRIM_AWS_RUNTIME_SECRET_ARN:
+            Ref: RuntimeSecretArn
+          AUTHRIM_AWS_RUNTIME_SECRET_VERSION_ID:
+            Ref: RuntimeSecretVersionId
+          AUTHRIM_AWS_MANIFEST_BUCKET:
+            Ref: AssetsBucketName
+          AUTHRIM_AWS_MANIFEST_KEY:
+            Ref: ManifestKey
+          AUTHRIM_AWS_MANIFEST_VERSION_ID:
+            Ref: ManifestVersionId
+          AUTHRIM_AWS_MANIFEST_SHA256:
+            Ref: ManifestSha256
+          AUTHRIM_AWS_BUCKET_OWNER:
+            Ref: BucketOwnerAccountId
+          AUTHRIM_AWS_ISSUER_ORIGIN:
+            Fn::GetAtt:
+              - BrowserApi
+              - ApiEndpoint
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: WARN
+        SystemLogLevel: WARN
+        LogGroup:
+          Ref: IdpLogGroup
+      Tags:
+        - Key: authrim:stack
+          Value:
+            Ref: AWS::StackName
+  IdpIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Forwards only explicit idp routes through Lambda payload v2.
+        must:
+          - Keep trusted source IP in API Gateway context and original HTTPS host/path.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri:
+        Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IdpFunction.Arn}/invocations
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 30000
+  IdpInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows only this account and new API to invoke idp.
+        must:
+          - No wildcard API ID and no function URL.
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: IdpFunction
+      Principal: apigateway.amazonaws.com
+      SourceAccount:
+        Ref: AWS::AccountId
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${BrowserApi}/*/*
+  SpLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Stores redacted sp diagnostics only.
+        must:
+          - No assertions, cookies, secrets, bodies or PII in logs.
+    Properties:
+      LogGroupName:
+        Fn::Sub: /authrim/aws-browser/${AWS::StackName}/sp
+      RetentionInDays: 14
+  SpRole:
+    Type: AWS::IAM::Role
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Runs sp with separate, version-pinned serving permissions.
+        must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
+          - No master secret, input fixture secret, secret writes or database initialization.
+          - SP uses only state DB credentials; IdP uses its own isolated runtime credentials.
+          - Phase-one empty parameters are unreachable while HasWorkload is false; RequirePreparedInputs
+            rejects them before phase two.
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1030
+    Properties:
+      Path: /authrim-dr/browser/
+      RoleName:
+        Fn::Sub: ${AWS::StackName}-sp
+      PermissionsBoundary:
+        Ref: SpPermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: isolated-synthetic-serving
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Fn::If:
+                  - HasAuthStateTable
+                  - Sid: SelectedAuthState
+                    Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:UpdateItem
+                      - dynamodb:DescribeTable
+                    Resource:
+                      Ref: AuthStateTableArn
+                  - Ref: AWS::NoValue
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${AWS::StackName}/sp:*
+              - Fn::If:
+                  - HasSpSecret
+                  - Effect: Allow
+                    Action: secretsmanager:GetSecretValue
+                    Resource:
+                      Ref: BrowserSpSecretArn
+                    Condition:
+                      StringEquals:
+                        secretsmanager:VersionId:
+                          Ref: BrowserSpSecretVersionId
+                  - Ref: AWS::NoValue
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'
+              - Effect: Deny
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'
+                Condition:
+                  ArnEquals:
+                    lambda:SourceFunctionArn:
+                      Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-sp
+  SpFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Serves only the synthetic sp browser rehearsal.
+        must:
+          - No migration, restore, administration, Cloudflare calls or DNS writes.
+          - Do not bundle maintenance handlers or fixture private passkey material in serving ZIPs.
+          - Phase-one empty parameters are unreachable while HasWorkload is false; RequirePreparedInputs
+            rejects them before phase two.
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1030
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-sp
+      Description: Authrim synthetic browser sp rehearsal
+      Runtime: nodejs24.x
+      Architectures:
+        - arm64
+      Handler: browser-sp.handler
+      Role:
+        Fn::GetAtt:
+          - SpRole
+          - Arn
+      Code:
+        S3Bucket:
+          Ref: AssetsBucketName
+        S3Key:
+          Ref: SpArtifactKey
+        S3ObjectVersion:
+          Ref: SpArtifactObjectVersion
+      MemorySize: 512
+      Timeout: 30
+      EphemeralStorage:
+        Size: 1024
+      ReservedConcurrentExecutions:
+        Ref: ReservedConcurrency
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: BootstrapSecurityGroupId
+        SubnetIds:
+          Ref: PrivateSubnetIds
+      Environment:
+        Variables:
+          NODE_EXTRA_CA_CERTS: /var/task/certs/rds-ca.pem
+          AUTHRIM_AWS_BROWSER_SP_ENABLED: synthetic-only
+          AUTHRIM_AWS_BROWSER_SP_ORIGIN:
+            Fn::GetAtt:
+              - BrowserApi
+              - ApiEndpoint
+          AUTHRIM_AWS_BROWSER_SP_SECRET_ARN:
+            Ref: BrowserSpSecretArn
+          AUTHRIM_AWS_BROWSER_SP_SECRET_VERSION_ID:
+            Ref: BrowserSpSecretVersionId
+          AUTHRIM_AWS_BROWSER_SP_DB_HOST:
+            Ref: DatabaseHost
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: WARN
+        SystemLogLevel: WARN
+        LogGroup:
+          Ref: SpLogGroup
+      Tags:
+        - Key: authrim:stack
+          Value:
+            Ref: AWS::StackName
+  SpIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Forwards only explicit sp routes through Lambda payload v2.
+        must:
+          - Keep trusted source IP in API Gateway context and original HTTPS host/path.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri:
+        Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SpFunction.Arn}/invocations
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 30000
+  SpInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows only this account and new API to invoke sp.
+        must:
+          - No wildcard API ID and no function URL.
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: SpFunction
+      Principal: apigateway.amazonaws.com
+      SourceAccount:
+        Ref: AWS::AccountId
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${BrowserApi}/*/*
+  IdpRoute1:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /health/ready
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute2:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /login
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute3:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /reauth
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute4:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /api/auth/health
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute5:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /auth/login-challenge
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute6:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /api/sessions/status
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute7:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /api/v1/auth/direct/passkey/login/start
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute8:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /api/v1/auth/direct/passkey/login/finish
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute9:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /api/v1/auth/direct/session
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute10:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /api/v1/login/interactions/start
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute11:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /api/v1/login/interactions/{interactionId}/submit
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute12:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /saml/idp/metadata
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute13:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /saml/idp/sso
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute14:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /saml/idp/sso
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute15:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /saml/idp/attribute-release-consent
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute16:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /saml/idp/attribute-release-consent
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute17:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /idp/profile/SAML2/Redirect/SSO
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute18:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /idp/profile/SAML2/Redirect/SSO
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute19:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /idp/profile/SAML2/POST/SSO
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpRoute20:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Idp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /idp/profile/SAML2/POST/SSO
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  SpRoute2:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Sp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /test-sp/start
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: SpIntegration
+  SpRoute3:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Sp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /test-sp/start
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: SpIntegration
+  SpRoute4:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Sp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: GET /test-sp/metadata
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: SpIntegration
+  SpRoute5:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes one fixed synthetic Sp route.
+        must:
+          - No catch-all or administration route.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: POST /test-sp/acs
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: SpIntegration
+  IdpPreflightRoute1:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/auth/health
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute2:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /auth/login-challenge
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute3:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/sessions/status
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute4:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/auth/direct/passkey/login/start
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute5:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/auth/direct/passkey/login/finish
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute6:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/auth/direct/session
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute7:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/login/interactions/start
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  IdpPreflightRoute8:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: HasWorkload
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets the shared authentication handler validate external UI CORS preflight.
+        must:
+          - Delegate exact allowed origin and header checks to the restored tenant configuration.
+          - No wildcard CORS or catch-all routes.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      RouteKey: OPTIONS /api/v1/login/interactions/{interactionId}/submit
+      AuthorizationType: NONE
+      Target:
+        Fn::Join:
+          - ''
+          - - integrations/
+            - Ref: IdpIntegration
+  BrowserStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Condition: HasWorkload
+    DependsOn:
+      - IdpRoute1
+      - IdpRoute2
+      - IdpRoute3
+      - IdpRoute4
+      - IdpRoute5
+      - IdpRoute6
+      - IdpRoute7
+      - IdpRoute8
+      - IdpRoute9
+      - IdpRoute10
+      - IdpRoute11
+      - IdpRoute12
+      - IdpRoute13
+      - IdpRoute14
+      - IdpRoute15
+      - IdpRoute16
+      - IdpRoute17
+      - IdpRoute18
+      - IdpRoute19
+      - IdpRoute20
+      - IdpPreflightRoute1
+      - IdpPreflightRoute2
+      - IdpPreflightRoute3
+      - IdpPreflightRoute4
+      - IdpPreflightRoute5
+      - IdpPreflightRoute6
+      - IdpPreflightRoute7
+      - IdpPreflightRoute8
+      - SpRoute2
+      - SpRoute3
+      - SpRoute4
+      - SpRoute5
+      - IdpInvokePermission
+      - SpInvokePermission
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Publishes the root HTTPS origin only after both integrations and explicit routes exist.
+        must:
+          - 'No path-prefix stage: WebAuthn/SAML origins use ApiEndpoint.'
+          - Bound throttles and concurrency; no account-wide access-log delivery configuration.
+    Properties:
+      ApiId:
+        Ref: BrowserApi
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingRateLimit:
+          Ref: ApiRateLimit
+        ThrottlingBurstLimit:
+          Ref: ApiBurstLimit
+Outputs:
+  ApiId:
+    Description: New isolated API ID; bind into the access stack before phase two.
+    Value:
+      Ref: BrowserApi
+  IssuerOrigin:
+    Description: AWS-owned HTTPS origin; phase one has no active routes.
+    Value:
+      Fn::GetAtt:
+        - BrowserApi
+        - ApiEndpoint
+  TestSpUrl:
+    Description: Synthetic SP start page; available only after phase two.
+    Value:
+      Fn::Sub: ${BrowserApi.ApiEndpoint}/test-sp/start
+  IdpFunctionArn:
+    Condition: HasWorkload
+    Description: Dedicated synthetic IdP serving function.
+    Value:
+      Fn::GetAtt:
+        - IdpFunction
+        - Arn
+  SpFunctionArn:
+    Condition: HasWorkload
+    Description: Dedicated synthetic SP serving function.
+    Value:
+      Fn::GetAtt:
+        - SpFunction
+        - Arn

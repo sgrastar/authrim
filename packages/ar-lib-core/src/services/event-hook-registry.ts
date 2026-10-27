@@ -1,3 +1,4 @@
+import { samlDrTrackEffect } from './tenant-portability/saml-dr-writer';
 /**
  * Event Hook Registry
  *
@@ -74,7 +75,7 @@ function createTimeout(ms: number, hookId: string): Promise<never> {
  * Execute a promise with a timeout.
  */
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, hookId: string): Promise<T> {
-  return Promise.race([promise, createTimeout(timeoutMs, hookId)]);
+  return Promise.race([samlDrTrackEffect(promise), createTimeout(timeoutMs, hookId)]);
 }
 
 // =============================================================================

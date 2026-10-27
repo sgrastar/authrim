@@ -1,3 +1,4 @@
+import { createSamlDrPersistentNameIdRegistry } from '@authrim/ar-lib-core/services/saml-dr-nameid-registry';
 import {
   generatePairwiseSubject,
   type Env,
@@ -54,9 +55,13 @@ export type SAMLPersistentIdentifierAlgorithm = PersistentIdentifierAlgorithm;
 export interface SAMLPairwiseSaltSource {
   PAIRWISE_SALT?: string;
   KEY_MANAGER?: Env['KEY_MANAGER'];
+  SAML_RUNTIME_PORTS?: Env['SAML_RUNTIME_PORTS'];
 }
 
 export interface SAMLTransientNameIDStoreSource {
+  ENABLE_SAML_DR_EXPORT?: string;
+  SESSION_REVOCATION_STORE?: Env['SESSION_REVOCATION_STORE'];
+  AUTH_RUNTIME_PORTS?: Env['AUTH_RUNTIME_PORTS'];
   STATE_STORE?: SAMLTransientNameIDStore;
   KV?: SAMLPersistentNameIDRegistryStore;
 }
@@ -149,7 +154,7 @@ export async function resolveSAMLPairwiseSecretForRef(
   tenantId: string,
   secretRef: string
 ): Promise<string | undefined> {
-  if (env.KEY_MANAGER) {
+  if (env.SAML_RUNTIME_PORTS || env.KEY_MANAGER) {
     const secret = await getKeyManagerSecret(env as Env, tenantId, {
       secretRef,
     });
@@ -170,6 +175,13 @@ export function resolveSAMLTransientNameIDStore(
 export function resolveSAMLPersistentNameIDRegistryStore(
   env: SAMLTransientNameIDStoreSource
 ): SAMLPersistentNameIDRegistryStore | undefined {
+  if (env.ENABLE_SAML_DR_EXPORT === 'true') {
+    if (!env.SESSION_REVOCATION_STORE) throw new Error('saml_dr_nameid_unavailable');
+    return createSamlDrPersistentNameIdRegistry({
+      ...env,
+      SESSION_REVOCATION_STORE: env.SESSION_REVOCATION_STORE,
+    });
+  }
   return env.KV ?? (env.STATE_STORE as SAMLPersistentNameIDRegistryStore | undefined);
 }
 

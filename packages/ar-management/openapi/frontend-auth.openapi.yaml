@@ -3,7 +3,14 @@ info:
   title: Authrim Frontend Auth Discovery API
   version: 0.4.2
   summary: Login UI discovery and grant bootstrap endpoints.
-  description: OpenAPI contract for frontend authentication discovery endpoints owned by the management Worker.
+  description: >
+    OpenAPI contract for frontend authentication discovery endpoints owned by the management Worker.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 servers:
   - url: https://{tenant_domain}
     variables:

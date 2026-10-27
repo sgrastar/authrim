@@ -1,3 +1,4 @@
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { D1Database } from '@cloudflare/workers-types';
 import {
@@ -85,39 +86,43 @@ function logDirectoryFailure(
 
 export class AccountDirectoryEntrypoint extends WorkerEntrypoint<Env, AccountDirectoryRpcProps> {
   async publishAccountDirectory(input: unknown): Promise<AccountDirectoryPublishResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#publishAccountDirectory(input, env)
+    );
+  }
+
+  async #publishAccountDirectory(input: unknown, env: Env): Promise<AccountDirectoryPublishResult> {
     try {
-      const environmentId = authorized(this.ctx.props, this.env);
+      const environmentId = authorized(this.ctx.props, env);
       const publication = await validateAccountDirectoryPublication(
         input as AccountDirectoryPublication
       );
       return await runTenantBackupCoveredEffect(
-        this.env,
+        env,
         { tenantId: publication.tenantId },
         async () => {
-          if (!this.env.TENANT_RUNTIME_REGISTRY) {
+          if (!env.TENANT_RUNTIME_REGISTRY) {
             throw new Error('lookup_registry_snapshot_unavailable');
           }
-          const publicJwks = this.env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS;
+          const publicJwks = env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS;
           if (!publicJwks) throw new Error('lookup_registry_public_jwks_unavailable');
-          const lookupForBucket = await createLookupBucketWriteResolver(this.env);
-          const tenantCore = tenantCoreBinding(this.env, publication);
+          const lookupForBucket = await createLookupBucketWriteResolver(env);
+          const tenantCore = tenantCoreBinding(env, publication);
           const coordinator = new AccountDirectoryCoordinator({
             tenantCore,
             lookupForBucket,
             now: () => Math.floor(Date.now() / 1000),
             onAccountActivated: async (activatedPublication, now) => {
               await activatePublishedAccountAuthenticationState(
-                this.env,
+                env,
                 tenantCore,
                 activatedPublication,
                 now
               );
               const operationRepository = new AccountCreationOperationRepository(
-                await resolveAuthCorePersistenceAdapterFromEnv(
-                  this.env,
-                  'account-directory-operation',
-                  { tenantId: activatedPublication.tenantId }
-                )
+                await resolveAuthCorePersistenceAdapterFromEnv(env, 'account-directory-operation', {
+                  tenantId: activatedPublication.tenantId,
+                })
               );
               await operationRepository.recordDirectoryOutcome({
                 publication: activatedPublication,
@@ -128,7 +133,7 @@ export class AccountDirectoryEntrypoint extends WorkerEntrypoint<Env, AccountDir
                   'account-directory-lifecycle-events'
                 ),
               });
-              await processAccountLifecycleEventForOperation(this.env, tenantCore, {
+              await processAccountLifecycleEventForOperation(env, tenantCore, {
                 tenantId: activatedPublication.tenantId,
                 operationId: activatedPublication.operationId,
                 now,
@@ -151,24 +156,30 @@ export class AccountDirectoryEntrypoint extends WorkerEntrypoint<Env, AccountDir
   }
 
   async removeAccountDirectory(input: unknown): Promise<AccountDirectoryPublishResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#removeAccountDirectory(input, env)
+    );
+  }
+
+  async #removeAccountDirectory(input: unknown, env: Env): Promise<AccountDirectoryPublishResult> {
     try {
-      authorized(this.ctx.props, this.env);
+      authorized(this.ctx.props, env);
       const publication = await validateAccountDirectoryRemovalPublication(
         input as AccountDirectoryRemovalPublication
       );
       return await runTenantBackupCoveredEffect(
-        this.env,
+        env,
         { tenantId: publication.tenantId },
         async () => {
-          if (!this.env.TENANT_RUNTIME_REGISTRY) {
+          if (!env.TENANT_RUNTIME_REGISTRY) {
             throw new Error('lookup_registry_snapshot_unavailable');
           }
-          if (!this.env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS) {
+          if (!env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS) {
             throw new Error('lookup_registry_public_jwks_unavailable');
           }
           const coordinator = new AccountDirectoryRemovalCoordinator({
-            tenantCore: tenantCoreBinding(this.env, publication),
-            lookupForBucket: await createLookupBucketWriteResolver(this.env),
+            tenantCore: tenantCoreBinding(env, publication),
+            lookupForBucket: await createLookupBucketWriteResolver(env),
             now: () => Math.floor(Date.now() / 1000),
           });
           return coordinator.remove(publication);

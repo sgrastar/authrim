@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   getView: vi.fn(),
   resume: vi.fn(),
   download: vi.fn(),
+  receipt: vi.fn(),
   cancel: vi.fn(),
   audit: vi.fn(),
   create: vi.fn(),
@@ -73,6 +74,9 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/operation-request', ()
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/published-artifact-reader', () => ({
   openTenantBackupDownload: state.download,
+}));
+vi.mock('../tenant-backup-export-receipt', () => ({
+  readTenantBackupExportReceipt: state.receipt,
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/upload-store', () => ({
   TENANT_BACKUP_UPLOAD_PART_BYTES: 8 * 1024 * 1024,
@@ -854,6 +858,24 @@ it('creates an export with the canonical source and returns only waiting progres
     })
   );
 });
+it('keeps an export that carries environment-wide SAML DR data to a global administrator', async () => {
+  const env = {
+    TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32),
+    EXPORT_ARTIFACTS: {},
+    ENABLE_SAML_DR_EXPORT: 'true',
+  };
+  const body = JSON.stringify({ idempotencyKey: 'request', selection });
+  // The tenant's own export permission does not reach environment-wide settings and secrets.
+  expect((await request('exports', 'POST', body, env)).status).toBe(403);
+  expect(state.create).not.toHaveBeenCalled();
+  auth = {
+    ...auth,
+    tenantScope: ['*'],
+    globalPermissions: [ADMIN_PERMISSIONS.BACKUPS_EXPORT],
+  };
+  expect((await request('exports', 'POST', body, env)).status).toBe(201);
+  expect(state.create).toHaveBeenCalledTimes(1);
+});
 it('rejects source injection, missing export permission and sensitive detail without permission', async () => {
   const env = { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), EXPORT_ARTIFACTS: {} };
   expect(
@@ -1059,5 +1081,55 @@ it('does not stream when audit fails and reports expired downloads without audit
   expect(
     (await request('operation/download', 'GET', undefined, { EXPORT_ARTIFACTS: {} })).status
   ).toBe(409);
+  expect(state.audit).not.toHaveBeenCalled();
+});
+
+it('returns an independently authenticated export receipt only after a successful audit', async () => {
+  const receipt = {
+    formatVersion: 1,
+    operationId: 'operation',
+    receipt: { parts: [{ size: 7, sha256: 'a'.repeat(64) }] },
+  };
+  state.receipt.mockResolvedValue(receipt);
+  const response = await request('operation/export-receipt');
+  expect(response.status).toBe(200);
+  expect(response.headers.get('Cache-Control')).toBe('no-store');
+  expect(await response.json()).toEqual(receipt);
+  expect(state.receipt).toHaveBeenCalledWith(
+    expect.objectContaining({
+      tenantId: 'tenant-a',
+      operationId: 'operation',
+      intent: expect.objectContaining({ kind: 'export' }) as unknown,
+    })
+  );
+  expect(state.audit).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      action: 'tenant_backup.export_receipt_read',
+      resourceId: 'operation',
+    })
+  );
+  state.audit.mockResolvedValue(null);
+  expect((await request('operation/export-receipt')).status).toBe(503);
+});
+it.each(['permission', 'stale', 'no-mfa', 'machine', 'tenant', 'sensitive'])(
+  'denies export receipt for %s without reading metadata',
+  async (kind) => {
+    if (kind === 'permission') auth.permissions = [ADMIN_PERMISSIONS.BACKUPS_READ];
+    if (kind === 'stale') auth.authenticationTimeMs = 1;
+    if (kind === 'no-mfa') auth.mfaVerified = false;
+    if (kind === 'machine') auth.actorType = 'agent';
+    if (kind === 'tenant') auth.tenantId = 'tenant-b';
+    if (kind === 'sensitive')
+      state.load.mockResolvedValue({ kind: 'export', selection: { logs: { sensitive: true } } });
+    expect((await request('operation/export-receipt')).status).toBe(403);
+    expect(state.receipt).not.toHaveBeenCalled();
+  }
+);
+it('redacts receipt failures and never audits unavailable metadata as successful', async () => {
+  state.receipt.mockRejectedValue(new Error('PRIVATE: source object or database details'));
+  const response = await request('operation/export-receipt');
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: 'backup_export_receipt_unavailable' });
   expect(state.audit).not.toHaveBeenCalled();
 });

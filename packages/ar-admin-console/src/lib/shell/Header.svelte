@@ -4,7 +4,8 @@
 	import IconButton from '$lib/ui/primitives/IconButton.svelte';
 	import AccountMenu from './AccountMenu.svelte';
 	import DisplayMenu from './DisplayMenu.svelte';
-	import LanguageSwitch from './LanguageSwitch.svelte';
+	import NotificationArea from './NotificationArea.svelte';
+	import type { ShellNotification } from './notifications';
 	import ScopeSwitcher, { type ScopeOption } from './ScopeSwitcher.svelte';
 
 	interface Props {
@@ -14,9 +15,25 @@
 		account: { name: string; email?: string; initials: string };
 		onsignout: () => void;
 		onmenu: () => void;
+		/**
+		 * The notification area left of the display menu. Left out (undefined), the header has
+		 * no such area.
+		 */
+		notifications?: readonly ShellNotification[];
+		/** Called when a piece of information is dismissed from the notification list. */
+		ondismiss?: (id: string) => void;
 	}
 
-	let { scopes, currentScopeId, onscope, account, onsignout, onmenu }: Props = $props();
+	let {
+		scopes,
+		currentScopeId,
+		onscope,
+		account,
+		onsignout,
+		onmenu,
+		notifications,
+		ondismiss
+	}: Props = $props();
 </script>
 
 <header class="topbar">
@@ -31,7 +48,7 @@
 	<span class="topbar__divider" aria-hidden="true"></span>
 	<ScopeSwitcher options={scopes} currentId={currentScopeId} onselect={onscope} />
 	<span class="topbar__spacer"></span>
-	<span class="topbar__lang"><LanguageSwitch /></span>
+	{#if notifications}<NotificationArea items={notifications} {ondismiss} />{/if}
 	<DisplayMenu />
 	<AccountMenu {...account} {onsignout} />
 </header>
@@ -57,7 +74,9 @@
 		flex-shrink: 0;
 	}
 
-	.topbar > :global(.popover:first-of-type) {
+	/* The scope switcher gives way first, whether it is a menu or (one scope only) a plain label. */
+	.topbar > :global(.popover:first-of-type),
+	.topbar > :global(.switcher--static) {
 		flex-shrink: 1;
 	}
 
@@ -121,8 +140,7 @@
 		/* Keep only "which scope", display settings and the account; the rest moves into the
 		   drawer. The brand mark alone identifies the product next to the menu button. */
 		.brand__name,
-		.topbar__divider,
-		.topbar__lang {
+		.topbar__divider {
 			display: none;
 		}
 	}

@@ -1,6 +1,15 @@
+import {
+  environmentReplicationGrantsRouter,
+  environmentReplicationMachineRouter,
+  isEnvironmentReplicationControlRequest,
+} from './routes/replication-environments';
 import { processTenantBackupMaintenance } from './tenant-backup-services';
 import { processTenantBackupOperations } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupExportAdapter } from './tenant-backup-production-export';
+import {
+  runSamlDrCoveredFetch,
+  runSamlDrCoveredOperation,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   serviceGroupRestart,
   serviceGroupRecover,
@@ -731,6 +740,10 @@ import { getSessionShards, updateSessionShards } from './routes/settings/session
 import { getChallengeShards, updateChallengeShards } from './routes/settings/challenge-shards';
 import { approvalArtifactsRouter } from './routes/approval-artifacts';
 import { approvalReceiptsRouter } from './routes/approval-receipts';
+import {
+  replicationBackupMachineRouter,
+  isReplicationBackupControlRequest,
+} from './routes/replication-backups';
 import { stepUpRouter } from './routes/step-up';
 import {
   getPartitionSettings,
@@ -2165,6 +2178,9 @@ app.route('/api/admin', policyRouter);
 app.route('/api/admin', adminManagementRouter);
 app.route('/api/approval-artifacts', approvalArtifactsRouter);
 app.route('/api/approval-receipts', approvalReceiptsRouter);
+app.route('/api/replication-backups', replicationBackupMachineRouter);
+app.route('/api/admin/replication-environments', environmentReplicationGrantsRouter);
+app.route('/api/replication-environments', environmentReplicationMachineRouter);
 app.route('/auth/step-up', stepUpRouter);
 
 // =============================================================================
@@ -4225,7 +4241,9 @@ const TENANT_BACKUP_SCHEDULED_BUDGET_MS = 15_000;
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const log = createLogger().module('SCHEDULED');
   try {
-    const backup = await processTenantBackupMaintenance(env);
+    const backup = await runSamlDrCoveredOperation(env, undefined, (covered) =>
+      processTenantBackupMaintenance(covered)
+    );
     if (backup.keysRemoved > 0) log.info('Expired backup operation keys removed', backup);
   } catch {
     log.warn('Backup operation key maintenance failed', { errorType: 'BackupMaintenanceError' });
@@ -4233,16 +4251,39 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 
   if (env.TENANT_BACKUP_WRAPPING_KEY && env.EXPORT_ARTIFACTS) {
     try {
+      const startedAt = Date.now();
       const operations = await processTenantBackupOperations(
         env,
         (context) => createProductionTenantBackupExportAdapter(env, context),
         new AbortController().signal,
         Date.now,
-        ['export', 'import'],
+        env.ENABLE_SAML_DR_EXPORT === 'true' ? ['export'] : ['export', 'import'],
         TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT,
         TENANT_BACKUP_SCHEDULED_BUDGET_MS,
         TENANT_BACKUP_SCHEDULED_TICK_TRANSITIONS
       );
+      if (env.ENABLE_SAML_DR_EXPORT === 'true') {
+        const remainingTime = TENANT_BACKUP_SCHEDULED_BUDGET_MS - (Date.now() - startedAt);
+        // A failed batch may have spent its entire transition cap. Reserve it conservatively.
+        const remainingTransitions =
+          TENANT_BACKUP_SCHEDULED_TICK_TRANSITIONS -
+          operations.advanced -
+          operations.failures * TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT;
+        if (remainingTime > 0 && remainingTransitions > 0) {
+          await runSamlDrCoveredOperation(env, undefined, (covered) =>
+            processTenantBackupOperations(
+              covered,
+              (context) => createProductionTenantBackupExportAdapter(covered, context),
+              new AbortController().signal,
+              Date.now,
+              ['import'],
+              Math.min(TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT, remainingTransitions),
+              remainingTime,
+              remainingTransitions
+            )
+          );
+        }
+      }
       if (operations.inspected > 0)
         log.info('Tenant backup operation scheduler completed', operations);
     } catch (error) {
@@ -4253,8 +4294,10 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   }
 
   try {
-    await runTenantBackupCoveredEffect(env, { environment: true }, () =>
-      handleCoveredScheduled(event, env, log)
+    await runSamlDrCoveredOperation(env, undefined, (covered) =>
+      runTenantBackupCoveredEffect(covered, { environment: true }, () =>
+        handleCoveredScheduled(event, covered, log)
+      )
     );
   } catch (error) {
     log.warn('Scheduled mutations deferred by backup admission', {
@@ -4805,12 +4848,71 @@ async function runFetchWithCoveredDeferredEffects(
   return response;
 }
 
+/** Literal deployed capability catalog; the live verifier binds it to the Worker version. */
+export const SAML_DR_WRITER_SURFACES = [
+  'fetch',
+  'scheduled.maintenance',
+  'scheduled.import-backup',
+  'scheduled.ordinary',
+  'queue',
+  'AccountDirectoryEntrypoint.publishAccountDirectory',
+  'AccountDirectoryEntrypoint.removeAccountDirectory',
+  'AuthAccountProvisioningEntrypoint.listExternalIdpPiiSourceShards',
+  'AuthAccountProvisioningEntrypoint.getExternalIdpRouteRemovalStatus',
+  'AuthAccountProvisioningEntrypoint.removeExternalIdpRoute',
+  'AuthAccountProvisioningEntrypoint.publishExternalIdpRoute',
+  'AuthAccountProvisioningEntrypoint.publishAuthPasskeyRoute',
+  'AuthAccountProvisioningEntrypoint.publishAuthDirectoryRoute',
+  'AuthAccountProvisioningEntrypoint.publishAuthDidRoute',
+  'AuthAccountProvisioningEntrypoint.getAuthAccountProvisioningStatus',
+  'AuthAccountProvisioningEntrypoint.provisionAuthAccount',
+  'AuthAccountProvisioningEntrypoint.provisionExternalIdpAccount',
+  'AuthAccountProvisioningEntrypoint.getExternalIdpAccountProvisioningStatus',
+] as const;
+export const SAML_DR_COORDINATOR_SURFACES = [
+  'scheduled.export-backup',
+  'test.run-scheduled',
+  'fetch.replication-export-control',
+] as const;
+export const SAML_DR_READ_ONLY_SURFACES = ['GuestUpgradeReadinessEntrypoint.read'] as const;
+
+// Export control must remain available while the source's business writers are drained.
+// This isolated router authenticates its own narrow, revocable export grant on every request;
+// it has no business mutation, import, login, generic Admin, or user-supplied destination route.
+const replicationBackupControlApp = new Hono<{ Bindings: Env }>()
+  .route('/api/replication-backups', replicationBackupMachineRouter)
+  .route('/api/replication-environments', environmentReplicationMachineRouter);
+
 export default {
   fetch(request: Request, env: Env, executionContext?: ExecutionContext) {
     const effectiveEnv = executionContext
       ? attachInternalAccountDirectoryBinding(env, executionContext)
       : env;
     const pathname = new URL(request.url).pathname;
+    if (
+      isReplicationBackupControlRequest(request) ||
+      isEnvironmentReplicationControlRequest(request)
+    ) {
+      if (new URL(request.url).protocol !== 'https:')
+        return new Response('HTTPS required', {
+          status: 426,
+          headers: { 'Cache-Control': 'no-store' },
+        });
+      return replicationBackupControlApp.fetch(request, effectiveEnv, executionContext);
+    }
+    if (env.ENABLE_SAML_DR_EXPORT === 'true') {
+      // This authenticated, test-only route executes the export coordinator itself. Every other
+      // HTTP route (including GET and backup control requests) remains behind writer admission.
+      if (
+        request.method === 'POST' &&
+        pathname === '/api/admin/test/run-scheduled' &&
+        env.ENABLE_TEST_ENDPOINTS === 'true'
+      )
+        return app.fetch(request, effectiveEnv, executionContext);
+      return runSamlDrCoveredFetch(effectiveEnv, executionContext, async (covered, tracked) =>
+        app.fetch(request, covered, tracked)
+      );
+    }
     if (
       ['GET', 'HEAD', 'OPTIONS'].includes(request.method) ||
       (pathname === '/api/admin/test/run-scheduled' && env.ENABLE_TEST_ENDPOINTS === 'true')
@@ -4825,7 +4927,11 @@ export default {
     });
   },
   scheduled: handleScheduled,
-  queue: handleQueue,
+  queue(batch: MessageBatch<unknown>, env: Env, executionContext?: ExecutionContext) {
+    return runSamlDrCoveredOperation(env, executionContext, (covered) =>
+      handleQueue(batch, covered)
+    );
+  },
 };
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';
 export { AccountDirectoryEntrypoint } from './account-directory-entrypoint';

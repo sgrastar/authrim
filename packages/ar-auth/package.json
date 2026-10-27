@@ -5,7 +5,8 @@
   "private": true,
   "exports": {
     ".": "./src/index.ts",
-    "./flow-engine": "./src/flow-engine/index.ts"
+    "./flow-engine": "./src/flow-engine/index.ts",
+    "./aws-passkey-idp": "./src/aws-passkey-idp.ts"
   },
   "scripts": {
     "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",

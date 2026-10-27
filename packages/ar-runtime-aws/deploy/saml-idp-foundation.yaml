@@ -1,0 +1,588 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Private foundation for an Authrim SAML IdP disaster-recovery rehearsal - isolated two-AZ
+  VPC, encrypted versioned assets, one retained PostgreSQL instance and a disabled empty HTTP API;
+  optional retained DynamoDB authentication state; no DNS, routes or tenant import.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: Private two-AZ network -> one single-AZ RDS PostgreSQL instance + versioned S3 assets.
+    must:
+      - Create no public subnet, internet gateway, NAT gateway, or public database endpoint.
+      - A separate private bootstrap job creates Core, PII, and state databases before restore.
+      - Do not activate traffic or change the existing issuer DNS from this stack.
+      - Retain the database, assets and their network dependencies on stack deletion/replacement.
+      - Retained RDS and interface endpoints continue to incur cost until explicitly removed.
+      - Use a short lowercase stack name; physical bucket and DB names are stack-derived.
+      - PostgreSQL 17.11 and its instance class must be rechecked in the target Region before stack creation.
+      - The empty HTTP API has no execute-api endpoint, routes, stages, or custom domain.
+
+Parameters:
+  AuthStateBackend:
+    Type: String
+    Default: postgresql
+    AllowedValues: [postgresql, dynamodb]
+    Description: Fresh-install authentication state backend; changing an existing backend requires a separate migration.
+  DynamoDbGatewayPrefixListId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^pl-[0-9a-f]+$'
+    Description: Region-verified AWS DynamoDB prefix-list ID; required only for DynamoDB state.
+  VpcCidr:
+    Type: String
+    Default: 10.96.0.0/20
+    Description: Isolated VPC CIDR; verify that it does not conflict with intended future peers.
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/(1[6-9]|2[0-8])$'
+  PrivateSubnetACidr:
+    Type: String
+    Default: 10.96.0.0/24
+    Description: First private subnet CIDR inside VpcCidr.
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/(1[6-9]|2[0-8])$'
+  PrivateSubnetBCidr:
+    Type: String
+    Default: 10.96.1.0/24
+    Description: Second private subnet CIDR inside VpcCidr and in a different AZ.
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/(1[6-9]|2[0-8])$'
+  S3GatewayPrefixListId:
+    Type: String
+    AllowedPattern: '^pl-[0-9a-f]+$'
+    Description: >-
+      Region-matched AWS-managed com.amazonaws.<region>.s3 prefix-list ID, discovered and
+      checked before deployment; CloudFormation does not expose it from the gateway endpoint.
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedPattern: '^db\.[a-z0-9]+\.[a-z0-9]+$'
+    Description: >-
+      Small single-AZ rehearsal default. Verify engine and class availability, capacity and
+      required availability before production use.
+  AllocatedStorageGiB:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 65536
+    Description: RDS gp3 storage in GiB; size from the verified tenant snapshot before deploy.
+  BackupRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 35
+    Description: Automated RDS backup retention days, separate from retained stack resources.
+
+Rules:
+  RequireDynamoDbGatewayPrefix:
+    RuleCondition: !Equals [!Ref AuthStateBackend, dynamodb]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref DynamoDbGatewayPrefixListId, '']]
+        AssertDescription: DynamoDB state requires the regional DynamoDB gateway prefix list.
+  RejectUnusedDynamoDbGatewayPrefix:
+    RuleCondition: !Equals [!Ref AuthStateBackend, postgresql]
+    Assertions:
+      - Assert: !Equals [!Ref DynamoDbGatewayPrefixListId, '']
+        AssertDescription: PostgreSQL state must not include a DynamoDB gateway prefix list.
+
+Conditions:
+  HasDynamoAuthState: !Equals [!Ref AuthStateBackend, dynamodb]
+
+Resources:
+  AuthStateTable:
+    Type: AWS::DynamoDB::Table
+    Condition: HasDynamoAuthState
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Stores tenant-scoped authentication state independently of the SQL databases.
+        must:
+          - Retain encryption, point-in-time recovery, deletion protection and the pk/sk key contract.
+          - TTL is cleanup only; application checks expiration before accepting credentials or state.
+          - Backend changes require an explicit migration; never delete the retained prior generation.
+    Properties:
+      TableName: !Sub '${AWS::StackName}-auth-state'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  DynamoDbGatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: HasDynamoAuthState
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Provides private DynamoDB access from both subnets without NAT or internet routes.
+        must:
+          - Permit data operations only on this stack's selected table and same-account principals.
+          - IAM role policies and boundaries must independently permit every operation.
+    Properties:
+      VpcId: !Ref PrivateVpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+      RouteTableIds: [!Ref PrivateRouteTableA, !Ref PrivateRouteTableB]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:ConditionCheckItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:DescribeTable
+            Resource: !GetAtt AuthStateTable.Arn
+            Condition:
+              StringEquals:
+                aws:PrincipalAccount: !Ref AWS::AccountId
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  AuthStateBootstrapEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Condition: HasDynamoAuthState
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets maintenance and isolated browser Lambdas reach the selected DynamoDB endpoint.
+        must:
+          - Use only TCP 443 and the Region-verified DynamoDB prefix list; no internet-wide egress.
+    Properties:
+      GroupId: !Ref BootstrapSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: !Ref DynamoDbGatewayPrefixListId
+      Description: Authentication state via private DynamoDB gateway
+
+  PrivateVpc:
+    Type: AWS::EC2::VPC
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Isolates DR data and private bootstrap/serving network from existing VPCs.
+        must:
+          - DNS support and hostnames are required for RDS and private Secrets Manager DNS.
+          - Do not attach an internet gateway or add public routes.
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-private'
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VpcId: !Ref PrivateVpc
+      CidrBlock: !Ref PrivateSubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-private-a'
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VpcId: !Ref PrivateVpc
+      CidrBlock: !Ref PrivateSubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-private-b'
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VpcId: !Ref PrivateVpc
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  PrivateRouteTableB:
+    Type: AWS::EC2::RouteTable
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VpcId: !Ref PrivateVpc
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  PrivateRouteA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTableA
+
+  PrivateRouteB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTableB
+
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Stores immutable-version-addressed Lambda ZIPs, encrypted backups, supplements and manifests.
+        must:
+          - Keep versioning, encryption, public access block and retention enabled.
+          - Never use an unpinned latest object version as activation evidence.
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-assets'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  AssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Refuses plaintext transport for both bucket metadata and all stored object versions.
+        must:
+          - Cover the bucket ARN and object ARN without granting public access.
+          - Remain attached when the retained asset bucket outlives this stack.
+    Properties:
+      Bucket: !Ref AssetsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${AssetsBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${AssetsBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  BootstrapSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Limits a temporary private Lambda bootstrap job to database, secret and asset access.
+        must:
+          - No inbound or internet-wide outbound access.
+          - This group is not the serving Lambda group from the workload stack.
+    Properties:
+      GroupDescription: Authrim private restore/bootstrap job egress
+      VpcId: !Ref PrivateVpc
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+      SecurityGroupEgress:
+        - Description: PostgreSQL bootstrap and restore
+          IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          DestinationSecurityGroupId: !Ref DatabaseSecurityGroup
+        - Description: Secrets Manager private endpoint
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId: !Ref SecretsEndpointSecurityGroup
+        - Description: Versioned S3 asset objects via gateway endpoint
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationPrefixListId: !Ref S3GatewayPrefixListId
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Gives private PostgreSQL ingress only to explicitly approved bootstrap and serving groups.
+        must:
+          - No CIDR-wide or public ingress.
+          - Replace EC2's default allow-all egress with a non-routable localhost-only rule.
+          - Workload stack must add its serving Lambda group as a separate ingress rule.
+    Properties:
+      GroupDescription: Authrim private PostgreSQL ingress
+      VpcId: !Ref PrivateVpc
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+      SecurityGroupEgress:
+        - Description: Remove default allow-all egress; stateful replies remain allowed
+          IpProtocol: '-1'
+          CidrIp: 127.0.0.1/32
+
+  BootstrapDatabaseIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroup
+      Description: PostgreSQL from private bootstrap job only
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref BootstrapSecurityGroup
+
+  SecretsEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Restricts the Secrets Manager private endpoint to approved Lambda security groups.
+        must:
+          - No VPC-wide or public ingress.
+          - Replace EC2's default allow-all egress with a non-routable localhost-only rule.
+          - Workload stack must add its serving Lambda group as a separate ingress rule.
+    Properties:
+      GroupDescription: Authrim private Secrets Manager endpoint ingress
+      VpcId: !Ref PrivateVpc
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+      SecurityGroupEgress:
+        - Description: Remove default allow-all egress; stateful replies remain allowed
+          IpProtocol: '-1'
+          CidrIp: 127.0.0.1/32
+
+  BootstrapSecretsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      GroupId: !Ref SecretsEndpointSecurityGroup
+      Description: HTTPS from private bootstrap job only
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref BootstrapSecurityGroup
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Routes private subnet S3 reads/writes without NAT; identity policies constrain objects.
+        must:
+          - Attach both private route tables.
+          - Prefix-list parameter must be the S3 list for this Region.
+    Properties:
+      VpcId: !Ref PrivateVpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      RouteTableIds:
+        - !Ref PrivateRouteTableA
+        - !Ref PrivateRouteTableB
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  SecretsInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets private bootstrap and serving Lambdas retrieve pinned secrets without NAT.
+        must:
+          - Keep private DNS and VPC DNS enabled.
+          - Keep ingress scoped to bootstrap and serving security groups.
+    Properties:
+      VpcId: !Ref PrivateVpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref SecretsEndpointSecurityGroup
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      DBSubnetGroupDescription: Two private Availability Zones for Authrim DR PostgreSQL
+      DBSubnetGroupName: !Sub '${AWS::StackName}-db-subnets'
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+  DatabaseParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Enforces TLS at the server even when a client is misconfigured.
+        must:
+          - Match the pinned PostgreSQL 17 engine version.
+          - Keep rds.force_ssl enabled.
+    Properties:
+      Description: Authrim PostgreSQL TLS enforcement
+      Family: postgres17
+      Parameters:
+        rds.force_ssl: '1'
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Pinned PostgreSQL 17.11 on one AZ for a restricted DR rehearsal; capacity and HA need measured approval.
+        must:
+          - Remain private, storage encrypted, TLS-only, deletion protected and retained.
+          - Managed master secret is for offline bootstrap, not the serving Lambda.
+          - Core, PII and state logical databases are created later by a private bootstrap job.
+          - Review and test engine minor-version upgrades before changing the explicit version.
+    Properties:
+      DBInstanceIdentifier: !Sub '${AWS::StackName}-postgres'
+      Engine: postgres
+      EngineVersion: '17.11'
+      EngineLifecycleSupport: open-source-rds-extended-support-disabled
+      DBInstanceClass: !Ref DatabaseInstanceClass
+      AllocatedStorage: !Ref AllocatedStorageGiB
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      MasterUsername: authrimowner
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      DBParameterGroupName: !Ref DatabaseParameterGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      DeletionProtection: true
+      AutoMinorVersionUpgrade: false
+      CopyTagsToSnapshot: true
+
+  EmptyHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Creates a tagged API identity before the workload role is bound to its exact ID.
+        must:
+          - Keep the default execute-api endpoint disabled.
+          - Add no route, stage, integration, or public domain in this stack.
+          - Retain the API while the workload stack may still reference it.
+    Properties:
+      Name: !Sub '${AWS::StackName}-saml-idp'
+      ProtocolType: HTTP
+      DisableExecuteApiEndpoint: true
+      Tags:
+        'authrim:stack': !Ref 'AWS::StackName'
+
+Outputs:
+  AuthStateTableArn:
+    Condition: HasDynamoAuthState
+    Description: Exact selected authentication-state table for serving and maintenance IAM policies.
+    Value: !GetAtt AuthStateTable.Arn
+  DynamoDbGatewayPrefixListId:
+    Condition: HasDynamoAuthState
+    Description: Region-verified DynamoDB prefix list for private serving egress.
+    Value: !Ref DynamoDbGatewayPrefixListId
+  VpcId:
+    Description: Private VPC for the workload and offline bootstrap job.
+    Value: !Ref PrivateVpc
+  PrivateSubnetIds:
+    Description: Comma-separated private subnet IDs in two Availability Zones.
+    Value: !Join [',', [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+  BootstrapSecurityGroupId:
+    Description: Attach to a private offline bootstrap Lambda, not the serving Lambda.
+    Value: !Ref BootstrapSecurityGroup
+  DatabaseSecurityGroupId:
+    Description: Workload stack adds only its serving Lambda security group as an ingress source.
+    Value: !Ref DatabaseSecurityGroup
+  SecretsEndpointSecurityGroupId:
+    Description: Workload stack adds only its serving Lambda security group as an ingress source.
+    Value: !Ref SecretsEndpointSecurityGroup
+  S3GatewayPrefixListId:
+    Description: Region-verified AWS-managed S3 prefix list passed to the workload stack.
+    Value: !Ref S3GatewayPrefixListId
+  AssetsBucketName:
+    Description: Encrypted versioned private bucket for ZIP, backup, supplement and manifest.
+    Value: !Ref AssetsBucket
+  DatabaseEndpointAddress:
+    Description: Private RDS hostname; do not publish as an internet endpoint.
+    Value: !GetAtt Database.Endpoint.Address
+  DatabaseEndpointPort:
+    Description: Private RDS PostgreSQL port.
+    Value: !GetAtt Database.Endpoint.Port
+  DatabaseMasterSecretArn:
+    Description: RDS-managed master secret for private bootstrap only; never grant to serving Lambda.
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+  HttpApiId:
+    Description: Disabled empty HTTP API ID; workload adds exact scoped routes and domain after restore.
+    Value: !Ref EmptyHttpApi

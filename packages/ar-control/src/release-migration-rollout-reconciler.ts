@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   decideControlProvisioningFailure,
   type ApplyMigrationReleaseInput,
@@ -246,7 +247,7 @@ export class ReleaseMigrationRolloutReconciler {
         }
       }
     );
-    await Promise.all(workers);
+    await samlDrAll(workers);
 
     const awaitingSetup = await this.advanceActiveOperations(this.now());
     return {

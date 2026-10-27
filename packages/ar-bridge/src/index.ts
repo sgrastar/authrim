@@ -20,6 +20,10 @@
  * - DELETE /api/admin/external-providers/:id - Delete provider
  */
 
+import {
+  runSamlDrCoveredFetch,
+  runSamlDrCoveredOperation,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
@@ -340,8 +344,17 @@ async function scheduled(
 }
 
 // Export for Cloudflare Workers
+export const SAML_DR_WRITER_SURFACES = ['fetch', 'scheduled'] as const;
 export default {
-  fetch: app.fetch,
-  scheduled,
+  fetch(request: Request, env: Env, context: ExecutionContext) {
+    return runSamlDrCoveredFetch(env, context, (coveredEnv, coveredContext) =>
+      Promise.resolve(app.fetch(request, coveredEnv, coveredContext))
+    );
+  },
+  scheduled(controller: ScheduledController, env: Env, context: ExecutionContext) {
+    return runSamlDrCoveredOperation(env, context, (coveredEnv, coveredContext) =>
+      scheduled(controller, coveredEnv, coveredContext ?? context)
+    );
+  },
 };
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';
