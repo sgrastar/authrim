@@ -110,7 +110,7 @@
 {/if}
 
 <div class="table-wrap">
-	<table class="data">
+	<table class="data" class:data--many={columns.length >= 6}>
 		<caption class="sr-only">{caption}</caption>
 		<colgroup>
 			{#if selectable}<col class="data__select-col" />{/if}
@@ -343,5 +343,10 @@
 		.data {
 			min-width: 560px;
 		}
+	}
+
+	/* Keep six-or-more column tables readable inside the shared page frame. */
+	.data.data--many {
+		min-width: 960px;
 	}
 </style>

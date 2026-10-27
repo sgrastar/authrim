@@ -17,14 +17,14 @@
 			docs: {
 				description: {
 					component:
-						'Page body. `standard` (1100px) for settings and forms, `wide` (1600px) for lists, tables, logs and dashboards. Both are start-aligned so the content edge never jumps; children reveal top to bottom when the page is entered.'
+						'Page body. Every page uses the same 1100px maximum width and shrinks with the viewport. It is start-aligned so the content edge never jumps; children reveal top to bottom when the page is entered.'
 				}
 			}
 		}
 	});
 </script>
 
-<Story name="Settings (standard width)">
+<Story name="Settings">
 	{#snippet template()}
 		<Page>
 			<PageHeader title={sample('authMethodsTitle')} description={sample('authMethodsDesc')} />
@@ -33,9 +33,9 @@
 	{/snippet}
 </Story>
 
-<Story name="List (wide width)">
+<Story name="List">
 	{#snippet template()}
-		<Page width="wide">
+		<Page>
 			<PageHeader title={sample('usersTitle')} description={sample('usersDesc')}>
 				{#snippet actions()}<Button variant="primary" icon="plus">{sample('createUser')}</Button
 					>{/snippet}

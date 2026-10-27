@@ -181,7 +181,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.apps.all',
 				icon: 'app',
 				platform: 'template',
-				wide: true,
 				ownsSide: true,
 				legacyRoutes: [
 					'/admin/clients',
@@ -502,7 +501,6 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 				id: 'list',
 				label: 'nav.pt.list',
 				icon: 'building',
-				wide: true,
 				legacyRoutes: ['/admin/tenants', '/admin/tenants/[id]']
 			},
 			{
@@ -542,7 +540,6 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 				id: 'users',
 				label: 'nav.pa.users',
 				icon: 'users',
-				wide: true,
 				legacyRoutes: ['/admin/admins (全テナント)', '/admin/admins/[id]']
 			},
 			{
@@ -639,7 +636,6 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 				id: 'jobs',
 				label: 'nav.pi.jobs',
 				icon: 'list',
-				wide: true,
 				legacyRoutes: ['/admin/jobs']
 			}
 		],
@@ -656,7 +652,6 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 				id: 'queue',
 				label: 'nav.pv.queue',
 				icon: 'check',
-				wide: true,
 				badge: '3',
 				legacyRoutes: ['/admin/approvals']
 			},
@@ -664,7 +659,6 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 				id: 'elevations',
 				label: 'nav.pv.elevations',
 				icon: 'lock',
-				wide: true,
 				legacyRoutes: ['/admin/agent-access/elevations/[id]']
 			}
 		],

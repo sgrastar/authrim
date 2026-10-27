@@ -3,6 +3,8 @@
 		value: string;
 		label: string;
 		description?: string;
+		/** Longer explanation behind a "?" beside this option. */
+		info?: string;
 		disabled?: boolean;
 	}
 </script>
@@ -11,6 +13,7 @@
 	import { useChangeMark } from '../save/save-scope';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import { useBusy } from '../busy/busy';
+	import InfoTip from './InfoTip.svelte';
 	/**
 	 * One choice from a short list where every option should stay visible (up to ~5). Longer
 	 * lists use Select; compact toolbars use SegmentedControl. Native radios, so arrow keys move
@@ -22,6 +25,8 @@
 		value?: string;
 		name?: string;
 		orientation?: 'vertical' | 'horizontal';
+		/** Keep the group name for screen readers when a FieldRow shows it visually. */
+		hideLabel?: boolean;
 		disabled?: boolean;
 		onchange?: (value: string) => void;
 		/** Path in the SaveScope draft; once the value differs from the saved one it is marked. */
@@ -36,6 +41,7 @@
 		value = $bindable(''),
 		name,
 		orientation = 'vertical',
+		hideLabel = false,
 		disabled = false,
 		onchange,
 		field,
@@ -56,28 +62,38 @@
 	class:is-changed={isChanged}
 	disabled={disabled || busy()}
 >
-	<legend class="radios__legend"
+	<legend class="radios__legend" class:sr-only={hideLabel}
 		>{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}</legend
 	>
-	{#each options as option (option.value)}
-		<label class="radio" class:is-disabled={option.disabled}>
-			<input
-				type="radio"
-				name={groupName}
-				value={option.value}
-				checked={value === option.value}
-				disabled={option.disabled}
-				onchange={() => {
-					value = option.value;
-					onchange?.(option.value);
-				}}
-			/>
-			<span class="radio__dot" aria-hidden="true"></span>
-			<span class="radio__text">
-				<span class="radio__label">{option.label}</span>
-				{#if option.description}<span class="radio__desc">{option.description}</span>{/if}
-			</span>
-		</label>
+	{#each options as option, index (option.value)}
+		<div class="radio-option">
+			<label class="radio" class:is-disabled={option.disabled}>
+				<input
+					type="radio"
+					name={groupName}
+					value={option.value}
+					checked={value === option.value}
+					disabled={option.disabled}
+					aria-describedby={option.info ? `${uid}-info-${index}` : undefined}
+					onchange={() => {
+						value = option.value;
+						onchange?.(option.value);
+					}}
+				/>
+				<span class="radio__dot" aria-hidden="true"></span>
+				<span class="radio__text">
+					<span class="radio__label">{option.label}</span>
+					{#if option.description}<span class="radio__desc">{option.description}</span>{/if}
+				</span>
+			</label>
+			{#if option.info}
+				<InfoTip
+					label="{t('common.moreInfo')}: {option.label}"
+					text={option.info}
+					id="{uid}-info-{index}"
+				/>
+			{/if}
+		</div>
 	{/each}
 </fieldset>
 
@@ -96,7 +112,7 @@
 		gap: 10px 20px;
 	}
 
-	.radios--horizontal .radios__legend {
+	.radios--horizontal .radios__legend:not(.sr-only) {
 		width: 100%;
 	}
 
@@ -106,6 +122,12 @@
 		font-size: var(--fs-label);
 		font-weight: var(--fw-semibold);
 		color: var(--text-secondary);
+	}
+
+	.radio-option {
+		display: inline-flex;
+		align-items: flex-start;
+		gap: 2px;
 	}
 
 	.radio {

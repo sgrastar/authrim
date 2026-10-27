@@ -91,7 +91,7 @@
 
 	.datetime__other {
 		color: var(--text-muted);
-		font-size: 0.9em;
+		font-size: var(--fs-caption);
 	}
 
 	.datetime--invalid {

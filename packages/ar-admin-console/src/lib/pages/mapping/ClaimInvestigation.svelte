@@ -153,7 +153,7 @@
 	}
 </script>
 
-<Page width="wide">
+<Page>
 	<PageHeader title={t('mc.ex.title')} description={t('mc.ex.desc')} />
 
 	{#if loadError}

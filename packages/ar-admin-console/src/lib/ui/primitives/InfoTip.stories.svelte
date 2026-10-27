@@ -13,7 +13,7 @@
 			docs: {
 				description: {
 					component:
-						'A "?" that shows a short explanation on hover or focus, for text that would crowd the layout if always shown (a checkbox\'s longer description, what a part in a list does). The bubble is in the top layer, beside the "?" or below it when there is no room, so no scrolling container clips it; Esc closes it. Point another control at the text with `id` + aria-describedby so screen readers read it too — Checkbox does this through its `info` prop.'
+						'A 16px SVG question icon (about a 13px drawn circle) in a 24 × 24px target. Its plain-text bubble uses the 12px caption size, regular weight, 1.45 line height, 8 × 10px padding and a 260px maximum width. It appears on hover or focus beside the "?", or below/above it when there is no room; Escape closes it. Point another control at the text with `id` + aria-describedby so screen readers read it too — Checkbox does this through its `info` prop.'
 				}
 			}
 		}

@@ -204,7 +204,7 @@
 	);
 </script>
 
-<Page width="wide">
+<Page>
 	{#if loadError}
 		<PageHeader title={t('mc.ch.title')} description={t('mc.ch.desc')} />
 		<Callout tone="warning" live>

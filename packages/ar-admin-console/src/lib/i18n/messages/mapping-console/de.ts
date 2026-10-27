@@ -40,13 +40,11 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.chain.stops': 'Endet hier',
 
 	'mc.ro.title': 'Mapping-Standards für Mandanten',
-	'mc.ro.desc':
-		'Lassen Sie ein Mapping-Set der Plattform zum Mandanten-Standard der gewählten Mandanten werden. Jeder Mandant wird einzeln geändert, und nur die nicht geänderten Mandanten werden erneut versucht.',
+	'mc.ro.desc': 'Weisen Sie ausgewählten Mandanten ein Plattform-Mapping-Set als Standard zu.',
 	'mc.ro.platformDefault': 'Plattform-Standard: {value}',
 	'mc.ro.setCard': 'Zu vergebendes Mapping-Set',
 	'mc.ro.setLabel': 'Mapping-Set',
-	'mc.ro.setHint':
-		'Wählen Sie aus den Mapping-Sets der Plattform. Es gilt für die Apps jedes Mandanten, die kein eigenes Mapping-Set angeben.',
+	'mc.ro.setHint': 'Dieses Set gilt für Apps der Mandanten ohne eigenes Mapping-Set.',
 	'mc.ro.choose': 'Auswählen…',
 	'mc.ro.existing': 'Mandanten, die bereits einen Mandanten-Standard haben',
 	'mc.ro.existing.skip': 'Unverändert lassen',
@@ -237,19 +235,17 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ch.saved': 'Gespeichert.',
 
 	'mc.app.title': 'Identity-Mapping von {app}',
-	'mc.app.desc':
-		'Welches Mapping das ID-Token und UserInfo dieser App verwenden. Ohne Auswahl gilt der Mandanten-Standard.',
+	'mc.app.desc': 'Wählen Sie das Mapping für ID-Token und UserInfo dieser App.',
 	'mc.app.current': 'Derzeit wirksam',
 	'mc.app.choice': 'Auswahl dieser App',
 	'mc.app.follow': 'Dem Mandanten-Standard folgen',
 	'mc.app.follow.desc':
-		'Keine Auswahl für diese App (Nicht gesetzt). Es gilt der Mandanten-Standard, ohne ihn der Plattform-Standard. Ändert sich der Standard, ändert sich auch diese App.',
+		'Es gilt der Mandanten-Standard, sonst der Plattform-Standard; spätere Änderungen werden übernommen.',
 	'mc.app.own': 'Nur für diese App ein Mapping-Set festlegen',
-	'mc.app.own.desc':
-		'Das gewählte Mapping-Set gilt. Diese App ändert sich nicht, wenn sich die Standards ändern.',
+	'mc.app.own.desc': 'Dieses Set gilt unabhängig von späteren Änderungen der Standards.',
 	'mc.app.none': 'Kein Mapping verwenden',
 	'mc.app.none.desc':
-		'Es gilt kein Mapping; nur die Standard-Claims werden gesendet. Diese App ändert sich nicht, wenn sich die Standards ändern.',
+		'Es werden nur Standard-Claims gesendet, unabhängig von späteren Änderungen der Standards.',
 	'mc.app.set': 'Mapping-Set für diese App',
 	'mc.app.setRequired': 'Wählen Sie ein Mapping-Set.',
 	'mc.app.would': 'Wirksam mit dieser Auswahl',

@@ -50,7 +50,25 @@
 	}
 </script>
 
-<Story name="Tenants">
+<Story
+	name="Tenants"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const select = await canvas.findByRole('combobox', { name: t('mc.ro.setLabel') });
+		const help = canvas.getByRole('button', {
+			name: `${t('common.moreInfo')}: ${t('mc.ro.setLabel')}`
+		});
+		const helpId = select.getAttribute('aria-describedby');
+		await expect(helpId).toBeTruthy();
+		await expect(document.getElementById(helpId!)).toHaveTextContent(t('mc.ro.setHint'));
+		await expect(help.closest('.field-row')).toContainElement(select);
+		await expect(help.closest('label')).toBeNull();
+		const group = canvas.getByRole('group', { name: t('mc.ro.existing') });
+		await expect(group.querySelector('legend')).toHaveClass('sr-only');
+		await userEvent.click(help);
+		await expect(select).toHaveValue('');
+	}}
+>
 	{#snippet template()}
 		<MappingRollout client={createFakeIdentityMapping()} />
 	{/snippet}

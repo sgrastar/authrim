@@ -159,10 +159,10 @@
 							{
 								value: 'follow',
 								label: t('mc.app.follow'),
-								description: t('mc.app.follow.desc')
+								info: t('mc.app.follow.desc')
 							},
-							{ value: 'own', label: t('mc.app.own'), description: t('mc.app.own.desc') },
-							{ value: 'none', label: t('mc.app.none'), description: t('mc.app.none.desc') }
+							{ value: 'own', label: t('mc.app.own'), info: t('mc.app.own.desc') },
+							{ value: 'none', label: t('mc.app.none'), info: t('mc.app.none.desc') }
 						]}
 						bind:value={draft!.value.mode}
 					/>

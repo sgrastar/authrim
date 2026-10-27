@@ -62,7 +62,7 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 		'Das FAPI-2.0-Sicherheitsprofil auf alle Apps des Mandanten anwenden.',
 	'set.page.appDefaults': 'App-Standards',
 	'set.page.appDefaults.desc':
-		'Regeln für Autorisierungsanfragen und Tokens, die für alle Apps des Mandanten gelten. Die Einstellungen einer App können eine Sicherheitsanforderung hinzufügen, aber keine aufheben.',
+		'Diese Regeln gelten für alle Apps des Mandanten; App-Einstellungen dürfen Sicherheitsanforderungen nicht abschwächen.',
 	'set.section.authRequests': 'Autorisierungsanfragen',
 	'set.section.authRequests.desc': 'Was die Anmeldeanfrage einer App enthalten muss.',
 	'set.section.authRequests.advanced': 'Signierte und verschlüsselte Request Objects',

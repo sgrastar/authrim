@@ -709,7 +709,7 @@
 
 	.menu__label.is-mono {
 		font-family: var(--font-mono);
-		font-size: 0.93em;
+		font-size: var(--fs-caption);
 	}
 
 	.menu__label.is-placeholder {

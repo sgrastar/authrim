@@ -39,13 +39,11 @@ export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.chain.stops': 'Stops here',
 
 	'mc.ro.title': 'Mapping defaults for tenants',
-	'mc.ro.desc':
-		'Make a platform set the tenant default of the tenants you choose. Each tenant is changed on its own, and only the tenants not changed are retried.',
+	'mc.ro.desc': 'Apply a platform mapping set as the default for selected tenants.',
 	'mc.ro.platformDefault': 'Platform default: {value}',
 	'mc.ro.setCard': 'Set to give',
 	'mc.ro.setLabel': 'Set',
-	'mc.ro.setHint':
-		'Choose from the platform’s sets. It applies to the apps of each tenant that do not name a set of their own.',
+	'mc.ro.setHint': 'This set applies to tenant apps that do not specify their own set.',
 	'mc.ro.choose': 'Choose…',
 	'mc.ro.existing': 'Tenants that already have a tenant default',
 	'mc.ro.existing.skip': 'Leave them as they are',
@@ -230,18 +228,16 @@ export const enMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ch.saved': 'Saved.',
 
 	'mc.app.title': 'Identity mapping of {app}',
-	'mc.app.desc':
-		'Which mapping this app’s ID token and UserInfo use. Without a choice it follows the tenant default.',
+	'mc.app.desc': 'Choose the mapping for this app’s ID token and UserInfo.',
 	'mc.app.current': 'In effect now',
 	'mc.app.choice': 'This app’s choice',
 	'mc.app.follow': 'Follow the tenant default',
 	'mc.app.follow.desc':
-		'No choice for this app (Not set). The tenant default applies, or the platform default when there is none. When the default changes, this app changes too.',
+		'Use the tenant default, or the platform default if none exists, and follow later changes.',
 	'mc.app.own': 'Set one for this app only',
-	'mc.app.own.desc': 'The set you choose applies. This app does not change when the defaults do.',
+	'mc.app.own.desc': 'Use the chosen set regardless of later default changes.',
 	'mc.app.none': 'Do not use a mapping',
-	'mc.app.none.desc':
-		'No mapping applies; only the standard claims are sent. This app does not change when the defaults do.',
+	'mc.app.none.desc': 'Send only standard claims, regardless of later default changes.',
 	'mc.app.set': 'Set for this app',
 	'mc.app.setRequired': 'Choose a set.',
 	'mc.app.would': 'In effect with this choice',

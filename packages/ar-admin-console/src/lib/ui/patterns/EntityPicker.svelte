@@ -390,7 +390,7 @@
 		align-items: center;
 		gap: 4px;
 		max-width: 100%;
-		height: var(--control-h-xs);
+		height: var(--control-h-sm);
 		padding-inline: 8px 2px;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-badge);
@@ -409,8 +409,8 @@
 	.chip__remove {
 		display: grid;
 		place-items: center;
-		width: 20px;
-		height: 20px;
+		width: var(--control-h-xs);
+		height: var(--control-h-xs);
 		padding: 0;
 		border: 0;
 		border-radius: var(--radius-round);

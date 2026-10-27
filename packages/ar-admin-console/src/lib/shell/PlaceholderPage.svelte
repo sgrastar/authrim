@@ -47,7 +47,7 @@
 	});
 </script>
 
-<Page width={item?.wide ? 'wide' : 'standard'}>
+<Page>
 	<PageHeader {title} />
 	{#if treatment}
 		<ScopeNote

@@ -113,7 +113,7 @@
 	const affected = $derived(plan?.apps.filter((app) => app.changes.length > 0) ?? []);
 </script>
 
-<Page width="wide">
+<Page>
 	<PageHeader title={t('mc.hist.title')} description={t('mc.hist.desc')} />
 
 	{#if loadError}

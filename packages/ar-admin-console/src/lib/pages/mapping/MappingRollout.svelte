@@ -16,6 +16,7 @@
 	import Callout from '$lib/ui/patterns/Callout.svelte';
 	import Card from '$lib/ui/patterns/Card.svelte';
 	import DataTable from '$lib/ui/patterns/DataTable.svelte';
+	import FieldRow from '$lib/ui/patterns/FieldRow.svelte';
 	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
 	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
@@ -41,6 +42,8 @@
 	}
 
 	let { client, onpreview }: Props = $props();
+	const uid = $props.id();
+	const setInfoId = `${uid}-set-help`;
 
 	let overview = $state<PlatformTenantsOverview | null>(null);
 	let sets = $state<MappingSetSummary[]>([]);
@@ -308,7 +311,7 @@
 		overview?.tenants.find((row) => row.tenant_id === id)?.display_name ?? id;
 </script>
 
-<Page width="wide">
+<Page>
 	<PageHeader title={t('mc.ro.title')} description={t('mc.ro.desc')} />
 
 	{#if loadError}
@@ -319,28 +322,38 @@
 	{:else if !overview}
 		<LoadingState label={t('mc.loading')} />
 	{:else}
-		<Card title={t('mc.ro.setCard')}>
-			<div class="form">
-				<p class="muted">
-					{t('mc.ro.platformDefault', { value: chainValueText(overview.platform_default) })}
-				</p>
-				<Select
-					label={t('mc.ro.setLabel')}
-					hint={t('mc.ro.setHint')}
-					placeholder={t('mc.ro.choose')}
-					options={sets.map((s) => ({ value: s.id, label: s.display_name ?? s.id }))}
-					bind:value={setId}
-				/>
-				<RadioGroup
-					label={t('mc.ro.existing')}
-					orientation="horizontal"
-					options={[
-						{ value: 'skip', label: t('mc.ro.existing.skip') },
-						{ value: 'overwrite', label: t('mc.ro.existing.overwrite') }
-					]}
-					value={policy}
-					onchange={(value) => (policy = value === 'overwrite' ? 'overwrite' : 'skip')}
-				/>
+		<Card
+			title={t('mc.ro.setCard')}
+			description={t('mc.ro.platformDefault', {
+				value: chainValueText(overview.platform_default)
+			})}
+		>
+			<div class="set-rows">
+				<FieldRow label={t('mc.ro.setLabel')} info={t('mc.ro.setHint')} infoId={setInfoId}>
+					<div class="set-control">
+						<Select
+							label={t('mc.ro.setLabel')}
+							hideLabel
+							describedBy={setInfoId}
+							placeholder={t('mc.ro.choose')}
+							options={sets.map((s) => ({ value: s.id, label: s.display_name ?? s.id }))}
+							bind:value={setId}
+						/>
+					</div>
+				</FieldRow>
+				<FieldRow label={t('mc.ro.existing')} align="text">
+					<RadioGroup
+						label={t('mc.ro.existing')}
+						hideLabel
+						orientation="horizontal"
+						options={[
+							{ value: 'skip', label: t('mc.ro.existing.skip') },
+							{ value: 'overwrite', label: t('mc.ro.existing.overwrite') }
+						]}
+						value={policy}
+						onchange={(value) => (policy = value === 'overwrite' ? 'overwrite' : 'skip')}
+					/>
+				</FieldRow>
 			</div>
 		</Card>
 
@@ -540,6 +553,14 @@
 </FormDialog>
 
 <style>
+	.set-rows {
+		display: grid;
+	}
+
+	.set-control {
+		width: min(16rem, 100%);
+	}
+
 	.form {
 		display: flex;
 		flex-direction: column;
