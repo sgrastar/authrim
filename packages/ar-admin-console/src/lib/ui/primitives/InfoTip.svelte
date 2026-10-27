@@ -37,6 +37,21 @@
 	function hide() {
 		if (bubble?.matches(':popover-open')) bubble.hidePopover();
 	}
+
+	// A finger has no hover, and Safari does not focus a tapped button, so no blur would close
+	// the bubble: a second tap closes it. Focus (where a tap gives it) opens the bubble before
+	// the click, so what counts is whether it was open when the finger came down.
+	let touched = false;
+	let openAtDown = false;
+	function press(event: PointerEvent) {
+		touched = event.pointerType === 'touch';
+		openAtDown = !!bubble?.matches(':popover-open');
+	}
+	function tap() {
+		if (touched && openAtDown) hide();
+		else show();
+		touched = false;
+	}
 </script>
 
 <button
@@ -51,8 +66,9 @@
 	onpointerleave={(event) => {
 		if (event.pointerType !== 'touch') hide();
 	}}
+	onpointerdown={press}
 	onfocus={show}
-	onclick={show}
+	onclick={tap}
 	onblur={hide}
 	onkeydown={(event) => {
 		if (event.key === 'Escape') hide();

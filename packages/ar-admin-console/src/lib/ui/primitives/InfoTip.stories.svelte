@@ -34,3 +34,30 @@
 		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(false));
 	}}
 />
+
+<!-- A tap opens the bubble and a second tap closes it, with or without focus moving to the button. -->
+<Story
+	name="Touch"
+	args={{ label: t('common.moreInfo'), text: sample('passkeyDesc') }}
+	play={async ({ canvasElement }) => {
+		const tip = within(canvasElement).getByRole('button');
+		const bubble = canvasElement.ownerDocument.getElementById(
+			tip.getAttribute('aria-describedby') ?? ''
+		);
+		const touch = (type: string) =>
+			tip.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', bubbles: true }));
+		// Chrome on Android: the tap focuses the button before the click.
+		touch('pointerdown');
+		tip.focus();
+		tip.click();
+		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(true));
+		// Safari: a tap moves no focus, so no blur ever closes it. The second tap does.
+		touch('pointerdown');
+		tip.click();
+		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(false));
+		// And a third tap opens it again.
+		touch('pointerdown');
+		tip.click();
+		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(true));
+	}}
+/>
