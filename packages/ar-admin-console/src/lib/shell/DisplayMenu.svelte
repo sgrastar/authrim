@@ -3,6 +3,7 @@
 	import Icon from '$lib/ui/icons/Icon.svelte';
 	import type { IconName } from '$lib/ui/icons/icons';
 	import Popover from '$lib/ui/patterns/Popover.svelte';
+	import LanguageSwitch from './LanguageSwitch.svelte';
 	import { theme, type ThemeLook, type ThemeMode } from '$lib/ui/theme/theme.svelte';
 	import TimeSettings from '$lib/ui/time/TimeSettings.svelte';
 
@@ -61,6 +62,10 @@
 				<span>{t(look.label)}</span>
 			</label>
 		{/each}
+	</fieldset>
+	<fieldset class="group">
+		<legend>{t('app.language')}</legend>
+		<LanguageSwitch block />
 	</fieldset>
 	<fieldset class="group">
 		<legend>{t('time.title')}</legend>

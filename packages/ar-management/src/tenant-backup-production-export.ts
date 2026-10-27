@@ -12,6 +12,7 @@ import { portablePiiLogValues } from '@authrim/ar-lib-core/services/tenant-porta
 import { portableTotpSecret } from '@authrim/ar-lib-core/services/tenant-portability/portable-totp-secret';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { TenantBackupExecutionInventory } from '@authrim/ar-lib-core/services/tenant-portability/execution-inventory';
+import { assertSamlDrWriterCoverage } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { resolveInstalledSqliteDatasets } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
 import { phase8SqliteRestoreTargetRole } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
@@ -39,6 +40,11 @@ import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-oper
 import { createProductionTenantBackupRestoreTargets } from './tenant-backup-production-restore-targets';
 import { createTenantBackupImportDiscard } from './tenant-backup-import-discard';
 import { assertIdentityMappingHistoryBoundaryReady } from './identity-mapping-history-maintenance';
+import { createProductionSamlDrSnapshotSources } from './tenant-backup-saml-dr-production-source';
+import {
+  createTenantBackupSamlDrSupplementPort,
+  withSamlDrSupplementExport,
+} from './tenant-backup-saml-dr-supplement';
 import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 import {
   activateProvisionedTenantLifecycle,
@@ -197,6 +203,16 @@ export async function createProductionTenantBackupExportAdapter(
   let activeContext = context;
   const currentContext = () => activeContext;
   const importing = context.operation?.kind === 'import';
+  const samlDrEnabled = !importing && env.ENABLE_SAML_DR_EXPORT === 'true';
+  if (
+    samlDrEnabled &&
+    context.operation?.state !== 'cancelling' &&
+    context.operation?.state !== 'failed'
+  ) {
+    // A feature flag selects the extension; only the authoritative writer contract admits it.
+    // Cancellation never needs writer admission to release an already captured source plan.
+    await assertSamlDrWriterCoverage(env, context.lease.tenantId, context.signal);
+  }
   const tenantKey = importing
     ? await resolveRestoreTenantKey(env, context)
     : await resolveTenantKey(env, context);
@@ -259,6 +275,14 @@ export async function createProductionTenantBackupExportAdapter(
           lease: currentContext().lease,
           registrations: PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
         }));
+  const samlDr = samlDrEnabled
+    ? createTenantBackupSamlDrSupplementPort({
+        env,
+        now,
+        sources: createProductionSamlDrSnapshotSources({ env, loadPlanned: plan, now }),
+      })
+    : undefined;
+  if (samlDr) records.push(samlDr);
   let sourceAssertion: Promise<void> | null = null;
   const assertSources = () =>
     (sourceAssertion ??= (async () => {
@@ -509,6 +533,7 @@ export async function createProductionTenantBackupExportAdapter(
   });
   return {
     ...installed,
+    ...(samlDr ? { export: withSamlDrSupplementExport(installed.export, samlDr) } : {}),
     bindContext(next) {
       if (
         next.operation.kind !== activeContext.operation.kind ||

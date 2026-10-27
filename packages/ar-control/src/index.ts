@@ -4,8 +4,13 @@ import {
 } from '@authrim/ar-lib-core/services/log-iceberg-readiness';
 import { readRequestJsonWithLimit } from '@authrim/ar-lib-core/utils/body-limits';
 import { advanceLogArchiveReadiness } from './log-archive-readiness';
+import { readControlEnvironmentReplicationInventory } from './environment-replication-inventory';
+import { verifyEnvironmentSamlDrWriterInventory } from './saml-dr-writer-inventory';
+import type { SamlDrWriterInventoryReceipt } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer-contract';
 import { controlTenantBackupBoundary } from './tenant-backup-boundary';
 import { controlTenantMutationPermit } from './tenant-backup-mutation-permits';
+import { runControlSamlDrOperation } from './saml-dr-mutation-entrypoint';
+import { samlDrWaitUntil } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { createLogger } from '@authrim/ar-lib-core';
 import { LOOKUP_MAX_VIRTUAL_BUCKET } from '@authrim/ar-lib-core/services/lookup-directory/contract';
@@ -1118,16 +1123,161 @@ function tenantPlacementMigrationMutation(
   };
 }
 
+/** Exact public entrypoint inventory; private helpers are not RPC-callable. */
+export const SAML_DR_CONTROL_SURFACE = {
+  guarded: [
+    'publishTenantBackupRuntimeState',
+    'fetch',
+    'reportR2BucketMetrics',
+    'requestCapacityProvisioning',
+    'ensureTenantShardCapacity',
+    'preparePluginDynamicWorkerResources',
+    'syncPluginDynamicWorkerObservedState',
+    'requestPluginResourceCleanup',
+    'finalizeTenantDeletionControlState',
+    'registerTenantPlacementPolicy',
+    'activateTenantPlacementPolicy',
+    'startTenantPlacementMigration',
+    'cancelTenantPlacementMigration',
+    'beginTenantPlacementRouteCutover',
+    'commitTenantPlacementMigration',
+    'finalizeTenantPlacementMigrationCutover',
+    'approveTenantPlacementMigrationPurge',
+    'retryReleaseMigrationRolloutTarget',
+    'retryProvisioningOperationStep',
+    'cancelProvisioningOperation',
+    'restoreProvisioningOperationPreviousSettings',
+    'startTenantDisasterRecovery',
+    'observeTenantDisasterRecoveryDeny',
+    'confirmTenantDisasterRecoveryRestore',
+    'recordTenantDisasterRecoveryVerification',
+    'claimTenantDisasterRecoveryLookupReprojection',
+    'claimNextTenantDisasterRecoveryLookupReprojection',
+    'checkpointTenantDisasterRecoveryLookupReprojection',
+    'completeTenantDisasterRecoveryLookupReprojection',
+    'requestTenantDisasterRecoveryReactivation',
+    'completeTenantDisasterRecoveryReactivation',
+    'cancelTenantDisasterRecovery',
+    'quarantineShard',
+    'retryShardQuarantine',
+    'approveShardCleanup',
+    'retryShardCleanup',
+    'reserveTenantDefaultRoute',
+    'commitTenantDefaultRoute',
+    'releaseTenantDefaultRoute',
+    'allocateAccountRoute',
+    'tryAllocateAccountRoute',
+    'commitAccountRoute',
+    'releaseAccountRoute',
+    'startLookupBucketMigration',
+    'claimLookupBucketMigration',
+    'claimNextLookupBucketMigration',
+    'checkpointLookupBucketMigration',
+    'releaseLookupBucketMigration',
+    'cutoverLookupBucketMigration',
+    'completeLookupBucketMigration',
+    'blockLookupBucketMigration',
+    'planNextLookupBucketMigration',
+    'reconcileLookupScaleOut',
+    'applyLookupRetentionPolicyProjection',
+    'applyAccountLegalHoldProjection',
+    'startReadReplicationRollout',
+    'initializeLookupHmacKeyState',
+    'startLookupHmacRotation',
+    'activateLookupHmacRotation',
+    'observeLookupHmacRotationGeneration',
+    'claimNextLookupHmacRotation',
+    'checkpointLookupHmacRotation',
+    'getNextLookupHmacRotationSource',
+    'checkpointLookupHmacRotationSource',
+    'beginLookupHmacRotationVerification',
+    'getNextLookupHmacRotationVerificationShard',
+    'checkpointLookupHmacRotationVerificationShard',
+    'finalizeLookupHmacRotationVerification',
+    'recordLookupHmacRotationVerification',
+    'completeLookupHmacRotationGrace',
+    'reconcilePending',
+    'replenishLowWatermark',
+    'reviewWorkerInventoryDriftFinding',
+    'acknowledgeWorkerInventoryDriftNotifications',
+    'scheduled',
+  ],
+  boundary: [
+    'acquireEnvironmentBackupMutationPermit',
+    'acquireTenantBackupMutationPermit',
+    'completeEnvironmentBackupMutationPermit',
+    'completeTenantBackupMutationPermit',
+    'tenantBackupSnapshotBoundary',
+  ],
+  readonly: [
+    'getLookupBucketWriteRoute',
+    'getLookupHmacRotation',
+    'getLookupHmacVerificationStatus',
+    'getLookupRetentionProjectionStatus',
+    'getOperationStatus',
+    'getPluginDynamicWorkerResourcePreparation',
+    'getPluginResourceCleanup',
+    'getProvisioningAuthorityStatus',
+    'getProvisioningOperation',
+    'getR2BucketMetrics',
+    'getReadReplicationStatus',
+    'getReleaseMigrationRolloutStatus',
+    'getRuntimeRegistrySignerMetadata',
+    'getShardCleanupCandidate',
+    'getStorageTopology',
+    'getTenantDeletionInventory',
+    'getTenantDisasterRecovery',
+    'getTenantPlacementMigration',
+    'getTenantPlacementPolicy',
+    'getEnvironmentReplicationInventory',
+    'getTenantProvisioningRegionShardPolicy',
+    'getTenantProvisioningRouteTargets',
+    'getTenantRegionShardPolicy',
+    'getTenantRuntimeRouteTargets',
+    'inspectSamlDrWriterCoverage',
+    'listAccountDirectorySourceShards',
+    'listAccountRouteSourceShards',
+    'listPendingWorkerInventoryDriftFindings',
+    'listShardCleanupCandidates',
+    'listWorkerInventoryDriftFindings',
+    'previewCapacityProvisioning',
+    'resolveLookupBucketRouteVersion',
+    'signRuntimeRegistryPayload',
+    'validatePluginDynamicWorkerDesiredState',
+  ],
+} as const;
+
 export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlRpcProps> {
-  publishTenantBackupRuntimeState() {
+  #mutation<T>(
+    operation: (env: ControlEnv) => Promise<T>,
+    action = 'unknown',
+    metrics = false
+  ): Promise<T> {
     return rpcResult(async () => {
+      if (this.env.ENABLE_SAML_DR_EXPORT === 'true') {
+        const caller = metrics
+          ? authorizedMetricReporter(this.ctx.props)
+          : authorizedCaller(this.ctx.props);
+        if (caller.environmentId !== this.env.AUTHRIM_ENVIRONMENT_NAME)
+          throw new Error('control_rpc_caller_unauthorized');
+      }
+      return runControlSamlDrOperation(this.env, operation);
+    }, action);
+  }
+
+  publishTenantBackupRuntimeState() {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const now = () => Math.floor(Date.now() / 1000);
-      const [lookupRegistry, lookupHmacKeyState, pluginRunnerRegistry] = await Promise.all([
-        new LookupRegistryPublisher(this.env, now).publishEnvironment(caller.environmentId),
-        new LookupHmacKeyStatePublisher(this.env, now).publishEnvironment(caller.environmentId),
-        new PluginRunnerRegistryPublisher(this.env, now).publishEnvironment(caller.environmentId),
-      ]);
+      const publications = [
+        new LookupRegistryPublisher(env, now).publishEnvironment(caller.environmentId),
+        new LookupHmacKeyStatePublisher(env, now).publishEnvironment(caller.environmentId),
+        new PluginRunnerRegistryPublisher(env, now).publishEnvironment(caller.environmentId),
+      ] as const;
+      if (env.ENABLE_SAML_DR_EXPORT === 'true')
+        for (const publication of publications) samlDrWaitUntil(this.ctx, publication);
+      const [lookupRegistry, lookupHmacKeyState, pluginRunnerRegistry] =
+        await Promise.all(publications);
       const result = { lookupRegistry, lookupHmacKeyState, pluginRunnerRegistry };
       assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -1135,6 +1285,24 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   async fetch(request?: Request): Promise<Response> {
+    if (
+      this.env.ENABLE_SAML_DR_EXPORT === 'true' &&
+      request?.method === 'POST' &&
+      new URL(request.url).pathname === '/api/internal/control/bootstrap/advance'
+    ) {
+      try {
+        return await runControlSamlDrOperation(this.env, (env) => this.#fetch(request, env));
+      } catch {
+        return new Response(null, {
+          status: 503,
+          headers: { 'Cache-Control': 'no-store', 'Retry-After': '5' },
+        });
+      }
+    }
+    return this.#fetch(request, this.env);
+  }
+
+  async #fetch(request: Request | undefined, env: ControlEnv): Promise<Response> {
     if (!request) {
       return new Response('Not Found', {
         status: 404,
@@ -1161,7 +1329,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       if (action !== null && action !== 'log_archive_readiness')
         return new Response(null, { status: 400 });
       const admission = await admitInitialBootstrapAcceleration({
-        env: this.env,
+        env: env,
         proof: match[1],
         ...(action === 'log_archive_readiness'
           ? { purpose: 'log_archive_readiness' as const }
@@ -1185,13 +1353,13 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
             assertLogIcebergReadinessAttempt(attempt);
             if ((await logIcebergReadinessAttemptDigest(attempt)) !== admission.claims.probeDigest)
               throw new Error('runtime_smoke_log_archive_scope_denied');
-            const proof = await advanceLogArchiveReadiness(this.env, attempt);
+            const proof = await advanceLogArchiveReadiness(env, attempt);
             return Response.json(proof, {
               status: proof.state === 'ready' ? 200 : 202,
               headers: { 'Cache-Control': 'no-store' },
             });
           }
-          await advanceInitialBootstrap({ env: this.env });
+          await advanceInitialBootstrap({ env });
         } catch (error) {
           return new Response(null, {
             status: 503,
@@ -1202,7 +1370,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
           });
         } finally {
           await releaseInitialBootstrapAcceleration({
-            env: this.env,
+            env: env,
             claims: admission.claims,
           });
         }
@@ -1232,17 +1400,21 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   reportR2BucketMetrics(input: unknown) {
-    return rpcResult(async () => {
-      const caller = authorizedMetricReporter(this.ctx.props);
-      const result = await reportR2BucketMetrics(
-        this.env.CONTROL_DB,
-        caller.environmentId,
-        caller.caller,
-        input
-      );
-      assertControlPlaneRecordIsSecretFree(result);
-      return result;
-    });
+    return this.#mutation(
+      async (env) => {
+        const caller = authorizedMetricReporter(this.ctx.props);
+        const result = await reportR2BucketMetrics(
+          env.CONTROL_DB,
+          caller.environmentId,
+          caller.caller,
+          input
+        );
+        assertControlPlaneRecordIsSecretFree(result);
+        return result;
+      },
+      'report_r2_bucket_metrics',
+      true
+    );
   }
 
   getR2BucketMetrics() {
@@ -1255,9 +1427,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   requestCapacityProvisioning(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      return service(this.env).requestCapacityProvisioning(input, caller.environmentId);
+      return service(env).requestCapacityProvisioning(input, caller.environmentId);
     });
   }
 
@@ -1293,9 +1465,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   ensureTenantShardCapacity(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await service(this.env).ensureTenantShardCapacity(input, caller.environmentId);
+      const result = await service(env).ensureTenantShardCapacity(input, caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
       return result;
     }, 'ensure_tenant_shard_capacity');
@@ -1362,9 +1534,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   preparePluginDynamicWorkerResources(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new PluginDynamicWorkerDesiredStateService(this.env.CONTROL_DB).prepare(
+      const result = await new PluginDynamicWorkerDesiredStateService(env.CONTROL_DB).prepare(
         caller.environmentId,
         input
       );
@@ -1385,9 +1557,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   syncPluginDynamicWorkerObservedState(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new PluginDynamicWorkerDesiredStateService(this.env.CONTROL_DB).sync(
+      const result = await new PluginDynamicWorkerDesiredStateService(env.CONTROL_DB).sync(
         caller.environmentId,
         input
       );
@@ -1397,14 +1569,14 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   requestPluginResourceCleanup(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const clients = createControlApiClients(this.env);
+      const clients = createControlApiClients(env);
       const result = await new PluginResourceCleanupService(
-        this.env.CONTROL_DB,
+        env.CONTROL_DB,
         clients,
         () => Math.floor(Date.now() / 1000),
-        this.env.CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED === 'true'
+        env.CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED === 'true'
       ).request(caller.environmentId, input);
       if (result) assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -1439,9 +1611,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   finalizeTenantDeletionControlState(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await service(this.env).finalizeTenantDeletionControlState(
+      const result = await service(env).finalizeTenantDeletionControlState(
         input,
         caller.environmentId
       );
@@ -1451,24 +1623,18 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   registerTenantPlacementPolicy(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await service(this.env).registerTenantPlacementPolicy(
-        input,
-        caller.environmentId
-      );
+      const result = await service(env).registerTenantPlacementPolicy(input, caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
       return result;
     });
   }
 
   activateTenantPlacementPolicy(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await service(this.env).activateTenantPlacementPolicy(
-        input,
-        caller.environmentId
-      );
+      const result = await service(env).activateTenantPlacementPolicy(input, caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
       return result;
     });
@@ -1487,11 +1653,11 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   startTenantPlacementMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const apiClients = createControlApiClients(this.env);
+      const apiClients = createControlApiClients(env);
       const migration = new TenantPlacementMigrationService(
-        this.env.CONTROL_DB,
+        env.CONTROL_DB,
         () => Math.floor(Date.now() / 1000),
         { sourceD1: apiClients.d1 }
       );
@@ -1499,12 +1665,10 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         caller.environmentId,
         tenantPlacementMigrationStart(input)
       );
-      this.ctx.waitUntil(
-        new TenantPlacementMigrationReconciler(
-          this.env.CONTROL_DB,
-          service(this.env),
-          apiClients.d1,
-          () => Math.floor(Date.now() / 1000)
+      samlDrWaitUntil(
+        this.ctx,
+        new TenantPlacementMigrationReconciler(env.CONTROL_DB, service(env), apiClients.d1, () =>
+          Math.floor(Date.now() / 1000)
         ).reconcile()
       );
       assertControlPlaneRecordIsSecretFree(result);
@@ -1524,12 +1688,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   cancelTenantPlacementMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const result = await new TenantPlacementMigrationService(
-        this.env.CONTROL_DB,
+        env.CONTROL_DB,
         () => Math.floor(Date.now() / 1000),
-        { sourceD1: createControlApiClients(this.env).d1 }
+        { sourceD1: createControlApiClients(env).d1 }
       ).cancel(caller.environmentId, tenantPlacementMigrationMutation(input));
       assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -1537,9 +1701,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   beginTenantPlacementRouteCutover(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantPlacementMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new TenantPlacementMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).beginRouteCutover(caller.environmentId, tenantPlacementMigrationMutation(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -1548,9 +1712,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   commitTenantPlacementMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantPlacementMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new TenantPlacementMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).commitCutover(caller.environmentId, tenantPlacementMigrationMutation(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -1559,12 +1723,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   finalizeTenantPlacementMigrationCutover(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const result = await new TenantPlacementMigrationService(
-        this.env.CONTROL_DB,
+        env.CONTROL_DB,
         () => Math.floor(Date.now() / 1000),
-        { sourceD1: createControlApiClients(this.env).d1 }
+        { sourceD1: createControlApiClients(env).d1 }
       ).finalizeCutover(caller.environmentId, tenantPlacementMigrationMutation(input));
       assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -1572,9 +1736,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   approveTenantPlacementMigrationPurge(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantPlacementMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new TenantPlacementMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).approvePurge(caller.environmentId, tenantPlacementMigrationMutation(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -1594,6 +1758,35 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     });
   }
 
+  getEnvironmentReplicationInventory(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      exactInput(input, [], 'invalid_replication_environment_inventory');
+      if (caller.environmentId !== this.env.AUTHRIM_ENVIRONMENT_NAME)
+        throw new Error('control_rpc_caller_unauthorized');
+      return readControlEnvironmentReplicationInventory(this.env.CONTROL_DB, caller.environmentId);
+    }, 'getEnvironmentReplicationInventory');
+  }
+
+  inspectSamlDrWriterCoverage(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      if (this.env.AUTHRIM_ENVIRONMENT_NAME !== caller.environmentId)
+        throw new Error('control_rpc_caller_unauthorized');
+      const keys =
+        input && typeof input === 'object' && 'expectedReceipt' in input
+          ? ['tenantId', 'expectedReceipt']
+          : ['tenantId'];
+      const value = exactInput(input, keys, 'invalid_saml_dr_writer_inventory');
+      return verifyEnvironmentSamlDrWriterInventory(this.env, {
+        tenantId: provisioningOperationId(value.tenantId),
+        ...(value.expectedReceipt !== undefined
+          ? { expectedReceipt: value.expectedReceipt as SamlDrWriterInventoryReceipt }
+          : {}),
+      });
+    }, 'inspectSamlDrWriterCoverage');
+  }
+
   tenantBackupSnapshotBoundary(input: unknown) {
     return rpcResult(async () => {
       const caller = authorizedCaller(this.ctx.props);
@@ -1602,6 +1795,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         environmentId: caller.environmentId,
         caller: caller.caller,
         request: input,
+        strictIncompletePermits: this.env.ENABLE_SAML_DR_EXPORT === 'true',
       });
     });
   }
@@ -1680,11 +1874,11 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   retryReleaseMigrationRolloutTarget(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const request = releaseRolloutRetryTarget(input);
       const result = await new D1ControlRepository(
-        this.env.CONTROL_DB
+        env.CONTROL_DB
       ).retryReleaseMigrationRolloutTarget(
         request,
         caller.environmentId,
@@ -1696,12 +1890,10 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   retryProvisioningOperationStep(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const request = provisioningOperationRetry(input);
-      const result = await new D1ControlRepository(
-        this.env.CONTROL_DB
-      ).retryProvisioningOperationStep(
+      const result = await new D1ControlRepository(env.CONTROL_DB).retryProvisioningOperationStep(
         request,
         caller.environmentId,
         Math.floor(Date.now() / 1000)
@@ -1712,20 +1904,20 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   cancelProvisioningOperation(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const request = provisioningOperationCancel(input);
-      const result = await new D1ControlRepository(this.env.CONTROL_DB).cancelProvisioningOperation(
+      const result = await new D1ControlRepository(env.CONTROL_DB).cancelProvisioningOperation(
         request,
         caller.environmentId,
         Math.floor(Date.now() / 1000)
       );
       if (result.operationKind === 'provision_plugin_resources') {
         await new PluginResourceCleanupService(
-          this.env.CONTROL_DB,
-          createControlApiClients(this.env),
+          env.CONTROL_DB,
+          createControlApiClients(env),
           () => Math.floor(Date.now() / 1000),
-          this.env.CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED === 'true'
+          env.CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED === 'true'
         ).requestCanceledProvisioning(caller.environmentId, {
           sourceOperationId: request.operationId,
           requestedById: request.requestedById,
@@ -1738,11 +1930,11 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   restoreProvisioningOperationPreviousSettings(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const request = provisioningOperationRestore(input);
       const result = await new D1ControlRepository(
-        this.env.CONTROL_DB
+        env.CONTROL_DB
       ).restoreProvisioningOperationPreviousSettings(
         request,
         caller.environmentId,
@@ -1754,9 +1946,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   startTenantDisasterRecovery(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantDisasterRecoveryService(this.env.CONTROL_DB).start(
+      const result = await new TenantDisasterRecoveryService(env.CONTROL_DB).start(
         caller.environmentId,
         tenantDrStart(input)
       );
@@ -1778,9 +1970,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   observeTenantDisasterRecoveryDeny(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantDisasterRecoveryService(this.env.CONTROL_DB).observeDeny(
+      const result = await new TenantDisasterRecoveryService(env.CONTROL_DB).observeDeny(
         caller.environmentId,
         tenantDrDeny(input)
       );
@@ -1790,9 +1982,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   confirmTenantDisasterRecoveryRestore(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantDisasterRecoveryService(this.env.CONTROL_DB).confirmRestore(
+      const result = await new TenantDisasterRecoveryService(env.CONTROL_DB).confirmRestore(
         caller.environmentId,
         tenantDrRestore(input)
       );
@@ -1802,20 +1994,18 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   recordTenantDisasterRecoveryVerification(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const request = tenantDrVerification(input);
-      const recovery = await new TenantDisasterRecoveryService(this.env.CONTROL_DB).get(
+      const recovery = await new TenantDisasterRecoveryService(env.CONTROL_DB).get(
         caller.environmentId,
         request.operationId
       );
       if (!recovery) throw new Error('control_tenant_dr_operation_not_found');
       if (request.stage === 'migration') {
         const engine = new ApiMigrationEngine(
-          new MigrationReleaseArtifactReader(
-            new R2ReleaseArtifactStore(this.env.MIGRATION_RELEASES)
-          ),
-          cloudflareMigrationExecutor(createControlApiClients(this.env).d1),
+          new MigrationReleaseArtifactReader(new R2ReleaseArtifactStore(env.MIGRATION_RELEASES)),
+          cloudflareMigrationExecutor(createControlApiClients(env).d1),
           () => Date.now()
         );
         for (const target of recovery.targets) {
@@ -1831,19 +2021,20 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
           });
         }
       }
-      const result = await new TenantDisasterRecoveryService(
-        this.env.CONTROL_DB
-      ).recordVerification(caller.environmentId, request);
+      const result = await new TenantDisasterRecoveryService(env.CONTROL_DB).recordVerification(
+        caller.environmentId,
+        request
+      );
       assertControlPlaneRecordIsSecretFree(result);
       return result;
     });
   }
 
   claimTenantDisasterRecoveryLookupReprojection(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const result = await new TenantDisasterRecoveryService(
-        this.env.CONTROL_DB
+        env.CONTROL_DB
       ).claimLookupReprojection(caller.environmentId, tenantDrLookupClaim(input));
       assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -1851,10 +2042,10 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   claimNextTenantDisasterRecoveryLookupReprojection(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const result = await new TenantDisasterRecoveryService(
-        this.env.CONTROL_DB
+        env.CONTROL_DB
       ).claimNextLookupReprojection(caller.environmentId, tenantDrLookupClaimNext(input));
       if (result) assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -1862,10 +2053,10 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   checkpointTenantDisasterRecoveryLookupReprojection(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const result = await new TenantDisasterRecoveryService(
-        this.env.CONTROL_DB
+        env.CONTROL_DB
       ).checkpointLookupReprojection(caller.environmentId, tenantDrLookupCheckpoint(input));
       assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -1873,10 +2064,10 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   completeTenantDisasterRecoveryLookupReprojection(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const result = await new TenantDisasterRecoveryService(
-        this.env.CONTROL_DB
+        env.CONTROL_DB
       ).completeLookupReprojection(caller.environmentId, tenantDrLookupComplete(input));
       assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -1884,31 +2075,33 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   requestTenantDisasterRecoveryReactivation(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantDisasterRecoveryService(
-        this.env.CONTROL_DB
-      ).requestReactivation(caller.environmentId, tenantDrReactivation(input));
+      const result = await new TenantDisasterRecoveryService(env.CONTROL_DB).requestReactivation(
+        caller.environmentId,
+        tenantDrReactivation(input)
+      );
       assertControlPlaneRecordIsSecretFree(result);
       return result;
     });
   }
 
   completeTenantDisasterRecoveryReactivation(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantDisasterRecoveryService(
-        this.env.CONTROL_DB
-      ).completeReactivation(caller.environmentId, tenantDrReactivationObservation(input));
+      const result = await new TenantDisasterRecoveryService(env.CONTROL_DB).completeReactivation(
+        caller.environmentId,
+        tenantDrReactivationObservation(input)
+      );
       assertControlPlaneRecordIsSecretFree(result);
       return result;
     });
   }
 
   cancelTenantDisasterRecovery(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new TenantDisasterRecoveryService(this.env.CONTROL_DB).cancel(
+      const result = await new TenantDisasterRecoveryService(env.CONTROL_DB).cancel(
         caller.environmentId,
         tenantDrCancel(input)
       );
@@ -1950,12 +2143,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   quarantineShard(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const clients = createControlApiClients(this.env);
+      const clients = createControlApiClients(env);
       const result = await ShardCleanupService.fromEnv(
-        this.env,
-        new D1ShardCleanupRepository(this.env.CONTROL_DB),
+        env,
+        new D1ShardCleanupRepository(env.CONTROL_DB),
         clients.d1,
         clients.workers,
         () => Math.floor(Date.now() / 1000)
@@ -1966,12 +2159,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   retryShardQuarantine(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const clients = createControlApiClients(this.env);
+      const clients = createControlApiClients(env);
       const result = await ShardCleanupService.fromEnv(
-        this.env,
-        new D1ShardCleanupRepository(this.env.CONTROL_DB),
+        env,
+        new D1ShardCleanupRepository(env.CONTROL_DB),
         clients.d1,
         clients.workers,
         () => Math.floor(Date.now() / 1000)
@@ -1982,12 +2175,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   approveShardCleanup(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const clients = createControlApiClients(this.env);
+      const clients = createControlApiClients(env);
       const result = await ShardCleanupService.fromEnv(
-        this.env,
-        new D1ShardCleanupRepository(this.env.CONTROL_DB),
+        env,
+        new D1ShardCleanupRepository(env.CONTROL_DB),
         clients.d1,
         clients.workers,
         () => Math.floor(Date.now() / 1000)
@@ -1998,12 +2191,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   retryShardCleanup(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const clients = createControlApiClients(this.env);
+      const clients = createControlApiClients(env);
       const result = await ShardCleanupService.fromEnv(
-        this.env,
-        new D1ShardCleanupRepository(this.env.CONTROL_DB),
+        env,
+        new D1ShardCleanupRepository(env.CONTROL_DB),
         clients.d1,
         clients.workers,
         () => Math.floor(Date.now() / 1000)
@@ -2034,78 +2227,76 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   reserveTenantDefaultRoute(input: unknown) {
-    return rpcResult(() => {
+    return this.#mutation((env) => {
       const caller = authorizedCaller(this.ctx.props);
-      return new TenantDefaultAllocationService(this.env.CONTROL_DB, () =>
+      return new TenantDefaultAllocationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).reserve(input, caller.environmentId);
     });
   }
 
   commitTenantDefaultRoute(input: unknown) {
-    return rpcResult(() => {
+    return this.#mutation((env) => {
       const caller = authorizedCaller(this.ctx.props);
-      return new TenantDefaultAllocationService(this.env.CONTROL_DB, () =>
+      return new TenantDefaultAllocationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).mutate(input, caller.environmentId, 'commit');
     });
   }
 
   releaseTenantDefaultRoute(input: unknown) {
-    return rpcResult(() => {
+    return this.#mutation((env) => {
       const caller = authorizedCaller(this.ctx.props);
-      return new TenantDefaultAllocationService(this.env.CONTROL_DB, () =>
+      return new TenantDefaultAllocationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).mutate(input, caller.environmentId, 'release');
     });
   }
 
   allocateAccountRoute(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const allocation = await new ControlAccountAllocationService(
-        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        new D1AccountAllocationRepository(env.CONTROL_DB),
         () => Math.floor(Date.now() / 1000)
       ).allocate(input, caller.environmentId);
-      this.ctx.waitUntil(
-        reconcileAccountScaleOut(this.env, caller.environmentId, allocation.tenantId).catch(
-          (error) => {
-            log.warn('Account scale-out forecast deferred after allocation', {
-              action: 'allocateAccountRoute',
-              errorType:
-                error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
-                  ? error.name
-                  : 'NonErrorThrow',
-            });
-          }
-        )
+      samlDrWaitUntil(
+        this.ctx,
+        reconcileAccountScaleOut(env, caller.environmentId, allocation.tenantId).catch((error) => {
+          log.warn('Account scale-out forecast deferred after allocation', {
+            action: 'allocateAccountRoute',
+            errorType:
+              error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+                ? error.name
+                : 'NonErrorThrow',
+          });
+        })
       );
       return allocation;
     });
   }
 
   tryAllocateAccountRoute(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const attempt = await new ControlAccountAllocationService(
-        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        new D1AccountAllocationRepository(env.CONTROL_DB),
         () => Math.floor(Date.now() / 1000)
       ).tryAllocate(input, caller.environmentId);
       if (attempt.state === 'allocated') {
-        this.ctx.waitUntil(
-          reconcileAccountScaleOut(
-            this.env,
-            caller.environmentId,
-            attempt.allocation.tenantId
-          ).catch((error) => {
-            log.warn('Account scale-out forecast deferred after allocation', {
-              action: 'tryAllocateAccountRoute',
-              errorType:
-                error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
-                  ? error.name
-                  : 'NonErrorThrow',
-            });
-          })
+        samlDrWaitUntil(
+          this.ctx,
+          reconcileAccountScaleOut(env, caller.environmentId, attempt.allocation.tenantId).catch(
+            (error) => {
+              log.warn('Account scale-out forecast deferred after allocation', {
+                action: 'tryAllocateAccountRoute',
+                errorType:
+                  error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+                    ? error.name
+                    : 'NonErrorThrow',
+              });
+            }
+          )
         );
       }
       return attempt;
@@ -2113,20 +2304,20 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   commitAccountRoute(input: unknown) {
-    return rpcResult(() => {
+    return this.#mutation((env) => {
       const caller = authorizedCaller(this.ctx.props);
       return new ControlAccountAllocationService(
-        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        new D1AccountAllocationRepository(env.CONTROL_DB),
         () => Math.floor(Date.now() / 1000)
       ).commit(input, caller.environmentId);
     });
   }
 
   releaseAccountRoute(input: unknown) {
-    return rpcResult(() => {
+    return this.#mutation((env) => {
       const caller = authorizedCaller(this.ctx.props);
       return new ControlAccountAllocationService(
-        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        new D1AccountAllocationRepository(env.CONTROL_DB),
         () => Math.floor(Date.now() / 1000)
       ).release(input, caller.environmentId);
     });
@@ -2162,9 +2353,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   startLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).start(caller.environmentId, lookupBucketMigrationStart(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2173,9 +2364,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   claimLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).claim(caller.environmentId, lookupBucketMigrationClaim(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2184,10 +2375,10 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   claimNextLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const value = exactInput(input, ['ownerId'], 'invalid_lookup_bucket_migration_claim_next');
-      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).claimNext(caller.environmentId, value.ownerId as string);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2196,9 +2387,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   checkpointLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).checkpoint(caller.environmentId, lookupBucketMigrationCheckpoint(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2207,9 +2398,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   releaseLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).release(caller.environmentId, lookupBucketMigrationCutover(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2218,14 +2409,14 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   cutoverLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const request = lookupBucketMigrationCutover(input);
-      const service = new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const service = new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       );
       await service.prepareCutover(caller.environmentId, request);
-      const publication = await new LookupRegistryPublisher(this.env, () =>
+      const publication = await new LookupRegistryPublisher(env, () =>
         Math.floor(Date.now() / 1000)
       ).publishEnvironment(caller.environmentId);
       const result = await service.confirmCutover(
@@ -2239,9 +2430,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   completeLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).complete(caller.environmentId, lookupBucketMigrationComplete(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2250,9 +2441,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   blockLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).block(caller.environmentId, lookupBucketMigrationBlock(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2261,9 +2452,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   planNextLookupBucketMigration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+      const result = await new LookupBucketMigrationService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).planNextAutomaticMigration(caller.environmentId, lookupBucketLoadSnapshot(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2272,9 +2463,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   reconcileLookupScaleOut(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const forecast = new LookupScaleOutForecastService(this.env.CONTROL_DB, () =>
+      const forecast = new LookupScaleOutForecastService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       );
       const result = await forecast.observe(caller.environmentId, lookupBucketLoadSnapshot(input));
@@ -2285,10 +2476,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       const request = result.capacityRequest;
       let capacity: Awaited<ReturnType<ControlService['requestLookupScaleOutCapacity']>>;
       try {
-        capacity = await service(this.env).requestLookupScaleOutCapacity(
-          request,
-          caller.environmentId
-        );
+        capacity = await service(env).requestLookupScaleOutCapacity(request, caller.environmentId);
       } catch (error) {
         const terminalErrorCode =
           error instanceof Error &&
@@ -2361,9 +2549,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   applyLookupRetentionPolicyProjection(input: ControlLookupRetentionPolicyProjectionRequest) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupRetentionProjectionService(this.env.CONTROL_DB, () =>
+      const result = await new LookupRetentionProjectionService(env.CONTROL_DB, () =>
         Date.now()
       ).applyPolicy(caller.environmentId, input);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2372,9 +2560,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   applyAccountLegalHoldProjection(input: ControlAccountLegalHoldProjectionRequest) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupRetentionProjectionService(this.env.CONTROL_DB, () =>
+      const result = await new LookupRetentionProjectionService(env.CONTROL_DB, () =>
         Date.now()
       ).applyLegalHold(caller.environmentId, input);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2433,15 +2621,15 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   startReadReplicationRollout(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const readReplication = new ReadReplicationService(
-        this.env.CONTROL_DB,
-        createControlApiClients(this.env).d1
+        env.CONTROL_DB,
+        createControlApiClients(env).d1
       );
       const result = await readReplication.start(caller.environmentId, readReplicationStart(input));
       if (result.operationId && result.aggregateStatus === 'updating') {
-        this.ctx.waitUntil(readReplication.reconcile(10, result.operationId));
+        samlDrWaitUntil(this.ctx, readReplication.reconcile(10, result.operationId));
       }
       assertControlPlaneRecordIsSecretFree(result);
       return result;
@@ -2449,16 +2637,16 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   initializeLookupHmacKeyState(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const service = new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const service = new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       );
       const result = await service.initialize(
         caller.environmentId,
         initialLookupHmacKeyState(input)
       );
-      await new LookupHmacKeyStatePublisher(this.env, () =>
+      await new LookupHmacKeyStatePublisher(env, () =>
         Math.floor(Date.now() / 1000)
       ).publishEnvironment(caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2467,9 +2655,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   startLookupHmacRotation(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).start(caller.environmentId, lookupHmacRotationStart(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2509,12 +2697,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   activateLookupHmacRotation(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).activate(caller.environmentId, lookupHmacRotationMutation(input));
-      await new LookupHmacKeyStatePublisher(this.env, () =>
+      await new LookupHmacKeyStatePublisher(env, () =>
         Math.floor(Date.now() / 1000)
       ).publishEnvironment(caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2523,12 +2711,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   observeLookupHmacRotationGeneration(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).observeGeneration(caller.environmentId, lookupHmacRotationMutation(input));
-      await new LookupHmacKeyStatePublisher(this.env, () =>
+      await new LookupHmacKeyStatePublisher(env, () =>
         Math.floor(Date.now() / 1000)
       ).publishEnvironment(caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2537,14 +2725,14 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   claimNextLookupHmacRotation(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const value = exactInput(input, ['ownerId'], 'invalid_lookup_hmac_rotation_claim');
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).claimNext(caller.environmentId, value.ownerId as string);
       if (result) {
-        await new LookupHmacKeyStatePublisher(this.env, () =>
+        await new LookupHmacKeyStatePublisher(env, () =>
           Math.floor(Date.now() / 1000)
         ).publishEnvironment(caller.environmentId);
         assertControlPlaneRecordIsSecretFree(result);
@@ -2554,9 +2742,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   checkpointLookupHmacRotation(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).checkpoint(caller.environmentId, lookupHmacRotationCheckpoint(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2565,9 +2753,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   getNextLookupHmacRotationSource(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).getNextSource(caller.environmentId, lookupHmacRotationMutation(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2576,9 +2764,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   checkpointLookupHmacRotationSource(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).checkpointSource(caller.environmentId, lookupHmacRotationSourceCheckpoint(input));
       assertControlPlaneRecordIsSecretFree(result);
@@ -2587,12 +2775,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   beginLookupHmacRotationVerification(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).beginVerification(caller.environmentId, lookupHmacRotationMutation(input));
-      await new LookupHmacKeyStatePublisher(this.env, () =>
+      await new LookupHmacKeyStatePublisher(env, () =>
         Math.floor(Date.now() / 1000)
       ).publishEnvironment(caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2601,9 +2789,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   getNextLookupHmacRotationVerificationShard(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).getNextVerificationShard(caller.environmentId, lookupHmacRotationMutation(input));
       if (result) assertControlPlaneRecordIsSecretFree(result);
@@ -2612,9 +2800,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   checkpointLookupHmacRotationVerificationShard(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).checkpointVerificationShard(
         caller.environmentId,
@@ -2626,12 +2814,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   finalizeLookupHmacRotationVerification(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).finalizeVerification(caller.environmentId, lookupHmacRotationMutation(input));
-      await new LookupHmacKeyStatePublisher(this.env, () =>
+      await new LookupHmacKeyStatePublisher(env, () =>
         Math.floor(Date.now() / 1000)
       ).publishEnvironment(caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2640,12 +2828,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   recordLookupHmacRotationVerification(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).recordVerification(caller.environmentId, lookupHmacRotationVerification(input));
-      await new LookupHmacKeyStatePublisher(this.env, () =>
+      await new LookupHmacKeyStatePublisher(env, () =>
         Math.floor(Date.now() / 1000)
       ).publishEnvironment(caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2654,12 +2842,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   completeLookupHmacRotationGrace(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      const result = await new LookupHmacKeyStateService(this.env.CONTROL_DB, () =>
+      const result = await new LookupHmacKeyStateService(env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).completeGrace(caller.environmentId, lookupHmacRotationMutation(input));
-      await new LookupHmacKeyStatePublisher(this.env, () =>
+      await new LookupHmacKeyStatePublisher(env, () =>
         Math.floor(Date.now() / 1000)
       ).publishEnvironment(caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
@@ -2675,16 +2863,16 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   reconcilePending() {
-    return rpcResult(() => {
+    return this.#mutation((env) => {
       authorizedCaller(this.ctx.props);
-      return service(this.env).reconcilePending();
+      return service(env).reconcilePending();
     });
   }
 
   replenishLowWatermark() {
-    return rpcResult(() => {
+    return this.#mutation((env) => {
       authorizedCaller(this.ctx.props);
-      return service(this.env).replenishLowWatermark();
+      return service(env).replenishLowWatermark();
     });
   }
 
@@ -2721,15 +2909,13 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   reviewWorkerInventoryDriftFinding(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
       const request = driftReviewRequest(input);
       if (!request.findingId.startsWith(`drift:${caller.environmentId}:actual_only:`)) {
         throw new Error('invalid_worker_inventory_drift_review');
       }
-      const row = await new D1ControlRepository(
-        this.env.CONTROL_DB
-      ).reviewWorkerInventoryDriftFinding(
+      const row = await new D1ControlRepository(env.CONTROL_DB).reviewWorkerInventoryDriftFinding(
         caller.environmentId,
         request,
         Math.floor(Date.now() / 1000)
@@ -2741,11 +2927,9 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   acknowledgeWorkerInventoryDriftNotifications(input: unknown) {
-    return rpcResult(async () => {
+    return this.#mutation(async (env) => {
       const caller = authorizedCaller(this.ctx.props);
-      await new D1ControlRepository(
-        this.env.CONTROL_DB
-      ).acknowledgeWorkerInventoryDriftNotifications(
+      await new D1ControlRepository(env.CONTROL_DB).acknowledgeWorkerInventoryDriftNotifications(
         caller.environmentId,
         findingIds(input),
         Math.floor(Date.now() / 1000)
@@ -2754,302 +2938,306 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   async scheduled(): Promise<void> {
-    const scheduledTask = (name: string, operation: Promise<unknown>): Promise<unknown> =>
-      operation.catch(() => {
-        throw new Error(`control_scheduled_${name}_failed`);
+    return runControlSamlDrOperation(this.env, async (env) => {
+      const scheduledTask = (name: string, operation: Promise<unknown>): Promise<unknown> => {
+        const task = operation.catch(() => {
+          throw new Error(`control_scheduled_${name}_failed`);
+        });
+        // Earlier startup failures must not release the permit while already-launched jobs write.
+        if (env.ENABLE_SAML_DR_EXPORT === 'true') samlDrWaitUntil(this.ctx, task);
+        return task;
+      };
+      const repository = new D1ControlRepository(env.CONTROL_DB);
+      const serviceBindingBudget = new BoundedServiceBindingInvocationBudget();
+      const control = new ControlService({
+        repository,
+        env: env,
+        now: () => Math.floor(Date.now() / 1000),
       });
-    const repository = new D1ControlRepository(this.env.CONTROL_DB);
-    const serviceBindingBudget = new BoundedServiceBindingInvocationBudget();
-    const control = new ControlService({
-      repository,
-      env: this.env,
-      now: () => Math.floor(Date.now() / 1000),
-    });
-    const tasks: Promise<unknown>[] = [
-      scheduledTask('r2_bucket_metrics_scan', scanControlR2BucketMetrics(this.env)),
-      scheduledTask(
-        'signing_key_candidate_verification',
-        new SigningKeyCandidateVerifier(
-          new D1SigningKeyVerificationRepository(this.env.CONTROL_DB),
-          this.env,
-          () => Math.floor(Date.now() / 1000),
-          serviceBindingBudget
-        ).reconcile()
-      ),
-      scheduledTask(
-        'lookup_hmac_candidate_verification',
-        new LookupHmacCandidateVerifier(
-          new D1LookupHmacCandidateVerificationRepository(this.env.CONTROL_DB),
-          this.env,
-          () => Math.floor(Date.now() / 1000),
-          serviceBindingBudget
-        ).reconcile()
-      ),
-      scheduledTask(
-        'tenant_disaster_recovery_drain',
-        new TenantDisasterRecoveryService(this.env.CONTROL_DB).reconcileDrain()
-      ),
-    ];
-    const d1Token = this.env.CLOUDFLARE_D1_API_TOKEN?.trim();
-    const workersToken = this.env.CLOUDFLARE_WORKERS_API_TOKEN?.trim();
-    const automaticProvisioningReady =
-      this.env.AUTHRIM_AUTOMATIC_PROVISIONING === 'true' &&
-      Boolean(d1Token) &&
-      Boolean(workersToken) &&
-      d1Token !== workersToken &&
-      (await repository.hasReadyAutomaticProvisioning());
-    if (
-      automaticProvisioningReady &&
-      this.env.AUTHRIM_ENVIRONMENT_NAME &&
-      repository.resumeAutomaticBootstrapOperations
-    ) {
-      await repository.resumeAutomaticBootstrapOperations(
-        this.env.AUTHRIM_ENVIRONMENT_NAME,
-        Math.floor(Date.now() / 1000)
-      );
-    }
-    // Always reconcile existing operations. When automatic execution is unavailable the service
-    // atomically hands them to setup instead of leaving a partially provisioned shard stranded.
-    tasks.push(scheduledTask('pending_operation_handoff', control.reconcilePending()));
-    if (automaticProvisioningReady) {
-      const unavailablePluginResourceKinds = [
-        ...(this.env.CLOUDFLARE_KV_API_TOKEN?.trim() ? [] : (['kv_namespace'] as const)),
-        ...(this.env.CLOUDFLARE_R2_API_TOKEN?.trim() ? [] : (['r2_bucket'] as const)),
+      const tasks: Promise<unknown>[] = [
+        scheduledTask('r2_bucket_metrics_scan', scanControlR2BucketMetrics(env)),
+        scheduledTask(
+          'signing_key_candidate_verification',
+          new SigningKeyCandidateVerifier(
+            new D1SigningKeyVerificationRepository(env.CONTROL_DB),
+            env,
+            () => Math.floor(Date.now() / 1000),
+            serviceBindingBudget
+          ).reconcile()
+        ),
+        scheduledTask(
+          'lookup_hmac_candidate_verification',
+          new LookupHmacCandidateVerifier(
+            new D1LookupHmacCandidateVerificationRepository(env.CONTROL_DB),
+            env,
+            () => Math.floor(Date.now() / 1000),
+            serviceBindingBudget
+          ).reconcile()
+        ),
+        scheduledTask(
+          'tenant_disaster_recovery_drain',
+          new TenantDisasterRecoveryService(env.CONTROL_DB).reconcileDrain()
+        ),
       ];
-      if (unavailablePluginResourceKinds.length > 0) {
-        await handoffPluginResourceOperationsToSetup(
-          this.env.CONTROL_DB,
-          Math.floor(Date.now() / 1000),
-          { resourceKinds: unavailablePluginResourceKinds }
+      const d1Token = env.CLOUDFLARE_D1_API_TOKEN?.trim();
+      const workersToken = env.CLOUDFLARE_WORKERS_API_TOKEN?.trim();
+      const automaticProvisioningReady =
+        env.AUTHRIM_AUTOMATIC_PROVISIONING === 'true' &&
+        Boolean(d1Token) &&
+        Boolean(workersToken) &&
+        d1Token !== workersToken &&
+        (await repository.hasReadyAutomaticProvisioning());
+      if (
+        automaticProvisioningReady &&
+        env.AUTHRIM_ENVIRONMENT_NAME &&
+        repository.resumeAutomaticBootstrapOperations
+      ) {
+        await repository.resumeAutomaticBootstrapOperations(
+          env.AUTHRIM_ENVIRONMENT_NAME,
+          Math.floor(Date.now() / 1000)
         );
       }
-    }
-    const apiClients = createControlApiClients(this.env);
-    const releaseArtifactReader = new MigrationReleaseArtifactReader(
-      new R2ReleaseArtifactStore(this.env.MIGRATION_RELEASES)
-    );
-    const releaseMigrationEngine = d1Token
-      ? new ApiMigrationEngine(
-          releaseArtifactReader,
-          cloudflareMigrationExecutor(apiClients.d1),
-          () => Date.now()
+      // Always reconcile existing operations. When automatic execution is unavailable the service
+      // atomically hands them to setup instead of leaving a partially provisioned shard stranded.
+      tasks.push(scheduledTask('pending_operation_handoff', control.reconcilePending()));
+      if (automaticProvisioningReady) {
+        const unavailablePluginResourceKinds = [
+          ...(env.CLOUDFLARE_KV_API_TOKEN?.trim() ? [] : (['kv_namespace'] as const)),
+          ...(env.CLOUDFLARE_R2_API_TOKEN?.trim() ? [] : (['r2_bucket'] as const)),
+        ];
+        if (unavailablePluginResourceKinds.length > 0) {
+          await handoffPluginResourceOperationsToSetup(
+            env.CONTROL_DB,
+            Math.floor(Date.now() / 1000),
+            { resourceKinds: unavailablePluginResourceKinds }
+          );
+        }
+      }
+      const apiClients = createControlApiClients(env);
+      const releaseArtifactReader = new MigrationReleaseArtifactReader(
+        new R2ReleaseArtifactStore(env.MIGRATION_RELEASES)
+      );
+      const releaseMigrationEngine = d1Token
+        ? new ApiMigrationEngine(
+            releaseArtifactReader,
+            cloudflareMigrationExecutor(apiClients.d1),
+            () => Date.now()
+          )
+        : null;
+      tasks.push(
+        scheduledTask(
+          'release_migration_rollout',
+          new ReleaseMigrationRolloutReconciler(
+            env.CONTROL_DB,
+            releaseMigrationEngine,
+            () => Math.floor(Date.now() / 1000),
+            { executorAvailable: Boolean(d1Token), artifactProbe: releaseArtifactReader }
+          ).reconcile()
         )
-      : null;
-    tasks.push(
-      scheduledTask(
-        'release_migration_rollout',
-        new ReleaseMigrationRolloutReconciler(
-          this.env.CONTROL_DB,
-          releaseMigrationEngine,
-          () => Math.floor(Date.now() / 1000),
-          { executorAvailable: Boolean(d1Token), artifactProbe: releaseArtifactReader }
-        ).reconcile()
-      )
-    );
-    const workerBindingReconciler = new WorkerBindingReconciler(
-      new D1WorkerBindingRepository(this.env.CONTROL_DB),
-      repository,
-      apiClients.workers,
-      this.env,
-      () => Math.floor(Date.now() / 1000),
-      automaticProvisioningReady,
-      serviceBindingBudget
-    );
-    tasks.push(
-      scheduledTask(
-        'worker_binding_reconciliation',
-        (async () => {
-          await workerBindingReconciler.reconcile();
-          await new TenantDisasterRecoveryService(this.env.CONTROL_DB).reconcileBindingSmoke();
-        })()
-      ),
-      scheduledTask(
-        'plugin_binding_reconciliation',
-        new PluginResourceBindingReconciler(
-          this.env.CONTROL_DB,
-          apiClients.workers,
-          this.env,
-          () => Math.floor(Date.now() / 1000),
-          automaticProvisioningReady,
-          serviceBindingBudget
-        ).reconcile()
-      )
-    );
-    if (automaticProvisioningReady) {
-      const workerInventory = new WorkerInventoryReconciler(repository, apiClients.workers, () =>
-        Math.floor(Date.now() / 1000)
+      );
+      const workerBindingReconciler = new WorkerBindingReconciler(
+        new D1WorkerBindingRepository(env.CONTROL_DB),
+        repository,
+        apiClients.workers,
+        env,
+        () => Math.floor(Date.now() / 1000),
+        automaticProvisioningReady,
+        serviceBindingBudget
       );
       tasks.push(
         scheduledTask(
-          'account_scale_out_forecast_reconciliation',
-          this.env.AUTHRIM_ENVIRONMENT_NAME
-            ? reconcileAccountScaleOut(this.env, this.env.AUTHRIM_ENVIRONMENT_NAME)
-            : Promise.resolve()
+          'worker_binding_reconciliation',
+          (async () => {
+            await workerBindingReconciler.reconcile();
+            await new TenantDisasterRecoveryService(env.CONTROL_DB).reconcileBindingSmoke();
+          })()
         ),
         scheduledTask(
-          'lookup_scale_out_forecast_reconciliation',
-          (async () => {
-            const forecast = new LookupScaleOutForecastService(this.env.CONTROL_DB, () =>
-              Math.floor(Date.now() / 1000)
-            );
-            const reconciliation = await forecast.reconcileProvisioningOperations();
-            for (const request of reconciliation.capacityRequests) {
-              let capacity: Awaited<ReturnType<ControlService['requestLookupScaleOutCapacity']>>;
-              try {
-                capacity = await control.requestLookupScaleOutCapacity(
-                  request,
-                  request.environmentId
-                );
-              } catch (error) {
-                const terminalErrorCode =
-                  error instanceof Error &&
-                  /^(?:invalid_[a-z0-9_]+|control_(?:d1_resource_limit|environment_not_found|lookup_capacity_domain_mismatch|residency_partition_not_found|resource_policy_not_found|operation_idempotency_conflict))$/u.test(
-                    error.message
-                  )
-                    ? error.message
-                    : null;
-                if (terminalErrorCode) {
-                  await forecast.blockCapacityRequest(
-                    request.environmentId,
+          'plugin_binding_reconciliation',
+          new PluginResourceBindingReconciler(
+            env.CONTROL_DB,
+            apiClients.workers,
+            env,
+            () => Math.floor(Date.now() / 1000),
+            automaticProvisioningReady,
+            serviceBindingBudget
+          ).reconcile()
+        )
+      );
+      if (automaticProvisioningReady) {
+        const workerInventory = new WorkerInventoryReconciler(repository, apiClients.workers, () =>
+          Math.floor(Date.now() / 1000)
+        );
+        tasks.push(
+          scheduledTask(
+            'account_scale_out_forecast_reconciliation',
+            env.AUTHRIM_ENVIRONMENT_NAME
+              ? reconcileAccountScaleOut(env, env.AUTHRIM_ENVIRONMENT_NAME)
+              : Promise.resolve()
+          ),
+          scheduledTask(
+            'lookup_scale_out_forecast_reconciliation',
+            (async () => {
+              const forecast = new LookupScaleOutForecastService(env.CONTROL_DB, () =>
+                Math.floor(Date.now() / 1000)
+              );
+              const reconciliation = await forecast.reconcileProvisioningOperations();
+              for (const request of reconciliation.capacityRequests) {
+                let capacity: Awaited<ReturnType<ControlService['requestLookupScaleOutCapacity']>>;
+                try {
+                  capacity = await control.requestLookupScaleOutCapacity(
                     request,
-                    terminalErrorCode
+                    request.environmentId
                   );
-                } else {
+                } catch (error) {
+                  const terminalErrorCode =
+                    error instanceof Error &&
+                    /^(?:invalid_[a-z0-9_]+|control_(?:d1_resource_limit|environment_not_found|lookup_capacity_domain_mismatch|residency_partition_not_found|resource_policy_not_found|operation_idempotency_conflict))$/u.test(
+                      error.message
+                    )
+                      ? error.message
+                      : null;
+                  if (terminalErrorCode) {
+                    await forecast.blockCapacityRequest(
+                      request.environmentId,
+                      request,
+                      terminalErrorCode
+                    );
+                  } else {
+                    await forecast.recordCapacityRequestRetry(
+                      request.environmentId,
+                      request,
+                      'lookup_scale_out_capacity_request_retry'
+                    );
+                  }
+                  continue;
+                }
+                if (!capacity.operation) {
                   await forecast.recordCapacityRequestRetry(
                     request.environmentId,
                     request,
-                    'lookup_scale_out_capacity_request_retry'
+                    'lookup_scale_out_capacity_operation_pending'
                   );
+                  continue;
                 }
-                continue;
-              }
-              if (!capacity.operation) {
-                await forecast.recordCapacityRequestRetry(
+                await forecast.recordProvisioningOperation(
                   request.environmentId,
                   request,
-                  'lookup_scale_out_capacity_operation_pending'
+                  capacity.operation.operationId,
+                  capacity.operation.status,
+                  capacity.operation.lastErrorCode
                 );
-                continue;
               }
-              await forecast.recordProvisioningOperation(
-                request.environmentId,
-                request,
-                capacity.operation.operationId,
-                capacity.operation.status,
-                capacity.operation.lastErrorCode
-              );
-            }
-          })()
-        ),
-        scheduledTask('low_watermark_replenishment', control.replenishLowWatermark()),
-        scheduledTask('worker_inventory_reconciliation', workerInventory.reconcile()),
-        scheduledTask(
-          'read_replication_reconciliation',
-          new ReadReplicationService(this.env.CONTROL_DB, apiClients.d1).reconcile()
-        ),
-        scheduledTask(
-          'read_replication_drift',
-          new ReadReplicationService(this.env.CONTROL_DB, apiClients.d1).reconcileDrift()
-        ),
-        scheduledTask(
-          'bootstrap_handoff_verification',
-          new BootstrapHandoffVerifier(
-            new D1BootstrapHandoffRepository(this.env.CONTROL_DB),
-            {
-              getD1Database: (databaseId) => apiClients.d1.getD1Database(databaseId),
-              queryD1Batch: (databaseId, queries) =>
-                apiClients.d1.queryD1Batch(databaseId, queries),
-              getWorkerSettings: (scriptName) => apiClients.workers.getWorkerSettings(scriptName),
-              listWorkerDeployments: (scriptName) =>
-                apiClients.workers.listWorkerDeployments(scriptName),
-            },
-            () => Math.floor(Date.now() / 1000)
-          ).reconcile()
-        ),
-        scheduledTask(
-          'tenant_placement_migration',
-          new TenantPlacementMigrationReconciler(this.env.CONTROL_DB, control, apiClients.d1, () =>
-            Math.floor(Date.now() / 1000)
-          ).reconcile()
-        ),
-        scheduledTask(
-          'plugin_resource_reconciliation',
-          new PluginResourceReconciler(this.env.CONTROL_DB, apiClients, () =>
-            Math.floor(Date.now() / 1000)
-          ).reconcile()
-        ),
-        scheduledTask(
-          'plugin_resource_migration',
-          new PluginResourceMigrationReconciler(
-            this.env.CONTROL_DB,
-            this.env.MIGRATION_RELEASES,
-            apiClients.d1,
-            () => Math.floor(Date.now() / 1000)
-          ).reconcile()
-        ),
-        scheduledTask(
-          'plugin_resource_cleanup',
-          new PluginResourceCleanupService(
-            this.env.CONTROL_DB,
-            apiClients,
-            () => Math.floor(Date.now() / 1000),
-            this.env.CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED === 'true'
-          ).reconcile()
-        ),
-        scheduledTask(
-          'shard_cleanup',
-          ShardCleanupService.fromEnv(
-            this.env,
-            new D1ShardCleanupRepository(this.env.CONTROL_DB),
-            apiClients.d1,
-            apiClients.workers,
-            () => Math.floor(Date.now() / 1000)
-          ).reconcile()
-        )
-      );
-    } else {
-      tasks.push(
-        scheduledTask(
-          'plugin_resource_operator_handoff',
-          handoffPluginResourceOperationsToSetup(this.env.CONTROL_DB, Math.floor(Date.now() / 1000))
-        ),
-        scheduledTask(
-          'tenant_disaster_recovery_binding_handoff',
-          new TenantDisasterRecoveryService(this.env.CONTROL_DB).handoffBindingSmokeToSetup()
-        )
-      );
-    }
-    if (this.env.TENANT_RUNTIME_REGISTRY) {
-      tasks.push(
-        scheduledTask(
-          'lookup_registry_publication',
-          new LookupRegistryPublisher(this.env, () => Math.floor(Date.now() / 1000)).reconcile()
-        ),
-        scheduledTask(
-          'lookup_hmac_key_state_publication',
-          new LookupHmacKeyStatePublisher(this.env, () => Math.floor(Date.now() / 1000)).reconcile()
-        ),
-        scheduledTask(
-          'plugin_runner_registry_publication',
-          new PluginRunnerRegistryPublisher(this.env, () =>
-            Math.floor(Date.now() / 1000)
-          ).reconcile()
-        )
-      );
-    }
-    const results = await Promise.allSettled(tasks);
-    const failures = results.flatMap((result) => {
-      if (result.status !== 'rejected') return [];
-      const message = result.reason instanceof Error ? result.reason.message : '';
-      return /^control_scheduled_[a-z0-9_]+_failed$/u.test(message)
-        ? [message]
-        : ['control_scheduled_task_failed'];
+            })()
+          ),
+          scheduledTask('low_watermark_replenishment', control.replenishLowWatermark()),
+          scheduledTask('worker_inventory_reconciliation', workerInventory.reconcile()),
+          scheduledTask(
+            'read_replication_reconciliation',
+            new ReadReplicationService(env.CONTROL_DB, apiClients.d1).reconcile()
+          ),
+          scheduledTask(
+            'read_replication_drift',
+            new ReadReplicationService(env.CONTROL_DB, apiClients.d1).reconcileDrift()
+          ),
+          scheduledTask(
+            'bootstrap_handoff_verification',
+            new BootstrapHandoffVerifier(
+              new D1BootstrapHandoffRepository(env.CONTROL_DB),
+              {
+                getD1Database: (databaseId) => apiClients.d1.getD1Database(databaseId),
+                queryD1Batch: (databaseId, queries) =>
+                  apiClients.d1.queryD1Batch(databaseId, queries),
+                getWorkerSettings: (scriptName) => apiClients.workers.getWorkerSettings(scriptName),
+                listWorkerDeployments: (scriptName) =>
+                  apiClients.workers.listWorkerDeployments(scriptName),
+              },
+              () => Math.floor(Date.now() / 1000)
+            ).reconcile()
+          ),
+          scheduledTask(
+            'tenant_placement_migration',
+            new TenantPlacementMigrationReconciler(env.CONTROL_DB, control, apiClients.d1, () =>
+              Math.floor(Date.now() / 1000)
+            ).reconcile()
+          ),
+          scheduledTask(
+            'plugin_resource_reconciliation',
+            new PluginResourceReconciler(env.CONTROL_DB, apiClients, () =>
+              Math.floor(Date.now() / 1000)
+            ).reconcile()
+          ),
+          scheduledTask(
+            'plugin_resource_migration',
+            new PluginResourceMigrationReconciler(
+              env.CONTROL_DB,
+              env.MIGRATION_RELEASES,
+              apiClients.d1,
+              () => Math.floor(Date.now() / 1000)
+            ).reconcile()
+          ),
+          scheduledTask(
+            'plugin_resource_cleanup',
+            new PluginResourceCleanupService(
+              env.CONTROL_DB,
+              apiClients,
+              () => Math.floor(Date.now() / 1000),
+              env.CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED === 'true'
+            ).reconcile()
+          ),
+          scheduledTask(
+            'shard_cleanup',
+            ShardCleanupService.fromEnv(
+              env,
+              new D1ShardCleanupRepository(env.CONTROL_DB),
+              apiClients.d1,
+              apiClients.workers,
+              () => Math.floor(Date.now() / 1000)
+            ).reconcile()
+          )
+        );
+      } else {
+        tasks.push(
+          scheduledTask(
+            'plugin_resource_operator_handoff',
+            handoffPluginResourceOperationsToSetup(env.CONTROL_DB, Math.floor(Date.now() / 1000))
+          ),
+          scheduledTask(
+            'tenant_disaster_recovery_binding_handoff',
+            new TenantDisasterRecoveryService(env.CONTROL_DB).handoffBindingSmokeToSetup()
+          )
+        );
+      }
+      if (env.TENANT_RUNTIME_REGISTRY) {
+        tasks.push(
+          scheduledTask(
+            'lookup_registry_publication',
+            new LookupRegistryPublisher(env, () => Math.floor(Date.now() / 1000)).reconcile()
+          ),
+          scheduledTask(
+            'lookup_hmac_key_state_publication',
+            new LookupHmacKeyStatePublisher(env, () => Math.floor(Date.now() / 1000)).reconcile()
+          ),
+          scheduledTask(
+            'plugin_runner_registry_publication',
+            new PluginRunnerRegistryPublisher(env, () => Math.floor(Date.now() / 1000)).reconcile()
+          )
+        );
+      }
+      const results = await Promise.allSettled(tasks);
+      const failures = results.flatMap((result) => {
+        if (result.status !== 'rejected') return [];
+        const message = result.reason instanceof Error ? result.reason.message : '';
+        return /^control_scheduled_[a-z0-9_]+_failed$/u.test(message)
+          ? [message]
+          : ['control_scheduled_task_failed'];
+      });
+      if (failures.length > 0) {
+        throw new Error(
+          `control_scheduled_reconciliation_failed:${[...new Set(failures)].sort().join(',')}`
+        );
+      }
     });
-    if (failures.length > 0) {
-      throw new Error(
-        `control_scheduled_reconciliation_failed:${[...new Set(failures)].sort().join(',')}`
-      );
-    }
   }
 }
 
@@ -3095,3 +3283,5 @@ export {
 } from './lookup-hmac-candidate-verifier';
 export { BootstrapHandoffVerifier, D1BootstrapHandoffRepository } from './bootstrap-handoff';
 export type * from './types';
+
+export { SamlDrMutationEntrypoint } from './saml-dr-mutation-entrypoint';

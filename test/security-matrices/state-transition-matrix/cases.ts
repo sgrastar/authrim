@@ -702,30 +702,35 @@ export const QUEUE_AUDIT_VALUES: Record<string, readonly Scalar[]> = {
 };
 
 export const QUEUE_AUDIT_CONSTRAINTS: Constraint[] = [
-  // attempts are only observable on the fanout path (attempt_count is recorded in the
-  // aggregates and delivery events); event/pii/unknown paths never read attempts.
+  // The fanout family covers repeated/terminal attempt metadata. Event/PII sink families
+  // cover their distinct canonical payload types on a first attempt.
   (row) => String(row.attempt) === 'first' || String(row.payloadFamily) === 'fanout',
-  // Only fanout touches the AUDIT_ARCHIVE bucket; other payloads never read it.
+  // Fault injection for encrypted HTTP retry payloads is covered by the fanout family.
   (row) => String(row.payloadFamily) === 'fanout' || String(row.dlqArchive) === 'success',
   // all-success batches contain one healthy message.
   (row) =>
     String(row.batchComposition) !== 'all-success' ||
-    (String(row.payloadFamily) !== 'unknown-audit' && String(row.bindingState) === 'present'),
+    (String(row.payloadFamily) !== 'unknown-audit' &&
+      String(row.bindingState) === 'present' &&
+      String(row.dlqArchive) === 'success'),
   // all-fail batches contain a failing message.
   (row) =>
     String(row.batchComposition) !== 'all-fail' ||
     String(row.payloadFamily) === 'unknown-audit' ||
-    String(row.bindingState) !== 'present',
+    String(row.bindingState) !== 'present' ||
+    String(row.dlqArchive) !== 'success',
   // mixed batches hold a healthy first message plus the failing second one.
   (row) =>
     String(row.batchComposition) !== 'mixed' ||
-    (String(row.payloadFamily) !== 'unknown-audit' && String(row.bindingState) === 'present'),
-  // A fanout success requires the archive bucket.
+    (String(row.payloadFamily) !== 'unknown-audit' &&
+      String(row.bindingState) === 'present' &&
+      String(row.dlqArchive) === 'success'),
+  // A fanout success requires its encrypted retry-payload bucket.
   (row) =>
     String(row.batchComposition) !== 'all-success' ||
     String(row.payloadFamily) !== 'fanout' ||
     String(row.dlqArchive) === 'success',
-  // A fanout all-fail batch with a present binding must fail through the archive.
+  // With healthy database bindings, fanout all-fail rows require a payload-bucket fault.
   (row) =>
     String(row.batchComposition) !== 'all-fail' ||
     String(row.payloadFamily) !== 'fanout' ||
@@ -760,14 +765,10 @@ export const QUEUE_DLQ_VALUES: Record<string, readonly Scalar[]> = {
 };
 
 export const QUEUE_DLQ_CONSTRAINTS: Constraint[] = [
-  (row) => String(row.batchComposition) !== 'mixed',
-  // attempts are observable only when the DLQ save runs (binding present).
   (row) => String(row.attempt) === 'first' || String(row.bindingState) === 'present',
-  // all-fail batches require a throwing binding or a throwing archive bucket.
   (row) =>
-    String(row.batchComposition) !== 'all-fail' ||
-    String(row.bindingState) === 'throws' ||
-    String(row.dlqArchive) === 'throws',
+    (String(row.batchComposition) === 'all-success') ===
+    (String(row.bindingState) === 'present' && String(row.dlqArchive) === 'success'),
 ];
 
 export const QUEUE_DLQ_SELECTED_TRIPLES: Array<[string, string, string]> = [
@@ -798,7 +799,8 @@ export const QUEUE_LOG_VALUES: Record<string, readonly Scalar[]> = {
   tenant: ['matching', 'foreign'],
   dlqArchive: ['success', 'missing', 'throws'],
   payloadFamily: [
-    'chunk-write',
+    'iceberg-ingest',
+    'legacy-chunk-write',
     'delivery-fanout',
     'http-sink-batch',
     'dlq-replay',
@@ -814,32 +816,31 @@ export const QUEUE_LOG_CONSTRAINTS: Constraint[] = [
     (String(row.schema) === 'future' &&
       String(row.dlqArchive) === 'success' &&
       String(row.bindingState) === 'present'),
-  // attempts are observable only through recorded attempt_count values (chunk-write
-  // aggregates, future-schema DLQ save, fanout/sink delivery events).
+  // Repeated/terminal attempts are observable in external-delivery or unsupported-schema receipts.
   (row) =>
     String(row.attempt) === 'first' ||
-    ['chunk-write', 'future-schema', 'delivery-fanout', 'http-sink-batch'].includes(
-      String(row.payloadFamily)
-    ),
+    ['future-schema', 'delivery-fanout', 'http-sink-batch'].includes(String(row.payloadFamily)),
   // Schema semantics tied to the payload family.
   (row) => String(row.payloadFamily) !== 'future-schema' || String(row.schema) === 'future',
   (row) => String(row.payloadFamily) !== 'malformed' || String(row.schema) === 'malformed',
   (row) => String(row.payloadFamily) === 'future-schema' || String(row.schema) !== 'future',
   (row) => String(row.payloadFamily) === 'malformed' || String(row.schema) !== 'malformed',
-  // Only the chunk-write payload succeeds for a supported schema in this environment;
+  // Only Iceberg ingest succeeds for a supported schema in this environment;
   // the other supported families require real external destinations that the Node fake
   // cannot provide.
   (row) =>
-    String(row.payloadFamily) === 'chunk-write' ||
+    String(row.payloadFamily) === 'iceberg-ingest' ||
     String(row.schema) !== 'supported' ||
     String(row.bindingState) !== 'present',
+  // Iceberg ingestion has no delivery-lane field. Lane policies remain tested on external delivery envelopes.
+  (row) => String(row.payloadFamily) !== 'iceberg-ingest' || String(row.lane) === 'default',
   // Fallback lanes require a missing primary binding and an all-fail batch.
   (row) => String(row.lane) !== 'fallback' || String(row.bindingState) === 'missing',
   (row) => String(row.lane) !== 'fallback' || String(row.batchComposition) === 'all-fail',
-  // chunk-write success requires the archive bucket and a present binding.
+  // Iceberg ingest requires its authenticated retry object and the real outbox database.
   (row) =>
     String(row.batchComposition) !== 'all-success' ||
-    String(row.payloadFamily) !== 'chunk-write' ||
+    String(row.payloadFamily) !== 'iceberg-ingest' ||
     (String(row.bindingState) === 'present' && String(row.dlqArchive) === 'success'),
   // future-schema success requires the archive bucket and a present binding.
   (row) =>
@@ -853,9 +854,15 @@ export const QUEUE_LOG_CONSTRAINTS: Constraint[] = [
     String(row.batchComposition) !== 'all-fail' ||
     String(row.schema) === 'malformed' ||
     String(row.bindingState) !== 'present' ||
-    ['delivery-fanout', 'http-sink-batch', 'dlq-replay', 'rewrap-chunk'].includes(
-      String(row.payloadFamily)
-    ),
+    (['iceberg-ingest', 'future-schema'].includes(String(row.payloadFamily)) &&
+      String(row.dlqArchive) !== 'success') ||
+    [
+      'legacy-chunk-write',
+      'delivery-fanout',
+      'http-sink-batch',
+      'dlq-replay',
+      'rewrap-chunk',
+    ].includes(String(row.payloadFamily)),
 ];
 
 export const QUEUE_LOG_SELECTED_TRIPLES: Array<[string, string, string]> = [
@@ -1450,6 +1457,7 @@ export interface QueueDecision {
   effective: Record<string, 'ack' | 'retry'>;
   writeCalls: number;
   uniqueEffects: number;
+  sinkSendCalls: number;
   dlqSaved: boolean;
   tenantKey: string;
   attemptsDelivered: number;
@@ -1465,6 +1473,7 @@ function baseQueueDecision(): QueueDecision {
     effective: {},
     writeCalls: 0,
     uniqueEffects: 0,
+    sinkSendCalls: 0,
     dlqSaved: false,
     tenantKey: '',
     attemptsDelivered: 1,
@@ -1539,164 +1548,42 @@ function fillDuplicateDeliveryCalls(
 }
 
 export function decideQueueAudit(row: Row): QueueDecision {
-  const payloadFamily = String(row.payloadFamily);
-  const batchComposition = String(row.batchComposition);
-  const bindingState = String(row.bindingState);
-  const dlqArchive = String(row.dlqArchive);
-  const tenant = String(row.tenant);
-  const delivery = String(row.delivery);
-  const attempts = String(row.attempt) === 'retry' ? 2 : String(row.attempt) === 'terminal' ? 5 : 1;
   const decision = baseQueueDecision();
+  const ids = row.batchComposition === 'all-success' ? ['m1'] : ['m1', 'm2'];
+  const attempts = row.attempt === 'retry' ? 2 : row.attempt === 'terminal' ? 5 : 1;
+  const healthy =
+    row.payloadFamily !== 'unknown-audit' &&
+    row.bindingState === 'present' &&
+    row.dlqArchive === 'success';
+  const acked = healthy ? (row.batchComposition === 'mixed' ? ['m1'] : ids) : [];
+  const retried = ids.filter((id) => !acked.includes(id));
+  const deliveries = row.delivery === 'duplicate' ? 2 : 1;
+  // Each HTTP fanout persists its encrypted retry payload and aggregate receipt; the queue send is separately asserted.
+  decision.writeCalls = acked.length * 2 * deliveries;
+  decision.uniqueEffects = acked.length * 2;
+  decision.sinkSendCalls = acked.length * deliveries;
+  decision.tenantKey = acked.length ? (row.tenant === 'foreign' ? 'foreign' : 'default') : '';
   decision.attemptsDelivered = attempts;
-  const ids = batchComposition === 'all-success' ? ['m1'] : ['m1', 'm2'];
-  const fanout = payloadFamily === 'fanout';
-  const single = delivery === 'first';
-
-  // ---- per-message outcome ----
-  let acked: string[];
-  let retried: string[];
-  const messageFails =
-    payloadFamily === 'unknown-audit' ||
-    bindingState !== 'present' ||
-    (fanout && dlqArchive !== 'success');
-  if (batchComposition === 'all-fail') {
-    acked = [];
-    retried = ids;
-  } else if (messageFails) {
-    acked = [];
-    retried = batchComposition === 'mixed' ? ['m1', 'm2'] : ids;
-  } else {
-    acked = batchComposition === 'all-success' || batchComposition === 'mixed' ? ['m1'] : ids;
-    retried = batchComposition === 'mixed' ? ['m2'] : [];
-  }
-  // all-success batches carry exactly one message.
-  if (batchComposition === 'all-success') {
-    acked = acked.length > 0 ? ['m1'] : [];
-    retried = retried.length > 0 ? ['m1'] : [];
-  }
-
-  // ---- durable effects (single delivery, from the production probe) ----
-  let writeCalls = 0;
-  let uniqueEffects = 0;
-  let dlqSaved = false;
-  let tenantKey = '';
-  const perMessage = delivery === 'duplicate' ? 2 : 1;
-  if (batchComposition === 'all-success') {
-    const healthy = acked.length === 1;
-    if (healthy && fanout) {
-      // fanout success: catalog + index + delivery aggregate + 1 R2 object. Queue-stable
-      // chunk/catalog ids and object keys make redelivery reuse the committed object. The
-      // replay only finalizes indexes and delivery state, so it performs three more writes.
-      writeCalls = delivery === 'duplicate' ? 9 : 6;
-      uniqueEffects = 4;
-      tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
-    } else if (healthy && !fanout) {
-      // event/pii-log: 1 INSERT with the stable entry id (idempotent on redelivery)
-      writeCalls = 1 * perMessage;
-      uniqueEffects = 1;
-      tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
-    } else if (fanout && bindingState === 'present' && dlqArchive === 'missing') {
-      // fanout archive-missing: delivery aggregate + notification (retried)
-      writeCalls = 2 * perMessage;
-      uniqueEffects = 2;
-    } else if (fanout && bindingState === 'present' && dlqArchive === 'throws') {
-      // fanout archive-throws: catalog + delivery event/aggregate + notification
-      // A duplicate first reclaims the stable orphaned catalog claim before retrying.
-      writeCalls = delivery === 'duplicate' ? 13 : 6;
-      uniqueEffects = 4;
-    } else {
-      writeCalls = 0;
-      uniqueEffects = 0;
-    }
-  } else {
-    // mixed/all-fail batches: only the healthy message writes anything. A redelivery
-    // re-runs the healthy message, so the per-delivery effects double.
-    if (acked.length > 0 && fanout) {
-      writeCalls = delivery === 'duplicate' ? 9 : 6;
-      uniqueEffects = 4;
-      tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
-    } else if (acked.length > 0) {
-      writeCalls = 1 * perMessage;
-      uniqueEffects = 1;
-      tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
-    } else if (fanout && bindingState === 'present' && dlqArchive === 'missing') {
-      writeCalls = 2 * perMessage;
-      uniqueEffects = 2;
-      tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
-    } else if (fanout && bindingState === 'present' && dlqArchive === 'throws') {
-      writeCalls = delivery === 'duplicate' ? 13 : 6;
-      uniqueEffects = 4;
-      tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
-    }
-  }
-
-  decision.writeCalls = writeCalls;
-  decision.uniqueEffects = uniqueEffects;
-  decision.dlqSaved = dlqSaved;
-  decision.tenantKey = tenantKey;
-  if (single) {
-    fillSingleDeliveryCalls(decision, ids, acked, retried);
-  } else {
-    fillDuplicateDeliveryCalls(decision, ids, acked, retried, attempts);
-  }
+  if (deliveries === 1) fillSingleDeliveryCalls(decision, ids, acked, retried);
+  else fillDuplicateDeliveryCalls(decision, ids, acked, retried, attempts);
   return decision;
 }
 
 export function decideQueueDlq(row: Row): QueueDecision {
-  const dlqArchive = String(row.dlqArchive);
-  const bindingState = String(row.bindingState);
-  const tenant = String(row.tenant);
-  const batchComposition = String(row.batchComposition);
-  const delivery = String(row.delivery);
-  const attempts = String(row.attempt) === 'retry' ? 2 : String(row.attempt) === 'terminal' ? 5 : 1;
   const decision = baseQueueDecision();
+  const ids = row.batchComposition === 'all-success' ? ['m1'] : ['m1', 'm2'];
+  const attempts = row.attempt === 'retry' ? 2 : row.attempt === 'terminal' ? 5 : 1;
+  const healthy = row.bindingState === 'present' && row.dlqArchive === 'success';
+  const acked = healthy ? ids : [];
+  const retried = healthy ? [] : ids;
+  const deliveries = row.delivery === 'duplicate' ? 2 : 1;
+  decision.writeCalls = healthy ? ids.length * 4 * deliveries : 0;
+  decision.uniqueEffects = healthy ? ids.length * 4 : 0;
+  decision.dlqSaved = healthy;
+  decision.tenantKey = healthy ? (row.tenant === 'foreign' ? 'foreign' : 'default') : '';
   decision.attemptsDelivered = attempts;
-  const ids = batchComposition === 'all-success' ? ['m1'] : ['m1', 'm2'];
-  const single = delivery === 'first';
-
-  let acked: string[];
-  let retried: string[];
-  if (bindingState === 'throws' || dlqArchive === 'throws') {
-    acked = [];
-    retried = ids;
-  } else {
-    acked = ids;
-    retried = [];
-  }
-
-  let writeCalls = 0;
-  let uniqueEffects = 0;
-  let dlqSaved = false;
-  let tenantKey = '';
-  const perMessage = delivery === 'duplicate' ? 2 : 1;
-  if (acked.length > 0) {
-    if (bindingState === 'missing') {
-      writeCalls = 0;
-      uniqueEffects = 0;
-    } else if (dlqArchive === 'success') {
-      // dlq save: dlq item + delivery aggregate + notification + R2 object. Stable
-      // queue-derived ids and object keys make a redelivery idempotent.
-      writeCalls = 4 * perMessage;
-      uniqueEffects = 4;
-      dlqSaved = true;
-      tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
-    } else {
-      // archive missing: delivery aggregate + notification (no R2)
-      writeCalls = 2 * perMessage;
-      uniqueEffects = 2;
-      tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
-    }
-  }
-
-  decision.writeCalls = writeCalls;
-  decision.uniqueEffects = uniqueEffects;
-  decision.dlqSaved = dlqSaved;
-  decision.tenantKey = tenantKey;
-  if (single) {
-    fillSingleDeliveryCalls(decision, ids, acked, retried);
-  } else {
-    fillDuplicateDeliveryCalls(decision, ids, acked, retried, attempts);
-  }
+  if (deliveries === 1) fillSingleDeliveryCalls(decision, ids, acked, retried);
+  else fillDuplicateDeliveryCalls(decision, ids, acked, retried, attempts);
   return decision;
 }
 
@@ -1734,7 +1621,7 @@ export function decideQueueLog(row: Row): QueueDecision {
       retried = [];
     }
   } else if (
-    payloadFamily === 'chunk-write' &&
+    payloadFamily === 'iceberg-ingest' &&
     bindingState === 'present' &&
     dlqArchive === 'success'
   ) {
@@ -1764,11 +1651,10 @@ export function decideQueueLog(row: Row): QueueDecision {
       dlqSaved = true;
       tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
     } else {
-      // chunk-write: catalog + index + aggregates + 1 R2 object. Stable catalog and chunk
-      // identifiers make redelivery reuse the committed object and only finalize indexes
-      // and delivery state.
-      writeCalls = delivery === 'duplicate' ? 11 : 7;
-      uniqueEffects = 4;
+      // Iceberg ingest: three exact outbox transitions plus one Stream send per message.
+      // A redelivery observes ingested and performs neither another transition nor another send.
+      writeCalls = ids.length * 4;
+      uniqueEffects = ids.length;
       tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
     }
   } else if (
@@ -1780,7 +1666,7 @@ export function decideQueueLog(row: Row): QueueDecision {
     writeCalls = per * perMessage;
     uniqueEffects = 3 * perMessage;
   } else if (
-    payloadFamily === 'chunk-write' &&
+    payloadFamily === 'iceberg-ingest' &&
     bindingState === 'present' &&
     dlqArchive === 'missing'
   ) {
@@ -1888,7 +1774,6 @@ function queueMutationIds(row: Row): string[] {
   const delivery = String(row.delivery);
   const payloadFamily = String(row.payloadFamily);
   const bindingState = String(row.bindingState);
-  const dlqArchive = String(row.dlqArchive);
   if (batchComposition === 'mixed') ids.push('queue:retry-entire-mixed-batch');
   if (schema === 'future' && payloadFamily === 'future-schema' && batchComposition !== 'mixed') {
     ids.push('queue:ack-unsupported-schema-before-durable-dlq');
@@ -2113,6 +1998,29 @@ export const QUEUE_LOG_CASE_TABLE = [
     fingerprint: 'Q-L|queue-app-unsupported-schema',
     mutationIds: ['queue:ack-unsupported-schema-before-durable-dlq'],
   },
+  // Pair/triple coverage alone can place R2 faults behind an unhealthy DB. Keep all
+  // four healthy-DB payload-storage faults as explicit production regression rows.
+  ...(['iceberg-ingest', 'future-schema'] as const).flatMap((payloadFamily) =>
+    (['missing', 'throws'] as const).map((fault) => ({
+      id: `st-ql-app-r2-${payloadFamily}-${fault}`,
+      title: `healthy database, ${payloadFamily}, ${fault} payload bucket`,
+      dimensions: {
+        batchComposition: 'all-fail',
+        attempt: 'first',
+        schema: payloadFamily === 'future-schema' ? 'future' : 'supported',
+        delivery: 'first',
+        lane: 'default',
+        bindingState: 'present',
+        tenant: 'matching',
+        dlqArchive: fault,
+        payloadFamily,
+      },
+      family: 'queue' as const,
+      matrix: 'Q-L',
+      fingerprint: `Q-L|queue-app-r2-${payloadFamily}-${fault}`,
+      mutationIds: ['queue:ack-transient-failure'],
+    }))
+  ),
 ];
 
 export const STATE_CASE_TABLES: Record<string, StateCase[]> = {

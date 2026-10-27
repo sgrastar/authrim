@@ -373,7 +373,7 @@
 	.etable__problem {
 		margin: 2px 6px 0;
 		color: var(--danger);
-		font-size: var(--fs-small);
+		font-size: var(--fs-caption);
 		white-space: normal;
 	}
 

@@ -1127,6 +1127,38 @@ describe('SAML provider CRUD boundaries', () => {
     expect(await getIdPConfigByEntityId({} as never, 'tenant-a', 'missing')).toBeNull();
   });
 
+  it('limits an alternate SAML runtime to its imported explicit SP inventory', async () => {
+    const runtime = {
+      serviceProviders: {
+        isAllowed: vi.fn(
+          ({ tenantId, entityId }: { tenantId: string; entityId: string }) =>
+            tenantId === 'tenant-a' && entityId === 'https://sp.example.test'
+        ),
+      },
+    };
+    const env = { SAML_RUNTIME_PORTS: runtime } as never;
+    expect(await getSPConfig(env, 'tenant-a', 'https://other.example.test')).toBeNull();
+    expect(mocks.adapter!.query).not.toHaveBeenCalled();
+
+    mocks.adapter!.query.mockResolvedValueOnce([
+      {
+        enabled: true,
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+        }),
+      },
+    ]);
+    expect(await getSPConfig(env, 'tenant-a', 'https://sp.example.test')).toMatchObject({
+      entityId: 'https://sp.example.test',
+    });
+    expect(runtime.serviceProviders.isAllowed).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      entityId: 'https://sp.example.test',
+    });
+    expect(await getSPConfig(env, 'tenant-b', 'https://sp.example.test')).toBeNull();
+  });
+
   it("files an IdP's saved sign-in switches under its provider id, found by entity id", async () => {
     mocks.adapter!.query.mockResolvedValue([
       { id: 'idp-other', config_json: JSON.stringify({ entityId: 'other' }) },

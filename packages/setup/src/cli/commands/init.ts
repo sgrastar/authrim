@@ -2548,6 +2548,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     challengeShards,
   };
   config.features = {
+    samlDrExport: config.features.samlDrExport,
     ...resolveInitialLogStorageFeatures(config, { queue: enableQueue, r2: enableR2 }),
     pluginDynamicWorkers: config.features.pluginDynamicWorkers,
     email: {

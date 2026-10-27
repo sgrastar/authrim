@@ -85,6 +85,7 @@ export class PostgresAdapter implements DatabaseAdapter {
   private readonly partition: string;
   private readonly clientFactory?: PostgresAdapterConfig['clientFactory'];
   private client: PgClientLike | null = null;
+  private ordinaryAdmission: Promise<void> | undefined;
   private readonly statementConsentClientFactory?: PostgresAdapterConfig['statementConsentClientFactory'];
   private readonly usedStatementConsentClients = new WeakSet<PgClientLike>();
   private readonly ordinaryStatementConsentExclusions = new WeakSet<PgClientLike>();
@@ -139,10 +140,30 @@ export class PostgresAdapter implements DatabaseAdapter {
     return this.client;
   }
 
+  /** The cached connection belongs to one operation, or one whole transaction, at a time. */
+  private async withOrdinaryAdmission<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.ordinaryAdmission;
+    let release!: () => void;
+    const admission = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.ordinaryAdmission = admission;
+    // Preserve synchronous factory reservation when there is no preceding operation.
+    if (previous) await previous;
+    try {
+      return await operation();
+    } finally {
+      if (this.ordinaryAdmission === admission) this.ordinaryAdmission = undefined;
+      release();
+    }
+  }
+
   async query<T>(sql: string, params?: unknown[], _options?: QueryOptions): Promise<T[]> {
-    const client = await this.getClient();
-    const result = await client.query<T>(toPostgresSql(sql), params);
-    return result.rows;
+    return this.withOrdinaryAdmission(async () => {
+      const client = await this.getClient();
+      const result = await client.query<T>(toPostgresSql(sql), params);
+      return result.rows;
+    });
   }
 
   async queryOne<T>(sql: string, params?: unknown[], _options?: QueryOptions): Promise<T | null> {
@@ -152,8 +173,10 @@ export class PostgresAdapter implements DatabaseAdapter {
 
   async execute(sql: string, params?: unknown[]): Promise<ExecuteResult> {
     const startTime = Date.now();
-    const client = await this.getClient();
-    const result = await client.query(toPostgresSql(sql), params);
+    const result = await this.withOrdinaryAdmission(async () => {
+      const client = await this.getClient();
+      return client.query(toPostgresSql(sql), params);
+    });
     return {
       rowsAffected: result.rowCount,
       success: true,
@@ -162,35 +185,77 @@ export class PostgresAdapter implements DatabaseAdapter {
   }
 
   async transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
-    const client = await this.getClient();
-    await client.query('BEGIN');
-
-    const txContext: TransactionContext = {
-      query: async <R>(sql: string, params?: unknown[]) => {
-        const result = await client.query<R>(toPostgresSql(sql), params);
-        return result.rows;
-      },
-      queryOne: async <R>(sql: string, params?: unknown[]) => {
-        const result = await client.query<R>(toPostgresSql(sql), params);
-        return result.rows[0] ?? null;
-      },
-      execute: async (sql: string, params?: unknown[]) => {
-        const result = await client.query(toPostgresSql(sql), params);
-        return {
-          rowsAffected: result.rowCount,
-          success: true,
-        };
-      },
-    };
-
-    try {
-      const result = await fn(txContext);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    }
+    return this.withOrdinaryAdmission(async () => {
+      const client = await this.getClient();
+      let active = false;
+      let started = false;
+      let committing = false;
+      let failed = false;
+      let failure: unknown;
+      const pending = new Set<Promise<unknown>>();
+      // Callers must use this context inside the callback. Queries on the outer adapter
+      // wait for this exclusive lease and cannot accidentally join its transaction.
+      const query = async <R>(sql: string, params?: unknown[]): Promise<PgQueryResult<R>> => {
+        if (!active) throw new Error('postgres_transaction_context_closed');
+        if (failed) throw failure;
+        let operation: Promise<PgQueryResult<R>> | undefined;
+        try {
+          operation = client.query<R>(toPostgresSql(sql), params);
+          pending.add(operation);
+          return await operation;
+        } catch (error) {
+          failed = true;
+          failure = error;
+          throw error;
+        } finally {
+          if (operation) pending.delete(operation);
+        }
+      };
+      const txContext: TransactionContext = {
+        query: async <R>(sql: string, params?: unknown[]) => (await query<R>(sql, params)).rows,
+        queryOne: async <R>(sql: string, params?: unknown[]) =>
+          (await query<R>(sql, params)).rows[0] ?? null,
+        execute: async (sql, params) => {
+          const result = await query(sql, params);
+          return { rowsAffected: result.rowCount, success: true };
+        },
+      };
+      try {
+        // BEGIN itself can succeed before its acknowledgement is lost.
+        await client.query('BEGIN');
+        started = true;
+        active = true;
+        let result: T;
+        try {
+          result = await fn(txContext);
+        } finally {
+          active = false;
+          await Promise.allSettled(pending);
+        }
+        if (failed) throw failure;
+        committing = true;
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        active = false;
+        let rollbackFailed = false;
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          // An uncertain connection is discarded even when rollback also fails.
+          rollbackFailed = true;
+        }
+        if (!started || committing || rollbackFailed) {
+          this.client = null;
+          try {
+            await client.end();
+          } catch {
+            // Preserve the original error; never retry a possibly committed operation.
+          }
+        }
+        throw error;
+      }
+    });
   }
 
   async batch(statements: PreparedStatement[]): Promise<ExecuteResult[]> {
@@ -400,8 +465,7 @@ export class PostgresAdapter implements DatabaseAdapter {
     const startTime = Date.now();
 
     try {
-      const client = await this.getClient();
-      await client.query('SELECT 1');
+      await this.query('SELECT 1');
       return {
         healthy: true,
         latencyMs: Date.now() - startTime,
@@ -424,10 +488,11 @@ export class PostgresAdapter implements DatabaseAdapter {
   }
 
   async close(): Promise<void> {
-    if (this.client) {
-      await this.client.end();
+    await this.withOrdinaryAdmission(async () => {
+      const client = this.client;
       this.client = null;
-    }
+      await client?.end();
+    });
   }
 }
 

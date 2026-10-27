@@ -1,5 +1,6 @@
 import { emitLogIcebergRow } from './log-iceberg-emitter';
 import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
+import { samlDrAll } from './tenant-portability/saml-dr-writer';
 import type { DatabaseAdapter } from '../db/adapter';
 
 export type DirectoryAuthMigrationCampaignStatus =
@@ -1377,7 +1378,7 @@ export async function cleanupExpiredDirectoryAuthMaintenance(
   now: number = Date.now()
 ): Promise<DirectoryAuthMaintenanceCleanupResult> {
   const [migrationTransactionsExpired, evidenceExportsExpired, supportBundlesExpired] =
-    await Promise.all([
+    await samlDrAll([
       cleanupExpiredDirectoryAuthMigrationTransactions(adapter, tenantId, now),
       cleanupExpiredDirectoryAuthEvidenceExports(adapter, tenantId, now),
       cleanupExpiredDirectoryAuthSupportBundles(adapter, tenantId, now),

@@ -1405,6 +1405,53 @@ describe('setup web basic API contracts', () => {
     });
   });
 
+  it('preserves explicit SAML DR and replication identity when recreating default config', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const features = {
+      samlDrExport: { enabled: true },
+      replicationWriter: {
+        version: 1,
+        endpoint: 'https://authority.example.test/replication/v1/rpc',
+        credentialId: 'cf-writer',
+        pairId: 'pair-a',
+        tenantId: 'default',
+        deploymentId: 'cf-a',
+        epoch: 1,
+        generationId: 'install-a',
+      },
+    };
+    const response = await app.request(
+      '/config/default',
+      post(
+        '/config/default',
+        {
+          env: 'prod',
+          features,
+        },
+        token
+      )
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      config: { features },
+    });
+
+    const invalid = await app.request(
+      '/config/default',
+      post(
+        '/config/default',
+        {
+          env: 'prod',
+          features: { ...features, samlDrExport: { enabled: false } },
+        },
+        token
+      )
+    );
+    expect(invalid.status).toBe(400);
+  });
+
   it('validates a complete config, schema failures, domain conflicts, and malformed JSON', async () => {
     const token = generateSessionToken();
     const app = createApiRoutes();

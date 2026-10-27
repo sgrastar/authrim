@@ -7,6 +7,7 @@ const {
   mockSessionStore,
   mockRateLimiter,
   mockTotpRepo,
+  mockCoreAdapter,
   mockRuntimeUserStore,
   mockGetChallengeStoreByChallengeId,
   mockGetSessionStoreForNewSession,
@@ -49,7 +50,9 @@ const {
     markUsed: vi.fn(),
     replaceBackupCodes: vi.fn(),
   };
+  const coreAdapter = {};
   return {
+    mockCoreAdapter: coreAdapter,
     mockChallengeStore: challengeStore,
     mockSessionStore: sessionStore,
     mockRateLimiter: rateLimiter,
@@ -71,7 +74,7 @@ const {
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({
       repositories: { totp: totpRepo },
-      coreAdapter: {},
+      coreAdapter,
     }),
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: {} }),
     mockPublishEvent: vi.fn().mockResolvedValue(undefined),
@@ -337,7 +340,8 @@ describe('TOTP login handlers', () => {
     const request = (
       path: string,
       body: Record<string, unknown>,
-      headers: Record<string, string>
+      headers: Record<string, string>,
+      env = createEnv(enabledSettings)
     ) =>
       resolveConstantTimeResponse(
         createApp().request(
@@ -347,7 +351,7 @@ describe('TOTP login handlers', () => {
             headers: { 'Content-Type': 'application/json', ...headers },
             body: JSON.stringify(body),
           },
-          createEnv(enabledSettings),
+          env,
           { waitUntil: vi.fn() } as unknown as ExecutionContext
         )
       );
@@ -389,15 +393,22 @@ describe('TOTP login handlers', () => {
       mockRuntimeUserStore.findById.mockResolvedValueOnce({ id: 'user-1', active: 1 });
       mockTotpRepo.findActiveByUserId.mockResolvedValueOnce([]);
 
+      const env = createEnv(enabledSettings);
       const response = await request(
         '/api/auth/totp/login/verify',
         { challenge_id: 'challenge', code: '123456' },
-        { 'X-Authrim-Interaction-Id': 'int-2' }
+        { 'X-Authrim-Interaction-Id': 'int-2' },
+        env
       );
 
       expect(response.status).toBeGreaterThanOrEqual(400);
       await vi.waitFor(() => expect(attemptRecording.record).toHaveBeenCalledTimes(1));
-      expect(attemptRecording.record.mock.calls[0]?.[2]).toEqual({
+      const recorded = attemptRecording.record.mock.calls[0];
+      expect(recorded).toHaveLength(4);
+      expect(recorded?.[0]).toBe(env);
+      expect(recorded?.[1]).toBe(mockCoreAdapter);
+      expect(recorded?.[2]).toBeNull();
+      expect(recorded?.[3]).toEqual({
         tenantId: 'default',
         interactionId: 'int-1',
         method: 'totp',
@@ -413,7 +424,8 @@ describe('TOTP login handlers', () => {
         userId: 'user-1',
         metadata: { attempt_interaction_id: 'int-1' },
       });
-      await resolveConstantTimeResponse(
+      const env = createEnv({});
+      const response = await resolveConstantTimeResponse(
         createApp().request(
           '/api/auth/totp/login/verify',
           {
@@ -421,15 +433,25 @@ describe('TOTP login handlers', () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ challenge_id: 'challenge', code: '123456' }),
           },
-          createEnv({}),
+          env,
           { waitUntil: vi.fn() } as unknown as ExecutionContext
         )
       );
+      expect(response.status).toBeGreaterThanOrEqual(400);
       await vi.waitFor(() => expect(attemptRecording.record).toHaveBeenCalledTimes(1));
-      expect(attemptRecording.record.mock.calls[0]?.[2]).toMatchObject({
+      const recorded = attemptRecording.record.mock.calls[0];
+      expect(recorded).toHaveLength(4);
+      expect(recorded?.[0]).toBe(env);
+      expect(recorded?.[1]).toBe(mockCoreAdapter);
+      expect(recorded?.[2]).toBeNull();
+      expect(recorded?.[3]).toEqual({
+        tenantId: 'default',
+        interactionId: 'int-1',
+        method: 'totp',
         reasonCode: 'method_disabled',
         userId: 'user-1',
       });
+      expect(attemptRecording.resolve).not.toHaveBeenCalled();
     });
 
     it('records nothing for a challenge tied to no interaction', async () => {

@@ -9,6 +9,7 @@ import {
   type TenantBundleManifestExpectation,
 } from './bundle-manifest';
 import { tenantBackupSelectionsCover } from './selection-contract';
+import type { TenantBackupSelection } from './selection-contract';
 import { runTenantBackupInputDecodeStep } from './decode-input-step';
 
 export interface TenantBackupPlannedInput {
@@ -110,6 +111,11 @@ export async function loadPlannedTenantBackupInputs(
     )
   )
     fail();
+  assertTenantBackupInputLogDetailCoverage(
+    inputs,
+    expected.selection,
+    new Set(expected.datasets.map(({ id }) => id))
+  );
   await owner(context, inventory);
   return inputs;
 }
@@ -135,6 +141,27 @@ export function tenantBackupInputDatasetOwners(
     }
   });
   return new Map([...owners].map(([datasetId, value]) => [datasetId, value.bundleId]));
+}
+
+/** Protected details belong to the audit/other record in the same bundle. A
+ * separate PII-category input cannot supply a redacted record's missing detail. */
+export function assertTenantBackupInputLogDetailCoverage(
+  inputs: readonly TenantBackupPlannedInput[],
+  requested: TenantBackupSelection,
+  expectedDatasetIds: ReadonlySet<string>
+): void {
+  if (!requested.logs.sensitive) return;
+  const owners = tenantBackupInputDatasetOwners(inputs);
+  for (const [category, datasetId] of [
+    ['audit', 'logs.iceberg_audit_records'],
+    ['other', 'logs.iceberg_other_records'],
+  ] as const) {
+    if (!requested.logs[category] || !expectedDatasetIds.has(datasetId)) continue;
+    const bundleId = owners.get(datasetId);
+    const input = inputs.find(({ manifest }) => manifest.bundleId === bundleId);
+    if (!input?.manifest.selection.logs[category] || !input.manifest.selection.logs.sensitive)
+      throw new Error('backup_input_sensitive_log_details_uncovered');
+  }
 }
 
 /** Read and revalidate one immutable input from the sealed operation inventory. */

@@ -213,6 +213,37 @@ it('installs deployed export ports and keeps import targets fail closed', async 
   );
 });
 
+it('rejects an opted-in DR export before reading sources without complete writer coverage', async () => {
+  const context = {
+    operation: { kind: 'export', state: 'running' },
+    lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
+    signal: new AbortController().signal,
+  } as never;
+  await expect(
+    createProductionTenantBackupExportAdapter({ ENABLE_SAML_DR_EXPORT: 'true' } as Env, context)
+  ).rejects.toThrow('saml_dr_writer_inventory_unverified');
+  expect(mocks.resources).not.toHaveBeenCalled();
+  expect(mocks.phase8).not.toHaveBeenCalled();
+});
+
+it('preserves cancellation cleanup when the experimental DR option is enabled', async () => {
+  const context = {
+    operation: { kind: 'export', state: 'cancelling' },
+    lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
+    signal: new AbortController().signal,
+  } as never;
+  const installed = await createProductionTenantBackupExportAdapter(
+    {
+      ENABLE_SAML_DR_EXPORT: 'true',
+      EXPORT_ARTIFACTS: {},
+      OBJECT_ENCRYPTION_ROOT_KEY: 'a'.repeat(64),
+    } as Env,
+    context
+  );
+  expect(installed.export).toMatchObject({ installed: true });
+  expect(installed.cleanup).toEqual({});
+});
+
 it('requires settled history at the snapshot boundary even when users are not selected', async () => {
   const context = {
     lease: { tenantId: 'tenant-a', operationId: 'operation-a' },

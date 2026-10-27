@@ -16,6 +16,17 @@ import {
 import type { Env } from '../../../types/env';
 import * as sessionHelper from '../../../utils/session-helper';
 
+// Assert against the mock function itself without treating a binding method as detached.
+function mockMethod<T extends object>(
+  binding: T | undefined,
+  key: keyof T
+): ReturnType<typeof vi.fn> {
+  if (!binding) throw new Error('test_binding_missing');
+  const method = binding[key];
+  if (!vi.isMockFunction(method)) throw new Error('test_binding_method_not_mocked');
+  return method;
+}
+
 // Helper to create mock DO stubs with RPC methods
 function createMockSessionStoreDO() {
   return {
@@ -67,6 +78,9 @@ function createMockGenericDO() {
 function createMockEnv(): Env {
   return {
     DB: {
+      batch: vi.fn(async (statements: D1PreparedStatement[]) =>
+        Promise.all(statements.map((statement) => statement.run()))
+      ),
       prepare: vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnThis(),
         first: vi.fn().mockResolvedValue(null),
@@ -76,6 +90,9 @@ function createMockEnv(): Env {
     } as unknown as D1Database,
     // DB_PII for PII/Non-PII DB separation
     DB_PII: {
+      batch: vi.fn(async (statements: D1PreparedStatement[]) =>
+        Promise.all(statements.map((statement) => statement.run()))
+      ),
       prepare: vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnThis(),
         first: vi.fn().mockResolvedValue(null),
@@ -185,7 +202,7 @@ describe('CloudflareStorageAdapter', () => {
   describe('Routing Logic', () => {
     it('should route session: prefix to SessionStore DO', async () => {
       await adapter.get('session:123');
-      expect(env.SESSION_STORE.get).toHaveBeenCalled();
+      expect(mockMethod(env.SESSION_STORE, 'get')).toHaveBeenCalled();
     });
 
     it('should route legacy session DO by configured tenant', async () => {
@@ -193,7 +210,9 @@ describe('CloudflareStorageAdapter', () => {
 
       await adapter.get('session:123');
 
-      expect(env.SESSION_STORE.idFromName).toHaveBeenCalledWith('tenant:acme:session');
+      expect(mockMethod(env.SESSION_STORE, 'idFromName')).toHaveBeenCalledWith(
+        'tenant:acme:session'
+      );
     });
 
     it('should read client security metadata directly from D1', async () => {
@@ -208,18 +227,18 @@ describe('CloudflareStorageAdapter', () => {
 
       const result = await adapter.get('client:test-client');
       expect(result).toBe(JSON.stringify({ client_id: 'test-client' }));
-      expect(env.CLIENTS_CACHE?.get).not.toHaveBeenCalled();
-      expect(env.DB.prepare).toHaveBeenCalled();
+      expect(mockMethod(env.CLIENTS_CACHE, 'get')).not.toHaveBeenCalled();
+      expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalled();
     });
 
     it('should route user: prefix to D1', async () => {
       await adapter.get('user:123');
-      expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('SELECT'));
+      expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith(expect.stringContaining('SELECT'));
     });
 
     it('should route authcode: prefix to AuthCodeStore DO', async () => {
       await adapter.get('authcode:abc123');
-      expect(env.AUTH_CODE_STORE.get).toHaveBeenCalled();
+      expect(mockMethod(env.AUTH_CODE_STORE, 'get')).toHaveBeenCalled();
     });
 
     it('should route authcode DO by configured tenant', async () => {
@@ -227,7 +246,9 @@ describe('CloudflareStorageAdapter', () => {
 
       await adapter.get('authcode:abc123');
 
-      expect(env.AUTH_CODE_STORE.idFromName).toHaveBeenCalledWith('tenant:acme:auth-code');
+      expect(mockMethod(env.AUTH_CODE_STORE, 'idFromName')).toHaveBeenCalledWith(
+        'tenant:acme:auth-code'
+      );
     });
 
     it('should reject low-level refreshtoken reads without routing metadata', async () => {
@@ -258,8 +279,8 @@ describe('CloudflareStorageAdapter', () => {
 
     it('should set value with client: prefix to D1 and invalidate KV cache', async () => {
       await adapter.set('client:test-client', JSON.stringify({ client_id: 'test-client' }));
-      expect(env.DB.prepare).toHaveBeenCalled();
-      expect(env.CLIENTS_CACHE?.delete).toHaveBeenCalled();
+      expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalled();
+      expect(mockMethod(env.CLIENTS_CACHE, 'delete')).toHaveBeenCalled();
     });
 
     it('should attach configured tenant to legacy authcode writes', async () => {
@@ -301,7 +322,7 @@ describe('CloudflareStorageAdapter', () => {
         })
       );
 
-      expect(env.REFRESH_TOKEN_ROTATOR.get).toHaveBeenCalled();
+      expect(mockMethod(env.REFRESH_TOKEN_ROTATOR, 'get')).toHaveBeenCalled();
       expect(mockCreateFamilyRpc).toHaveBeenCalled();
     });
 
@@ -325,8 +346,8 @@ describe('CloudflareStorageAdapter', () => {
 
     it('should delete client from D1 and invalidate KV cache', async () => {
       await adapter.delete('client:test-client');
-      expect(env.DB.prepare).toHaveBeenCalled();
-      expect(env.CLIENTS_CACHE?.delete).toHaveBeenCalled();
+      expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalled();
+      expect(mockMethod(env.CLIENTS_CACHE, 'delete')).toHaveBeenCalled();
     });
 
     it('should reject low-level refreshtoken deletes without routing metadata', async () => {
@@ -352,12 +373,14 @@ describe('CloudflareStorageAdapter', () => {
 
       const results = await adapter.query('SELECT * FROM users WHERE id = ?', ['1']);
       expect(results).toEqual(mockResults);
-      expect(env.DB.prepare).toHaveBeenCalledWith('SELECT * FROM users WHERE id = ?');
+      expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith(
+        'SELECT * FROM users WHERE id = ?'
+      );
     });
 
     it('should execute statement without returning results', async () => {
       await adapter.execute('DELETE FROM users WHERE id = ?', ['1']);
-      expect(env.DB.prepare).toHaveBeenCalledWith('DELETE FROM users WHERE id = ?');
+      expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith('DELETE FROM users WHERE id = ?');
     });
   });
 });
@@ -418,7 +441,7 @@ describe('UserStore', () => {
       run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
       first: vi.fn().mockResolvedValue(null),
     }));
-    const corePrepare = env.DB.prepare as ReturnType<typeof vi.fn>;
+    const corePrepare = mockMethod(env.DB, 'prepare');
     corePrepare.mockImplementation((sql: string) => ({
       bind: vi.fn().mockImplementation((..._params: unknown[]) => ({
         all: vi.fn().mockResolvedValue({
@@ -532,8 +555,10 @@ describe('UserStore', () => {
 
     expect(user.id).toBeDefined();
     expect(user.created_at).toBeDefined();
-    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('identity_accounts'));
-    expect(env.DB_PII.prepare).toHaveBeenCalledWith(
+    expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith(
+      expect.stringContaining('identity_accounts')
+    );
+    expect(mockMethod(env.DB_PII, 'prepare')).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO identity_sensitive_values')
     );
   });
@@ -542,7 +567,7 @@ describe('UserStore', () => {
     mockCanonicalRuntimeUser();
     const updated = await userStore.update('user_123', { name: 'Updated Name' });
     expect(updated.id).toBe('user_123');
-    expect(env.DB_PII.prepare).toHaveBeenCalledWith(
+    expect(mockMethod(env.DB_PII, 'prepare')).toHaveBeenCalledWith(
       expect.stringContaining('identity_sensitive_values')
     );
   });
@@ -550,9 +575,20 @@ describe('UserStore', () => {
   it('should delete user (soft delete)', async () => {
     mockCanonicalRuntimeUser();
     await userStore.delete('user_123');
-    expect(env.DB.prepare).toHaveBeenCalledWith(
+    expect(mockMethod(env.DB, 'batch')).toHaveBeenCalledTimes(2);
+    expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE identity_accounts')
     );
+  });
+
+  it('does not begin PII cleanup when the atomic Core deletion admission fails', async () => {
+    mockCanonicalRuntimeUser();
+    (env.DB.batch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('synthetic_atomic_batch_failure')
+    );
+    await expect(userStore.delete('user_123')).rejects.toThrow('synthetic_atomic_batch_failure');
+    expect(mockMethod(env.DB_PII, 'prepare')).not.toHaveBeenCalled();
+    expect(mockMethod(env.DB_PII, 'batch')).not.toHaveBeenCalled();
   });
 
   it('should throw error when updating non-existent user', async () => {
@@ -613,7 +649,7 @@ describe('ClientStore', () => {
     const client = await clientStore.create(newClient);
     expect(client.client_id).toBe('client_new');
     expect(client.created_at).toBeDefined();
-    expect(env.DB.prepare).toHaveBeenCalledWith(
+    expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO oauth_clients')
     );
   });
@@ -640,7 +676,7 @@ describe('ClientStore', () => {
 
   it('should delete client', async () => {
     await clientStore.delete('client_123');
-    expect(env.DB.prepare).toHaveBeenCalledWith(
+    expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith(
       'DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?'
     );
   });
@@ -698,7 +734,7 @@ describe('SessionStore', () => {
     const session = await sessionStore.get('g1:wnam:7:session_123');
     expect(session).toEqual(mockSession);
     expect(mockGetSessionRpc).toHaveBeenCalledWith('g1:wnam:7:session_123');
-    expect(env.SESSION_STORE.idFromName).toHaveBeenCalledWith('default:wnam:ses:7');
+    expect(mockMethod(env.SESSION_STORE, 'idFromName')).toHaveBeenCalledWith('default:wnam:ses:7');
   });
 
   it('should return null for non-existent session', async () => {
@@ -847,7 +883,9 @@ describe('PasskeyStore', () => {
     const passkey = await passkeyStore.create(newPasskey);
     expect(passkey.id).toBeDefined();
     expect(passkey.credential_id).toBe('cred_new');
-    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO passkeys'));
+    expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO passkeys')
+    );
   });
 
   it('should update passkey counter', async () => {
@@ -872,7 +910,7 @@ describe('PasskeyStore', () => {
 
   it('should delete passkey', async () => {
     await passkeyStore.delete('passkey_123');
-    expect(env.DB.prepare).toHaveBeenCalledWith(
+    expect(mockMethod(env.DB, 'prepare')).toHaveBeenCalledWith(
       'DELETE FROM passkeys WHERE tenant_id = ? AND id = ?'
     );
   });

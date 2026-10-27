@@ -61,7 +61,7 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.fapi_enabled.desc': 'تطبيق ملف أمان FAPI 2.0 على كل تطبيقات المستأجر.',
 	'set.page.appDefaults': 'الإعدادات الافتراضية للتطبيقات',
 	'set.page.appDefaults.desc':
-		'قواعد طلبات التفويض والرموز التي تنطبق على كل تطبيقات المستأجر. يمكن لإعدادات التطبيق إضافة متطلب أمني لكن لا يمكنها إلغاؤه.',
+		'تسري هذه القواعد على جميع تطبيقات المستأجر؛ ولا يجوز لإعدادات التطبيق تخفيف المتطلبات الأمنية.',
 	'set.section.authRequests': 'طلبات التفويض',
 	'set.section.authRequests.desc': 'ما يجب أن يتضمنه طلب تسجيل الدخول من التطبيق.',
 	'set.section.authRequests.advanced': 'كائنات الطلب الموقّعة والمشفّرة',

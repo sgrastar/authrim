@@ -46,7 +46,7 @@ export function openAdminDatabase(): SQLiteDatabase {
     )
   );
   db.exec(
-    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/052_log_iceberg_storage.sql'), 'utf8')
+    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/053_log_iceberg_storage.sql'), 'utf8')
   );
   return db;
 }

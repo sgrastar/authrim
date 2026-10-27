@@ -8,6 +8,7 @@ import { LoggingConfigSchema } from './log-archive-config.js';
 
 import { legacyDatetimeString, legacyUrlString, z } from './zod.js';
 import { isReservedTenantId, TENANT_ID_STRICT_PATTERN } from './tenant-id.js';
+import { parseReplicationWriterConfiguration } from '@authrim/ar-lib-core/services/deployment-replication/writer';
 
 // =============================================================================
 // URL Configuration
@@ -310,8 +311,21 @@ export const EmailFeatureSchema = z.object({
   verificationProtocolOriginTrial: EmailVerificationOriginTrialConfigSchema.optional(),
 });
 
+export const ReplicationWriterConfigSchema = z.unknown().transform((value, context) => {
+  try {
+    return parseReplicationWriterConfiguration(JSON.stringify(value));
+  } catch {
+    context.addIssue({ code: 'custom', message: 'Invalid replication writer configuration' });
+    return z.NEVER;
+  }
+});
+
 export const FeaturesConfigSchema = z
   .object({
+    /** Experimental coordinated SAML DR source export; requires initialized source authorities. */
+    samlDrExport: z.object({ enabled: z.boolean().default(false) }).optional(),
+    /** Explicit tenant or whole-environment writer authority. Absence preserves standalone mode. */
+    replicationWriter: ReplicationWriterConfigSchema.optional(),
     queue: QueueFeatureSchema.prefault({}),
     r2: R2FeatureSchema.prefault({}),
     email: EmailFeatureSchema.prefault({}),
@@ -323,6 +337,13 @@ export const FeaturesConfigSchema = z
       .prefault({}),
   })
   .superRefine((features, context) => {
+    if (features.replicationWriter && features.samlDrExport?.enabled !== true) {
+      context.addIssue({
+        code: 'custom',
+        path: ['replicationWriter'],
+        message: 'Replication requires coordinated SAML DR exports and complete writer bindings',
+      });
+    }
     if (features.pluginDynamicWorkers.enabled && !features.r2.enabled) {
       context.addIssue({
         code: 'custom',
@@ -731,6 +752,24 @@ export const AuthrimConfigSchema = z
         code: 'custom',
         path: ['features', 'queue'],
         message: 'Pipeline log archive requires durable logging delivery queues',
+      });
+    }
+    const writer = config.features.replicationWriter;
+    if (
+      writer &&
+      (writer.version === 2
+        ? writer.environmentId !== config.environment.prefix ||
+          writer.tenantId !== undefined ||
+          writer.restoreId !== undefined ||
+          writer.epoch !== 1
+        : writer.tenantId !== config.tenant.name ||
+          config.tenant.multiTenant ||
+          (config.tenant.primaryTenant && config.tenant.primaryTenant !== writer.tenantId))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['features', 'replicationWriter'],
+        message: 'Replication writer must match the declared tenant or entire environment',
       });
     }
   });

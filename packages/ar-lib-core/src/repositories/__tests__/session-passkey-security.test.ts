@@ -108,6 +108,43 @@ describe('PasskeyRepository clone-detection invariants', () => {
     });
   });
 
+  it('normalizes PostgreSQL bigint fields before checking passkey counter rollback', async () => {
+    const execute = vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 });
+    const repository = new PasskeyRepository(
+      adapterWith({
+        queryOne: vi.fn().mockResolvedValue({
+          ...passkeyRow(),
+          counter: '5',
+          created_at: '100',
+          last_used_at: '120',
+        }),
+        execute,
+      }),
+      'tenant-a'
+    );
+
+    await expect(repository.updateCounterAfterAuth('pk-1', 5)).rejects.toThrow('Invalid counter');
+    expect(execute).not.toHaveBeenCalled();
+    await expect(repository.findByCredentialId('credential-1')).resolves.toMatchObject({
+      counter: 5,
+      created_at: 100,
+      last_used_at: 120,
+    });
+  });
+
+  it('rejects malformed or unsafe stored counters instead of authenticating with them', async () => {
+    const repository = new PasskeyRepository(
+      adapterWith({
+        queryOne: vi.fn().mockResolvedValue({ ...passkeyRow(), counter: '9007199254740993' }),
+      }),
+      'tenant-a'
+    );
+
+    await expect(repository.findByCredentialId('credential-1')).rejects.toThrow(
+      'Invalid stored passkey counter'
+    );
+  });
+
   it('rejects an empty tenant and includes tenant isolation in credential lookup', async () => {
     expect(() => new PasskeyRepository(adapterWith(), '   ')).toThrow(
       'PasskeyRepository requires tenantId'

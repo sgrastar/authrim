@@ -1,4 +1,5 @@
 import type { LogIcebergReadinessResult } from '@authrim/ar-lib-core/services/log-iceberg-readiness';
+import type { SamlDrWriterProbe } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer-contract';
 import type { R2Bucket } from '@cloudflare/workers-types';
 import type { RuntimeSmokeResult } from '@authrim/ar-lib-core';
 import type {
@@ -74,6 +75,7 @@ export type ProvisionedD1DataRole = TenantShardDataRole | 'lookup';
 
 export interface RuntimeSmokeServiceBinding {
   probeLogArchive?: (input: unknown) => Promise<LogIcebergReadinessResult>;
+  inspectSamlDrWriter?: () => Promise<SamlDrWriterProbe>;
   smokeTenantBinding: (token: string) => Promise<RuntimeSmokeResult>;
   smokeTenantBindings?: (
     tokens: string[]
@@ -100,6 +102,9 @@ export interface RuntimeSmokeServiceBinding {
 }
 
 export interface ControlEnv {
+  AUTHRIM_REPLICATION_WRITER?: string;
+  AUTHRIM_REPLICATION_WRITER_SECRET?: string;
+  ENABLE_SAML_DR_EXPORT?: string;
   /** Setup-generated binding identity metadata; not a user-configurable backup option. */
   AUTHRIM_FIXED_DATABASE_IDS?: string;
   CONTROL_DB: D1Database;
@@ -122,6 +127,8 @@ export interface ControlEnv {
   SMOKE_RPC_SIGNING_JWK_SLOT_B?: string;
   SMOKE_RPC_SIGNING_ACTIVE_SLOT?: 'A' | 'B';
   SMOKE_RPC_SIGNING_ACTIVE_KID?: string;
+  SMOKE_AR_CONTROL?: RuntimeSmokeServiceBinding;
+  SMOKE_AR_ROUTER?: RuntimeSmokeServiceBinding;
   SMOKE_AR_LIB_CORE?: RuntimeSmokeServiceBinding;
   SMOKE_AR_DISCOVERY?: RuntimeSmokeServiceBinding;
   SMOKE_AR_AUTH?: RuntimeSmokeServiceBinding;

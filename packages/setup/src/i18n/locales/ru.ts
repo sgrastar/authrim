@@ -769,6 +769,29 @@ const ru: Translations = {
   'web.lightMode': 'Светлая',
   'web.systemMode': 'Системная',
 
+  // Web UI cloud platform selection
+  'web.platform.title': 'Выберите облачную платформу',
+  'web.platform.description': 'Выберите облако для настройки Authrim.',
+  'web.platform.cloudflareAction': 'Настроить в Cloudflare',
+  'web.platform.cloudflareDescription': 'Настройте Authrim на Cloudflare Workers.',
+  'web.platform.awsAction': 'Настроить в AWS',
+  'web.platform.development': 'В разработке',
+  'web.platform.awsScope': 'Пока поддерживается только SAML DR',
+  'web.platform.choose': 'Выбрать',
+  'web.platform.back': 'Вернуться к выбору облака',
+  'web.platform.awsTitle': 'Подготовить SAML DR в AWS',
+  'web.platform.awsDescription':
+    'Подготовьте среду восстановления SAML IdP на случай сбоя Cloudflare.',
+  'web.platform.awsGuide':
+    'Команды настройки AWS позволяют проверить предварительные требования и составить план развертывания. Настройка в браузере находится в разработке.',
+  'web.platform.awsPrerequisites':
+    'Подготовьте аккаунт AWS, регион и профиль для входа через выделенную роль.',
+  'web.platform.awsCommand': 'Команда проверки предварительных требований',
+  'web.platform.awsCommandNote':
+    'Замените идентификатор аккаунта и имя профиля на значения из ваших настроек AWS.',
+  'web.platform.targetPending': 'Не выбрано',
+  'web.platform.chooseCloudflare': 'Перейти к настройке Cloudflare',
+
   // Web UI Prerequisites
   'web.prereq.title': 'Подготовка',
   'web.prereq.checking': 'Проверка...',

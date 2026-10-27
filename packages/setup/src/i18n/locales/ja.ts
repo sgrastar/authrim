@@ -760,6 +760,28 @@ const ja: Translations = {
   'web.lightMode': 'ライト',
   'web.systemMode': 'システム',
 
+  // Web UI cloud platform selection
+  'web.platform.title': '構築先を選択',
+  'web.platform.description': 'Authrimを構築するクラウドを選んでください。',
+  'web.platform.cloudflareAction': 'Cloudflareで構築',
+  'web.platform.cloudflareDescription': 'Cloudflare WorkersでAuthrimをセットアップします。',
+  'web.platform.awsAction': 'AWSで構築',
+  'web.platform.development': '開発中',
+  'web.platform.awsScope': '現在はSAML DR対応のみ',
+  'web.platform.choose': '選択する',
+  'web.platform.back': '構築先の選択に戻る',
+  'web.platform.awsTitle': 'AWSでSAML DRを準備',
+  'web.platform.awsDescription': 'Cloudflare障害時に備えるSAML IdPの復旧環境を準備します。',
+  'web.platform.awsGuide':
+    '現在はAWS用のセットアップコマンドで事前確認と計画作成を進められます。ブラウザからの構築は開発中です。',
+  'web.platform.awsPrerequisites':
+    'AWSアカウント、リージョン、専用ロールでログインするプロファイルを用意してください。',
+  'web.platform.awsCommand': '事前確認コマンド',
+  'web.platform.awsCommandNote':
+    'アカウントIDとプロファイル名を、ご利用のAWS設定に置き換えてください。',
+  'web.platform.targetPending': '未選択',
+  'web.platform.chooseCloudflare': 'Cloudflareのセットアップに進む',
+
   // Web UI Prerequisites
   'web.prereq.title': '準備',
   'web.prereq.checking': '確認中...',

@@ -1,3 +1,4 @@
+import { samlDrAll } from './saml-dr-writer';
 import { backupOwnershipPredicate, type BackupRowOwnership } from './row-ownership';
 import { TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES } from './container-dataset-reader';
 import { readSqliteRestoreSeedFingerprint } from './sqlite-restore-seed';
@@ -506,7 +507,7 @@ export class SqliteRestoreTarget {
     await this.authorize();
     const results = this.database.batch
       ? await this.database.batch(statements)
-      : await Promise.all(statements.map(({ sql, params }) => this.database.execute(sql, params)));
+      : await samlDrAll(statements.map(({ sql, params }) => this.database.execute(sql, params)));
     if (results.length !== statements.length || results.some(({ success }) => !success))
       throw error();
     await this.assertLive();

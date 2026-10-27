@@ -39,7 +39,7 @@ describe('private log master history', () => {
       expect(getSecretNamesForWorker(component, { logArchive: true })).toContain(
         'LOG_ARCHIVE_ROOT_KEYRING'
       );
-      expect(requiredWorkerSecretNames(component, undefined, true).all).toContain(
+      expect(requiredWorkerSecretNames(component, undefined, { logArchive: true }).all).toContain(
         'LOG_ARCHIVE_ROOT_KEYRING'
       );
       expect(getSecretNamesForWorker(component)).not.toContain('LOG_ARCHIVE_ROOT_KEYRING');

@@ -2,7 +2,14 @@ openapi: 3.2.0
 info:
   title: Authrim External Identity Bridge API
   version: 0.4.2
-  description: Browser continuation endpoints owned by the external identity bridge.
+  description: >
+    Browser continuation endpoints owned by the external identity bridge.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 paths:
   /auth/external/{provider}/start:
     get:

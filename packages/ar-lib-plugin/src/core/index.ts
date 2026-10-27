@@ -86,6 +86,7 @@ export {
   type JSONSchema7,
   type JSONSchema7TypeName,
   type SchemaConversionOptions,
+  type SchemaConversionWarning,
   type PluginSchemaInfo,
   type ValidationResult,
   type ValidationError,

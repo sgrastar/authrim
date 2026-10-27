@@ -1,4 +1,5 @@
 import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
   AdminAgentAccessRepository,
@@ -564,12 +565,21 @@ export class AgentDownscopeEntrypoint extends WorkerEntrypoint<Env> {
   exchangeAgentAccessToken(
     input: AgentDownscopeExchangeRequest
   ): Promise<AgentDownscopeExchangeResult> {
-    return exchangeAgentAccessToken(this.env, input);
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      exchangeAgentAccessToken(env, input)
+    );
   }
 
   issueAgentBulkChildToken(
     input: AgentBulkChildTokenRequest
   ): Promise<AgentDownscopeExchangeResult> {
-    return issueAgentBulkChildToken(this.env, input);
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      issueAgentBulkChildToken(env, input)
+    );
   }
 }
+
+export const SAML_DR_WRITER_SURFACES = [
+  'rpc:AgentDownscopeEntrypoint.exchangeAgentAccessToken',
+  'rpc:AgentDownscopeEntrypoint.issueAgentBulkChildToken',
+] as const;

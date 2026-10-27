@@ -3,6 +3,7 @@
 	import { resolveNavPath } from './nav';
 	import PlaceholderPage from './PlaceholderPage.svelte';
 	import type { ScopeOption } from './ScopeSwitcher.svelte';
+	import type { ShellNotification } from './notifications';
 
 	/**
 	 * Storybook stand-in for the console route: link clicks inside the frame update the location
@@ -10,18 +11,29 @@
 	 */
 	interface Props {
 		path?: string;
+		/** Leave out for a header without a notification area. */
+		notifications?: readonly ShellNotification[];
+		/** An administrator of one tenant only: the header shows a plain scope, not a switcher. */
+		singleScope?: boolean;
 	}
 
-	let { path = '/admin/users/all' }: Props = $props();
+	let { path = '/admin/users/all', notifications, singleScope = false }: Props = $props();
+
+	// Information is dismissed in place; the demo keeps what is left.
+	let dismissed = $state<string[]>([]);
+	const shown = $derived(notifications?.filter((item) => !dismissed.includes(item.id)));
 
 	let current = $state('');
-	const location = $derived(resolveNavPath(current || path) ?? resolveNavPath('/admin')!);
+	const location = $derived(
+		resolveNavPath((current || path).split('?')[0]) ?? resolveNavPath('/admin')!
+	);
 
-	const scopes: ScopeOption[] = [
+	const allScopes: ScopeOption[] = [
 		{ id: 'platform', kind: 'platform', name: 'プラットフォーム全体', mark: '◆' },
 		{ id: 'acme', kind: 'tenant', name: 'Acme Corporation', mark: 'A' },
 		{ id: 'globex', kind: 'tenant', name: 'Globex Inc.', mark: 'G' }
 	];
+	const scopes = $derived(singleScope ? allScopes.filter((s) => s.id === 'acme') : allScopes);
 	let tenant = $state('acme');
 
 	function intercept(event: MouseEvent) {
@@ -48,6 +60,8 @@
 		}}
 		account={{ name: 'Alex Morgan', email: 'admin@example.com', initials: 'AM' }}
 		onsignout={() => {}}
+		notifications={shown}
+		ondismiss={(id) => (dismissed = [...dismissed, id])}
 	>
 		{#key current}<PlaceholderPage {location} />{/key}
 	</AppShell>

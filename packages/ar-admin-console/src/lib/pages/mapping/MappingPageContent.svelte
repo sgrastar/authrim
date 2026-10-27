@@ -206,7 +206,7 @@
 	);
 </script>
 
-<Page width="wide">
+<Page>
 	{#if trail.length > 0}<div>
 			<Button variant="ghost" disabled={busy} onclick={goBack}>{t('mc.nav.back')}</Button>
 		</div>{/if}

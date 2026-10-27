@@ -46,6 +46,11 @@
 	--warning: #8f5f14;
 	--warning-bg: #fdf3e0;
 	--danger: #b03a31;
+	/* Circles of the header notification area: red, orange, yellow, blue. */
+	--sev-critical: #d9382c;
+	--sev-high: #ee7a1c;
+	--sev-caution: #e8b41a;
+	--sev-info: #3477b9;
 	--danger-bg: #fbeae8;
 	--info: #3b6c90;
 	--info-bg: #e9f1f7;
@@ -154,6 +159,11 @@
 	--warning: #d9a03f;
 	--warning-bg: rgba(217, 160, 63, 0.14);
 	--danger: #ea8a81;
+	/* Circles of the header notification area: red, orange, yellow, blue. */
+	--sev-critical: #ff6f5f;
+	--sev-high: #ffa04c;
+	--sev-caution: #f7d457;
+	--sev-info: #67b0ee;
 	--danger-bg: rgba(224, 114, 104, 0.14);
 	--info: #6ba5cc;
 	--info-bg: rgba(107, 165, 204, 0.14);

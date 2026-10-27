@@ -1960,7 +1960,11 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       const deploymentSecrets = await loadDeploySecretsFromKeys(
         keysDirectory?.path,
         [...components],
-        { rootDir: baseDir, env }
+        {
+          rootDir: baseDir,
+          env,
+          replicationWriter: config.features.replicationWriter !== undefined,
+        }
       );
       const deploymentControlDatabase = workingLock.d1.CONTROL_DB;
       if (!deploymentControlDatabase) {
@@ -1984,6 +1988,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           ])
         ),
         secrets: deploymentSecrets,
+        replicationWriter: config.features.replicationWriter !== undefined,
         ...lookupHmacDeployOptions(workingLock.controlKeyState?.lookupHmac),
         deploymentLease: {
           controlDatabaseId: deploymentControlDatabase.id,

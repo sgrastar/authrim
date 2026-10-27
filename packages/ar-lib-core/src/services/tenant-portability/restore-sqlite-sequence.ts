@@ -1,3 +1,4 @@
+import { samlDrAll } from './saml-dr-writer';
 import { openPlannedSqliteRestoreTarget } from './sqlite-restore-plan';
 import { encodeTenantBundleManifest } from './bundle-manifest';
 import type { TenantBackupRestorePlanInventoryPort } from './restore-plan-inventory';
@@ -212,7 +213,7 @@ async function openRegisteredRestoreTargets(
     opened + Math.max(1, Math.floor(RESTORE_STATEMENT_BUDGET / TARGET_OPEN_STATEMENTS))
   );
   for (let offset = 0; offset < pending.length; offset += 4) {
-    await Promise.all(
+    await samlDrAll(
       pending.slice(offset, offset + 4).map((target) =>
         openPlannedSqliteRestoreTarget({
           ...input,
@@ -751,7 +752,7 @@ export async function runSqliteRestoreSequenceStep(
         if (writableEmpty.length)
           await target.verifyEmptyDatasets(writableEmpty.map(({ loaded }) => loaded.policy));
         if (writableRows.length) {
-          const preparedRows = await Promise.all(
+          const preparedRows = await samlDrAll(
             writableRows.map(async ({ loaded, rows }) => ({
               policy: loaded.policy,
               manifest: loaded.manifest,
@@ -854,7 +855,7 @@ async function finalizeSqliteTargets(
     if (verifyIndex !== 0 || cursor.datasetCursor !== null) throw fail();
     if (sealIndex < targets.length) {
       const batch = targets.slice(sealIndex, sealIndex + 4);
-      await Promise.all(
+      await samlDrAll(
         batch.map(async (descriptor) => {
           const target = await openPlannedSqliteRestoreTarget({
             ...input,

@@ -11,6 +11,7 @@ import {
   resolveAccountCoreDataContext,
   resolveAccountPiiSourceForAudit,
   resolveOtpAccountCoreDataContextByIdentifier,
+  resolveAccountRouteForSamlDrSnapshot,
 } from '../runtime-data-context';
 
 const mocks = vi.hoisted(() => ({
@@ -296,6 +297,68 @@ describe('runtime account data context', () => {
     clearTenantDatabaseResolverMemoryCache();
     mocks.tenantId = 'tenant-a';
   });
+
+  it('reads a held DR route from primary even after normal runtime cached an older route', async () => {
+    const bindings = env();
+    await resolveAccountDataContext(bindings, { tenantId: 'tenant-a', accountId: 'user-a' });
+    const replacement = d1({ lookupRows: [lookupRow()] });
+    const updated = { ...bindings, ENABLE_SAML_DR_EXPORT: 'true', LOOKUP_A: replacement } as Env;
+    const route = await resolveAccountRouteForSamlDrSnapshot(updated, {
+      tenantId: 'tenant-a',
+      accountId: 'account:user-a',
+      accountRouteGeneration: 3,
+      nowMs: Date.now(),
+    });
+    expect(route.accountRouteGeneration).toBe(3);
+    expect(
+      (replacement as unknown as { withSession: ReturnType<typeof vi.fn> }).withSession
+    ).toHaveBeenCalledWith('first-primary');
+    expect(
+      (replacement as unknown as { withSession: ReturnType<typeof vi.fn> }).withSession
+    ).not.toHaveBeenCalledWith('first-unconstrained');
+  });
+
+  it('does not require an active Core account while capturing its primary DR route', async () => {
+    const bindings = {
+      ...env(),
+      ENABLE_SAML_DR_EXPORT: 'true',
+      TDB_USERS_A: d1({ role: 'tenant_core/users', accountLifecycleState: 'suspended' }),
+    } as Env;
+    await expect(
+      resolveAccountRouteForSamlDrSnapshot(bindings, {
+        tenantId: 'tenant-a',
+        accountId: 'account:user-a',
+        accountRouteGeneration: 3,
+        nowMs: Date.now(),
+      })
+    ).resolves.toMatchObject({ accountRouteGeneration: 3 });
+    expect(
+      (bindings as unknown as { TDB_USERS_A: { withSession: ReturnType<typeof vi.fn> } })
+        .TDB_USERS_A.withSession
+    ).not.toHaveBeenCalled();
+  });
+
+  it.each(['stale', 'foreign', 'disabled'])(
+    'rejects invalid primary DR membership: %s',
+    async (kind) => {
+      const row = lookupRow();
+      if (kind === 'foreign') row.tenant_id = 'tenant-other';
+      if (kind === 'disabled') row.lifecycle_state = 'disabled';
+      const bindings = {
+        ...env(),
+        ENABLE_SAML_DR_EXPORT: 'true',
+        LOOKUP_A: d1({ lookupRows: [row] }),
+      } as Env;
+      await expect(
+        resolveAccountRouteForSamlDrSnapshot(bindings, {
+          tenantId: 'tenant-a',
+          accountId: 'account:user-a',
+          accountRouteGeneration: kind === 'stale' ? 4 : 3,
+          nowMs: Date.now(),
+        })
+      ).rejects.toThrow();
+    }
+  );
 
   it('fixes one account to its verified core and PII shard route', async () => {
     const bindings = env();

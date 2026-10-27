@@ -47,6 +47,7 @@ const TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
 
 type SqliteDatabase = {
   exec(sql: string): void;
+  close(): void;
   prepare(sql: string): {
     run(...params: unknown[]): { changes: number | bigint };
     get(...params: unknown[]): unknown;
@@ -271,23 +272,27 @@ function migrate(folder: string): SqliteDatabase {
 function adapterOver(db: SqliteDatabase): DatabaseAdapter & { raw: SqliteDatabase } {
   const bind = (params: unknown[] = []) =>
     params.map((value) => (value === undefined ? null : value));
+  const totalChanges = () =>
+    Number((db.prepare('SELECT total_changes() AS changes').get() as { changes: number }).changes);
+  const executeStatement = (sql: string, params?: unknown[]) => {
+    const before = totalChanges();
+    db.prepare(sql).run(...bind(params));
+    // D1 meta.changes includes trigger effects, unlike SQLite's direct run().changes.
+    return { success: true, rowsAffected: totalChanges() - before };
+  };
   const adapter = {
     raw: db,
     query: async (sql: string, params?: unknown[]) => db.prepare(sql).all(...bind(params)),
     queryOne: async (sql: string, params?: unknown[]) =>
       (db.prepare(sql).get(...bind(params)) as unknown) ?? null,
-    execute: async (sql: string, params?: unknown[]) => ({
-      success: true,
-      rowsAffected: Number(db.prepare(sql).run(...bind(params)).changes),
-    }),
+    execute: async (sql: string, params?: unknown[]) => executeStatement(sql, params),
     transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(adapter),
     batch: async (statements: Array<{ sql: string; params?: unknown[] }>) => {
       db.exec('BEGIN');
       try {
-        const results = statements.map((statement) => ({
-          success: true,
-          rowsAffected: Number(db.prepare(statement.sql).run(...bind(statement.params)).changes),
-        }));
+        const results = statements.map((statement) =>
+          executeStatement(statement.sql, statement.params)
+        );
         db.exec('COMMIT');
         return results;
       } catch (error) {
@@ -296,7 +301,7 @@ function adapterOver(db: SqliteDatabase): DatabaseAdapter & { raw: SqliteDatabas
       }
     },
     isHealthy: async () => true,
-    getType: () => 'sqlite',
+    getType: () => 'd1',
     close: async () => undefined,
   };
   return adapter as unknown as DatabaseAdapter & { raw: SqliteDatabase };
@@ -391,6 +396,54 @@ async function seedAccount(databases: Databases): Promise<void> {
     sensitiveValues: { email: EMAIL, name: 'Routed User' },
   });
 }
+
+describe('real D1 adapter result fidelity', () => {
+  it('counts migration trigger effects for execute and batch while preserving zero matched rows', async () => {
+    const sqlite = migrate('core');
+    const db = adapterOver(sqlite);
+    try {
+      const inserted = await db.execute(
+        `INSERT INTO service_group_write_boundaries
+         (id,tenant_id,user_id,operation,status,created_at) VALUES (?,?,?,?,'writing',?)`,
+        ['boundary-delta', TENANT, USER, 'profile-write', 1]
+      );
+      expect(inserted.rowsAffected).toBe(2);
+      expect(
+        await db.queryOne(
+          'SELECT revision FROM service_group_inputs WHERE tenant_id=? AND user_id=?',
+          [TENANT, USER]
+        )
+      ).toEqual({ revision: 1 });
+      expect(
+        (
+          await db.execute('DELETE FROM service_group_write_boundaries WHERE id=?', [
+            'absent-boundary',
+          ])
+        ).rowsAffected
+      ).toBe(0);
+      const deleted = await db.batch([
+        {
+          sql: 'DELETE FROM service_group_write_boundaries WHERE id=?',
+          params: ['boundary-delta'],
+        },
+        {
+          sql: 'DELETE FROM service_group_write_boundaries WHERE id=?',
+          params: ['boundary-delta'],
+        },
+      ]);
+      expect(deleted.map((result) => result.rowsAffected)).toEqual([2, 0]);
+      expect(
+        await db.queryOne(
+          'SELECT revision FROM service_group_inputs WHERE tenant_id=? AND user_id=?',
+          [TENANT, USER]
+        )
+      ).toEqual({ revision: 2 });
+      expect(await db.query('SELECT id FROM service_group_write_boundaries')).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+});
 
 describe.each(['shared_pool', 'tenant_exclusive'] as const)(
   'account reads and writes of a %s tenant (real SQL)',

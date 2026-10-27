@@ -45,6 +45,7 @@ export const SECRET_NAMES = [
   'RESEND_API_KEY',
   'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID',
   'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET',
+  'AUTHRIM_REPLICATION_WRITER_SECRET',
 ] as const;
 
 export type SecretName = (typeof SECRET_NAMES)[number];
@@ -92,6 +93,7 @@ export const SECRET_KEY_FILES: Partial<Record<SecretName, string>> = {
   RESEND_API_KEY: 'resend_api_key.txt',
   DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'downstream_grant_introspection_client_id.txt',
   DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'downstream_grant_introspection_client_secret.txt',
+  AUTHRIM_REPLICATION_WRITER_SECRET: 'replication_writer_secret.txt',
 };
 
 export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> = {
@@ -283,7 +285,12 @@ export const DEFAULT_SECRET_TARGET_WORKERS: WorkerComponent[] = Object.entries(S
   .filter(([, secrets]) => secrets.length > 0)
   .map(([component]) => component as WorkerComponent);
 
-export function getSecretTargetWorkers(workers?: WorkerComponent[]): WorkerComponent[] {
+export function getSecretTargetWorkers(
+  workers?: WorkerComponent[],
+  options: { replicationWriter?: boolean } = {}
+): WorkerComponent[] {
+  if (options.replicationWriter)
+    return workers?.length ? workers : (Object.keys(SECRET_UPLOAD_PLAN) as WorkerComponent[]);
   const requestedWorkers = workers && workers.length > 0 ? workers : DEFAULT_SECRET_TARGET_WORKERS;
   return requestedWorkers.filter((component) => SECRET_UPLOAD_PLAN[component]?.length > 0);
 }
@@ -304,14 +311,13 @@ export function getLogArchiveSecretNamesForWorker(
 
 export function getSecretNamesForWorker(
   component: WorkerComponent,
-  options: { logArchive?: boolean } = {}
+  options: { logArchive?: boolean; replicationWriter?: boolean } = {}
 ): readonly SecretName[] {
-  return options.logArchive
-    ? [
-        ...new Set<SecretName>([
-          ...SECRET_UPLOAD_PLAN[component],
-          ...getLogArchiveSecretNamesForWorker(component),
-        ]),
-      ]
-    : (SECRET_UPLOAD_PLAN[component] ?? []);
+  return [
+    ...new Set<SecretName>([
+      ...(SECRET_UPLOAD_PLAN[component] ?? []),
+      ...(options.logArchive ? getLogArchiveSecretNamesForWorker(component) : []),
+      ...(options.replicationWriter ? (['AUTHRIM_REPLICATION_WRITER_SECRET'] as const) : []),
+    ]),
+  ];
 }

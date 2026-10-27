@@ -5,6 +5,12 @@ info:
   summary: SCIM 2.0 user and group provisioning API.
   description: >
     Initial OpenAPI contract for the SCIM 2.0 endpoints implemented by `@authrim/ar-management`. SCIM resource schemas are represented at a high level here; detailed semantics are governed by RFC 7643, RFC 7644, and the implementation tests.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 servers:
   - name: Tenant runtime
     url: https://{tenant_domain}

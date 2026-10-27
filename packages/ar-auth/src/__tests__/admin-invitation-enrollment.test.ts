@@ -529,7 +529,7 @@ describe('Admin invitation enrollment', () => {
     expect(response.status).toBe(200);
     expect(adapter.batch).toHaveBeenCalledOnce();
     const statements = adapter.batch.mock.calls[0][0];
-    expect(statements).toHaveLength(9);
+    expect(statements).toHaveLength(10);
     for (const statement of statements) {
       expect(statement.sql.match(/\?/gu) ?? []).toHaveLength(statement.params?.length ?? 0);
     }
@@ -539,11 +539,21 @@ describe('Admin invitation enrollment', () => {
       expect.stringContaining('INSERT INTO admin_role_assignments'),
       expect.stringContaining('INSERT INTO admin_sessions'),
       expect.stringContaining('UPDATE admin_invitations'),
+      expect.stringContaining('INSERT INTO log_iceberg_retention_jobs'),
       expect.stringContaining('INSERT INTO log_iceberg_event_receipts'),
       expect.stringContaining('INSERT INTO log_iceberg_records'),
       expect.stringContaining('INSERT INTO log_iceberg_record_parts'),
       expect.stringContaining('DELETE FROM admin_invitation_enrollments'),
     ]);
+    expect(statements[5].params).toEqual([
+      expect.stringMatching(/^[a-f0-9]{64}$/u),
+      logging.config.tableUuid,
+      logging.config.generation,
+      invitation.tenant_id,
+      'key-invitation',
+      'admin.admin_audit_log',
+    ]);
+    expect(statements[5].sql).toContain('ON CONFLICT(id) DO NOTHING');
     expect(statements[0].sql).toContain('EXISTS');
     expect(statements[0].params).toContain(await hashToken('enrollment-token'));
     expect(enrollments.has(await hashToken('enrollment-token'))).toBe(false);

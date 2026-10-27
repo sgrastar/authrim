@@ -21,6 +21,7 @@
  * @see https://datatracker.ietf.org/doc/html/rfc7644
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import {
@@ -240,7 +241,7 @@ async function mapScimConcurrent<T, R>(
       results[index] = await mapper(values[index]);
     }
   });
-  await Promise.all(workers);
+  await samlDrAll(workers);
   return results;
 }
 

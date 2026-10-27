@@ -97,7 +97,7 @@ function openAdminDatabase(): SQLiteDatabase {
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
   db.exec(
-    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/052_log_iceberg_storage.sql'), 'utf8')
+    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/053_log_iceberg_storage.sql'), 'utf8')
   );
   return db;
 }

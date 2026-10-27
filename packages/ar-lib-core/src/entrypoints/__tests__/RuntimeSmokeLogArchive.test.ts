@@ -1,6 +1,7 @@
 import { exportJWK, generateKeyPair, type JWK } from 'jose';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RuntimeSmokeEntrypoint } from '../RuntimeSmokeEntrypoint';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RuntimeSmokeEntrypoint, type RuntimeSmokeEntrypointEnv } from '../RuntimeSmokeEntrypoint';
+import { hasTenantBackupMutationCoverage } from '../../services/tenant-portability/covered-mutation';
 import { signRuntimeSmokeRequest } from '../../services/control-plane/runtime-smoke-rpc';
 import {
   logIcebergReadinessAttemptDigest,
@@ -18,13 +19,20 @@ beforeAll(async () => {
     keys: [{ ...(await exportJWK(pair.publicKey)), kid: 'smoke-key', alg: 'EdDSA' }],
   });
 });
-beforeEach(() => vi.mocked(probeLogIcebergReadiness).mockClear());
+beforeEach(() => {
+  vi.mocked(probeLogIcebergReadiness).mockReset().mockResolvedValue({ state: 'pending' });
+});
+afterEach(() => vi.unstubAllGlobals());
 const attempt = {
   attemptId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
   startedAt: new Date().toISOString(),
   deploymentFingerprint: 'd'.repeat(64),
 };
-function worker(caller = 'ar-control', target = 'test-ar-management') {
+function worker(
+  caller = 'ar-control',
+  target = 'test-ar-management',
+  extra: Partial<RuntimeSmokeEntrypointEnv> = {}
+) {
   return new RuntimeSmokeEntrypoint(
     {
       props: {
@@ -52,6 +60,7 @@ function worker(caller = 'ar-control', target = 'test-ar-management') {
       AUTHRIM_LOG_ARCHIVE_PHYSICAL_FINGERPRINT: 'f'.repeat(64),
       AUTHRIM_LOG_ARCHIVE_DB_RETENTION_DAYS: '7',
       AUTHRIM_LOG_ARCHIVE_EXPORT_INTERVAL_MINUTES: '5',
+      ...extra,
     }
   );
 }
@@ -80,6 +89,78 @@ describe('private log archive bootstrap probe authority', () => {
     expect(entry.fetch().status).toBe(404);
     await entry.probeLogArchive({ token: await token(), attempt });
     expect(probeLogIcebergReadiness).toHaveBeenCalledOnce();
+  });
+  it('requires the environment permit only after verifying the signed probe purpose', async () => {
+    const control = {
+      acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: false })),
+      completeEnvironmentBackupMutationPermit: vi.fn(async () => {}),
+    };
+    const entry = worker('ar-control', 'test-ar-management', {
+      ENABLE_SAML_DR_EXPORT: 'true',
+      SAML_DR_MUTATION_CONTROL: control,
+    });
+    await expect(
+      entry.probeLogArchive({ token: await token('ordinary-db-smoke'), attempt })
+    ).rejects.toThrow('scope_denied');
+    expect(control.acquireEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+    await expect(entry.probeLogArchive({ token: await token(), attempt })).rejects.toThrow(
+      'probe_failed'
+    );
+    expect(control.acquireEnvironmentBackupMutationPermit).toHaveBeenCalledOnce();
+    expect(probeLogIcebergReadiness).not.toHaveBeenCalled();
+  });
+  it('observes caught R2 uncertainty inside the signed probe instead of completing replication', async () => {
+    const requests: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: unknown, init: RequestInit) => {
+        const body: unknown = JSON.parse(typeof init.body === 'string' ? init.body : '{}');
+        if (!body || typeof body !== 'object' || !('payload' in body) || !('action' in body))
+          throw new Error('invalid authority request');
+        requests.push(String(body.action));
+        return Response.json(body.payload);
+      })
+    );
+    const put = vi.fn(async () => {
+      throw new Error('unknown R2 outcome');
+    });
+    const bucket = { get: vi.fn(), put, delete: vi.fn() };
+    const control = {
+      acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+      completeEnvironmentBackupMutationPermit: vi.fn(async () => {}),
+    };
+    const entry = worker('ar-control', 'test-ar-management', {
+      ENABLE_SAML_DR_EXPORT: 'true',
+      SAML_DR_MUTATION_CONTROL: control,
+      AUTHRIM_REPLICATION_WRITER: JSON.stringify({
+        version: 2,
+        endpoint: 'https://authority.example.test/replication/v1/rpc',
+        credentialId: 'writer-a',
+        pairId: 'pair-a',
+        environmentId: 'test',
+        deploymentId: 'cf-a',
+        epoch: 1,
+        generationId: 'gen-a',
+      }),
+      AUTHRIM_REPLICATION_WRITER_SECRET: 'a'.repeat(64),
+      LOG_ARCHIVE: bucket as unknown as R2Bucket,
+    });
+    vi.mocked(probeLogIcebergReadiness).mockImplementationOnce(async (covered) => {
+      expect(hasTenantBackupMutationCoverage(covered, { environment: true })).toBe(true);
+      expect(covered.LOG_ARCHIVE).not.toBe(bucket);
+      try {
+        await covered.LOG_ARCHIVE?.put('readiness-proof', 'x');
+      } catch {
+        /* provider return does not prove rollback */
+      }
+      return { state: 'pending' };
+    });
+    await expect(entry.probeLogArchive({ token: await token(), attempt })).rejects.toThrow(
+      'probe_failed'
+    );
+    expect(put).toHaveBeenCalledOnce();
+    expect(requests).toEqual(['environmentEnter']);
+    expect(control.completeEnvironmentBackupMutationPermit).toHaveBeenCalledOnce();
   });
   it('rejects ordinary callers, another Worker target, another signed purpose, and caller-selected tenant scope', async () => {
     const valid = await token();

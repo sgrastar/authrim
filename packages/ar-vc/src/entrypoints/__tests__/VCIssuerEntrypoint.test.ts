@@ -148,3 +148,19 @@ describe('VCIssuerEntrypoint', () => {
     expect(getStore).not.toHaveBeenCalled();
   });
 });
+
+describe('VC issuer RPC source guard', () => {
+  it('refuses offer creation before resolving or writing a Durable Object when admission is unavailable', async () => {
+    getStore.mockClear();
+    createOfferRpc.mockClear();
+    const entrypoint = new VCIssuerEntrypoint(
+      {} as ExecutionContext,
+      { ENABLE_SAML_DR_EXPORT: 'true' } as Env
+    );
+    await expect(entrypoint.createCredentialOffer(validInput())).rejects.toThrow(
+      'saml_dr_writer_unavailable'
+    );
+    expect(getStore).not.toHaveBeenCalled();
+    expect(createOfferRpc).not.toHaveBeenCalled();
+  });
+});

@@ -15,6 +15,8 @@
 		label: string;
 		/** What the setting does, behind a "?" next to its name. */
 		info?: string;
+		/** ID to let the control reference the help text with aria-describedby. */
+		infoId?: string;
 		/** Marks after the name: where the value comes from ("Set for this tenant"). */
 		badges?: Snippet;
 		/**
@@ -26,13 +28,15 @@
 		children: Snippet;
 	}
 
-	let { label, info, badges, align = 'field', children }: Props = $props();
+	let { label, info, infoId, badges, align = 'field', children }: Props = $props();
 </script>
 
 <div class="field-row" class:field-row--text={align === 'text'}>
 	<div class="field-row__name">
 		<span class="field-row__label" aria-hidden="true">{label}</span>
-		{#if info}<InfoTip label={t('common.moreInfo')} text={info} />{/if}
+		{#if info}
+			<InfoTip label="{t('common.moreInfo')}: {label}" text={info} id={infoId} />
+		{/if}
 		{#if badges}<span class="field-row__badges">{@render badges()}</span>{/if}
 	</div>
 	<div class="field-row__control">{@render children()}</div>
@@ -44,7 +48,7 @@
 		display: grid;
 		grid-template-columns: var(--row-name-col, minmax(0, 2fr)) minmax(0, 3fr);
 		gap: 8px var(--space-columns);
-		padding-block: 14px;
+		padding-block: 16px;
 	}
 
 	.field-row:first-child {
@@ -83,7 +87,7 @@
 
 	.field-row__label {
 		color: var(--text-primary);
-		font-size: var(--fs-body);
+		font-size: var(--fs-label);
 		font-weight: var(--fw-semibold);
 	}
 

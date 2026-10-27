@@ -117,7 +117,7 @@ describe('Iceberg runtime mode isolation and durable delivery', () => {
     });
     fixture.db.exec(
       readFileSync(
-        new URL('../../../../../migrations/admin/d1/052_log_iceberg_storage.sql', import.meta.url),
+        new URL('../../../../../migrations/admin/d1/053_log_iceberg_storage.sql', import.meta.url),
         'utf8'
       )
     );

@@ -30,7 +30,7 @@ import {
 } from '../services/tenant-vanity-domain-resolver';
 import {
   resolveTenantMetadataContext,
-  type TenantMetadataContext,
+  type AnyTenantMetadataContext,
 } from '../services/runtime-data-context';
 import { TenantDatabaseResolverError } from '../services/tenant-database-resolver';
 
@@ -466,7 +466,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
           requestClass !== 'tenant_inventory_admin' &&
           tenantResult.success));
 
-    let tenantMetadataContext: TenantMetadataContext | undefined;
+    let tenantMetadataContext: AnyTenantMetadataContext | undefined;
     if (shouldResolveTenantDataContexts(requestClass, c.req.path)) {
       try {
         tenantMetadataContext = await timeDiagnosticSpan(timingSpans, 'rc_tenant_metadata', () =>

@@ -600,6 +600,40 @@ export async function filterSamlAttributesByDestinationConsentWithStatus<
     input.tenantId,
     input.profileId
   );
+  return filterSamlAttributesByDestinationConsentDescriptorWithStatus({
+    coreAdapter: input.coreAdapter,
+    tenantId: input.tenantId,
+    subjectId: input.subjectId,
+    samlSpId: input.samlSpId,
+    profileId: input.profileId,
+    fieldPolicies: input.fieldPolicies,
+    releaseSafetyBinding: input.releaseSafetyBinding,
+    attributes: input.attributes,
+    descriptor,
+  });
+}
+
+/** The same release gate with a profile descriptor imported from a verified Admin snapshot. */
+export async function filterSamlAttributesByDestinationConsentDescriptorWithStatus<
+  T extends { name: string },
+>(input: {
+  coreAdapter: DatabaseAdapter;
+  tenantId: string;
+  subjectId: string;
+  samlSpId: string;
+  profileId: string;
+  fieldPolicies?: DestinationFieldReleasePolicies;
+  releaseSafetyBinding?: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>;
+  attributes: T[];
+  descriptor: DestinationProfileConsentDescriptor | null;
+}): Promise<{
+  attributes: T[];
+  consentApplied: boolean;
+  consentRecordId?: string;
+  consentEvidence?: Record<string, unknown>;
+  consentCreatedAt?: number;
+}> {
+  const descriptor = input.descriptor;
   if (!descriptor) {
     throw new DestinationProfileReleaseValidationError(
       'SAML destination profile is unavailable',
@@ -610,6 +644,12 @@ export async function filterSamlAttributesByDestinationConsentWithStatus<
     throw new DestinationProfileReleaseValidationError(
       'Destination profile is not a SAML profile',
       'destination_profile_type_mismatch'
+    );
+  }
+  if (descriptor.profileId !== input.profileId || !descriptor.profileVersionId) {
+    throw new DestinationProfileReleaseValidationError(
+      'SAML destination profile does not match its selected version',
+      'destination_profile_unavailable'
     );
   }
   if (input.releaseSafetyBinding) {

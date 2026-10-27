@@ -420,7 +420,11 @@
               "checksum": "267b99dcd63f0b73ba22de7a1a8aabadb4c6c103497bcf6f1280aa5a916d6025"
             },
             {
-              "path": "052_log_iceberg_storage.sql",
+              "path": "052_tenant_backup_replication_grants.sql",
+              "checksum": "2ffad2b50ebb711bfb7bfab5a14aa657bf67ecfdbab640d10409f53b8322b34b"
+            },
+            {
+              "path": "053_log_iceberg_storage.sql",
               "checksum": "493c29521086a72229037e944d85b036e5caa8bec6cf2fd7814285637f8c3817"
             }
           ]
@@ -598,11 +602,19 @@
               "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
             },
             {
-              "path": "013_provisioning_revocation_receipts.sql",
+              "path": "013_saml_passkey_configuration_and_route_generation.sql",
+              "checksum": "2d82407f3ff17044028b444bb1b62fabcd08bb169528b6429750fef266bd1f02"
+            },
+            {
+              "path": "014_saml_replication_account_bookkeeping.sql",
+              "checksum": "d5e422efc5db61c2d9ecb674c0a7f8b0b3efec5819a6986a874b0c200ebb5a1e"
+            },
+            {
+              "path": "015_provisioning_revocation_receipts.sql",
               "checksum": "f3c0245facd2a062429b95fe0cc800b7b0b678e85a794706707e7758337386b5"
             },
             {
-              "path": "014_log_iceberg_core_publications.sql",
+              "path": "016_log_iceberg_core_publications.sql",
               "checksum": "66cbe8cd26d03aca61eb8c3151968e63f0a314c6070f6c8249c94883be0e2255"
             }
           ]
@@ -1069,7 +1081,11 @@
           "checksum": "267b99dcd63f0b73ba22de7a1a8aabadb4c6c103497bcf6f1280aa5a916d6025"
         },
         {
-          "path": "052_log_iceberg_storage.sql",
+          "path": "052_tenant_backup_replication_grants.sql",
+          "checksum": "2ffad2b50ebb711bfb7bfab5a14aa657bf67ecfdbab640d10409f53b8322b34b"
+        },
+        {
+          "path": "053_log_iceberg_storage.sql",
           "checksum": "493c29521086a72229037e944d85b036e5caa8bec6cf2fd7814285637f8c3817"
         }
       ]
@@ -1263,11 +1279,19 @@
           "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
         },
         {
-          "path": "013_provisioning_revocation_receipts.sql",
+          "path": "013_saml_passkey_configuration_and_route_generation.sql",
+          "checksum": "2d82407f3ff17044028b444bb1b62fabcd08bb169528b6429750fef266bd1f02"
+        },
+        {
+          "path": "014_saml_replication_account_bookkeeping.sql",
+          "checksum": "d5e422efc5db61c2d9ecb674c0a7f8b0b3efec5819a6986a874b0c200ebb5a1e"
+        },
+        {
+          "path": "015_provisioning_revocation_receipts.sql",
           "checksum": "f3c0245facd2a062429b95fe0cc800b7b0b678e85a794706707e7758337386b5"
         },
         {
-          "path": "014_log_iceberg_core_publications.sql",
+          "path": "016_log_iceberg_core_publications.sql",
           "checksum": "66cbe8cd26d03aca61eb8c3151968e63f0a314c6070f6c8249c94883be0e2255"
         }
       ]

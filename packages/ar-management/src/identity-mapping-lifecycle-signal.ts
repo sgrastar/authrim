@@ -6,6 +6,7 @@
 import type { Context } from 'hono';
 import {
   createAuthContextFromHono,
+  getRegistryTenantMetadataRoute,
   getTenantMetadataContextFromHono,
   readAccountAuthenticationState,
   type AdminAuthContext,
@@ -153,7 +154,7 @@ export async function resolveLifecycleSignalAccountOwner(
   accountId: string
 ): Promise<Owner> {
   const metadata = getTenantMetadataContextFromHono(c);
-  const route = metadata?.route;
+  const route = getRegistryTenantMetadataRoute(metadata);
   const stores = usesRoutedAccountStorage(metadata)
     ? await tenantCoreStores(c.env, tenantId, {
         accountsOfRoutedTenant: true,

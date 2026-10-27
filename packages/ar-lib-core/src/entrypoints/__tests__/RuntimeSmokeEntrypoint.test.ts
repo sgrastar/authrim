@@ -366,3 +366,86 @@ describe('RuntimeSmokeEntrypoint', () => {
     expect(fallback.prepare).not.toHaveBeenCalled();
   });
 });
+
+describe('installed SAML DR source writer probe', () => {
+  const admission = {
+    acquireEnvironmentBackupMutationPermit: vi.fn(),
+    completeEnvironmentBackupMutationPermit: vi.fn(),
+  };
+  it('reports only the static code contract and current version metadata', async () => {
+    const result = await worker({
+      ENABLE_SAML_DR_EXPORT: 'true',
+      SAML_DR_MUTATION_CONTROL: admission,
+      SAML_DR_WRITER_COMPLETE: 'true',
+      SAML_DR_CONTRACT_DIGEST: 'forged',
+    }).inspectSamlDrWriter();
+    expect(result).toMatchObject({
+      formatVersion: 1,
+      environmentId: 'test',
+      workerName: 'test-ar-auth',
+      component: 'ar-auth',
+      versionId: 'version-1',
+    });
+    expect(result.contractDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(result.surfaces).toContain('guarded:fetch');
+    expect(result.contractDigest).not.toBe('forged');
+    expect(admission.acquireEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+  });
+  it.each([
+    [{}, 'saml_dr_writer_disabled'],
+    [{ ENABLE_SAML_DR_EXPORT: 'true' }, 'saml_dr_writer_admission_unavailable'],
+    [
+      { ENABLE_SAML_DR_EXPORT: 'true', SAML_DR_MUTATION_CONTROL: {} },
+      'saml_dr_writer_admission_unavailable',
+    ],
+    [
+      {
+        ENABLE_SAML_DR_EXPORT: 'true',
+        SAML_DR_MUTATION_CONTROL: admission,
+        CONTROL_SMOKE_VERSION: { id: '' },
+      },
+      'saml_dr_writer_identity_unavailable',
+    ],
+  ] as const)(
+    'fails closed when opt-in, admission or version metadata is missing',
+    async (env, error) => {
+      await expect(worker(env).inspectSamlDrWriter()).rejects.toThrow(error);
+    }
+  );
+  it('does not accept a probe for a different Worker identity', async () => {
+    await expect(
+      worker({
+        AUTHRIM_WORKER_SCRIPT_NAME: 'test-ar-token',
+        ENABLE_SAML_DR_EXPORT: 'true',
+        SAML_DR_MUTATION_CONTROL: admission,
+      }).inspectSamlDrWriter()
+    ).rejects.toThrow('runtime_smoke_caller_unauthorized');
+  });
+  it('recognizes Control local admission only with its actual database capability', async () => {
+    const entry = (database: unknown) =>
+      new RuntimeSmokeEntrypoint(
+        {
+          props: {
+            caller: 'ar-control',
+            audience: 'authrim-runtime-smoke-v1',
+            environmentId: 'test',
+            targetWorker: 'test-ar-control',
+          },
+        } as ConstructorParameters<typeof RuntimeSmokeEntrypoint>[0],
+        {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          AUTHRIM_WORKER_SCRIPT_NAME: 'test-ar-control',
+          ENABLE_SAML_DR_EXPORT: 'true',
+          CONTROL_SMOKE_VERSION: { id: 'control-v1', tag: '', timestamp: '' },
+          CONTROL_DB: database,
+        }
+      );
+    await expect(entry({}).inspectSamlDrWriter()).rejects.toThrow(
+      'saml_dr_writer_admission_unavailable'
+    );
+    await expect(entry({ prepare: vi.fn() }).inspectSamlDrWriter()).resolves.toMatchObject({
+      component: 'ar-control',
+      versionId: 'control-v1',
+    });
+  });
+});

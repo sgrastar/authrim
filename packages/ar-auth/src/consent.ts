@@ -1047,7 +1047,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       try {
         const ipAddress = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || '';
         const ipHash = ipAddress
-          ? await hashIpAddress(ipAddress, tenantId, c.env.KV ?? null)
+          ? await hashIpAddress(ipAddress, tenantId, c.env.KV ?? null, c.env)
           : undefined;
 
         await processConsentItemDecisions(

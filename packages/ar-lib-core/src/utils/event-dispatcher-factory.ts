@@ -1,3 +1,4 @@
+import { samlDrTrackEffect } from '../services/tenant-portability/saml-dr-writer';
 /**
  * Event Dispatcher Factory
  *
@@ -333,11 +334,26 @@ export async function createEventDispatcherFromEnv(
  * @param options - Publish options
  * @returns Publish result
  */
-export async function publishEvent<T = unknown>(
+export function publishEvent<T = unknown>(
   c: Context<{ Bindings: Env }>,
   payload: EventPublishPayload<T>,
   options?: EventPublishOptions
 ): Promise<EventPublishResult> {
+  return samlDrTrackEffect(publishEventOwned(c, payload, options));
+}
+
+async function publishEventOwned<T = unknown>(
+  c: Context<{ Bindings: Env }>,
+  payload: EventPublishPayload<T>,
+  options?: EventPublishOptions
+): Promise<EventPublishResult> {
+  if (c.env.EVENT_RUNTIME_PORTS) {
+    const delivery = c.env.EVENT_RUNTIME_PORTS.publish(payload, options);
+    // Most auth callers intentionally do not await publishEvent. Keep the original promise
+    // request-scoped so Lambda can drain and surface a failed durable write before returning.
+    getWaitUntilFromContext(c)?.(delivery);
+    return delivery;
+  }
   const dispatcher = await createEventDispatcherFromContext(c);
   return dispatcher.publish(payload, options);
 }

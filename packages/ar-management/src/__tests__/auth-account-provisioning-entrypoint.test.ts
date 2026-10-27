@@ -222,6 +222,33 @@ function worker(
   );
 }
 
+describe('AuthAccountProvisioningEntrypoint DR writer coverage', () => {
+  it.each([
+    'listExternalIdpPiiSourceShards',
+    'getExternalIdpRouteRemovalStatus',
+    'removeExternalIdpRoute',
+    'publishExternalIdpRoute',
+    'publishAuthPasskeyRoute',
+    'publishAuthDirectoryRoute',
+    'publishAuthDidRoute',
+    'getAuthAccountProvisioningStatus',
+    'provisionAuthAccount',
+    'provisionExternalIdpAccount',
+    'getExternalIdpAccountProvisioningStatus',
+  ] as const)('requires admission before %s even with no wrapping key', async (method) => {
+    await expect(worker({ env: { ENABLE_SAML_DR_EXPORT: 'true' } })[method]({})).rejects.toThrow(
+      'saml_dr_writer_unavailable'
+    );
+  });
+  it('does not expose unguarded implementation methods as RPCs', () => {
+    expect(
+      Object.getOwnPropertyNames(AuthAccountProvisioningEntrypoint.prototype).filter(
+        (name) => name.startsWith('#') || name.endsWith('Impl')
+      )
+    ).toEqual([]);
+  });
+});
+
 async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');

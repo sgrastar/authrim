@@ -12,6 +12,8 @@
  */
 
 import type { DatabaseAdapter } from '../db';
+import type { Env } from '../types/env';
+import { readSamlDrConsentIpSalt } from '../services/tenant-portability/saml-dr-runtime-settings';
 import type {
   ConsentStatement,
   ConsentStatementVersion,
@@ -548,9 +550,9 @@ export async function resolveClientTrustPolicy(
     const rows = await adapter.query<{
       target_type: string;
       target_id: string;
-      first_party: number;
-      trusted: number;
-      skip_authorization_consent: number;
+      first_party: number | string;
+      trusted: number | string;
+      skip_authorization_consent: number | string;
     }>(
       `SELECT target_type, target_id, first_party, trusted, skip_authorization_consent
          FROM client_trust_policies
@@ -567,9 +569,10 @@ export async function resolveClientTrustPolicy(
     return {
       target_type: row.target_type as ResolvedClientTrustPolicy['target_type'],
       target_id: row.target_id,
-      first_party: row.first_party === 1,
-      trusted: row.trusted === 1,
-      skip_authorization_consent: row.skip_authorization_consent === 1,
+      first_party: row.first_party === 1 || row.first_party === '1',
+      trusted: row.trusted === 1 || row.trusted === '1',
+      skip_authorization_consent:
+        row.skip_authorization_consent === 1 || row.skip_authorization_consent === '1',
     };
   } catch {
     return null;
@@ -1562,10 +1565,13 @@ export async function computeContentHash(
 export async function hashIpAddress(
   ip: string,
   tenantId: string,
-  kv: KVNamespace | null
+  kv: KVNamespace | null,
+  env?: Pick<Env, 'ENABLE_SAML_DR_EXPORT' | 'KEY_MANAGER'>
 ): Promise<string> {
   let salt = '';
-  if (kv) {
+  if (env?.ENABLE_SAML_DR_EXPORT === 'true') {
+    salt = await readSamlDrConsentIpSalt(env, tenantId);
+  } else if (kv) {
     try {
       const storedSalt = await kv.get(`consent:ip_salt:${tenantId}`);
       if (storedSalt) {

@@ -48,7 +48,7 @@ async function icebergFixture() {
   const f = sqliteAdapter();
   f.db.exec(
     readFileSync(
-      new URL('../../migrations/admin/d1/052_log_iceberg_storage.sql', import.meta.url),
+      new URL('../../migrations/admin/d1/053_log_iceberg_storage.sql', import.meta.url),
       'utf8'
     )
   );
@@ -60,7 +60,7 @@ async function icebergFixture() {
     mode: 'scheduled',
     generation: 'new-generation',
     schemaVersion: 1,
-    activatedAt: now - 30 * 86400000,
+    activatedAt: Math.max(0, now - 30 * 86400000),
     accountId: 'a'.repeat(32),
     bucket: 'authrim-test',
     warehouse: `${'a'.repeat(32)}_authrim-test`,

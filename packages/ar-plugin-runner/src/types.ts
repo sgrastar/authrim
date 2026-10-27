@@ -1,3 +1,4 @@
+import type { SamlDrWriterEnv } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type {
   D1Database,
   KVNamespace,
@@ -11,7 +12,7 @@ import type {
   NotificationDeliveryPayload,
 } from '@authrim/ar-lib-core';
 
-export interface PluginRunnerEnv {
+export interface PluginRunnerEnv extends SamlDrWriterEnv {
   /** Setup-generated binding identity metadata. */
   AUTHRIM_FIXED_DATABASE_IDS?: string;
   PLUGIN_RUNNER_DB: D1Database;

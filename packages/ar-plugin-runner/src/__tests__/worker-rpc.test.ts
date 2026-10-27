@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import PluginRunnerWorker from '../worker';
+import PluginRunnerWorker, { createDynamicPluginHostInterfaces } from '../worker';
 import type { PluginEgressContext } from '../types';
 import type {
   PluginResourceBindingDescriptor,
@@ -38,25 +38,19 @@ describe('PluginRunnerWorker RPC boundary', () => {
     }));
     const kvAccess = vi.fn(() => ({ get: vi.fn() }));
     const r2Access = vi.fn(() => ({ get: vi.fn() }));
-    const runtime = new PluginRunnerWorker(
-      {
-        props: {
-          caller: 'ar-management',
-          environmentId: 'test',
-          audience: 'authrim-plugin-runner-v1',
-        },
-        exports: {
-          PluginAccountMetadataAccess: vi.fn(),
-          PluginD1ResourceAccess: d1Access,
-          PluginKvResourceAccess: kvAccess,
-          PluginR2ResourceAccess: r2Access,
-        },
-      } as unknown as ConstructorParameters<typeof PluginRunnerWorker>[0],
-      {
-        AUTHRIM_ENVIRONMENT_NAME: 'test',
-        PLUGIN_RUNNER_DB: {} as D1Database,
-      } as unknown as ConstructorParameters<typeof PluginRunnerWorker>[1]
-    );
+    const executionContext = {
+      props: {
+        caller: 'ar-management',
+        environmentId: 'test',
+        audience: 'authrim-plugin-runner-v1',
+      },
+      exports: {
+        PluginAccountMetadataAccess: vi.fn(),
+        PluginD1ResourceAccess: d1Access,
+        PluginKvResourceAccess: kvAccess,
+        PluginR2ResourceAccess: r2Access,
+      },
+    } as unknown as ExecutionContext;
     const context: PluginEgressContext = {
       contractVersion: 1,
       tenantId: 'tenant-a',
@@ -90,16 +84,13 @@ describe('PluginRunnerWorker RPC boundary', () => {
         ownershipFingerprint: 'c'.repeat(64),
       },
     ];
-    const factory = runtime as unknown as {
-      dynamicHostInterfaces(
-        context: PluginEgressContext,
-        bindings: [],
-        resources: PluginResourceBindingDescriptor[],
-        pluginId: string
-      ): Record<string, unknown>;
-    };
-
-    const interfaces = factory.dynamicHostInterfaces(context, [], resources, 'plugin-a');
+    const interfaces = createDynamicPluginHostInterfaces(
+      executionContext,
+      context,
+      [],
+      resources,
+      'plugin-a'
+    );
     expect(Object.keys(interfaces).sort()).toEqual([
       'PLUGIN_CACHE',
       'PLUGIN_OBJECTS',

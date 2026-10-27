@@ -392,8 +392,7 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/passkey/options', asyn
     rpID,
     userName: checked.invitation.email,
     userDisplayName: checked.invitation.name || checked.invitation.email,
-    // @ts-expect-error SimpleWebAuthn accepts Uint8Array for the WebAuthn user handle.
-    userID: encoder.encode(checked.invitation.admin_user_id),
+    userID: new Uint8Array(encoder.encode(checked.invitation.admin_user_id)),
     attestationType: 'none',
     authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
     timeout: 60_000,

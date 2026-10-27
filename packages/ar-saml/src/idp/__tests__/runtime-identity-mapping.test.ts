@@ -5,6 +5,7 @@
  * entry, so resolving the mapping adds one per field of the SP's release policy.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SAMLRuntimeImportedSPRelease } from '@authrim/ar-lib-core/types/saml-runtime-ports';
 import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 import {
   emptyCoreAdapter,
@@ -13,6 +14,7 @@ import {
   OID_MAIL,
   OID_SURNAME,
   PRODUCTION_DESTINATION_SCHEMA,
+  PRODUCTION_DESTINATION_PROFILE_ID,
   PRODUCTION_SP_ENTITY_ID,
   productionAdminAdapter,
   productionBinding,
@@ -53,6 +55,8 @@ import {
 } from '../attributes';
 import { withSAMLAssuranceAttributes } from '../identity-assurance';
 import {
+  assertSAMLImportedSPRelease,
+  compileSAMLImportedSPRelease,
   destinationCatalogEntries,
   findRenamedAttributeDescriptors,
   resolveSAMLRuntimeIdentityMapping,
@@ -65,6 +69,175 @@ const destinationEntries = (
 const IAL1_URI = 'https://example.org/assurance/IAL1';
 const IAL2_URI = 'https://example.org/assurance/IAL2';
 const env = {} as never;
+
+function importedRelease(): SAMLRuntimeImportedSPRelease {
+  const field = 'urn:oid:0.9.2342.19200300.100.1.3';
+  const selector = {
+    fieldMappingSetId: 'set-a',
+    fieldMappingVersionId: 'version-a',
+    destinationProfileId: 'profile-a',
+    destinationFieldPolicies: { [field]: 'required' as const },
+  };
+  return {
+    tenantId: 'tenant-a',
+    entityId: 'https://sp.example.test',
+    sourceSelector: selector,
+    sourceBindingRef: {
+      activationId: 'activation-a',
+      fieldMappingSetId: 'set-a',
+      fieldMappingVersionId: 'version-a',
+      mappingSnapshotHash: 'hash-a',
+      destinationProfileId: 'profile-a',
+      destinationProfileVersionId: 'profile-version-a',
+    },
+    binding: {
+      id: 'activation-a',
+      role: 'idp',
+      tenantId: 'tenant-a',
+      localEntityId: 'https://tenant-a.example.test/saml/idp/metadata',
+      partnerEntityId: 'https://sp.example.test',
+      fieldMappingSetId: 'set-a',
+      fieldMappingVersionId: 'version-a',
+      mappingSnapshotHash: 'hash-a',
+      destinationProfileId: 'profile-a',
+      destinationProfileIds: ['profile-a'],
+      destinationFieldPolicies: selector.destinationFieldPolicies,
+      catalog: { identity: { id: 'catalog-a', contentHash: 'hash-a' }, entries: [] },
+      edges: [
+        {
+          id: 'edge-a',
+          sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'email' },
+          targetRef: { side: 'destination', namespace: 'saml.attribute', path: field },
+        },
+      ],
+      transforms: [],
+      validationRules: [],
+      fieldMappingSet: { id: 'version-a', rules: [] },
+    },
+    destinationProfile: {
+      profileId: 'profile-a',
+      profileVersionId: 'profile-version-a',
+      destinationType: 'saml',
+      fields: [
+        {
+          key: field,
+          label: 'mail',
+          required: false,
+          nullable: false,
+          classification: 'pii',
+          surfaces: [],
+          requiredScopes: [],
+          valueType: 'string',
+          valueMultiplicity: 'single',
+          allowedValues: [],
+        },
+      ],
+    },
+  };
+}
+
+describe('portable imported SAML release boundary', () => {
+  const context = {
+    tenantId: 'tenant-a',
+    spEntityId: 'https://sp.example.test',
+    idpEntityId: 'https://tenant-a.example.test/saml/idp/metadata',
+  };
+
+  it('accepts only a single compiled binding for the exact selected SP', () => {
+    const release = importedRelease();
+    expect(
+      assertSAMLImportedSPRelease(release, {
+        ...context,
+        sourceSelector: release.sourceSelector ?? undefined,
+      })
+    ).toBe(release.binding);
+
+    const nested = importedRelease();
+    (nested.binding as Record<string, unknown>).bindings = [
+      { ...(nested.binding as Record<string, unknown>), edges: [] },
+    ];
+    expect(() =>
+      assertSAMLImportedSPRelease(nested, {
+        ...context,
+        sourceSelector: nested.sourceSelector ?? undefined,
+      })
+    ).toThrow('saml_idp_runtime_imported_release_invalid');
+
+    const defaultBinding = importedRelease();
+    (defaultBinding.binding as Record<string, unknown>).defaultBinding = defaultBinding.binding;
+    expect(() =>
+      assertSAMLImportedSPRelease(defaultBinding, {
+        ...context,
+        sourceSelector: defaultBinding.sourceSelector ?? undefined,
+      })
+    ).toThrow('saml_idp_runtime_imported_release_invalid');
+  });
+
+  it('rejects incomplete release policy and output attribute renaming', () => {
+    const incomplete = importedRelease();
+    const selector = incomplete.sourceSelector as NonNullable<typeof incomplete.sourceSelector>;
+    selector.destinationFieldPolicies = {};
+    (incomplete.binding as Record<string, unknown>).destinationFieldPolicies = {};
+    expect(() =>
+      assertSAMLImportedSPRelease(incomplete, {
+        ...context,
+        sourceSelector: incomplete.sourceSelector ?? undefined,
+      })
+    ).toThrow('saml_idp_runtime_imported_release_invalid');
+
+    const renamed = importedRelease();
+    const descriptors = {
+      [renamed.destinationProfile.fields[0].key]: { name: 'lower_classification_field' },
+    };
+    (renamed.sourceSelector as Record<string, unknown>).attributeDescriptors = descriptors;
+    (renamed.binding as Record<string, unknown>).attributeDescriptors = descriptors;
+    expect(() =>
+      assertSAMLImportedSPRelease(renamed, {
+        ...context,
+        sourceSelector: renamed.sourceSelector ?? undefined,
+      })
+    ).toThrow('saml_idp_runtime_imported_release_invalid');
+  });
+
+  it('rejects imported tenant, provider, version, and profile mismatches', () => {
+    const wrongTenant = importedRelease();
+    wrongTenant.tenantId = 'tenant-b';
+    expect(() =>
+      assertSAMLImportedSPRelease(wrongTenant, {
+        ...context,
+        sourceSelector: wrongTenant.sourceSelector ?? undefined,
+      })
+    ).toThrow('saml_idp_runtime_imported_release_invalid');
+
+    const wrongProvider = importedRelease();
+    (wrongProvider.binding as Record<string, unknown>).partnerEntityId =
+      'https://other-sp.example.test';
+    expect(() =>
+      assertSAMLImportedSPRelease(wrongProvider, {
+        ...context,
+        sourceSelector: wrongProvider.sourceSelector ?? undefined,
+      })
+    ).toThrow('saml_idp_runtime_imported_release_invalid');
+
+    const wrongVersion = importedRelease();
+    (wrongVersion.binding as Record<string, unknown>).fieldMappingVersionId = 'other-version';
+    expect(() =>
+      assertSAMLImportedSPRelease(wrongVersion, {
+        ...context,
+        sourceSelector: wrongVersion.sourceSelector ?? undefined,
+      })
+    ).toThrow('saml_idp_runtime_imported_release_invalid');
+
+    const wrongProfile = importedRelease();
+    wrongProfile.destinationProfile.profileVersionId = 'other-profile-version';
+    expect(() =>
+      assertSAMLImportedSPRelease(wrongProfile, {
+        ...context,
+        sourceSelector: wrongProfile.sourceSelector ?? undefined,
+      })
+    ).toThrow('saml_idp_runtime_imported_release_invalid');
+  });
+});
 
 describe('destinationCatalogEntries', () => {
   const fields = [
@@ -169,6 +342,31 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
       'https://idp.example.test',
       spConfig as never
     );
+
+  it('compiles the imported release through the same mapping path as CF issuance', async () => {
+    const spConfig = productionSpConfig();
+    const cfBinding = await resolve(spConfig);
+    const imported = await compileSAMLImportedSPRelease({
+      adminAdapter: mocks.admin as never,
+      coreAdapter: mocks.core as never,
+      tenantId: 'tenant-a',
+      idpEntityId: 'https://idp.example.test',
+      spConfig: spConfig as never,
+    });
+    expect(imported.binding).toMatchObject({
+      ...cfBinding,
+      mappingSnapshotHash: 'snapshot-hash',
+      destinationProfileIds: [PRODUCTION_DESTINATION_PROFILE_ID],
+    });
+    expect(
+      assertSAMLImportedSPRelease(imported, {
+        tenantId: 'tenant-a',
+        spEntityId: PRODUCTION_SP_ENTITY_ID,
+        idpEntityId: 'https://idp.example.test',
+        sourceSelector: spConfig.identityMapping,
+      })
+    ).toBe(imported.binding);
+  });
 
   /** What the SSO endpoints do from the resolved mapping to the attributes released. */
   async function release(

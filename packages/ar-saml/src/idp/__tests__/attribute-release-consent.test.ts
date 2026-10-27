@@ -212,6 +212,29 @@ describe('SAML attribute release consent', () => {
     ).resolves.toMatchObject({ action: 'release', attributeSetHash: null });
   });
 
+  it('fails closed for an AWS SP when the imported trust policy cannot be read', async () => {
+    mocks.requirementsError = true;
+    await expect(
+      enforceSAMLAttributeReleaseConsent(
+        input({
+          env: { SAML_RUNTIME_PORTS: {} },
+          attributeReleaseConsent: undefined,
+        })
+      )
+    ).rejects.toThrow('saml_idp_runtime_consent_policy_unavailable');
+    expect(mocks.findLatest).not.toHaveBeenCalled();
+
+    mocks.trust = { trusted: true };
+    await expect(
+      enforceSAMLAttributeReleaseConsent(
+        input({ env: { SAML_RUNTIME_PORTS: {} }, attributeReleaseConsent: undefined })
+      )
+    ).resolves.toMatchObject({ action: 'release' });
+    await expect(
+      enforceSAMLAttributeReleaseConsent(input({ env: { SAML_RUNTIME_PORTS: {} } }))
+    ).rejects.toThrow('saml_idp_runtime_consent_policy_unsupported');
+  });
+
   it('enables one-time consent when a protocol-neutral policy requires it', async () => {
     mocks.requirements = [{ is_required: false }, { is_required: true }];
     await enforceSAMLAttributeReleaseConsent(input({ attributeReleaseConsent: undefined }));

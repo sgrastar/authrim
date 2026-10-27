@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { z } from './zod';
 import type { ControlTenantDefaultRouteAllocation, Env } from '@authrim/ar-lib-core';
@@ -769,7 +770,7 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
   for (let offset = 0; offset < names.length; offset += 25) {
-    await Promise.all(names.slice(offset, offset + 25).map((name) => kv.delete(name)));
+    await samlDrAll(names.slice(offset, offset + 25).map((name) => kv.delete(name)));
   }
 }
 
@@ -849,7 +850,7 @@ async function copyKvPrefix(
     const page = await kv.list({ prefix: sourcePrefix, cursor, limit: 1000 });
     for (let offset = 0; offset < page.keys.length; offset += MAX_CONCURRENT_KV_WRITES) {
       const batch = page.keys.slice(offset, offset + MAX_CONCURRENT_KV_WRITES);
-      await Promise.all(
+      await samlDrAll(
         batch.map(async (key) => {
           const category = key.name.slice(sourcePrefix.length).toLowerCase();
           if (excludedCategories.has(category)) return;

@@ -768,6 +768,28 @@ const id: Translations = {
   'web.lightMode': 'Terang',
   'web.systemMode': 'Sistem',
 
+  // Web UI cloud platform selection
+  'web.platform.title': 'Pilih platform cloud',
+  'web.platform.description': 'Pilih cloud tempat Anda ingin menyiapkan Authrim.',
+  'web.platform.cloudflareAction': 'Siapkan di Cloudflare',
+  'web.platform.cloudflareDescription': 'Siapkan Authrim di Cloudflare Workers.',
+  'web.platform.awsAction': 'Siapkan di AWS',
+  'web.platform.development': 'Dalam pengembangan',
+  'web.platform.awsScope': 'Saat ini hanya mendukung SAML DR',
+  'web.platform.choose': 'Pilih',
+  'web.platform.back': 'Kembali ke pilihan cloud',
+  'web.platform.awsTitle': 'Siapkan SAML DR di AWS',
+  'web.platform.awsDescription':
+    'Siapkan lingkungan pemulihan SAML IdP untuk menghadapi gangguan Cloudflare.',
+  'web.platform.awsGuide':
+    'Perintah penyiapan AWS saat ini mendukung pemeriksaan prasyarat dan perencanaan deployment. Penyiapan melalui browser masih dalam pengembangan.',
+  'web.platform.awsPrerequisites':
+    'Siapkan akun AWS, wilayah, dan profil untuk masuk melalui peran khusus.',
+  'web.platform.awsCommand': 'Perintah pemeriksaan prasyarat',
+  'web.platform.awsCommandNote': 'Ganti ID akun dan nama profil sesuai pengaturan AWS Anda.',
+  'web.platform.targetPending': 'Belum dipilih',
+  'web.platform.chooseCloudflare': 'Lanjutkan ke penyiapan Cloudflare',
+
   // Web UI Prerequisites
   'web.prereq.title': 'Siap',
   'web.prereq.checking': 'Memeriksa...',

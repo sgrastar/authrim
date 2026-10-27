@@ -4786,6 +4786,12 @@ export async function getSPConfig(
   tenantId: string,
   entityId: string
 ): Promise<SAMLSPConfig | null> {
+  if (
+    env.SAML_RUNTIME_PORTS &&
+    !env.SAML_RUNTIME_PORTS.serviceProviders.isAllowed({ tenantId, entityId })
+  ) {
+    return null;
+  }
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
   const result = await coreAdapter.query<{ config_json: string; enabled: number }>(
     `SELECT config_json, enabled FROM identity_providers
@@ -4808,7 +4814,7 @@ export async function getSPConfig(
   }
   const match = matches[0];
   if (match) {
-    if (match.row.enabled !== 1 || !isPersistedSAMLProviderTrustUsable(match.config)) {
+    if (Number(match.row.enabled) !== 1 || !isPersistedSAMLProviderTrustUsable(match.config)) {
       // An explicit provider is authoritative for its entityID. Do not silently replace an
       // disabled, expired, or metadata-suspended relationship with an aggregate candidate.
       return null;
@@ -4818,7 +4824,11 @@ export async function getSPConfig(
     return applySafeSAMLSPSigningDefaults(match.config);
   }
 
-  return resolveFederationRuntimeConfig(env, tenantId, entityId, 'saml_sp');
+  // The AWS DR slice accepts only imported, explicitly configured SPs. Aggregate
+  // federation resolution depends on a separate control-plane snapshot and policy.
+  return env.SAML_RUNTIME_PORTS
+    ? null
+    : resolveFederationRuntimeConfig(env, tenantId, entityId, 'saml_sp');
 }
 
 /**

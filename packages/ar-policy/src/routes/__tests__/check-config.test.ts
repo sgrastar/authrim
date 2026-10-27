@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import type { CheckAuditServiceConfig } from '@authrim/ar-lib-core/services/check-audit-service';
 
 const audit = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('@authrim/ar-lib-core/services/check-audit-service', async (importOriginal) => {
@@ -69,7 +70,8 @@ async function health(overrides: Record<string, unknown> = {}) {
 }
 
 async function reachAuditConfiguration(overrides: Record<string, unknown> = {}) {
-  return app.request(
+  const bindings = env(overrides);
+  const response = await app.request(
     '/',
     {
       method: 'POST',
@@ -79,8 +81,20 @@ async function reachAuditConfiguration(overrides: Record<string, unknown> = {}) 
       },
       body: JSON.stringify({ tenant_id: 'tenant-a' }),
     },
-    env(overrides)
+    bindings
   );
+  return { response, bindings };
+}
+
+function expectAuditConfiguration(
+  bindings: ReturnType<typeof env>,
+  config: CheckAuditServiceConfig
+): void {
+  expect(audit.create).toHaveBeenCalledTimes(1);
+  const call = audit.create.mock.calls[0];
+  expect(call).toHaveLength(2);
+  expect(call?.[0]).toBe(bindings);
+  expect(call?.[1]).toEqual(config);
 }
 
 describe('Check API runtime configuration branches', () => {
@@ -206,7 +220,7 @@ describe('Check API runtime configuration branches', () => {
   );
 
   it('creates the audit service with the platform Settings API values over env', async () => {
-    await reachAuditConfiguration({
+    const { bindings } = await reachAuditConfiguration({
       ENABLE_CHECK_API_AUDIT: 'false',
       CHECK_API_AUDIT_MODE: 'queue',
       SETTINGS: createKv({
@@ -219,29 +233,27 @@ describe('Check API runtime configuration branches', () => {
         }),
       }),
     });
-    expect(audit.create).toHaveBeenCalledWith(
-      expect.anything(),
-      { mode: 'sync', logDeny: 'always', logAllow: 'always', sampleRate: 0, retentionDays: 1 },
-      undefined
-    );
+    expectAuditConfiguration(bindings, {
+      mode: 'sync',
+      logDeny: 'always',
+      logAllow: 'always',
+      sampleRate: 0,
+      retentionDays: 1,
+    });
   });
 
   it.each([
     ['without a settings binding', {}],
     ['with no saved settings', { SETTINGS: createKv() }],
   ])('enables auditing by default %s', async (_description, overrides) => {
-    await reachAuditConfiguration(overrides);
-    expect(audit.create).toHaveBeenCalledWith(
-      expect.anything(),
-      {
-        mode: 'waitUntil',
-        logDeny: 'always',
-        logAllow: 'sample',
-        sampleRate: 0.01,
-        retentionDays: 90,
-      },
-      undefined
-    );
+    const { bindings } = await reachAuditConfiguration(overrides);
+    expectAuditConfiguration(bindings, {
+      mode: 'waitUntil',
+      logDeny: 'always',
+      logAllow: 'sample',
+      sampleRate: 0.01,
+      retentionDays: 90,
+    });
   });
 
   it.each([
@@ -253,27 +265,23 @@ describe('Check API runtime configuration branches', () => {
   });
 
   it('uses env, then the defaults, for the audit settings nothing saved', async () => {
-    await reachAuditConfiguration({
+    const { bindings } = await reachAuditConfiguration({
       SETTINGS: createKv(),
       ENABLE_CHECK_API_AUDIT: 'true',
       CHECK_API_AUDIT_LOG_ALLOW: 'never',
       CHECK_API_AUDIT_RETENTION_DAYS: '365',
     });
-    expect(audit.create).toHaveBeenCalledWith(
-      expect.anything(),
-      {
-        mode: 'waitUntil',
-        logDeny: 'always',
-        logAllow: 'never',
-        sampleRate: 0.01,
-        retentionDays: 365,
-      },
-      undefined
-    );
+    expectAuditConfiguration(bindings, {
+      mode: 'waitUntil',
+      logDeny: 'always',
+      logAllow: 'never',
+      sampleRate: 0.01,
+      retentionDays: 365,
+    });
   });
 
   it('takes a decimal sample rate from env and ignores env values it cannot use', async () => {
-    await reachAuditConfiguration({
+    const { bindings } = await reachAuditConfiguration({
       SETTINGS: createKv(),
       ENABLE_CHECK_API_AUDIT: 'true',
       CHECK_API_AUDIT_MODE: 'invalid',
@@ -281,29 +289,27 @@ describe('Check API runtime configuration branches', () => {
       CHECK_API_AUDIT_SAMPLE_RATE: '0.5',
       CHECK_API_AUDIT_RETENTION_DAYS: '0',
     });
-    expect(audit.create).toHaveBeenCalledWith(
-      expect.anything(),
-      {
-        mode: 'waitUntil',
-        logDeny: 'always',
-        logAllow: 'sample',
-        sampleRate: 0.5,
-        retentionDays: 90,
-      },
-      undefined
-    );
+    expectAuditConfiguration(bindings, {
+      mode: 'waitUntil',
+      logDeny: 'always',
+      logAllow: 'sample',
+      sampleRate: 0.5,
+      retentionDays: 90,
+    });
 
     audit.create.mockClear();
-    await reachAuditConfiguration({
+    const { bindings: fallbackBindings } = await reachAuditConfiguration({
       SETTINGS: createKv(),
       ENABLE_CHECK_API_AUDIT: 'true',
       CHECK_API_AUDIT_SAMPLE_RATE: '2',
     });
-    expect(audit.create).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ sampleRate: 0.01 }),
-      undefined
-    );
+    expectAuditConfiguration(fallbackBindings, {
+      mode: 'waitUntil',
+      logDeny: 'always',
+      logAllow: 'sample',
+      sampleRate: 0.01,
+      retentionDays: 90,
+    });
   });
 
   it('creates no audit service when the Settings API turns auditing off, even if env enables it', async () => {
@@ -318,32 +324,30 @@ describe('Check API runtime configuration branches', () => {
 
   it('keeps auditing on with the defaults when its settings cannot be read', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    await reachAuditConfiguration({
+    const { bindings } = await reachAuditConfiguration({
       SETTINGS: createKv({ 'settings:platform:check-api-audit': 'not json' }),
       ENABLE_CHECK_API_AUDIT: 'false',
     });
-    expect(audit.create).toHaveBeenCalledWith(
-      expect.anything(),
-      {
-        mode: 'waitUntil',
-        logDeny: 'always',
-        logAllow: 'sample',
-        sampleRate: 0.01,
-        retentionDays: 90,
-      },
-      undefined
-    );
+    expectAuditConfiguration(bindings, {
+      mode: 'waitUntil',
+      logDeny: 'always',
+      logAllow: 'sample',
+      sampleRate: 0.01,
+      retentionDays: 90,
+    });
   });
 
   it('no longer reads the older audit values from AUTHRIM_CONFIG', async () => {
-    await reachAuditConfiguration({
+    const { bindings } = await reachAuditConfiguration({
       SETTINGS: createKv(),
       AUTHRIM_CONFIG: createKv({ CHECK_API_AUDIT_ENABLED: 'false' }),
     });
-    expect(audit.create).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ logDeny: 'always', logAllow: 'sample', sampleRate: 0.01 }),
-      undefined
-    );
+    expectAuditConfiguration(bindings, {
+      mode: 'waitUntil',
+      logDeny: 'always',
+      logAllow: 'sample',
+      sampleRate: 0.01,
+      retentionDays: 90,
+    });
   });
 });

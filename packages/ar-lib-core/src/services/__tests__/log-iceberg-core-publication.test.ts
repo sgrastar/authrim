@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import {
+  coreLogPublicationSource,
+  coreLogPublicationEnvironmentPermitId,
   filterPublishedCoreLogRecords,
   prepareCoreLogPublication,
   type CoreLogPublicationSource,
@@ -32,7 +34,7 @@ function completeAdapter(adapter: DatabaseAdapter) {
     close: async () => {},
   });
 }
-async function fixture(mode: 'pipeline' | 'scheduled', actualControl = false) {
+async function fixture(mode: 'pipeline' | 'scheduled', actualControl = false, samlDr = false) {
   const f = await icebergFixture(),
     core = sqliteAdapter();
   close.push(
@@ -90,7 +92,8 @@ async function fixture(mode: 'pipeline' | 'scheduled', actualControl = false) {
       },
     },
     'test',
-    true
+    true,
+    samlDr
   );
   const objects = new Map<
     string,
@@ -187,6 +190,17 @@ async function fixture(mode: 'pipeline' | 'scheduled', actualControl = false) {
         }
       : {}),
   };
+  if (samlDr) {
+    env.ENABLE_SAML_DR_EXPORT = 'true';
+    env.SAML_DR_MUTATION_CONTROL = {
+      acquireEnvironmentBackupMutationPermit: async ({ permitId }) => ({
+        admitted: await admission.acquireEnvironment(permitId, Date.now()),
+      }),
+      completeEnvironmentBackupMutationPermit: async ({ permitId }) => {
+        await admission.completeEnvironment(permitId, Date.now());
+      },
+    };
+  }
   const resolver = vi.fn(async () => core.adapter);
   const port = createLogIcebergWritePort(env, config, () => f.now, {
     resolveCorePublicationSource: resolver,
@@ -241,6 +255,334 @@ async function fixture(mode: 'pipeline' | 'scheduled', actualControl = false) {
 
 for (const mode of ['scheduled', 'pipeline'] as const)
   describe(`Core publication atomicity (${mode})`, () => {
+    it('reuses the exact durable environment permit after its acquisition ACK is lost', async () => {
+      const f = await fixture(mode, true, true),
+        control = f.env.SAML_DR_MUTATION_CONTROL;
+      if (!control?.acquireEnvironmentBackupMutationPermit) throw new Error('missing control');
+      const acquire = control.acquireEnvironmentBackupMutationPermit.bind(control);
+      let lost = false;
+      control.acquireEnvironmentBackupMutationPermit = async (input) => {
+        const result = await acquire(input);
+        const source = f.core.db
+          .prepare('SELECT source_token FROM log_iceberg_core_publications')
+          .get();
+        if (
+          !lost &&
+          source &&
+          input.permitId ===
+            (await coreLogPublicationEnvironmentPermitId(String(source.source_token)))
+        ) {
+          lost = true;
+          throw new Error('lost environment acquire ACK');
+        }
+        return result;
+      };
+      const prepared = await f.prepare();
+      expect(lost).toBe(true);
+      expect(
+        f.controlDb
+          .prepare(
+            'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+          )
+          .get()?.n
+      ).toBe(2);
+      await f.core.adapter.batch(prepared.wrapBusinessBatch([f.business], f.predicate));
+      await prepared.dispatch();
+      expect(
+        f.controlDb
+          .prepare(
+            'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+          )
+          .get()?.n
+      ).toBe(0);
+    });
+    it('does not skip replication admission to resume a durable publication', async () => {
+      const f = await fixture(mode, true, true),
+        original = f.port.prepareCorePublication.bind(f.port);
+      vi.spyOn(f.port, 'prepareCorePublication').mockImplementationOnce(async (input) => {
+        f.env.AUTHRIM_REPLICATION_WRITER = JSON.stringify({
+          version: 2,
+          endpoint: 'https://authority.example.test/replication/v1/rpc',
+          credentialId: 'writer-a',
+          pairId: 'pair-a',
+          environmentId: 'test',
+          deploymentId: 'cf-a',
+          epoch: 1,
+          generationId: 'gen-a',
+        });
+        f.env.AUTHRIM_REPLICATION_WRITER_SECRET = 'a'.repeat(64);
+        return original(input);
+      });
+      const authority = vi.fn(async () => Response.json({ error: 'draining' }, { status: 409 }));
+      vi.stubGlobal('fetch', authority);
+      try {
+        await expect(f.prepare()).rejects.toThrow('replication_authority_unavailable');
+        expect(authority).toHaveBeenCalledOnce();
+        expect(f.put).not.toHaveBeenCalled();
+        expect(
+          f.core.db.prepare('SELECT body_prepared FROM log_iceberg_core_publications').get()
+            ?.body_prepared
+        ).toBe(0);
+        expect(
+          f.controlDb
+            .prepare(
+              'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+            )
+            .get()?.n
+        ).toBe(2);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+    it('continues body preparation and publication with distinct durable environment/tenant permits after draining begins', async () => {
+      const f = await fixture(mode, true, true);
+      const original = f.port.prepareCorePublication.bind(f.port);
+      const boundary = {
+        id: 'strict-boundary',
+        tenantId: 'tenant-a',
+        operationId: 'backup',
+        inventoryDigest: 'a'.repeat(64),
+        now: Date.now(),
+      };
+      vi.spyOn(f.port, 'prepareCorePublication').mockImplementationOnce(async (input) => {
+        const permits = f.controlDb
+          .prepare('SELECT id,scope FROM tenant_backup_mutation_permits WHERE completed_at IS NULL')
+          .all();
+        expect(permits).toHaveLength(2);
+        expect(permits.map((row) => row.scope).sort()).toEqual(['environment', 'tenant']);
+        const environmentId = await coreLogPublicationEnvironmentPermitId(input.sourceToken);
+        expect(environmentId).not.toBe(input.sourceToken);
+        expect(environmentId).toMatch(
+          /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u
+        );
+        expect(permits.some((row) => row.id === environmentId)).toBe(true);
+        await f.admission.begin(boundary);
+        expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).toBeNull();
+        return original(input);
+      });
+      const prepared = await f.prepare();
+      await f.core.adapter.batch(prepared.wrapBusinessBatch([f.business], f.predicate));
+      await prepared.dispatch();
+      expect(
+        f.controlDb
+          .prepare(
+            'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+          )
+          .get()?.n
+      ).toBe(0);
+      expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).not.toBeNull();
+      expect(
+        f.core.db.prepare('SELECT state FROM log_iceberg_core_publications').get()?.state
+      ).toBe('published');
+    });
+    it.each(['before', 'after'] as const)(
+      'recovers %s lost durable environment completion without reopening permits or duplicating payloads',
+      async (lost) => {
+        const f = await fixture(mode, true, true),
+          prepared = await f.prepare();
+        await f.core.adapter.batch(prepared.wrapBusinessBatch([f.business], f.predicate));
+        const control = f.env.SAML_DR_MUTATION_CONTROL;
+        if (!control) throw new Error('missing environment control');
+        const complete = control.completeEnvironmentBackupMutationPermit.bind(control);
+        let lose = true;
+        control.completeEnvironmentBackupMutationPermit = async (input) => {
+          if (lose) {
+            lose = false;
+            if (lost === 'after') await complete(input);
+            throw new Error('lost environment ACK');
+          }
+          await complete(input);
+        };
+        const boundary = {
+          id: 'ack-boundary',
+          tenantId: 'tenant-a',
+          operationId: 'backup',
+          inventoryDigest: 'a'.repeat(64),
+          now: Date.now(),
+        };
+        await f.admission.begin(boundary);
+        await expect(prepared.dispatch()).rejects.toThrow('lost environment ACK');
+        if (lost === 'before') {
+          expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).toBeNull();
+          expect(
+            f.db.prepare('SELECT finalized FROM log_iceberg_publications').get()?.finalized
+          ).toBe(0);
+          await f.port.reconcileCorePublications();
+        } else {
+          expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).not.toBeNull();
+        }
+        expect(
+          f.controlDb
+            .prepare(
+              'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+            )
+            .get()?.n
+        ).toBe(0);
+        expect(
+          f.db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM ${mode === 'pipeline' ? 'log_iceberg_outbox' : 'log_iceberg_event_receipts'}`
+            )
+            .get()?.n
+        ).toBe(1);
+        expect(f.put.mock.calls.length).toBe(mode === 'pipeline' ? 1 : 0);
+        expect(
+          f.controlDb
+            .prepare(
+              "SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE scope='environment' AND completed_at IS NOT NULL"
+            )
+            .get()?.n
+        ).toBeGreaterThanOrEqual(2);
+      }
+    );
+    it.each([61000, 21 * 60 * 1000])(
+      'aborts the expired source fence and closes both strict permits while draining (delay=%s)',
+      async (delay) => {
+        const f = await fixture(mode, true, true),
+          prepared = await f.prepare();
+        const boundary = {
+          id: 'expire-boundary',
+          tenantId: 'tenant-a',
+          operationId: 'backup',
+          inventoryDigest: 'a'.repeat(64),
+          now: Date.now(),
+        };
+        await f.admission.begin(boundary);
+        f.core.db.function('strftime', { varargs: true }, () =>
+          String(Math.floor((Date.now() + delay) / 1000))
+        );
+        await f.port.reconcileCorePublications();
+        expect(
+          f.core.db.prepare('SELECT state FROM log_iceberg_core_publications').get()?.state
+        ).toBe('aborted');
+        expect(
+          f.controlDb
+            .prepare(
+              'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+            )
+            .get()?.n
+        ).toBe(0);
+        expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).not.toBeNull();
+        await expect(
+          f.core.adapter.batch(prepared.wrapBusinessBatch([f.business], f.predicate))
+        ).rejects.toThrow();
+        expect(f.core.db.prepare('SELECT value FROM business_state').get()?.value).toBe(0);
+      }
+    );
+    it('does not close the shared durable admission when another publisher is still finishing its owned writes', async () => {
+      const f = await fixture(mode, true, true),
+        prepared = await f.prepare();
+      await f.core.adapter.batch(prepared.wrapBusinessBatch([f.business], f.predicate));
+      const execute = f.core.adapter.execute.bind(f.core.adapter);
+      let release!: () => void, entered!: () => void;
+      const gated = new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+        started = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+      let blocked = false;
+      vi.spyOn(f.core.adapter, 'execute').mockImplementation(async (sql, params) => {
+        const result = await execute(sql, params);
+        if (
+          !blocked &&
+          sql.startsWith('UPDATE log_iceberg_core_publications SET admission_completed_at=')
+        ) {
+          blocked = true;
+          entered();
+          await gated;
+        }
+        return result;
+      });
+      const first = prepared.dispatch();
+      await started;
+      // Lease age is not proof the first publisher stopped its request-owned I/O.
+      f.core.db.function('strftime', { varargs: true }, () =>
+        String(Math.floor((Date.now() + 61000) / 1000))
+      );
+      f.db.function('strftime', { varargs: true }, () =>
+        String(Math.floor((Date.now() + 61000) / 1000))
+      );
+      const boundary = {
+        id: 'concurrent-publish-boundary',
+        tenantId: 'tenant-a',
+        operationId: 'backup',
+        inventoryDigest: 'a'.repeat(64),
+        now: Date.now(),
+      };
+      await f.admission.begin(boundary);
+      try {
+        await prepared.dispatch().catch(() => undefined);
+        expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).toBeNull();
+        expect(
+          f.controlDb
+            .prepare(
+              "SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE scope='environment' AND completed_at IS NULL"
+            )
+            .get()?.n
+        ).toBe(1);
+      } finally {
+        release();
+        await first;
+      }
+      expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).not.toBeNull();
+    });
+    it('retains the durable environment admission when the tenant permit is denied, then aborts safely through its source fence', async () => {
+      const f = await fixture(mode, true, true),
+        control = f.env.CONTROL;
+      if (!control?.acquireTenantBackupMutationPermit) throw new Error('missing tenant control');
+      const acquire = control.acquireTenantBackupMutationPermit.bind(control);
+      control.acquireTenantBackupMutationPermit = async () => ({ admitted: false });
+      await expect(f.prepare()).rejects.toThrow('log_core_publication_admission_unavailable');
+      expect(f.put).not.toHaveBeenCalled();
+      expect(
+        f.controlDb
+          .prepare(
+            "SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE scope='environment' AND completed_at IS NULL"
+          )
+          .get()?.n
+      ).toBe(1);
+      control.acquireTenantBackupMutationPermit = acquire;
+      const boundary = {
+        id: 'partial-reserve-boundary',
+        tenantId: 'tenant-a',
+        operationId: 'backup',
+        inventoryDigest: 'a'.repeat(64),
+        now: Date.now(),
+      };
+      await f.admission.begin(boundary);
+      expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).toBeNull();
+      f.core.db.function('strftime', { varargs: true }, () =>
+        String(Math.floor((Date.now() + 61000) / 1000))
+      );
+      await f.port.reconcileCorePublications();
+      expect(
+        f.core.db.prepare('SELECT state FROM log_iceberg_core_publications').get()?.state
+      ).toBe('aborted');
+      expect(
+        f.controlDb
+          .prepare(
+            'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+          )
+          .get()?.n
+      ).toBe(0);
+      expect(await f.admission.hold(boundary.tenantId, boundary.id, Date.now())).not.toBeNull();
+    });
+    it('refuses a new strict reservation before source or payload creation once backup draining starts', async () => {
+      const f = await fixture(mode, true, true);
+      await f.admission.begin({
+        id: 'deny-boundary',
+        tenantId: 'tenant-a',
+        operationId: 'backup',
+        inventoryDigest: 'a'.repeat(64),
+        now: Date.now(),
+      });
+      await expect(f.prepare()).rejects.toThrow('backup_mutation_unavailable');
+      expect(
+        f.core.db.prepare('SELECT COUNT(*) AS n FROM log_iceberg_core_publications').get()?.n
+      ).toBe(0);
+      expect(f.put).not.toHaveBeenCalled();
+    });
     it('keeps its durable permit while a backup drains and closes it only after source publication', async () => {
       const f = await fixture(mode, true),
         prepared = await f.prepare();
@@ -315,61 +657,64 @@ for (const mode of ['scheduled', 'pipeline'] as const)
       ).rejects.toThrow();
       expect(f.core.db.prepare('SELECT value FROM business_state').get()?.value).toBe(0);
     });
-    it('recovers lost acquire/completion acknowledgements without duplicating a capability or losing committed publication', async () => {
-      const f = await fixture(mode, true),
-        control = f.env.CONTROL;
-      if (
-        !control?.acquireTenantBackupMutationPermit ||
-        !control.completeTenantBackupMutationPermit
-      )
-        throw new Error('missing control');
-      const acquire = control.acquireTenantBackupMutationPermit.bind(control),
-        complete = control.completeTenantBackupMutationPermit.bind(control);
-      let loseAcquire = true;
-      control.acquireTenantBackupMutationPermit = async (value) => {
-        const result = await acquire(value);
-        if (loseAcquire) {
-          loseAcquire = false;
-          throw new Error('lost acquire ACK');
-        }
-        return result;
-      };
-      const prepared = await f.prepare();
-      expect(
-        f.controlDb
-          .prepare(
-            'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
-          )
-          .get()?.n
-      ).toBe(1);
-      await f.core.adapter.batch(prepared.wrapBusinessBatch([f.business], f.predicate));
-      let loseComplete = true;
-      control.completeTenantBackupMutationPermit = async (value) => {
-        await complete(value);
-        if (loseComplete) {
-          loseComplete = false;
-          throw new Error('lost complete ACK');
-        }
-      };
-      await expect(prepared.dispatch()).rejects.toThrow('lost complete ACK');
-      expect(
-        f.core.db.prepare('SELECT state FROM log_iceberg_core_publications').get()?.state
-      ).toBe('published');
-      expect(f.db.prepare('SELECT finalized FROM log_iceberg_publications').get()?.finalized).toBe(
-        0
-      );
-      await f.port.reconcileCorePublications();
-      expect(f.db.prepare('SELECT finalized FROM log_iceberg_publications').get()?.finalized).toBe(
-        1
-      );
-      expect(
-        f.controlDb
-          .prepare(
-            'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
-          )
-          .get()?.n
-      ).toBe(0);
-    });
+    it.each([false, true])(
+      'recovers lost tenant acquire/completion acknowledgements without duplicating capability (strict=%s)',
+      async (strict) => {
+        const f = await fixture(mode, true, strict),
+          control = f.env.CONTROL;
+        if (
+          !control?.acquireTenantBackupMutationPermit ||
+          !control.completeTenantBackupMutationPermit
+        )
+          throw new Error('missing control');
+        const acquire = control.acquireTenantBackupMutationPermit.bind(control),
+          complete = control.completeTenantBackupMutationPermit.bind(control);
+        let loseAcquire = true;
+        control.acquireTenantBackupMutationPermit = async (value) => {
+          const result = await acquire(value);
+          if (loseAcquire) {
+            loseAcquire = false;
+            throw new Error('lost acquire ACK');
+          }
+          return result;
+        };
+        const prepared = await f.prepare();
+        expect(
+          f.controlDb
+            .prepare(
+              'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+            )
+            .get()?.n
+        ).toBe(strict ? 2 : 1);
+        await f.core.adapter.batch(prepared.wrapBusinessBatch([f.business], f.predicate));
+        let loseComplete = true;
+        control.completeTenantBackupMutationPermit = async (value) => {
+          await complete(value);
+          if (loseComplete) {
+            loseComplete = false;
+            throw new Error('lost complete ACK');
+          }
+        };
+        await expect(prepared.dispatch()).rejects.toThrow('lost complete ACK');
+        expect(
+          f.core.db.prepare('SELECT state FROM log_iceberg_core_publications').get()?.state
+        ).toBe('published');
+        expect(
+          f.db.prepare('SELECT finalized FROM log_iceberg_publications').get()?.finalized
+        ).toBe(0);
+        await f.port.reconcileCorePublications();
+        expect(
+          f.db.prepare('SELECT finalized FROM log_iceberg_publications').get()?.finalized
+        ).toBe(1);
+        expect(
+          f.controlDb
+            .prepare(
+              'SELECT COUNT(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+            )
+            .get()?.n
+        ).toBe(0);
+      }
+    );
     it('keeps prepared data invisible and publishes only after the source business commit', async () => {
       const f = await fixture(mode),
         prepared = await f.prepare();
@@ -562,32 +907,35 @@ for (const mode of ['scheduled', 'pipeline'] as const)
         'published'
       );
     });
-    it('retains physical prepared data during an active DR capture after installing the abort fence', async () => {
-      const f = await fixture(mode);
-      await f.prepare();
-      f.db
-        .prepare(
-          "INSERT INTO tenant_backup_snapshots(id,tenant_id,tenant_key,state) VALUES('snapshot','tenant-a','key-a','capturing')"
-        )
-        .run();
-      await f.port.reconcileCorePublications({ orphanBefore: Date.now() + 100000 });
-      expect(
-        f.db.prepare('SELECT state,finalized FROM log_iceberg_publications').get()
-      ).toMatchObject({ state: 'aborted', finalized: 0 });
-      expect(
-        f.core.db.prepare('SELECT state FROM log_iceberg_core_publications').get()?.state
-      ).toBe('aborted');
-      if (mode === 'pipeline') expect([...f.objects.values()][0]?.text.length).toBeGreaterThan(0);
-      else expect(f.db.prepare('SELECT COUNT(*) AS n FROM log_iceberg_records').get()?.n).toBe(1);
-      expect(await f.visible()).toEqual([]);
-      f.db.exec(
-        "UPDATE tenant_backup_snapshots SET state='sealed'; UPDATE log_iceberg_publications SET next_attempt_at=0"
-      );
-      await f.port.reconcileCorePublications({ orphanBefore: Date.now() + 100000 });
-      expect(f.db.prepare('SELECT finalized FROM log_iceberg_publications').get()?.finalized).toBe(
-        1
-      );
-    });
+    it.each([false, true])(
+      'retains physical prepared data during an active DR capture after installing the abort fence (strict=%s)',
+      async (strict) => {
+        const f = await fixture(mode, strict, strict);
+        await f.prepare();
+        f.db
+          .prepare(
+            "INSERT INTO tenant_backup_snapshots(id,tenant_id,tenant_key,state) VALUES('snapshot','tenant-a','key-a','capturing')"
+          )
+          .run();
+        await f.port.reconcileCorePublications({ orphanBefore: Date.now() + 100000 });
+        expect(
+          f.db.prepare('SELECT state,finalized FROM log_iceberg_publications').get()
+        ).toMatchObject({ state: 'aborted', finalized: 0 });
+        expect(
+          f.core.db.prepare('SELECT state FROM log_iceberg_core_publications').get()?.state
+        ).toBe('aborted');
+        if (mode === 'pipeline') expect([...f.objects.values()][0]?.text.length).toBeGreaterThan(0);
+        else expect(f.db.prepare('SELECT COUNT(*) AS n FROM log_iceberg_records').get()?.n).toBe(1);
+        expect(await f.visible()).toEqual([]);
+        f.db.exec(
+          "UPDATE tenant_backup_snapshots SET state='sealed'; UPDATE log_iceberg_publications SET next_attempt_at=0"
+        );
+        await f.port.reconcileCorePublications({ orphanBefore: Date.now() + 100000 });
+        expect(
+          f.db.prepare('SELECT finalized FROM log_iceberg_publications').get()?.finalized
+        ).toBe(1);
+      }
+    );
     it('refuses to claim an already direct event as a new Core publication', async () => {
       const f = await fixture(mode);
       const builder = await import('../log-iceberg-emitter');
@@ -645,4 +993,13 @@ describe('Core preparation export visibility', () => {
     expect(f.store.objects.size).toBeGreaterThan(0);
     expect(f.db.prepare('SELECT COUNT(*) AS n FROM log_iceberg_records').get()?.n).toBe(0);
   });
+});
+
+it('rejects a runtime-owned route without inventing a Cloudflare publication source', () => {
+  expect(() =>
+    coreLogPublicationSource(
+      { AUTHRIM_ENVIRONMENT_NAME: 'test' },
+      { allocationScope: 'shared_pool' }
+    )
+  ).toThrow('log_core_publication_source_invalid');
 });

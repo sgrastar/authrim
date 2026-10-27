@@ -7,6 +7,12 @@ info:
     Initial OpenAPI contract for `@authrim/ar-saml`. SAML XML and browser binding responses are
     represented at a high level; detailed SAML message schemas remain defined by the SAML
     specifications.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 servers:
   - url: https://{tenant_domain}
     variables:

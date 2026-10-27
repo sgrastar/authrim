@@ -18,6 +18,7 @@ function adapter(db: DatabaseSync): DatabaseAdapter {
   // The production paths exercised here need only these primary-local operations. Deliberately
   // do not model cross-database writes as one rollback-capable transaction.
   return {
+    getType: () => 'd1',
     async execute(sql: string, params: unknown[] = []) {
       const result = db.prepare(sql).run(...(params as SQLInputValue[]));
       return { success: true, rowsAffected: Number(result.changes) };

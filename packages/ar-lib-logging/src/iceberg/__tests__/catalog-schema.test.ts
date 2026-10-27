@@ -26,8 +26,8 @@ function tableResponse() {
   };
 }
 describe('archive schema and REST catalog', () => {
-  it('keeps activation disabled and fixes compatible stream/Iceberg field identities', async () => {
-    expect(LOG_ARCHIVE_IMPLEMENTED_MODES).toEqual([]);
+  it('publishes both storage modes and fixes compatible stream/Iceberg field identities', async () => {
+    expect(LOG_ARCHIVE_IMPLEMENTED_MODES).toEqual(['pipeline', 'scheduled']);
     expect(LOG_ARCHIVE_FIELDS.map((field) => field.id)).toEqual(
       Array.from({ length: 20 }, (_, i) => i + 1)
     );

@@ -29,7 +29,15 @@ import {
   type TenantDatabaseResolverEnv,
 } from './tenant-database-resolver';
 import { LOG_ICEBERG_DB_NOW, LogIcebergTableLease } from './log-iceberg-lease';
-import { runTenantBackupCoveredEffect } from './tenant-portability/covered-mutation';
+import {
+  runTenantBackupCoveredEffect,
+  withTenantBackupMutationCoverage,
+} from './tenant-portability/covered-mutation';
+import {
+  isSamlDrCoveredOperation,
+  runSamlDrCoveredOperation,
+} from './tenant-portability/saml-dr-writer';
+import { hasReplicationWriterConfiguration } from './deployment-replication/writer';
 import { retireLogIcebergRetryObject } from './log-iceberg-retry-marker';
 import { listCapturingTenantBackupTenantKeys } from './tenant-portability/r2-generation-retention';
 
@@ -129,6 +137,9 @@ export interface CoreLogPublicationPorts {
   }): Promise<void>;
   tenantKey(tenantId: string): Promise<string>;
   coverTenant?<T>(tenantId: string, run: () => Promise<T>): Promise<T>;
+  rebind(
+    env: LogIcebergRuntimeEnv
+  ): Pick<CoreLogPublicationPorts, 'tenantKey' | 'preparePipeline' | 'dispatchPipeline'>;
 }
 
 function assertSource(source: CoreLogPublicationSource): void {
@@ -157,8 +168,9 @@ function assertSource(source: CoreLogPublicationSource): void {
 }
 export function coreLogPublicationSource(
   env: { AUTHRIM_ENVIRONMENT_NAME?: string },
-  route: ResolvedTenantStore
+  route: ResolvedTenantStore | Pick<ResolvedTenantStore, 'allocationScope'>
 ): CoreLogPublicationSource {
+  if (!('registryRow' in route)) throw new Error('log_core_publication_source_invalid');
   const value = {
     environmentId: env.AUTHRIM_ENVIRONMENT_NAME ?? '',
     tenantId: route.tenantId,
@@ -373,7 +385,9 @@ export async function prepareCoreLogPublication(
   assertIdentity(row, value);
   if (row.state === 'aborted') throw new Error('log_core_publication_aborted');
   if (row.state === 'prepared') {
-    await prepareCovered(() => writer.prepareCorePublication({ ...value, record }));
+    // The reserved source-bound permit covers both local and RPC continuations. Acquiring a
+    // fresh tenant permit here would prevent this operation from finishing during DR draining.
+    await writer.prepareCorePublication({ ...value, record });
     row = await loadCore(core, value.publicationId);
     if (!row || row.state === 'aborted' || !row.body_prepared)
       throw new Error('log_core_publication_aborted');
@@ -436,13 +450,65 @@ export async function filterPublishedCoreLogRecords(
   );
 }
 
+type PublicationPorts = Omit<CoreLogPublicationPorts, 'resolveSource'> &
+  Partial<Pick<CoreLogPublicationPorts, 'resolveSource'>>;
+interface ReconcileOutcome {
+  state: CoreLogPublicationState;
+  finalizable: boolean;
+}
+type PublicationImplementation = CoreLogPublicationRpc & {
+  reconcileOne(row: AdminRow, orphanBefore?: number, durable?: boolean): Promise<ReconcileOutcome>;
+};
+
+/** Separate UUID purpose prevents collision with the tenant permit's primary key. */
+export async function coreLogPublicationEnvironmentPermitId(sourceToken: string): Promise<string> {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(sourceToken))
+    throw new Error('log_core_publication_source_invalid');
+  const bytes = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(`authrim-core-log-environment-permit-v1:${sourceToken}`)
+    )
+  );
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = [...bytes.subarray(0, 16)]
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** All writes and visibility changes stay in the existing Core named RPC service. */
 export function createCoreLogPublicationPort(
   env: LogIcebergRuntimeEnv,
   config: LogIcebergConfig,
-  supplied: Omit<CoreLogPublicationPorts, 'resolveSource'> &
-    Partial<Pick<CoreLogPublicationPorts, 'resolveSource'>>
+  supplied: PublicationPorts
 ): CoreLogPublicationRpc {
+  const bind = (covered: LogIcebergRuntimeEnv): PublicationImplementation =>
+    createCoreLogPublicationImplementation(
+      covered,
+      config,
+      {
+        ...supplied,
+        ...(covered !== env ? supplied.rebind(covered) : {}),
+      },
+      bind
+    );
+  const port = bind(env);
+  return {
+    reserveCorePublication: (input) => port.reserveCorePublication(input),
+    prepareCorePublication: (input) => port.prepareCorePublication(input),
+    publishCorePublication: (input) => port.publishCorePublication(input),
+    reconcileCorePublications: (input) => port.reconcileCorePublications(input),
+  };
+}
+
+function createCoreLogPublicationImplementation(
+  env: LogIcebergRuntimeEnv,
+  config: LogIcebergConfig,
+  supplied: PublicationPorts,
+  bind: (covered: LogIcebergRuntimeEnv) => PublicationImplementation
+): PublicationImplementation {
   const ports: CoreLogPublicationPorts = {
     ...supplied,
     resolveSource: supplied.resolveSource ?? ((source) => resolveSource(env, source)),
@@ -457,14 +523,16 @@ export function createCoreLogPublicationPort(
   };
   const admin = () =>
     ensureDatabaseAdapter(env.DB_ADMIN ?? missing(), 'log-core-publication-admin');
-  const cover = <T>(tenantId: string, run: () => Promise<T>) =>
-    ports.coverTenant
-      ? ports.coverTenant(tenantId, run)
-      : runTenantBackupCoveredEffect(
-          { CONTROL: env.CONTROL, TENANT_BACKUP_WRAPPING_KEY: 'required' },
-          { tenantId },
-          run
-        );
+  const cover = <T>(tenantId: string, run: (covered: LogIcebergRuntimeEnv) => Promise<T>) =>
+    runSamlDrCoveredOperation(env, undefined, (covered) =>
+      ports.coverTenant
+        ? ports.coverTenant(tenantId, () => run(covered))
+        : runTenantBackupCoveredEffect(
+            Object.assign({}, covered, { TENANT_BACKUP_WRAPPING_KEY: 'required' }),
+            { tenantId },
+            () => run(covered)
+          )
+    );
   const loadAdmin = (id: string) =>
     admin().queryOne<AdminRow>('SELECT * FROM log_iceberg_publications WHERE id=?', [id], primary);
   async function claimAdminPublication(value: CoreLogPublicationIdentity): Promise<AdminRow> {
@@ -506,7 +574,27 @@ export function createCoreLogPublicationPort(
     return saved;
   }
 
+  async function holdEnvironmentAdmission(value: CoreLogPublicationIdentity): Promise<void> {
+    if (env.ENABLE_SAML_DR_EXPORT !== 'true') return;
+    const control = env.SAML_DR_MUTATION_CONTROL;
+    if (
+      !control?.acquireEnvironmentBackupMutationPermit ||
+      !control.completeEnvironmentBackupMutationPermit
+    )
+      throw new Error('log_core_publication_admission_unavailable');
+    const permitId = await coreLogPublicationEnvironmentPermitId(value.sourceToken);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if ((await control.acquireEnvironmentBackupMutationPermit({ permitId }))?.admitted === true)
+          return;
+      } catch (error) {
+        if (attempt === 1) throw error;
+      }
+    }
+    throw new Error('log_core_publication_admission_unavailable');
+  }
   async function holdAdmission(value: CoreLogPublicationIdentity): Promise<void> {
+    await holdEnvironmentAdmission(value);
     const control = env.CONTROL;
     if (!control?.acquireTenantBackupMutationPermit)
       throw new Error('log_core_publication_admission_unavailable');
@@ -543,8 +631,23 @@ export function createCoreLogPublicationPort(
       [value.publicationId, value.sourceToken]
     );
   }
+  async function completeEnvironmentAdmission(value: CoreLogPublicationIdentity): Promise<void> {
+    if (env.ENABLE_SAML_DR_EXPORT !== 'true') return;
+    if (!env.SAML_DR_MUTATION_CONTROL?.completeEnvironmentBackupMutationPermit)
+      throw new Error('log_core_publication_admission_unavailable');
+    await env.SAML_DR_MUTATION_CONTROL.completeEnvironmentBackupMutationPermit({
+      permitId: await coreLogPublicationEnvironmentPermitId(value.sourceToken),
+    });
+  }
   async function reserveCorePublication(request: Omit<CoreLogPublicationIdentity, 'sourceToken'>) {
     assertCoreOwner();
+    if (
+      !isSamlDrCoveredOperation(env) &&
+      (env.ENABLE_SAML_DR_EXPORT === 'true' || hasReplicationWriterConfiguration(env))
+    )
+      return runSamlDrCoveredOperation(env, undefined, (covered) =>
+        bind(covered).reserveCorePublication(request)
+      );
     const value = { ...request, source: { ...request.source }, sourceToken: crypto.randomUUID() };
     await assertRequest(value, config);
     const core = await ports.resolveSource(value.source),
@@ -556,6 +659,8 @@ export function createCoreLogPublicationPort(
     assertIdentity(saved, value);
     if (saved.state === 'aborted') {
       await completeAdmission(core, value);
+      // The active reconciler owns durable environment completion. Do not close its shared
+      // permit from a concurrent reservation; recovery retries the same source witness.
       throw new Error('log_core_publication_aborted');
     }
     await claimAdminPublication(value);
@@ -584,6 +689,15 @@ export function createCoreLogPublicationPort(
     input = { ...input, source: { ...input.source }, record: { ...input.record } };
     await assertRequest(input, config);
     assertLogArchiveRecord(input.record);
+    if (
+      !isSamlDrCoveredOperation(env) &&
+      (env.ENABLE_SAML_DR_EXPORT === 'true' || hasReplicationWriterConfiguration(env))
+    ) {
+      const row = await loadAdmin(input.publicationId);
+      if (!row) throw new Error('log_core_publication_admin_missing');
+      assertIdentity(row, input);
+      return coverPublication(row, (bound) => bound.prepareCorePublication(input));
+    }
     const core = await ports.resolveSource(input.source),
       sourceRow = await loadCore(core, input.publicationId);
     if (!sourceRow) throw new Error('log_core_publication_source_unavailable');
@@ -642,19 +756,48 @@ export function createCoreLogPublicationPort(
   }
   async function reconcileOne(
     row: AdminRow,
-    orphanBefore?: number
-  ): Promise<CoreLogPublicationState> {
+    orphanBefore?: number,
+    durable = false
+  ): Promise<ReconcileOutcome> {
     const value = identity(row);
     await assertRequest(value, config);
     const lease = new LogIcebergTableLease(admin(), `publication_${row.id}`);
-    if (!(await lease.acquire())) return row.state === 'aborted' ? 'aborted' : 'prepared';
+    let acquired: boolean;
+    if (env.ENABLE_SAML_DR_EXPORT === 'true') {
+      // A timed-out request can still await provider I/O. Its explicit release, not age,
+      // permits another strict owner; overwriting its token would lose that evidence.
+      try {
+        await admin().execute(
+          `INSERT INTO scheduled_task_leases(task_id,lease_token,lease_until,updated_at)
+           VALUES(?,?,${LOG_ICEBERG_DB_NOW}+60000,${LOG_ICEBERG_DB_NOW}) ON CONFLICT(task_id) DO NOTHING`,
+          lease.params
+        );
+      } catch (error) {
+        if (!(await lease.isActive())) throw error;
+      }
+      acquired = await lease.isActive();
+    } else acquired = await lease.acquire();
+    if (!acquired)
+      return { state: row.state === 'aborted' ? 'aborted' : 'prepared', finalizable: false };
     let core: DatabaseAdapter | undefined,
       token = crypto.randomUUID();
     try {
       core = await ports.resolveSource(value.source);
+      const before = await loadCore(core, row.id);
+      if (before) assertIdentity(before, value);
+      // The source can finish after this request's admission preflight but before it obtains
+      // the lease. Logical replay after tenant completion requires an independently owned
+      // fresh environment permit, never the shared durable permit another owner may close.
+      if (
+        durable &&
+        before?.admission_completed_at !== null &&
+        before &&
+        ['published', 'aborted'].includes(before.state)
+      )
+        return { state: before.state, finalizable: false };
       const clock = dbNow(core);
       await core.execute(
-        `UPDATE log_iceberg_core_publications SET lease_token=?,lease_until=${clock}+60000 WHERE id=? AND (lease_until IS NULL OR lease_until<=${clock})`,
+        `UPDATE log_iceberg_core_publications SET lease_token=?,lease_until=${clock}+60000 WHERE id=? AND ${env.ENABLE_SAML_DR_EXPORT === 'true' ? 'lease_token IS NULL' : `(lease_until IS NULL OR lease_until<=${clock})`}`,
         [token, row.id]
       );
       let current = await loadCore(core, row.id);
@@ -667,7 +810,7 @@ export function createCoreLogPublicationPort(
           primary
         ))
       )
-        return current.state;
+        return { state: current.state, finalizable: false };
       await lease.assert();
       if (
         row.state === 'published' &&
@@ -688,7 +831,7 @@ export function createCoreLogPublicationPort(
           !expired &&
           (orphanBefore === undefined || row.created_at > orphanBefore)
         )
-          return 'prepared';
+          return { state: 'prepared', finalizable: false };
         if (!current) {
           const register = coreRegistration(core, value);
           await core.execute(register.sql.replace("'prepared',0", "'aborted',0"), register.params);
@@ -700,7 +843,7 @@ export function createCoreLogPublicationPort(
         current = await loadCore(core, row.id);
         if (!current) throw new Error('log_core_publication_source_unavailable');
         assertIdentity(current, value);
-        if (current.state !== 'aborted') return current.state;
+        if (current.state !== 'aborted') return { state: current.state, finalizable: false };
         await lease.assert();
         // Admin abort is a permanent fence against late staging/PUT preparations.
         await admin().batch([
@@ -724,7 +867,7 @@ export function createCoreLogPublicationPort(
           )
         ) {
           await completeAdmission(core, value);
-          return 'aborted';
+          return { state: 'aborted', finalizable: false };
         }
         await admin().execute(
           `DELETE FROM log_iceberg_records WHERE publication_id=? AND EXISTS(SELECT 1 FROM log_iceberg_publications WHERE id=? AND state='aborted') AND ${lease.predicate}`,
@@ -762,7 +905,7 @@ export function createCoreLogPublicationPort(
             ))
           ) {
             await completeAdmission(core, value);
-            return 'aborted';
+            return { state: 'aborted', finalizable: false };
           }
           await admin().execute(
             `UPDATE log_iceberg_outbox SET payload_erased_at=${LOG_ICEBERG_DB_NOW} WHERE id=? AND state='erased' AND ${lease.predicate}`,
@@ -770,12 +913,13 @@ export function createCoreLogPublicationPort(
           );
         }
         await completeAdmission(core, value);
-        await admin().execute(
-          `UPDATE log_iceberg_publications SET finalized=1 WHERE id=? AND state='aborted' AND ${lease.predicate}`,
-          [row.id, ...lease.params]
-        );
+        if (env.ENABLE_SAML_DR_EXPORT !== 'true')
+          await admin().execute(
+            `UPDATE log_iceberg_publications SET finalized=1 WHERE id=? AND state='aborted' AND ${lease.predicate}`,
+            [row.id, ...lease.params]
+          );
         await lease.assert();
-        return 'aborted';
+        return { state: 'aborted', finalizable: true };
       }
       if (!current.body_prepared) throw new Error('log_core_publication_body_unconfirmed');
       await lease.assert();
@@ -822,12 +966,13 @@ export function createCoreLogPublicationPort(
       const ack = await loadCore(core, row.id);
       if (ack?.state === 'published') {
         await completeAdmission(core, value);
-        await admin().execute(
-          `UPDATE log_iceberg_publications SET finalized=1 WHERE id=? AND state='published' AND ${lease.predicate}`,
-          [row.id, ...lease.params]
-        );
+        if (env.ENABLE_SAML_DR_EXPORT !== 'true')
+          await admin().execute(
+            `UPDATE log_iceberg_publications SET finalized=1 WHERE id=? AND state='published' AND ${lease.predicate}`,
+            [row.id, ...lease.params]
+          );
       }
-      return 'published';
+      return { state: 'published', finalizable: ack?.state === 'published' };
     } finally {
       if (core)
         await core.execute(
@@ -837,39 +982,158 @@ export function createCoreLogPublicationPort(
       await lease.release();
     }
   }
-  async function coverPublication<T>(row: AdminRow, run: () => Promise<T>): Promise<T> {
+  const finalizeEnvironmentJob = async (covered: LogIcebergRuntimeEnv, id: string) => {
+    if (env.ENABLE_SAML_DR_EXPORT !== 'true') return;
+    await ensureDatabaseAdapter(
+      covered.DB_ADMIN ?? missing(),
+      'log-core-publication-admin'
+    ).execute(
+      `UPDATE log_iceberg_publications SET finalized=1 WHERE id=? AND state IN('published','aborted')`,
+      [id]
+    );
+  };
+  async function publicationLeaseActive(core: DatabaseAdapter, id: string): Promise<boolean> {
+    if (
+      await core.queryOne(
+        `SELECT id FROM log_iceberg_core_publications WHERE id=? AND lease_token IS NOT NULL`,
+        [id],
+        primary
+      )
+    )
+      return true;
+    return Boolean(
+      await admin().queryOne(
+        `SELECT task_id FROM scheduled_task_leases WHERE task_id=?`,
+        [`log_iceberg:publication_${id}`],
+        primary
+      )
+    );
+  }
+  async function coverPublication<T>(
+    row: AdminRow,
+    run: (bound: PublicationImplementation, durable: boolean) => Promise<T>,
+    canFinalize: (result: T) => boolean = () => false
+  ): Promise<T> {
     const value = identity(row),
       core = await ports.resolveSource(value.source),
       source = await loadCore(core, row.id);
     if (source) assertIdentity(source, value);
-    const withinControlLease =
+    if (
+      env.ENABLE_SAML_DR_EXPORT === 'true' &&
       source &&
-      (await core.queryOne(
-        `SELECT id FROM log_iceberg_core_publications WHERE id=? AND created_at+${TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS}>${dbNow(core)}`,
+      ['published', 'aborted'].includes(source.state) &&
+      source.admission_completed_at !== null
+    ) {
+      if (await publicationLeaseActive(core, row.id))
+        throw new Error('log_core_publication_admission_busy');
+      // This path only closes the exact source-bound permit. All logical cleanup below must
+      // take a fresh environment permit, so another completion cannot leave it uncovered.
+      await completeEnvironmentAdmission(value);
+      return cover(row.tenant_id, async (covered) => {
+        const result = await run(bind(covered), false);
+        if (canFinalize(result)) await finalizeEnvironmentJob(covered, row.id);
+        return result;
+      });
+    }
+    const expiredSourceFence =
+      env.ENABLE_SAML_DR_EXPORT === 'true' &&
+      source?.state === 'prepared' &&
+      !(await core.queryOne(
+        `SELECT id FROM log_iceberg_core_publications WHERE id=? AND state='prepared' AND (CASE WHEN admission_expires_at=0 THEN created_at+${ADMISSION_MS} ELSE admission_expires_at END)>${dbNow(core)}`,
         [row.id],
         primary
       ));
-    if ((!source || source.admission_completed_at === null) && withinControlLease) {
+    // Strict environment permits never expire by age. The source database's own 60s fence
+    // prevents a delayed business commit; recovery must still close its durable permits.
+    const withinControlLease =
+      source &&
+      (env.ENABLE_SAML_DR_EXPORT === 'true' ||
+        (await core.queryOne(
+          `SELECT id FROM log_iceberg_core_publications WHERE id=? AND created_at+${TENANT_BACKUP_MUTATION_PERMIT_LEASE_MS}>${dbNow(core)}`,
+          [row.id],
+          primary
+        )));
+    if (
+      source &&
+      withinControlLease &&
+      (source.admission_completed_at === null ||
+        (env.ENABLE_SAML_DR_EXPORT === 'true' && ['published', 'aborted'].includes(source.state)))
+    ) {
       let held = false;
       try {
-        await holdAdmission(value);
+        if (
+          env.ENABLE_SAML_DR_EXPORT === 'true' &&
+          (['published', 'aborted'].includes(source.state) || expiredSourceFence)
+        )
+          // A partial reservation may own only its environment permit. Once the source's
+          // commit fence expired, resume that exact permit to CAS-abort it and install both
+          // completion tombstones; a new tenant permit would be refused by the drain.
+          await holdEnvironmentAdmission(value);
+        else await holdAdmission(value);
         held = true;
       } catch (error) {
         const current = await loadCore(core, row.id);
         if (!current || !['published', 'aborted'].includes(current.state)) throw error;
-        // A lost completion ACK may already have closed the original permit. The normal
-        // short permit is then required for remaining metadata/physical cleanup.
       }
-      if (held) return run();
+      if (held) {
+        const admitted =
+          env.ENABLE_SAML_DR_EXPORT === 'true'
+            ? withTenantBackupMutationCoverage(env, { environment: true })
+            : env;
+        const result = isSamlDrCoveredOperation(env)
+          ? await run(bind(env), false)
+          : await runSamlDrCoveredOperation(admitted, undefined, (covered) =>
+              run(bind(covered), true)
+            );
+        // Complete only after the owned storage operation (including lease cleanup/deferred writes)
+        // settled. A lost acknowledgement is retried by the same deterministic permit even when
+        // the source already recorded its tenant completion.
+        const final = await loadCore(core, row.id);
+        if (
+          final &&
+          ['published', 'aborted'].includes(final.state) &&
+          final.admission_completed_at !== null &&
+          !(await publicationLeaseActive(core, row.id))
+        ) {
+          await completeEnvironmentAdmission(value);
+          // The durable permit is now closed. Finishing scheduler metadata uses a fresh permit;
+          // a concurrent drain may defer it, leaving this finalization due for the next cron.
+          try {
+            if (canFinalize(result))
+              await cover(row.tenant_id, (covered) => finalizeEnvironmentJob(covered, row.id));
+          } catch {
+            /* Retain finalized=0: a lost completion reply can always be reconciled. */
+          }
+        }
+        return result;
+      }
     }
-    return cover(row.tenant_id, run);
+    return cover(row.tenant_id, async (covered) => {
+      const result = await run(bind(covered), false);
+      const final = await loadCore(core, row.id);
+      if (
+        final &&
+        ['published', 'aborted'].includes(final.state) &&
+        final.admission_completed_at !== null &&
+        !(await publicationLeaseActive(core, row.id))
+      ) {
+        await completeEnvironmentAdmission(value);
+        if (canFinalize(result)) await finalizeEnvironmentJob(covered, row.id);
+      }
+      return result;
+    });
   }
   async function publishCorePublication(input: CoreLogPublicationRequest) {
     assertCoreOwner();
     const row = await loadAdmin(input.publicationId);
     if (!row || row.tenant_id !== input.tenantId)
       throw new Error('log_core_publication_admin_missing');
-    return { state: await coverPublication(row, () => reconcileOne(row)) };
+    const outcome = await coverPublication(
+      row,
+      (bound, durable) => bound.reconcileOne(row, undefined, durable),
+      (result) => result.finalizable
+    );
+    return { state: outcome.state };
   }
   async function reconcileCorePublications(input: CoreLogPublicationReconcile = {}) {
     assertCoreOwner();
@@ -887,16 +1151,23 @@ export function createCoreLogPublicationPort(
     const result = { published: 0, aborted: 0, retained: 0 };
     for (const row of rows) {
       try {
-        const state = await coverPublication(row, () => reconcileOne(row, before));
-        if (state === 'published') result.published++;
-        else if (state === 'aborted') result.aborted++;
+        const outcome = await coverPublication(
+          row,
+          (bound, durable) => bound.reconcileOne(row, before, durable),
+          (value) => value.finalizable
+        );
+        if (outcome.state === 'published') result.published++;
+        else if (outcome.state === 'aborted') result.aborted++;
         else result.retained++;
       } catch {
         result.retained++;
       }
       try {
-        await cover(row.tenant_id, () =>
-          admin().execute(
+        await cover(row.tenant_id, (covered) =>
+          ensureDatabaseAdapter(
+            covered.DB_ADMIN ?? missing(),
+            'log-core-publication-admin'
+          ).execute(
             `UPDATE log_iceberg_publications SET next_attempt_at=${LOG_ICEBERG_DB_NOW}+300000,attempt_count=attempt_count+1 WHERE id=? AND finalized=0`,
             [row.id]
           )
@@ -912,6 +1183,7 @@ export function createCoreLogPublicationPort(
     prepareCorePublication,
     publishCorePublication,
     reconcileCorePublications,
+    reconcileOne,
   };
 }
 function missing(): never {

@@ -16,6 +16,22 @@ import { parseTenantBackupSelection, tenantDatasetSelectionRule } from '../selec
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 
 describe('tenant backup dataset registry coverage', () => {
+  it('never exports replication grants or their credential hashes', () => {
+    const policy = TENANT_DATASET_POLICIES.find(
+      (entry) => entry.family === 'admin' && entry.table === 'tenant_backup_replication_grants'
+    );
+    expect(policy?.kind).toBe('ephemeral');
+    if (!policy) throw new Error('replication_grant_policy_missing');
+    expect(
+      tenantDatasetSelectionRule(policy.kind, {
+        settings: true,
+        users: true,
+        admin: true,
+        artifacts: true,
+        logs: { audit: true, other: true, sensitive: true, period: 'all' },
+      }).action
+    ).toBe('excluded');
+  });
   it('selects failure aggregates only with other logs and preserves their cumulative meaning', () => {
     const policy = TENANT_DATASET_POLICIES.find(
       ({ family, table }) => family === 'admin' && table === 'identity_mapping_failures'

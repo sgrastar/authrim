@@ -1,3 +1,4 @@
+import type { SamlDrWriterEnv } from './tenant-portability/saml-dr-writer';
 import {
   logIcebergRestoreVisibleSql,
   assertLogIcebergRestoreHoldScope,
@@ -98,7 +99,8 @@ export interface LogArchiveWriteServiceBinding extends CoreLogPublicationRpc {
   }): Promise<void>;
 }
 
-export interface LogIcebergRuntimeEnv extends LogIcebergSettingsEnv, LogIcebergKeyEnv {
+export interface LogIcebergRuntimeEnv
+  extends LogIcebergSettingsEnv, LogIcebergKeyEnv, SamlDrWriterEnv {
   AUTHRIM_ENVIRONMENT_NAME?: string;
   AUTHRIM_WORKER_SCRIPT_NAME?: string;
   AUTHRIM_CONFIG?: KVNamespace;
@@ -427,14 +429,27 @@ export async function readLogIcebergRetryPayload(
 
 /** Only the named internal core RPC and Management consumer instantiate this port.
  * The public runtime wrapper/entrypoint enforces the compile-time activation gate. */
+type WritePortDependencies = {
+  resolveCorePublicationSource?: (source: CoreLogPublicationSource) => Promise<DatabaseAdapter>;
+};
+type PublicationDependencies = Pick<
+  import('./log-iceberg-core-publication').CoreLogPublicationPorts,
+  'tenantKey' | 'preparePipeline' | 'dispatchPipeline'
+>;
 export function createLogIcebergWritePort(
   env: LogIcebergRuntimeEnv,
   config: LogIcebergConfig,
   now = Date.now,
-  supplied: {
-    resolveCorePublicationSource?: (source: CoreLogPublicationSource) => Promise<DatabaseAdapter>;
-  } = {}
+  supplied: WritePortDependencies = {}
 ): LogArchiveWriteServiceBinding {
+  return createWritePortImplementation(env, config, now, supplied).writer;
+}
+function createWritePortImplementation(
+  env: LogIcebergRuntimeEnv,
+  config: LogIcebergConfig,
+  now: () => number,
+  supplied: WritePortDependencies
+): { writer: LogArchiveWriteServiceBinding; publication: PublicationDependencies } {
   const admin = () =>
     ensureDatabaseAdapter(
       env.DB_ADMIN ?? missing('log_iceberg_admin_database_unavailable'),
@@ -708,11 +723,13 @@ export function createLogIcebergWritePort(
       );
     }
   };
-  return {
+  const writer: LogArchiveWriteServiceBinding = {
     ...createCoreLogPublicationPort(env, config, {
       tenantKey: resolveTenantKey,
       preparePipeline: preparePipelineReferences,
       dispatchPipeline: dispatchPipelineReferences,
+      rebind: (covered) =>
+        createWritePortImplementation(covered, config, now, supplied).publication,
       ...(supplied.resolveCorePublicationSource
         ? { resolveSource: supplied.resolveCorePublicationSource }
         : {}),
@@ -772,6 +789,14 @@ export function createLogIcebergWritePort(
         ]);
       await dispatchPipelineReferences({ tenantId: request.tenantId, references: refs });
       return { stored: 0, queued: refs.length };
+    },
+  };
+  return {
+    writer,
+    publication: {
+      tenantKey: resolveTenantKey,
+      preparePipeline: preparePipelineReferences,
+      dispatchPipeline: dispatchPipelineReferences,
     },
   };
 }

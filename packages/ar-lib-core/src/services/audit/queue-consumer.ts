@@ -1996,41 +1996,40 @@ export async function processDLQQueue(
           `/dd=${partition.day}/${dlqItemId}.json`;
 
         // Save to R2 for recovery
-        const archiveBucket = env.SENSITIVE_DETAILS ?? null;
-        if (archiveBucket) {
-          await putEncryptedLoggingDeliveryPayload({
-            env,
-            bucket: archiveBucket,
-            objectKey: payloadObjectRef,
-            tenantContext: tenantKey,
-            payload: {
-              messageId: message.id,
-              receivedAt: timestamp,
-              retryCount: message.attempts,
-              body: message.body,
-            },
-            customMetadata: {
-              tenantKey,
-              payloadType: 'audit_queue_message',
-              schemaVersion: '1',
-              dlqItemId,
-              logType,
-            },
-          });
-
-          await dlqStore?.insertItem({
-            id: dlqItemId,
+        const archiveBucket = env.SENSITIVE_DETAILS;
+        if (!archiveBucket) throw new Error('audit_dlq_payload_bucket_unavailable');
+        await putEncryptedLoggingDeliveryPayload({
+          env,
+          bucket: archiveBucket,
+          objectKey: payloadObjectRef,
+          tenantContext: tenantKey,
+          payload: {
+            messageId: message.id,
+            receivedAt: timestamp,
+            retryCount: message.attempts,
+            body: message.body,
+          },
+          customMetadata: {
             tenantKey,
             payloadType: 'audit_queue_message',
-            schemaVersion: 1,
-            lane,
-            payloadObjectRef,
-            destinationId,
-            errorClass: 'audit_message_failed_permanently',
-            attemptCount: message.attempts,
-            now,
-          });
-        }
+            schemaVersion: '1',
+            dlqItemId,
+            logType,
+          },
+        });
+
+        await dlqStore?.insertItem({
+          id: dlqItemId,
+          tenantKey,
+          payloadType: 'audit_queue_message',
+          schemaVersion: 1,
+          lane,
+          payloadObjectRef,
+          destinationId,
+          errorClass: 'audit_message_failed_permanently',
+          attemptCount: message.attempts,
+          now,
+        });
 
         await recordDeliveryEvent(deliveryEventStore, log, {
           id: await createQueueStableLoggingId('lde', message, 'audit-dlq'),
@@ -2043,8 +2042,8 @@ export async function processDLQQueue(
           attemptCount: message.attempts,
           errorClass: 'audit_message_failed_permanently',
           metadata: {
-            dlq_item_id: archiveBucket ? dlqItemId : null,
-            payload_object_ref: archiveBucket ? payloadObjectRef : null,
+            dlq_item_id: dlqItemId,
+            payload_object_ref: payloadObjectRef,
             payload_type: 'audit_queue_message',
             schema_version: 1,
             record_count: message.body.entries.length,
@@ -2062,8 +2061,8 @@ export async function processDLQQueue(
           attemptCount: message.attempts,
           errorClass: 'audit_message_failed_permanently',
           metadata: {
-            dlq_item_id: archiveBucket ? dlqItemId : null,
-            payload_object_ref: archiveBucket ? payloadObjectRef : null,
+            dlq_item_id: dlqItemId,
+            payload_object_ref: payloadObjectRef,
             payload_type: 'audit_queue_message',
             schema_version: 1,
             record_count: message.body.entries.length,

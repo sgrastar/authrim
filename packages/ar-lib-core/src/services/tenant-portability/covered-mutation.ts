@@ -1,6 +1,6 @@
 import type { ControlServiceBinding } from '../control-plane/control-plane-contracts';
 
-type MutationControl = Pick<
+export type TenantBackupMutationControl = Pick<
   ControlServiceBinding,
   | 'acquireTenantBackupMutationPermit'
   | 'completeTenantBackupMutationPermit'
@@ -48,13 +48,23 @@ export class TenantBackupMutationUnavailableError extends Error {
 export async function runTenantBackupCoveredEffect<T>(
   input: {
     TENANT_BACKUP_WRAPPING_KEY?: string;
-    CONTROL?: MutationControl;
+    CONTROL?: TenantBackupMutationControl;
   } & CoverageCarrier,
   scope: TenantBackupMutationCoverage,
   run: () => Promise<T>
 ): Promise<T> {
   if (hasTenantBackupMutationCoverage(input, scope)) return run();
   if (!input.TENANT_BACKUP_WRAPPING_KEY) return run();
+  return runRequiredTenantBackupCoveredEffect(input, scope, run);
+}
+
+/** Admission required by an installed runtime contract; no backup encryption key is needed. */
+export async function runRequiredTenantBackupCoveredEffect<T>(
+  input: { CONTROL?: TenantBackupMutationControl } & CoverageCarrier,
+  scope: TenantBackupMutationCoverage,
+  run: () => Promise<T>
+): Promise<T> {
+  if (hasTenantBackupMutationCoverage(input, scope)) return run();
   const permitId = crypto.randomUUID();
   const control = input.CONTROL;
   const tenantScope = 'tenantId' in scope;
@@ -77,18 +87,33 @@ export async function runTenantBackupCoveredEffect<T>(
       ? control.completeTenantBackupMutationPermit?.({ tenantId: scope.tenantId, permitId })
       : control.completeEnvironmentBackupMutationPermit?.({ permitId });
   let admitted = false;
+  let outcomeUnknown = false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const result = await acquire();
+      outcomeUnknown = false;
       if (!result || typeof result.admitted !== 'boolean') break;
       if (!result.admitted) break;
       admitted = true;
       break;
     } catch {
       // Reuse the same private permit ID: the first RPC may have committed before losing its reply.
+      outcomeUnknown = true;
     }
   }
-  if (!admitted) throw new TenantBackupMutationUnavailableError();
+  if (!admitted) {
+    if (outcomeUnknown) {
+      // The service may have recorded a permit whose reply never arrived. Nothing ran under it, so
+      // close it by its ID; the service also refuses an acquisition of that ID that arrives later.
+      // If this fails too, the open permit is the one the service reports on its own.
+      try {
+        await complete();
+      } catch {
+        // Reported by the service itself as an open permit.
+      }
+    }
+    throw new TenantBackupMutationUnavailableError();
+  }
   let result!: T;
   let runError: unknown;
   let runFailed = false;

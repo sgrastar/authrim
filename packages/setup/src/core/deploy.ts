@@ -321,6 +321,8 @@ export interface DeployOptions {
   expectedWorkerVersionIds?: Readonly<Record<string, string | undefined>>;
   /** Secret values keyed by Wrangler secret name. Only each Worker's allow-list is written. */
   secrets?: Readonly<Record<string, string>>;
+  /** Explicit opt-in; never upload the writer credential to standalone Workers. */
+  replicationWriter?: boolean;
   /**
    * The Lookup HMAC slots the runtime resolves with (Control's active slot and, during a rotation,
    * its previous slot), from the environment lock. Unknown: either slot satisfies a Worker.
@@ -565,9 +567,10 @@ export const REQUIRED_WORKER_SECRET_KINDS: Readonly<
 export function requiredWorkerSecretNames(
   component: WorkerComponent,
   lookupHmacSlots: readonly LookupHmacSlot[] | undefined,
-  logArchive = false
+  options: { logArchive?: boolean; replicationWriter?: boolean } = {}
 ): { all: SecretName[]; anyOf: SecretName[][] } {
   const all: SecretName[] = [];
+  if (options.replicationWriter) all.push('AUTHRIM_REPLICATION_WRITER_SECRET');
   const anyOf: SecretName[][] = [];
   for (const kind of REQUIRED_WORKER_SECRET_KINDS[component] ?? []) {
     if (kind === 'lookup_hmac') {
@@ -578,7 +581,7 @@ export function requiredWorkerSecretNames(
       }
     }
   }
-  if (logArchive) all.push(...getLogArchiveSecretNamesForWorker(component));
+  if (options.logArchive) all.push(...getLogArchiveSecretNamesForWorker(component));
   return { all: [...new Set(all)], anyOf };
 }
 
@@ -662,7 +665,11 @@ export async function listDeployedWorkerSecretNames(
 export async function findMissingRequiredWorkerSecrets(
   options: Pick<
     DeployOptions,
-    'secrets' | 'existingComponents' | 'lookupHmacSlots' | 'logArchiveComponents'
+    | 'secrets'
+    | 'existingComponents'
+    | 'lookupHmacSlots'
+    | 'logArchiveComponents'
+    | 'replicationWriter'
   >,
   components: readonly WorkerComponent[],
   listSecretNames: (component: WorkerComponent) => Promise<Set<string>>
@@ -671,11 +678,10 @@ export async function findMissingRequiredWorkerSecrets(
   const distributed = (name: string) => Boolean(options.secrets?.[name]?.trim());
   const missing: MissingRequiredWorkerSecret[] = [];
   for (const component of components) {
-    const required = requiredWorkerSecretNames(
-      component,
-      options.lookupHmacSlots,
-      options.logArchiveComponents?.includes(component)
-    );
+    const required = requiredWorkerSecretNames(component, options.lookupHmacSlots, {
+      logArchive: options.logArchiveComponents?.includes(component),
+      replicationWriter: options.replicationWriter,
+    });
     if (required.anyOf.length > 0 && existing.has(component)) {
       // An existing environment has Control's key state: deploying without it would accept a
       // slot the runtime does not use. Only an initial deployment may go by "either slot".
@@ -704,7 +710,7 @@ export async function findMissingRequiredWorkerSecrets(
  * whose fingerprint differs from the one Control published for that slot.
  */
 export function assertDistributedSecretValues(
-  options: Pick<DeployOptions, 'secrets' | 'lookupHmacFingerprints'> &
+  options: Pick<DeployOptions, 'secrets' | 'lookupHmacFingerprints' | 'replicationWriter'> &
     Partial<Pick<DeployOptions, 'rootDir' | 'env' | 'configFile'>>,
   components: readonly WorkerComponent[]
 ): void {
@@ -712,6 +718,7 @@ export function assertDistributedSecretValues(
     components.flatMap((component) =>
       getSecretNamesForWorker(component, {
         logArchive: Boolean(generatedWorkerLogArchiveMode(component, options)),
+        replicationWriter: options.replicationWriter,
       })
     )
   );
@@ -749,6 +756,9 @@ export function assertDistributedSecretValues(
           OBJECT_ENCRYPTION_KEY_VERSION: String(ring.current_version),
           LOG_ARCHIVE_CONTENT_HMAC_KEY: hmac,
         });
+    }
+    if (name === 'AUTHRIM_REPLICATION_WRITER_SECRET' && !/^[a-f0-9]{64}$/u.test(value)) {
+      throw new Error('deploy_secret_value_invalid:AUTHRIM_REPLICATION_WRITER_SECRET');
     }
     const slot = /^LOOKUP_HMAC_KEY_SLOT_([AB])$/u.exec(name)?.[1] as LookupHmacSlot | undefined;
     const expected = slot ? options.lookupHmacFingerprints?.[slot] : undefined;
@@ -1621,7 +1631,7 @@ function effectiveWorkerDependencies(
 function getSecretsForWorker(
   component: WorkerComponent,
   secrets: Readonly<Record<string, string>> | undefined,
-  options: Pick<DeployOptions, 'rootDir' | 'env' | 'configFile'>
+  options: Pick<DeployOptions, 'rootDir' | 'env' | 'configFile' | 'replicationWriter'>
 ): Record<string, string> {
   if (!secrets) {
     return {};
@@ -1629,6 +1639,7 @@ function getSecretsForWorker(
   return Object.fromEntries(
     getSecretNamesForWorker(component, {
       logArchive: Boolean(generatedWorkerLogArchiveMode(component, options)),
+      replicationWriter: options.replicationWriter,
     })
       // A blank value is never sent: it would replace a working secret with nothing.
       .filter((name) => secrets[name] !== undefined && secrets[name].trim() !== '')
@@ -4248,8 +4259,11 @@ export function updateLockWithDeployments(lock: AuthrimLock, results: DeployResu
 export async function loadDeploySecretsFromKeys(
   keysDir: string | undefined,
   workers?: WorkerComponent[],
-  context?: Pick<DeployOptions, 'rootDir' | 'env'>
+  options: Partial<Pick<DeployOptions, 'rootDir' | 'env'>> &
+    Pick<DeployOptions, 'replicationWriter'> = {}
 ): Promise<Record<string, string>> {
+  const context =
+    options.rootDir && options.env ? { rootDir: options.rootDir, env: options.env } : undefined;
   const dependencies = context
     ? effectiveWorkerDependencies(context)
     : WORKER_DEPLOYMENT_DEPENDENCIES;
@@ -4270,6 +4284,7 @@ export async function loadDeploySecretsFromKeys(
     targetWorkers.flatMap((worker) =>
       getSecretNamesForWorker(worker, {
         logArchive: Boolean(context && generatedWorkerLogArchiveMode(worker, context)),
+        replicationWriter: options.replicationWriter,
       })
     )
   );
@@ -4313,7 +4328,11 @@ export async function loadDeploySecretsFromKeys(
       // A Lookup HMAC key file may end in a newline (editors and `echo` add one). Control's
       // fingerprint covers the key without surrounding whitespace, and the runtime hashes the
       // secret exactly as delivered, so the trimmed key is what must be distributed.
-      secrets[secretName] = LOOKUP_HMAC_SECRET_NAME.test(secretName) ? value.trim() : value;
+      secrets[secretName] =
+        LOOKUP_HMAC_SECRET_NAME.test(secretName) ||
+        secretName === 'AUTHRIM_REPLICATION_WRITER_SECRET'
+          ? value.trim()
+          : value;
     }
   }
   return secrets;
@@ -4331,7 +4350,7 @@ async function uploadSecretsWithoutLease(
 ): Promise<{ success: boolean; errors: string[] }> {
   const { env, rootDir, onProgress, dryRun } = options;
   const errors: string[] = [];
-  const targetWorkers = getSecretTargetWorkers(workers);
+  const targetWorkers = getSecretTargetWorkers(workers, options);
   const throttle = makeThrottle(options);
 
   await runBoundedPool(targetWorkers, throttle, async (component) => {
@@ -4401,7 +4420,7 @@ export async function uploadSecrets(
   workers?: WorkerComponent[]
 ): Promise<{ success: boolean; errors: string[] }> {
   await assertDeployConfigLockProof(options);
-  const components = getSecretTargetWorkers(workers);
+  const components = getSecretTargetWorkers(workers, options);
   await assertLogArchiveDeploymentState(options, components);
   if (options.deploymentLeaseSession || options.dryRun || !options.deploymentLease) {
     return uploadSecretsWithoutLease(secrets, options, workers);

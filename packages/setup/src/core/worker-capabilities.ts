@@ -430,6 +430,7 @@ export function validateGeneratedWorkerCapabilities(input: {
     (WORKER_COMPONENTS as readonly string[]).includes(input.compiled.component)
       ? getSecretNamesForWorker(input.compiled.component as WorkerComponent, {
           logArchive: input.config.vars.AUTHRIM_LOG_ARCHIVE_MODE !== undefined,
+          replicationWriter: input.config.vars.AUTHRIM_REPLICATION_WRITER !== undefined,
         })
       : manifest.secrets.map((secret) => secret.name)
   );

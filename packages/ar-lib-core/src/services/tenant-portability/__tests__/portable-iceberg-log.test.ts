@@ -12,7 +12,11 @@ import {
   createIcebergLogRecordDatasetPolicy,
 } from '../portable-iceberg-log';
 
-import { tenantBackupInputDatasetOwners } from '../input-plan';
+import {
+  assertTenantBackupInputLogDetailCoverage,
+  loadPlannedTenantBackupInputs,
+  tenantBackupInputDatasetOwners,
+} from '../input-plan';
 import {
   tenantDatasetSelectionRule,
   tenantBackupSelectionsCover,
@@ -256,6 +260,140 @@ it('keeps independent audit/other/sensitive owners when bundles are combined, wi
   });
   expect(inputBundle('settings-only', 100, settings).manifest.datasets).toHaveLength(0);
 });
+
+it.each(['audit', 'other'] as const)(
+  'rejects missing %s protected details from split inputs and a newer redacted owner',
+  async (category) => {
+    const f = await fixture();
+    const sourceDataset = category === 'audit' ? 'admin.admin_audit_log' : 'core.operational_logs';
+    const record = await buildLogIcebergRowRecord(f.env, {
+      tenantId: 'tenant-a',
+      sourceDataset,
+      logType: category === 'audit' ? 'admin_audit' : 'operational',
+      eventAt: f.now,
+      expiresAt: null,
+      row: {
+        id: 'protected-' + category,
+        tenant_id: 'tenant-a',
+        created_at: f.now,
+        ...(category === 'audit'
+          ? {
+              before_json: '{"state":"before"}',
+              after_json: '{"state":"after"}',
+              metadata_json: '{"private":"synthetic"}',
+            }
+          : { reason_detail_encrypted: null, encryption_key_version: 0 }),
+      },
+      ...(category === 'other'
+        ? { protectedDetail: { reason_detail: 'synthetic protected reason' } }
+        : {}),
+    });
+    const portable = async (includeSensitiveDetails: boolean) =>
+      decodePortableIcebergLog(
+        new TextDecoder().decode(
+          await encodePortableIcebergLog({
+            record,
+            tenantId: 'tenant-a',
+            tenantKey: 'key-a',
+            resolveKeys: async () => f.keys,
+            includeSensitiveDetails,
+          })
+        ),
+        'tenant-a'
+      );
+    const fullRecord = await portable(true);
+    const redactedRecord = await portable(false);
+    if (category === 'audit') {
+      expect(fullRecord.row.before_json).toBe('{"state":"before"}');
+      expect(redactedRecord.row.before_json).toBeNull();
+    } else {
+      expect(fullRecord.protectedDetail?.reason_detail).toBe('synthetic protected reason');
+      expect(redactedRecord.protectedDetail).toBeUndefined();
+    }
+    const none = {
+      settings: false,
+      users: false,
+      admin: false,
+      artifacts: false,
+      logs: { audit: false, other: false, sensitive: false, period: 7 as const },
+    };
+    const only = { ...none, logs: { ...none.logs, [category]: true } };
+    const sensitive = { ...none, logs: { ...none.logs, sensitive: true } };
+    const requested = { ...only, logs: { ...only.logs, sensitive: true } };
+    const datasetId = `logs.iceberg_${category}_records`;
+    const expectedIds = new Set([datasetId, 'logs.iceberg_sensitive_records']);
+    expect(icebergLogSelected(record, sensitive, f.now)).toBe(false);
+    const split = [inputBundle('a'.repeat(32), 2, only), inputBundle('b'.repeat(32), 3, sensitive)];
+    const newerRedacted = [
+      inputBundle('c'.repeat(32), 1, requested),
+      inputBundle('d'.repeat(32), 2, only),
+    ];
+    for (const inputs of [split, newerRedacted]) {
+      expect(
+        tenantBackupSelectionsCover(
+          requested,
+          inputs.map(({ manifest }) => manifest.selection)
+        )
+      ).toBe(true);
+      expect(tenantBackupInputDatasetOwners(inputs).get(datasetId)).toBe(
+        inputs === split ? 'a'.repeat(32) : 'd'.repeat(32)
+      );
+      expect(() =>
+        assertTenantBackupInputLogDetailCoverage(inputs, requested, expectedIds)
+      ).toThrow('backup_input_sensitive_log_details_uncovered');
+      // The common sealed-input loader must reject the same canonically decoded manifests.
+      const context = {
+        operation: {
+          kind: 'import',
+          state: 'running',
+          id: 'operation-a',
+          tenant_id: 'tenant-a',
+          lease_owner: 'worker-a',
+          fencing_token: 1,
+        },
+        lease: {
+          operationId: 'operation-a',
+          tenantId: 'tenant-a',
+          owner: 'worker-a',
+          fencingToken: 1,
+        },
+        signal: new AbortController().signal,
+      } as Parameters<typeof loadPlannedTenantBackupInputs>[0];
+      const inventory = {
+        headForLease: async () => ({ state: 'sealed', item_count: inputs.length }),
+        readPage: async (ordinal: number) => [
+          {
+            ordinal,
+            item_id: `backup-input:${inputs[ordinal].manifest.bundleId}`,
+            payload_json: JSON.stringify(inputs[ordinal]),
+          },
+        ],
+      } as unknown as Parameters<typeof loadPlannedTenantBackupInputs>[1];
+      await expect(
+        loadPlannedTenantBackupInputs(context, inventory, {
+          source: inputs[0].manifest.source,
+          selection: requested,
+          datasets: ICEBERG_LOG_RECORDS_DATASETS.filter(({ id }) => expectedIds.has(id)),
+        })
+      ).rejects.toThrow('backup_input_sensitive_log_details_uncovered');
+    }
+    const fullOwner = [
+      inputBundle('e'.repeat(32), 1, only),
+      inputBundle('f'.repeat(32), 2, requested),
+    ];
+    expect(tenantBackupInputDatasetOwners(fullOwner).get(datasetId)).toBe('f'.repeat(32));
+    expect(() =>
+      assertTenantBackupInputLogDetailCoverage(fullOwner, requested, expectedIds)
+    ).not.toThrow();
+    expect(() =>
+      assertTenantBackupInputLogDetailCoverage([split[0]], only, expectedIds)
+    ).not.toThrow();
+    // Legacy physical datasets and other categories do not acquire a new policy here.
+    expect(() =>
+      assertTenantBackupInputLogDetailCoverage(split, requested, new Set(['core.audit_log']))
+    ).not.toThrow();
+  }
+);
 
 it('binds logical log dataset policies to their category and tenant rather than trusting an envelope label', async () => {
   const f = await fixture();

@@ -316,7 +316,7 @@
 		color: var(--text-secondary);
 		font-size: var(--fs-small);
 		font-variant-numeric: tabular-nums;
-		line-height: 17px;
+		line-height: var(--lh-snug);
 		text-align: center;
 	}
 

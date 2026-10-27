@@ -190,9 +190,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       write: () => Promise<T>
     ) =>
       actual.withGroupInputWrite(
-        typeof db.execute === 'function'
-          ? db
-          : { ...db, execute: async () => ({ success: true, rowsAffected: 1 }) },
+        {
+          ...db,
+          getType: () => 'd1',
+          execute:
+            typeof db.execute === 'function'
+              ? db.execute.bind(db)
+              : async () => ({ success: true, rowsAffected: 1 }),
+        },
         tenant,
         user,
         operation,
@@ -529,7 +534,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expiresAt: Date.now() + 60_000,
       data: { amr: ['passkey'] },
     });
-    mocks.coreAdapter.execute.mockResolvedValue(undefined);
+    mocks.coreAdapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.coreAdapter.queryOne.mockResolvedValue({
       state: 'active',
       current_step_id: 'auth:step',
@@ -1302,7 +1307,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       metadata: { client_id: 'web-client' },
     };
 
-    async function finishWith(challenge: unknown) {
+    async function finishWith(
+      challenge: unknown,
+      configureEnv?: (env: ReturnType<typeof createEnv>) => void
+    ) {
       const codeVerifier = 'passkey-login-code-verifier';
       mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
         challenge: 'passkey-login-challenge',
@@ -1319,19 +1327,19 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       });
       mocks.challengeStore.getChallengeRpc.mockResolvedValue(challenge);
       const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
-      const response = await directPasskeyLoginFinishHandler(
-        createContext({
-          challenge_id: 'challenge_1',
-          credential: {
-            id: 'credential-id',
-            rawId: 'credential-id',
-            response: {},
-            type: 'public-key',
-          },
-          code_verifier: codeVerifier,
-          channel: 'browser',
-        }) as never
-      );
+      const context = createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      });
+      configureEnv?.(context.env);
+      const response = await directPasskeyLoginFinishHandler(context as never);
       return response;
     }
 
@@ -1365,6 +1373,39 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect(response.status).toBe(200);
       expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalled();
       expect(artifactMetadata()).not.toHaveProperty('browser_session_only');
+    });
+
+    it('does not access the Cloudflare code store for a SAML browser-only artifact', async () => {
+      const response = await finishWith(samlChallenge, (env) => {
+        Object.assign(env, { AUTH_RUNTIME_PORTS: {} });
+        Object.defineProperty(env, 'AUTH_CODE_STORE', {
+          get: () => {
+            throw new Error('Cloudflare code store was accessed');
+          },
+        });
+      });
+
+      expect(response.status).toBe(200);
+      expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+      expect(artifactMetadata()).toMatchObject({ browser_session_only: true });
+    });
+
+    it('uses the typed runtime code port for an OIDC authorization challenge', async () => {
+      const store = vi.fn().mockResolvedValue({ success: true, expiresAt: Date.now() + 60_000 });
+      const response = await finishWith(oidcChallenge, (env) => {
+        Object.assign(env, { AUTH_RUNTIME_PORTS: { authorizationCodes: { store } } });
+        Object.defineProperty(env, 'AUTH_CODE_STORE', {
+          get: () => {
+            throw new Error('Cloudflare code store was accessed');
+          },
+        });
+      });
+
+      expect(response.status).toBe(200);
+      expect(store).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 'tenant_test', clientId: 'web-client' })
+      );
+      expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
     });
 
     it('issues nothing when the challenge cannot be read', async () => {
@@ -1712,27 +1753,31 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     mocks.passkey.findByCredentialId.mockResolvedValue(null);
     const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
 
-    const response = await directPasskeyLoginFinishHandler(
-      createContext(
-        {
-          challenge_id: 'challenge_1',
-          credential: {
-            id: 'missing-credential-id',
-            rawId: 'missing-credential-id',
-            response: {},
-            type: 'public-key',
-          },
-          code_verifier: codeVerifier,
-          channel: 'browser',
+    const context = createContext(
+      {
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'missing-credential-id',
+          rawId: 'missing-credential-id',
+          response: {},
+          type: 'public-key',
         },
-        // Named at verify time: never what the failure is recorded against.
-        { 'x-authrim-interaction-id': 'int-2' }
-      ) as never
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      },
+      // Named at verify time: never what the failure is recorded against.
+      { 'x-authrim-interaction-id': 'int-2' }
     );
+    const response = await directPasskeyLoginFinishHandler(context as never);
 
     expect(response.status).toBe(400);
     await vi.waitFor(() => expect(attemptRecording.record).toHaveBeenCalledTimes(1));
-    expect(attemptRecording.record.mock.calls[0]?.[2]).toEqual({
+    const recorded = attemptRecording.record.mock.calls[0];
+    expect(recorded).toHaveLength(4);
+    expect(recorded?.[0]).toBe(context.env);
+    expect(recorded?.[1]).toBe(mocks.coreAdapter);
+    expect(recorded?.[2]).toBeNull();
+    expect(recorded?.[3]).toEqual({
       tenantId: 'tenant_test',
       interactionId: 'int-1',
       method: 'passkey',
