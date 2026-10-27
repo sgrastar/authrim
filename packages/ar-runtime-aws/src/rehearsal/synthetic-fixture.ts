@@ -1,5 +1,5 @@
 /** Synthetic data only: shared AUTHRIM2 fixture for local and AWS restore rehearsals. */
-import { createHash, generateKeyPairSync, randomUUID, webcrypto } from 'node:crypto';
+import { generateKeyPairSync, hash as nodeHash, randomUUID, webcrypto } from 'node:crypto';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Client } from 'pg';
@@ -901,7 +901,7 @@ export async function buildBackupFiles(input: {
         inventoryDigestSha256: manifest.inventoryDigestSha256,
         parts: encoded.parts.map((part) => ({
           size: part.length,
-          sha256: createHash('sha256').update(part).digest('hex'),
+          sha256: nodeHash('sha256', part, 'hex'),
         })),
       },
       passphrase: input.passphrase ?? PASSPHRASE,
@@ -911,7 +911,7 @@ export async function buildBackupFiles(input: {
     },
     supplement: {
       path: supplementPath,
-      expectedSha256: createHash('sha256').update(supplementBytes).digest('hex'),
+      expectedSha256: nodeHash('sha256', supplementBytes, 'hex'),
     },
   };
 }

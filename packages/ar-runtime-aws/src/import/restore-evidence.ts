@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hash as nodeHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
@@ -31,7 +31,7 @@ export function canonicalRestoreJson(value: unknown): string {
 }
 
 export function restoreEvidenceDigest(value: unknown): string {
-  return createHash('sha256').update(canonicalRestoreJson(value)).digest('hex');
+  return nodeHash('sha256', canonicalRestoreJson(value), 'hex');
 }
 
 /** Reads a bounded local file once, refusing aliases or replacement during the read. */
@@ -57,7 +57,7 @@ export async function readPinnedRestoreFile(
         before.mtimeNs !== after.mtimeNs ||
         before.ctimeNs !== after.ctimeNs ||
         bytes.length !== Number(before.size) ||
-        createHash('sha256').update(bytes).digest('hex') !== expectedSha256
+        nodeHash('sha256', bytes, 'hex') !== expectedSha256
       )
         invalid();
       return bytes;

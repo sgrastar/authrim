@@ -218,7 +218,7 @@ describe('AWS same-origin SAML sign-in page', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     const html = await response.text();
-    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    const script = html.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
     expect(script).toBeTruthy();
     if (!script) throw new Error('script_missing');
     expect(() => new Script(script)).not.toThrow();
@@ -230,7 +230,7 @@ describe('AWS same-origin SAML sign-in page', () => {
 
   it('runs the configured Flow, verifies a passkey, creates a session, and resumes only the bound SAML request', async () => {
     const html = await renderAwsPasskeyLoginPage(new Request(valid)).text();
-    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    const script = html.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
     if (!script) throw new Error('script_missing');
     const requests: Array<{
       path: string;

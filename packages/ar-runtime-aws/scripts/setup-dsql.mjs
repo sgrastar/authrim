@@ -10,6 +10,8 @@ import { readSetupFile, setupDigest } from './setup-execution-state.mjs';
 
 const execute = promisify(execFile);
 const HASH = /^[a-f0-9]{64}$/u;
+/** Literal text for a RegExp: the account ID comes from a command-line argument or the caller identity. */
+const escapeRegExp = (value) => String(value).replace(/[\\^$.*+?()[\]{}|]/gu, '\\$&');
 const IDENTITY_CHECKS = [
   'database',
   'native-schema-and-indexes',
@@ -103,7 +105,7 @@ function argumentsFor(args) {
       !HASH.test(options['config-sha256'] ?? '') ||
       !HASH.test(options['bundle-sha256'] ?? '') ||
       !new RegExp(
-        `^arn:aws:iam::${options['account-id']}:(?:root|(?:user|role)/[A-Za-z0-9/+=,.@_-]+)$`,
+        `^arn:aws:iam::${escapeRegExp(options['account-id'])}:(?:root|(?:user|role)/[A-Za-z0-9/+=,.@_-]+)$`,
         'u'
       ).test(options['principal-arn'] ?? '') ||
       !/^[A-Za-z0-9]{12,128}$/u.test(options['principal-id'] ?? ''))
@@ -203,7 +205,7 @@ async function identityFor(aws, accountId) {
   )
     fail('account_mismatch');
   const role = new RegExp(
-    `^arn:aws:sts::${accountId}:assumed-role/([A-Za-z0-9+=,.@_-]+)/[^/]+$`,
+    `^arn:aws:sts::${escapeRegExp(accountId)}:assumed-role/([A-Za-z0-9+=,.@_-]+)/[^/]+$`,
     'u'
   ).exec(identity.Arn);
   if (role) {
@@ -212,7 +214,7 @@ async function identityFor(aws, accountId) {
       typeof value.Role?.Arn !== 'string' ||
       typeof value.Role?.RoleId !== 'string' ||
       !/^[A-Za-z0-9]{12,128}$/u.test(value.Role.RoleId) ||
-      !new RegExp(`^arn:aws:iam::${accountId}:role/[A-Za-z0-9/+=,.@_-]+$`, 'u').test(
+      !new RegExp(`^arn:aws:iam::${escapeRegExp(accountId)}:role/[A-Za-z0-9/+=,.@_-]+$`, 'u').test(
         value.Role.Arn
       ) ||
       value.Role.Arn.split('/').at(-1) !== role[1] ||
@@ -222,9 +224,10 @@ async function identityFor(aws, accountId) {
     return { principalArn: value.Role.Arn, principalId: value.Role.RoleId };
   }
   if (
-    !new RegExp(`^arn:aws:iam::${accountId}:(?:root|user/[A-Za-z0-9/+=,.@_-]+)$`, 'u').test(
-      identity.Arn
-    ) ||
+    !new RegExp(
+      `^arn:aws:iam::${escapeRegExp(accountId)}:(?:root|user/[A-Za-z0-9/+=,.@_-]+)$`,
+      'u'
+    ).test(identity.Arn) ||
     !/^[A-Za-z0-9]{12,128}$/u.test(identity.UserId)
   )
     fail('principal_invalid');

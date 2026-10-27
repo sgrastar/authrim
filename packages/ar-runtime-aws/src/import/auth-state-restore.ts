@@ -1,5 +1,5 @@
 /** Verified, generation-isolated DynamoDB auth restore. Audit/activation SQL remains independent. */
-import { createHash, randomUUID } from 'node:crypto';
+import { hash as nodeHash, randomUUID } from 'node:crypto';
 import {
   DescribeTableCommand,
   GetItemCommand,
@@ -34,7 +34,7 @@ type Item = Record<string, AttributeValue>;
 type Client = Pick<DynamoDBClient, 'send'>;
 const S = (value: string): AttributeValue => ({ S: value });
 const N = (value: number): AttributeValue => ({ N: String(value) });
-const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
+const hash = (value: string): string => nodeHash('sha256', value, 'hex');
 function invalid(): never {
   throw new Error('aws_dynamo_auth_state_invalid');
 }
