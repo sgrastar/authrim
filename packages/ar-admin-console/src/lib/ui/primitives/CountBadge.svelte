@@ -24,7 +24,7 @@
 		border-radius: var(--radius-round);
 		background: var(--danger);
 		color: var(--text-inverse);
-		font-size: var(--fs-overline);
+		font-size: var(--fs-small);
 		font-weight: var(--fw-bold);
 		font-variant-numeric: tabular-nums;
 	}

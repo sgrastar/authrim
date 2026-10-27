@@ -37,6 +37,21 @@
 	function hide() {
 		if (bubble?.matches(':popover-open')) bubble.hidePopover();
 	}
+
+	// A finger has no hover, and Safari does not focus a tapped button, so no blur would close
+	// the bubble: a second tap closes it. Focus (where a tap gives it) opens the bubble before
+	// the click, so what counts is whether it was open when the finger came down.
+	let touched = false;
+	let openAtDown = false;
+	function press(event: PointerEvent) {
+		touched = event.pointerType === 'touch';
+		openAtDown = !!bubble?.matches(':popover-open');
+	}
+	function tap() {
+		if (touched && openAtDown) hide();
+		else show();
+		touched = false;
+	}
 </script>
 
 <button
@@ -45,9 +60,15 @@
 	class="info-tip"
 	aria-label={label}
 	aria-describedby={tipId}
-	onpointerenter={show}
-	onpointerleave={hide}
+	onpointerenter={(event) => {
+		if (event.pointerType !== 'touch') show();
+	}}
+	onpointerleave={(event) => {
+		if (event.pointerType !== 'touch') hide();
+	}}
+	onpointerdown={press}
 	onfocus={show}
+	onclick={tap}
 	onblur={hide}
 	onkeydown={(event) => {
 		if (event.key === 'Escape') hide();
@@ -85,7 +106,7 @@
 	.info-tip__bubble {
 		position: fixed;
 		inset: auto;
-		max-width: 260px;
+		max-width: min(260px, calc(100vw - 16px));
 		margin: 0;
 		padding: 8px 10px;
 		border: 1px solid var(--border-strong);
@@ -93,7 +114,12 @@
 		background: var(--bg-card);
 		box-shadow: var(--shadow-lg);
 		color: var(--text-primary);
+		font-family: var(--font-sans);
 		font-size: var(--fs-caption);
+		font-weight: var(--fw-regular);
 		line-height: var(--lh-snug);
+		text-align: start;
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 </style>

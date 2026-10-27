@@ -36,7 +36,7 @@
 	li {
 		display: grid;
 		gap: 3px;
-		font-size: var(--fs-label);
+		font-size: var(--fs-body);
 		line-height: var(--lh-relaxed);
 		color: var(--text-secondary);
 	}

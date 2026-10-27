@@ -335,7 +335,7 @@
 		font-size: var(--fs-body);
 		font-variant-numeric: tabular-nums;
 		font-weight: var(--fw-semibold);
-		line-height: 1;
+		line-height: var(--lh-tight);
 	}
 
 	/* In the list the pills share one column, as wide as the longest of them (see .notify__list),
@@ -372,7 +372,7 @@
 		color: color-mix(in oklab, var(--sev) 42%, var(--text-primary));
 		font-size: var(--fs-small);
 		font-weight: var(--fw-semibold);
-		line-height: 1.2;
+		line-height: var(--lh-tight);
 		white-space: nowrap;
 	}
 

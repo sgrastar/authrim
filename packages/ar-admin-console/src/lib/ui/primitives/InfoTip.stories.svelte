@@ -13,7 +13,7 @@
 			docs: {
 				description: {
 					component:
-						'A "?" that shows a short explanation on hover or focus, for text that would crowd the layout if always shown (a checkbox\'s longer description, what a part in a list does). The bubble is in the top layer, beside the "?" or below it when there is no room, so no scrolling container clips it; Esc closes it. Point another control at the text with `id` + aria-describedby so screen readers read it too — Checkbox does this through its `info` prop.'
+						'A 16px SVG question icon (about a 13px drawn circle) in a 24 × 24px target. Its plain-text bubble uses the 12px caption size, regular weight, 1.45 line height, 8 × 10px padding and a 260px maximum width. It appears on hover or focus beside the "?", or below/above it when there is no room; Escape closes it. Point another control at the text with `id` + aria-describedby so screen readers read it too — Checkbox does this through its `info` prop.'
 				}
 			}
 		}
@@ -32,5 +32,32 @@
 		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(true));
 		await userEvent.keyboard('{Escape}');
 		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(false));
+	}}
+/>
+
+<!-- A tap opens the bubble and a second tap closes it, with or without focus moving to the button. -->
+<Story
+	name="Touch"
+	args={{ label: t('common.moreInfo'), text: sample('passkeyDesc') }}
+	play={async ({ canvasElement }) => {
+		const tip = within(canvasElement).getByRole('button');
+		const bubble = canvasElement.ownerDocument.getElementById(
+			tip.getAttribute('aria-describedby') ?? ''
+		);
+		const touch = (type: string) =>
+			tip.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', bubbles: true }));
+		// Chrome on Android: the tap focuses the button before the click.
+		touch('pointerdown');
+		tip.focus();
+		tip.click();
+		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(true));
+		// Safari: a tap moves no focus, so no blur ever closes it. The second tap does.
+		touch('pointerdown');
+		tip.click();
+		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(false));
+		// And a third tap opens it again.
+		touch('pointerdown');
+		tip.click();
+		await waitFor(() => expect(bubble?.matches(':popover-open')).toBe(true));
 	}}
 />

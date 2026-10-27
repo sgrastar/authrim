@@ -93,16 +93,18 @@
 <ColumnBrowser label={sample('templates')} {groups} {items} bind:groupId bind:itemId>
 	{#snippet detail(item)}
 		<p
-			style="margin:0;color:var(--text-muted);font-size:11.5px;font-weight:700;letter-spacing:0.04em"
+			style="margin:0;color:var(--text-muted);font-size:var(--fs-overline);font-weight:var(--fw-bold);letter-spacing:0.04em"
 		>
 			{sample('kind')}
 		</p>
-		<p style="margin:0;font-size:15px;font-weight:650">{item.label}</p>
-		<p style="margin:0;color:var(--text-secondary);font-size:13px;line-height:1.55">
+		<p style="margin:0;font-size:var(--fs-heading);font-weight:var(--fw-semibold)">{item.label}</p>
+		<p
+			style="margin:0;color:var(--text-secondary);font-size:var(--fs-body);line-height:var(--lh-body)"
+		>
 			{item.description}
 		</p>
 		<dl
-			style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:4px 0 0;font-size:12.5px"
+			style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:4px 0 0;font-size:var(--fs-caption)"
 		>
 			<dt style="color:var(--text-muted)">{sample('version')}</dt>
 			<dd style="margin:0">{item.version}</dd>

@@ -1357,7 +1357,7 @@
 
 	code {
 		font-family: var(--font-mono);
-		font-size: 0.95em;
+		font-size: var(--fs-body);
 		overflow-wrap: anywhere;
 	}
 
@@ -1457,7 +1457,7 @@
 		position: fixed;
 		inset: auto;
 		display: none;
-		max-width: 280px;
+		max-width: min(280px, calc(100vw - 16px));
 		margin: 0;
 		padding: 8px 10px;
 		border: 1px solid var(--border-strong);
@@ -1470,6 +1470,7 @@
 		line-height: var(--lh-snug);
 		text-align: start;
 		white-space: normal;
+		overflow-wrap: anywhere;
 		/* Inside the line's button: pressing it must not press the line. */
 		pointer-events: none;
 	}
