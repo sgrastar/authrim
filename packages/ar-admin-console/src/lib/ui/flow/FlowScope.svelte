@@ -39,7 +39,7 @@
 		background: var(--bg-subtle);
 		color: var(--text-muted);
 		font-size: var(--fs-overline);
-		line-height: 18px;
+		line-height: var(--lh-snug);
 		/* Stays on the frame line; a long label wraps inside the frame width. */
 		max-width: calc(100% - 24px);
 		overflow-wrap: anywhere;

@@ -20,7 +20,7 @@
 			docs: {
 				description: {
 					component:
-						'Choosing one option. **RadioGroup** when every option (up to ~5) should stay visible, with descriptions. **Select** for longer lists or tight space (native picker on touch devices, type-to-find). **SegmentedControl** for a few short options shown as buttons without radio dots — view modes, periods. These three are built on native form controls, so arrow keys and screen readers work as expected. **SelectMenu** only where a row needs more than text (a key in monospace, a type badge): a select-only combobox with the same keys as a native select, type-to-find included.'
+						'Use **RadioGroup** for up to five visible choices, **Select** for longer lists, and **SegmentedControl** for short view or time switches. In a settings card, place the group in a **FieldRow**. Keep the short MFA consequences below each option because they distinguish the choices; put optional detail in an `info` tip. Use **SelectMenu** when a choice needs an icon or badge.'
 				}
 			}
 		}

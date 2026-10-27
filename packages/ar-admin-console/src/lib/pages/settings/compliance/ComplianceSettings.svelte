@@ -30,7 +30,7 @@
 	]);
 </script>
 
-<Page width="wide">
+<Page>
 	<PageHeader title={t('cmp.page')} description={t('cmp.page.desc')} />
 	<Tabs label={t('cmp.page')} items={tabs} bind:value={tab}>
 		{#snippet panel(id)}

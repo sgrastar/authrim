@@ -38,7 +38,9 @@
 			>
 				<TimeSettings />
 			</div>
-			<dl style="display:grid;grid-template-columns:auto 1fr;gap:10px 18px;margin:0;font-size:13px">
+			<dl
+				style="display:grid;grid-template-columns:auto 1fr;gap:10px 18px;margin:0;font-size:var(--fs-body)"
+			>
 				<dt style="color:var(--text-muted)">{sample('createdAt')}</dt>
 				<dd style="margin:0"><DateTime value={INSTANT} /></dd>
 				<dt style="color:var(--text-muted)">{sample('lastSignInAt')}</dt>
@@ -56,21 +58,24 @@
 
 <Story name="All combinations">
 	{#snippet template()}
-		<table style="border-collapse:collapse;font-size:13px">
+		<table style="border-collapse:collapse;font-size:var(--fs-body)">
 			<thead>
 				<tr>
 					<td></td>
-					<th style="padding:6px 14px;text-align:start;color:var(--text-muted);font-weight:600"
+					<th
+						style="padding:6px 14px;text-align:start;color:var(--text-muted);font-weight:var(--fw-semibold)"
 						>{sample('zoneLocal')}</th
 					>
-					<th style="padding:6px 14px;text-align:start;color:var(--text-muted);font-weight:600"
+					<th
+						style="padding:6px 14px;text-align:start;color:var(--text-muted);font-weight:var(--fw-semibold)"
 						>{sample('zoneUtc')}</th
 					>
 				</tr>
 			</thead>
 			<tbody>
 				<tr>
-					<th style="padding:6px 14px;text-align:start;color:var(--text-muted);font-weight:600"
+					<th
+						style="padding:6px 14px;text-align:start;color:var(--text-muted);font-weight:var(--fw-semibold)"
 						>—</th
 					>
 					<td style="padding:6px 14px"
@@ -81,7 +86,8 @@
 					>
 				</tr>
 				<tr>
-					<th style="padding:6px 14px;text-align:start;color:var(--text-muted);font-weight:600"
+					<th
+						style="padding:6px 14px;text-align:start;color:var(--text-muted);font-weight:var(--fw-semibold)"
 						>{sample('withOther')}</th
 					>
 					<td style="padding:6px 14px"

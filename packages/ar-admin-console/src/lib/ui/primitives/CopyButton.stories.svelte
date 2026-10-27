@@ -22,7 +22,7 @@
 	{#snippet template()}
 		<div style="display:grid;gap:14px;justify-items:start">
 			<CopyButton text="acme-portal" />
-			<div style="display:flex;align-items:center;gap:8px;font-size:13px">
+			<div style="display:flex;align-items:center;gap:8px;font-size:var(--fs-body)">
 				<span style="color:var(--text-muted)">{sample('clientId')}</span>
 				<code style="font-family:var(--font-mono)">acme-portal</code>
 				<CopyButton text="acme-portal" variant="icon" label={sample('clientId')} />

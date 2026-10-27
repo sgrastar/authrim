@@ -148,7 +148,7 @@
 		display: grid;
 		gap: 5px;
 		--code-line: 1.6;
-		--code-size: 12.5px;
+		--code-size: var(--fs-body);
 		--code-pad: 9px;
 	}
 

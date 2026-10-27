@@ -35,11 +35,10 @@ See _Patterns → Save scope_ and _Save model (toggle vs save)_.
 
 ## Page width
 
-- **Standard** (1100px) — settings and forms: short lines, labels close to their controls.
-- **Wide** (1600px) — lists, tables, logs, dashboards: more columns on wide screens.
-
-Both are start-aligned, so the content edge does not move when the left nav comes and goes.
-Navigation items declare `wide: true` in `src/lib/shell/nav-data.ts`.
+Every page uses one start-aligned frame, at most 1100px wide, for settings, forms, lists,
+tables and dashboards. Cards fill that frame; a page or card does not choose a wider or
+content-sized width. The frame shrinks to fit a smaller viewport, and wide data tables
+scroll inside it when needed. Its content edge stays in place when the left nav changes.
 
 ## Tone and emphasis
 
@@ -93,6 +92,7 @@ page lists them in a **retire note**. Removing it earlier makes the outstanding 
 ## Spacing
 
 Tokens in `src/lib/ui/tokens/tokens.css`; see **Tokens › Scales** for the values.
+Layout spacing uses 8, 12, 16, 24, 32 and 48px; semantic tokens assign these to roles.
 Spacing is not themable: a theme never moves anything.
 
 **Between boxes**
@@ -102,16 +102,17 @@ Spacing is not themable: a theme never moves anything.
   margins of their own.
 - Tiles of one set (item cards in a grid): `--space-grid` (12px) — closer, so they read as
   one group.
-- Page header to the first box: `--space-page-header`. Page margins (`--space-page-*`)
+- Page header to the first box: 24px total (the 16px page gap plus 8px of
+  `--space-page-header`). Page margins (`--space-page-*`)
   shrink at 1024px and 640px; at 640px box, note, tile and dialog padding shrink with them.
   Gaps between boxes stay the same at every width.
 - A box never sets an outer margin. Whatever holds it sets the gap.
 
 **Inside a box**
 
-- Sides, and top and bottom of the body: `--box-pad` (18px). Header, setting rows and danger
+- Sides, and top and bottom of the body: `--box-pad` (16px). Header, setting rows and danger
   rows are shorter (`--box-head-pad-y`), the footer shorter still (`--box-foot-pad-y`).
-- Fields and settings one below the other: `--space-field` (14px). Form columns side by side:
+- Fields and settings one below the other: `--space-field` (16px). Form columns side by side:
   `--space-columns` (24px), wider than the rows, so columns read as columns.
 - A control and what belongs to it (its buttons, a note right under it): `--space-related`.
 - A note inside a box (callout, scope note): `--note-pad-*`, less than the box around it.
@@ -125,9 +126,10 @@ control, a badge's padding) is the component's own and is not tokenised.
 
 ## Typography
 
-One size per role, from `--fs-*`; weights from `--fw-*`; line heights from `--lh-*`. A
-literal size or weight fails lint (`scripts/check-type-scale.mjs`); relative sizes (`em`)
-are fine for text that follows its parent, such as a monospace key inside a label.
+One token per role, from `--fs-*`, sharing six sizes; weights from `--fw-*`, sharing four
+actual weights (400, 500, 600, 700); line heights from `--lh-*`, sharing three values
+(1.25, 1.5, 1.7). Literal sizes, weights, line heights and fractional relative font sizes fail lint
+(`scripts/check-type-scale.mjs`). Code and secondary text use the nearest role token.
 
 - Pick the size by **what the text is**, not how important it feels: every field label is
   `--fs-label`, every hint `--fs-caption`, wherever it sits.
@@ -140,12 +142,12 @@ are fine for text that follows its parent, such as a monospace key inside a labe
 - No italics (Japanese, Chinese and Arabic have none; browsers slant the glyphs). No
   upper case except `--fs-overline` group labels, which get letter spacing; nothing is
   upper-cased in Japanese or Arabic, which have no case.
-- Nothing smaller than `--fs-overline` (10.5px), and that only for short upper-case labels
-  and the flow diagram's status lines; anything read as a sentence is at least
+- Nothing rendered smaller than 12px. `--fs-overline` is for short upper-case
+  labels and the flow diagram's status lines; anything read as a sentence is at least
   `--fs-caption`.
-- Line height: `--lh-body` for running text, `--lh-relaxed` for paragraphs meant to be read
-  (dialog bodies, notes), `--lh-snug` for captions and tooltips, `--lh-tight` for titles and
-  names that may wrap in a small box.
+- Line height: `--lh-body` and `--lh-snug` are both 1.5 for running text, captions and
+  tooltips; `--lh-relaxed` (1.7) is for longer dialog bodies and notes; `--lh-tight` (1.25)
+  is for titles and names in small boxes.
 
 ## Controls and icons
 
@@ -160,11 +162,38 @@ are fine for text that follows its parent, such as a monospace key inside a labe
 - Nothing you can press is smaller than 24 × 24 (WCAG 2.2 target size). Where a control has
   to stay smaller (the flow's "+", the buttons in the screen builder's row bar), keep it apart
   from its neighbours so a 24px circle around it touches no other target.
-- Icons follow the text beside them (`--icon-*`): 12 with small text, 14 with labels and
-  captions, 16 with body text and in buttons, 18 alone in an icon button or the navigation,
-  22 in empty states and drop zones. A literal icon size fails lint.
+- Icons follow the role of the text beside them (`--icon-*`), not its exact pixel size: 12
+  with small text, 14 with labels and captions, 16 with body and control text or in buttons,
+  18 alone in an icon button or the navigation, 22 in empty states and drop zones. A literal
+  icon size fails lint.
 - An icon never carries meaning alone: an icon button has a label for screen readers and a
   tooltip, a status icon sits next to words.
+
+## Compact text and inline help
+
+| Where         | Type                                                                  | Paired size                                                          |
+| ------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Field         | label `--fs-label` (13px, semibold), input `--fs-control` (14px)      | hint, error and counter `--fs-caption` (12px)                        |
+| Table         | column head `--fs-small` (12px, semibold), cell `--fs-body` (13px)    | second line `--fs-caption` (12px), sort icon `--icon-xs` (12px)      |
+| Badge         | text `--fs-small` (12px, semibold)                                    | optional status dot 6px; navigation count 12px, bold, tabular digits |
+| Empty state   | title `--fs-heading` (14px, semibold), description `--fs-body` (13px) | `--icon-xl` (22px) in a 44px tile                                    |
+| Code and time | editable code and identifiers `--fs-body` (13px)                      | compact code labels and secondary time zone `--fs-caption` (12px)    |
+
+- An explanatory `InfoTip` uses a 16px SVG icon (its drawn circle is about 13px) centred
+  in a 24 × 24px button. The button sits beside the first line of its label. Use it only
+  for short, plain-text explanations that would crowd the layout. Keep information
+  needed to decide or recover visible on the page.
+- Its bubble uses `--fs-caption` (12px), regular weight and `--lh-snug` (1.5). It has
+  8px vertical and 10px horizontal padding, a 1px border, `--radius-control`,
+  `--bg-card` and `--shadow-lg`. It is at most 260px wide and stays at least 8px inside
+  the viewport. Place it 8px from the button on the reading side; use below or above when
+  that side has no room. It opens on hover, focus or click and closes on leave, blur or Escape.
+- A tooltip contains no controls or heading. Use `Popover` for interactive choices and an
+  inline hint, callout or disclosure for longer help. A native `title` tooltip on an icon
+  action is browser-styled and does not define the console's explanatory bubble.
+- An icon-only action uses an 18px icon in a 32 × 32px button, or a 14px icon in a
+  24 × 24px small button. It needs an accessible name. A chip's remove action also has a
+  24 × 24px target with a 12px icon inside a 28px-high chip.
 
 ## Badges
 
@@ -221,6 +250,26 @@ are fine for text that follows its parent, such as a monospace key inside a labe
   takes the admin to the first field with an error instead of sending. Outside a SaveScope,
   read `bind:invalid`.
 
+### Settings rows and choices
+
+- In a card with independent settings, use one `FieldRow` per setting. The label and its
+  optional `InfoTip` occupy the start 40%; the control, inherited/default value and any
+  validation occupy the end 60%. Align the columns across the card and separate rows with
+  a 1px rule. The card keeps its body padding; the rows provide their own vertical space.
+  At 640px and below, place the label above the control.
+- Keep a short scalar control near its content width (normally at most 16rem), rather than
+  stretching it across the whole control column. Values such as lists and long text may
+  use the available width.
+- For two or three short options, put a horizontal `RadioGroup` in the control column and
+  allow it to wrap. Its visible group name is the row label; keep the fieldset legend for
+  assistive technology. Use a vertical group when labels or necessary descriptions need
+  separate lines.
+- Explain **differences needed to choose** next to the options. The MFA choices in
+  _Primitives → Choices_ keep their short consequences visible. Put only supplemental
+  explanation behind `InfoTip`; do not hide a security consequence or validation there.
+- A standalone choice that is not one of several settings in a card can use `RadioGroup`
+  without `FieldRow`.
+
 ## Layers and shadows
 
 - Page layers, lowest first (`--z-*`): top nav, header, save bar, anchored menus, toasts,
@@ -242,6 +291,13 @@ are fine for text that follows its parent, such as a monospace key inside a labe
 Messages live in `src/lib/i18n/messages` (Japanese is the source; every language has every
 key). The same thing is called the same everywhere.
 
+- **必要以上の文章説明を入れないでください。** Keep only text needed to understand the
+  current choice or complete the task. Do not add
+  explanatory paragraphs that restate a label or repeat nearby information. A page header
+  normally needs at most one short sentence, and a radio option normally needs only its
+  label. If a short explanation is still useful, put it in the round `InfoTip` beside the
+  relevant label instead of always showing it below the control. Keep errors, warnings,
+  requirements and consequences needed before an action visible at the point of action.
 - **Who is speaking**: the console, plainly and politely. Japanese uses です・ます in
   sentences; English and German address the reader (German with "Sie"); no exclamation
   marks, no jokes, no "Oops".

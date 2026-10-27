@@ -18,8 +18,6 @@ export interface NavItem {
 	id: string;
 	label: MessageKey;
 	icon: IconName;
-	/** Lists and dashboards use the wide page width; forms use the standard width. */
-	wide?: boolean;
 	/**
 	 * The page owns the left column, so no left nav is shown. Service flows: the list needs
 	 * the width, and the flow editor puts the flow diagram there instead.

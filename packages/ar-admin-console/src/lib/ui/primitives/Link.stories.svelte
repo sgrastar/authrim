@@ -20,7 +20,7 @@
 
 <Story name="Same tab and new tab">
 	{#snippet template()}
-		<div style="display:grid;gap:14px;font-size:13.5px">
+		<div style="display:grid;gap:14px;font-size:var(--fs-body-lg)">
 			<p style="margin:0">
 				{sample('linkSentence1')}
 				<Link href="https://authrim.com/docs/saml" newTab>{sample('docsLink')}</Link>
@@ -31,7 +31,7 @@
 				<Link href="https://authrim.com/docs" newTab standalone>{sample('docs')}</Link>
 			</div>
 			<ul
-				style="margin:0;padding:0;list-style:none;display:grid;gap:6px;color:var(--text-muted);font-size:12px"
+				style="margin:0;padding:0;list-style:none;display:grid;gap:6px;color:var(--text-muted);font-size:var(--fs-caption)"
 			>
 				<li><Link href="/admin" quiet>{sample('sameTab')}</Link></li>
 				<li><Link href="https://example.com" newTab quiet>{sample('newTabLabel')}</Link></li>
