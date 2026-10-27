@@ -1,3 +1,4 @@
+import { transitionCanonicalAccountDeletion } from '../../db/account-governance-mutations';
 import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter, PreparedStatement, TransactionContext } from '../../db/adapter';
 import {
@@ -950,6 +951,14 @@ export class CanonicalIdentityRepository {
     lifecycleState: IdentityLifecycleState
   ): Promise<boolean> {
     const now = getCurrentTimestamp();
+    if (lifecycleState === 'deleted' || lifecycleState === 'deleting') {
+      return transitionCanonicalAccountDeletion(this.adapter, {
+        tenantId: this.tenantId,
+        accountId,
+        state: lifecycleState,
+        now,
+      });
+    }
     const deletedAt = lifecycleState === 'deleted' || lifecycleState === 'deleting' ? now : null;
     const result = await this.adapter.execute(
       `UPDATE identity_accounts

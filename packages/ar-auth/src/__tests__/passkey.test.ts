@@ -267,7 +267,16 @@ function createMockDB(options: {
   };
 
   return {
-    prepare: vi.fn().mockReturnValue(mockStatement),
+    prepare: vi.fn().mockImplementation((sql: string) => ({
+      ...mockStatement,
+      bind: vi.fn().mockReturnThis(),
+      run: vi.fn().mockResolvedValue(
+        options.runResult ?? {
+          success: true,
+          meta: { changes: sql.startsWith('UPDATE user_custom_fields') ? 0 : 1 },
+        }
+      ),
+    })),
     batch: vi.fn().mockResolvedValue([]),
     _mockStatement: mockStatement,
   } as unknown as D1Database & { _mockStatement: typeof mockStatement };

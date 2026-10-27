@@ -1,3 +1,7 @@
+import {
+  runSamlDrCoveredFetch,
+  type SamlDrWriterEnv,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context, type Next } from 'hono';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { cors } from 'hono/cors';
@@ -25,7 +29,7 @@ const log = createLogger().module('ROUTER');
  * Environment bindings for the Router Worker
  * Service Bindings to other workers
  */
-interface Env {
+interface Env extends SamlDrWriterEnv {
   // Service Bindings to specialized workers
   OP_DISCOVERY: Fetcher;
   OP_VC?: Fetcher;
@@ -1753,6 +1757,11 @@ app.post('/revoke/batch', async (c) => {
  * because Hono's wildcard pattern matching doesn't guarantee more specific
  * patterns are matched first when using app.all().
  */
+app.all('/api/replication-backups/*', (c) => forwardReplicationExportControl(c.req.raw, c.env));
+app.all('/api/replication-environments/*', (c) =>
+  forwardReplicationExportControl(c.req.raw, c.env)
+);
+
 app.all('/api/admin/*', async (c) => {
   const path = c.req.path;
   const request = createServiceBindingRequest(c.req.raw);
@@ -2179,19 +2188,73 @@ app.onError((err, c) => {
 /** Private fetch entrypoint bound only by the Login UI Worker. */
 export class LoginUiBackendEntrypoint extends WorkerEntrypoint<Env> {
   fetch(request: Request): Promise<Response> {
-    const trustedRequest = validateLoginUiServiceBindingRequest(request);
-    if (!trustedRequest) {
-      return Promise.resolve(
-        Response.json(
-          {
-            error: 'access_denied',
-            error_description: 'Trusted Login UI service-binding request required.',
-          },
-          { status: 403 }
-        )
-      );
-    }
-    return Promise.resolve(app.fetch(trustedRequest, this.env, this.ctx));
+    return runSamlDrCoveredFetch(this.env, this.ctx, async (env, context) => {
+      const trustedRequest = validateLoginUiServiceBindingRequest(request);
+      if (!trustedRequest) {
+        return Promise.resolve(
+          Response.json(
+            {
+              error: 'access_denied',
+              error_description: 'Trusted Login UI service-binding request required.',
+            },
+            { status: 403 }
+          )
+        );
+      }
+      return Promise.resolve(app.fetch(trustedRequest, env, context));
+    });
+  }
+}
+
+/** Export control has no Router business-data effects; Management authenticates the scoped grant. */
+function isReplicationExportControlRequest(request: Request): boolean {
+  const path = new URL(request.url).pathname;
+  const id = '[A-Za-z0-9_.:-]{1,128}';
+  const base = `/api/replication-backups/${id}/exports`;
+  if (
+    request.method === 'GET' &&
+    new RegExp(`^/api/replication-environments/${id}/inventory$`).test(path)
+  )
+    return true;
+  return request.method === 'GET'
+    ? new RegExp(`^${base}/${id}(?:/export-receipt|/download)?$`).test(path)
+    : request.method === 'POST' &&
+        new RegExp(
+          `^${base}(?:/${id}/(?:key-challenges|start|key-challenges/${id}/accept))?$`
+        ).test(path);
+}
+
+async function forwardReplicationExportControl(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const denied = (status: number) =>
+    Response.json(
+      { error: 'backup_replication_request_denied' },
+      { status, headers: { 'Cache-Control': 'no-store' } }
+    );
+  if (
+    !isReplicationExportControlRequest(request) ||
+    url.protocol !== 'https:' ||
+    url.search ||
+    !/^Bearer [a-f0-9]{64}$/.test(request.headers.get('Authorization') ?? '') ||
+    !/^[A-Za-z0-9_.:-]{1,128}$/.test(request.headers.get('X-Tenant-Id') ?? '')
+  )
+    return denied(403);
+  try {
+    const body =
+      request.method === 'POST' ? await readRequestBytesWithLimit(request, 4096) : undefined;
+    const headers = new Headers(request.headers);
+    headers.delete('Cookie');
+    const forward = sanitizePublicRouterRequest(
+      new Request(request.url, {
+        method: request.method,
+        headers,
+        ...(body ? { body } : {}),
+        signal: request.signal,
+      })
+    );
+    return await env.OP_MANAGEMENT.fetch(createServiceBindingRequest(forward));
+  } catch (error) {
+    return denied(error instanceof BodyLimitExceededError ? 413 : 503);
   }
 }
 
@@ -2202,6 +2265,14 @@ export default {
     env: unknown,
     executionCtx?: ExecutionContext
   ): Response | Promise<Response> {
-    return app.fetch(sanitizePublicRouterRequest(request), env as Env, executionCtx);
+    if (isReplicationExportControlRequest(request))
+      return forwardReplicationExportControl(request, env as Env);
+    return runSamlDrCoveredFetch(env as Env, executionCtx, (coveredEnv, coveredContext) =>
+      Promise.resolve(app.fetch(sanitizePublicRouterRequest(request), coveredEnv, coveredContext))
+    );
   },
 };
+
+export const SAML_DR_WRITER_SURFACES = ['fetch', 'rpc:LoginUiBackendEntrypoint.fetch'] as const;
+export const SAML_DR_COORDINATOR_SURFACES = ['fetch.replication-export-control'] as const;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

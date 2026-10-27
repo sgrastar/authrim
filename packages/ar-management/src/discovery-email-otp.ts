@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { D1Database } from '@cloudflare/workers-types';
 import {
   createLookupBlindIndexes,
@@ -261,7 +262,7 @@ export class DiscoveryEmailOtpService {
       this.env.RATE_LIMITER.idFromName('lookup-discovery-email-otp')
     );
     const emailRateDigest = await hmac(normalizedEmail, verifierSecret, 'discovery-rate-email-v1');
-    const [emailLimit, ipLimit] = await Promise.all([
+    const [emailLimit, ipLimit] = await samlDrAll([
       limiter.incrementRpc(`email:${emailRateDigest}`, {
         windowSeconds: RATE_LIMIT_WINDOW_SECONDS,
         maxRequests: 5,

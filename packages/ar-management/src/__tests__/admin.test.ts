@@ -9,7 +9,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { openAdminDatabase, sqliteAdapter } from './helpers/admin-authority-fixture';
+import { installGroupBoundaryFixture } from './helpers/group-boundary-fixture';
 import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
 import {
@@ -605,6 +607,8 @@ import {
   adminUserConsentRevokeHandler,
 } from '../admin';
 
+const groupBoundaryDatabases: Array<ReturnType<typeof installGroupBoundaryFixture>> = [];
+
 // Helper to create mock D1Database
 function createMockDB(options: {
   prepareResults?: Record<string, any>;
@@ -640,7 +644,7 @@ function createMockDB(options: {
     run: vi.fn().mockResolvedValue(options.runResult ?? { success: true }),
   };
 
-  return {
+  const binding = {
     prepare: vi.fn((sql: string) => {
       currentSql = sql;
       return mockStatement;
@@ -658,6 +662,8 @@ function createMockDB(options: {
     _mockStatement: typeof mockStatement;
     _mockOptions: typeof options;
   };
+  groupBoundaryDatabases.push(installGroupBoundaryFixture(binding));
+  return binding;
 }
 
 function createOAuthClientRow(
@@ -1242,6 +1248,7 @@ describe('Admin API Handlers', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     for (const database of mappingUpdateDatabases.splice(0)) database.close();
+    for (const database of groupBoundaryDatabases.splice(0)) database.close();
   });
 
   describe('adminTestEmailCodeHandler tenant D1 routing', () => {
@@ -2736,6 +2743,7 @@ describe('Admin API Handlers', () => {
           {
             id: 'passkey-1',
             credential_id: 'cred-abc',
+            counter: 0,
             device_name: 'Chrome on Mac',
             created_at: Date.now(),
             last_used_at: null,
@@ -4934,6 +4942,85 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserAnonymizeHandler', () => {
+    it.each(['sessions', 'passkeys'])(
+      'holds DR admission through sibling erasure when %s deletion fails',
+      async (failingTable) => {
+        const userId = 'user-anon-parallel-failure';
+        const delayedTable = failingTable === 'sessions' ? 'passkeys' : 'sessions';
+        let finishDelayedWrite!: () => void;
+        const delayedWrite = new Promise<void>((resolve) => {
+          finishDelayedWrite = resolve;
+        });
+        const delayedStarted = vi.fn();
+        const delayedCommitted = vi.fn();
+        const handlerFinished = vi.fn();
+        const failure = new Error('synthetic_delete_failure');
+        const coreDb = createSqlAwareMockDB(async (sql, _params, op) => {
+          if (op === 'first' && sql.includes('FROM identity_accounts WHERE legacy_user_id = ?')) {
+            return {
+              id: `account:${userId}`,
+              tenant_id: 'default',
+              legacy_user_id: userId,
+              primary_subject_id: `subject:${userId}`,
+              lifecycle_state: 'active',
+              created_at: Date.now(),
+              updated_at: Date.now(),
+            };
+          }
+          if (op === 'run' && sql.startsWith(`DELETE FROM ${failingTable} WHERE`)) throw failure;
+          if (op === 'run' && sql.startsWith(`DELETE FROM ${delayedTable} WHERE`)) {
+            delayedStarted();
+            await delayedWrite;
+            delayedCommitted();
+          }
+          return op === 'run' ? { success: true } : undefined;
+        });
+        const c = createMockContext({
+          method: 'POST',
+          params: { id: userId },
+          body: { reason_code: 'user_request', confirm: true },
+          db: coreDb,
+          dbPII: createMockDB({ firstResult: null, runResult: { success: true } }),
+        }) as Parameters<typeof adminUserAnonymizeHandler>[0];
+        const control = {
+          acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+          completeEnvironmentBackupMutationPermit: vi.fn(async () => {}),
+        };
+        const env = {
+          ...c.env,
+          ENABLE_SAML_DR_EXPORT: 'true',
+          SAML_DR_MUTATION_CONTROL: control,
+        } as Env;
+        const result = runSamlDrCoveredOperation(env, undefined, async (covered) => {
+          c.env = covered;
+          const response = await adminUserAnonymizeHandler(c);
+          handlerFinished();
+          return response;
+        }).then(
+          (response) => response,
+          (error: unknown) => error
+        );
+        try {
+          await vi.waitFor(() => expect(delayedStarted).toHaveBeenCalledOnce());
+          // The handler has observed the first rejection; the sibling deletion is still pending.
+          await vi.waitFor(() => expect(handlerFinished).toHaveBeenCalledOnce());
+          expect(control.completeEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+          expect(delayedCommitted).not.toHaveBeenCalled();
+        } finally {
+          finishDelayedWrite();
+        }
+        const response = await result;
+        expect(response).toBeInstanceOf(Response);
+        expect((response as Response).status).toBe(500);
+        expect(delayedCommitted).toHaveBeenCalledOnce();
+        expect(control.completeEnvironmentBackupMutationPermit).toHaveBeenCalledOnce();
+        expect(delayedCommitted.mock.invocationCallOrder[0]).toBeLessThan(
+          control.completeEnvironmentBackupMutationPermit.mock.invocationCallOrder[0]
+        );
+        expect(markAccountRemovalsReady).not.toHaveBeenCalled();
+      }
+    );
+
     it('stops at a legal hold before any PII, its pseudonym included, is erased', async () => {
       const userId = 'user-anon-held';
       canonicalRuntimeUsers.set(userId, {

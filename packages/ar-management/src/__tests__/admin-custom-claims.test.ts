@@ -15,6 +15,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import { resolveTenantAssignedDatabaseSourcesFromRegistry } from '@authrim/ar-lib-core';
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 
 // Mock ar-lib-core
 const mockGenerateId = vi.fn().mockReturnValue('test-id-123');
@@ -398,6 +400,79 @@ describe('Custom Claims Admin API', () => {
     mockSchemaHistoryRecordChange.mockResolvedValue(undefined);
     mockGetRequiredCustomClaimViolationStatuses.mockReset();
   });
+
+  it.each(['delete', 'rename'] as const)(
+    'keeps DR admission while a sibling store finishes after a %s failure',
+    async (operation) => {
+      let finishDelayedWrite!: () => void;
+      const delayedWrite = new Promise<void>((resolve) => {
+        finishDelayedWrite = resolve;
+      });
+      const delayedStarted = vi.fn();
+      const delayedCommitted = vi.fn();
+      const handlerFinished = vi.fn();
+      const failure = new Error('synthetic_custom_claim_failure');
+      mockDbQuery.mockResolvedValueOnce([createSchemaRow()]).mockResolvedValue([]);
+      const c = createMockContext({
+        method: operation === 'delete' ? 'DELETE' : 'PATCH',
+        params: { id: 'schema-1' },
+        body: { new_field_key: 'emp_id' },
+      }) as Parameters<typeof adminCustomClaimDeleteHandler>[0];
+      vi.mocked(resolveTenantAssignedDatabaseSourcesFromRegistry).mockResolvedValueOnce([
+        { source: c.env.DB },
+        { source: c.env.DB },
+      ] as Awaited<ReturnType<typeof resolveTenantAssignedDatabaseSourcesFromRegistry>>);
+      const mutation =
+        operation === 'delete' ? mockDeleteStoredCustomClaimData : mockRenameStoredCustomClaimData;
+      mutation.mockRejectedValueOnce(failure).mockImplementationOnce(async () => {
+        delayedStarted();
+        await delayedWrite;
+        delayedCommitted();
+        return { affectedUsers: 1, processedUsers: 1, failedUsers: 0 };
+      });
+      const control = {
+        acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+        completeEnvironmentBackupMutationPermit: vi.fn(async () => {}),
+      };
+      const env = {
+        ...c.env,
+        ENABLE_SAML_DR_EXPORT: 'true',
+        SAML_DR_MUTATION_CONTROL: control,
+      } as Env;
+      const result = runSamlDrCoveredOperation(env, undefined, async (covered) => {
+        c.env = covered;
+        const response = await (operation === 'delete'
+          ? adminCustomClaimDeleteHandler(c)
+          : adminCustomClaimRenameHandler(c));
+        handlerFinished();
+        return response;
+      }).then(
+        (response) => response,
+        (error: unknown) => error
+      );
+      try {
+        await vi.waitFor(() => expect(delayedStarted).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(handlerFinished).toHaveBeenCalledOnce());
+        expect(control.completeEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+        expect(delayedCommitted).not.toHaveBeenCalled();
+      } finally {
+        finishDelayedWrite();
+      }
+      const response = await result;
+      expect(response).toBeInstanceOf(Response);
+      expect((response as Response).status).toBe(500);
+      expect(delayedCommitted).toHaveBeenCalledOnce();
+      expect(control.completeEnvironmentBackupMutationPermit).toHaveBeenCalledOnce();
+      expect(delayedCommitted.mock.invocationCallOrder[0]).toBeLessThan(
+        control.completeEnvironmentBackupMutationPermit.mock.invocationCallOrder[0]
+      );
+      expect(
+        (mockDbExecute.mock.calls as unknown[][]).some(([sql]) =>
+          String(sql).startsWith('DELETE FROM custom_claim_schemas')
+        )
+      ).toBe(false);
+    }
+  );
 
   // ===========================================================================
   // LIST

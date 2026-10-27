@@ -3,7 +3,14 @@ info:
   title: Authrim Agent Access API
   version: 0.4.2
   summary: Authenticated MCP Streamable HTTP endpoint.
-  description: Public HTTP contract owned by `@authrim/ar-agent-access`.
+  description: >
+    Public HTTP contract owned by `@authrim/ar-agent-access`.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 servers:
   - url: https://{tenant_domain}
     variables:

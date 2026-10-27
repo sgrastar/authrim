@@ -1,11 +1,11 @@
 import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter } from '../../db/adapter';
-import type { AccountAuthenticationLifecycle } from '../../durable-objects/SessionRevocationStore';
 import {
-  CanonicalIdentityRepository,
-  type IdentityAccountRow,
-  type JsonObject,
-} from './canonical-identity';
+  recordCanonicalLastLogin,
+  recordLastLoginStatement,
+} from '../../db/protected-identity-mutations';
+import type { AccountAuthenticationLifecycle } from '../../durable-objects/SessionRevocationStore';
+import { CanonicalIdentityRepository, type JsonObject } from './canonical-identity';
 import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
@@ -31,7 +31,7 @@ export interface CanonicalRuntimeUserCreateInput {
   active?: boolean;
   emailVerified?: boolean;
   phoneNumberVerified?: boolean;
-  userType?: 'end_user' | 'admin' | 'm2m' | string;
+  userType?: string;
   registrationState?: AccountRegistrationState;
   sourceRef?: string | null;
   externalId?: string | null;
@@ -118,24 +118,29 @@ interface CanonicalAccountAuthenticationStateRow {
   account_lifecycle_state: string;
   subject_lifecycle_state: string;
   directory_publication_state: string;
-  account_updated_at: number;
-  subject_updated_at: number;
+  account_updated_at: number | string;
+  subject_updated_at: number | string;
 }
 
-function runtimeTimestampToIso(value: number): string {
-  const absolute = Math.abs(value);
+function runtimeTimestampToIso(value: number | string): string {
+  // PostgreSQL int8 values are strings by default; validate before numeric/date coercion.
+  const numeric = typeof value === 'string' ? Number(value) : value;
+  if (typeof value === 'string' && (!/^-?\d+$/.test(value) || !Number.isSafeInteger(numeric))) {
+    throw new Error('canonical_account_authentication_timestamp_invalid');
+  }
+  const absolute = Math.abs(numeric);
   const milliseconds =
     absolute < 100_000_000_000
-      ? value * 1000
+      ? numeric * 1000
       : absolute < 100_000_000_000_000
-        ? value
+        ? numeric
         : absolute < 100_000_000_000_000_000
-          ? value / 1000
-          : value / 1_000_000;
+          ? numeric / 1000
+          : numeric / 1_000_000;
   return new Date(milliseconds).toISOString();
 }
 
-function runtimeTimestampToMilliseconds(value: number): number {
+function runtimeTimestampToMilliseconds(value: number | string): number {
   const parsed = Date.parse(runtimeTimestampToIso(value));
   if (!Number.isSafeInteger(parsed) || parsed < 1) {
     throw new Error('canonical_account_authentication_timestamp_invalid');
@@ -209,7 +214,7 @@ function parseJsonObject(value: string | null | undefined): JsonObject {
     return {};
   }
   try {
-    const parsed = JSON.parse(value);
+    const parsed: unknown = JSON.parse(value);
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as JsonObject)
       : {};
@@ -538,11 +543,14 @@ export class CanonicalRuntimeUserStore {
     const account = await this.repository.findAccountByLegacyUserId(userId, {
       includeInactive: true,
     });
-    if (!account) {
-      return false;
-    }
-    await this.updateAccountMetadata(account, { last_login_at: timestamp });
-    return true;
+    if (!account) return false;
+    return recordCanonicalLastLogin(this.options.coreAdapter, {
+      tenantId: this.options.tenantId,
+      userId,
+      accountId: account.id,
+      observedAtMs: timestamp,
+      operationId: `last-login:${userId}:${timestamp}`,
+    });
   }
 
   async markEmailVerifiedAndTouchLastLogin(
@@ -555,10 +563,16 @@ export class CanonicalRuntimeUserStore {
     if (!account) {
       return false;
     }
-    const metadata = {
-      ...parseJsonObject(account.metadata_json),
-      last_login_at: timestamp,
-    };
+    const dialect = this.options.coreAdapter.getType();
+    if (dialect !== 'd1' && dialect !== 'postgres')
+      throw new Error('protected_email_verification_capability_required');
+    const loginStatement = recordLastLoginStatement(dialect, {
+      tenantId: this.options.tenantId,
+      userId,
+      accountId: account.id,
+      observedAtMs: timestamp,
+      operationId: `verified-last-login:${userId}:${timestamp}`,
+    });
     const results = await this.options.coreAdapter.batch([
       {
         sql: `UPDATE contact_points
@@ -572,12 +586,7 @@ export class CanonicalRuntimeUserStore {
                  )`,
         params: [timestamp, this.options.tenantId, account.id, account.primary_subject_id],
       },
-      {
-        sql: `UPDATE identity_accounts
-                 SET metadata_json = ?, updated_at = ?
-               WHERE id = ? AND tenant_id = ?`,
-        params: [JSON.stringify(metadata), timestamp, account.id, this.options.tenantId],
-      },
+      loginStatement,
     ]);
     return results.length === 2 && results[1].success && results[1].rowsAffected > 0;
   }
@@ -596,20 +605,5 @@ export class CanonicalRuntimeUserStore {
       userId,
       timestamp
     );
-  }
-
-  private async updateAccountMetadata(
-    account: IdentityAccountRow,
-    patch: JsonObject
-  ): Promise<boolean> {
-    const metadata = {
-      ...parseJsonObject(account.metadata_json),
-      ...patch,
-    };
-    return this.repository.updateAccountRuntimeFields(account.id, {
-      lifecycleState: account.lifecycle_state,
-      displayLabel: account.display_label,
-      metadata,
-    });
   }
 }

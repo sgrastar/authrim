@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   assertControlPlaneRecordIsSecretFree,
   type ControlTenantDefaultRouteAllocation,
@@ -369,7 +370,7 @@ async function ensureCapacity(
   operationIds: Record<string, string>;
 }> {
   const api = control(env);
-  const entries = await Promise.all(
+  const entries = await samlDrAll(
     CAPACITY_ROLES.map(async (dataRole) => {
       const result = validateCapacityResult(
         await api.ensureTenantShardCapacity({

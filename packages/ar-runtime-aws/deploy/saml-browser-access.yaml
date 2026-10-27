@@ -1,0 +1,887 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description:
+  Isolated synthetic browser-rehearsal IAM and input-secret containers. No foundation network
+  changes; existing operator receives a separate scoped policy.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    must:
+      - Keep the existing DR bootstrap, foundation and maintenance policies unchanged.
+      - Only synthetic browser rehearsal resources use these roles; no Cloudflare or DNS permissions.
+      - Bind the new API ID after empty endpoint creation, before publishing any route.
+Parameters:
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'
+    Description: Exact selected foundation auth-state table ARN; empty preserves PostgreSQL state.
+  BrowserStackName:
+    Type: String
+    Default: authrim-dr-browser
+    AllowedPattern: ^[A-Za-z][A-Za-z0-9-]{0,44}$
+  DbBootstrapStackName:
+    Type: String
+    Default: authrim-dr-browser-db
+    AllowedPattern: ^[A-Za-z][A-Za-z0-9-]{0,44}$
+  OperatorRoleName:
+    Type: String
+    Default: authrim-dr-bootstrap-operator
+    AllowedPattern: ^[A-Za-z0-9+=,.@_-]{1,64}$
+  AssetsBucketName:
+    Type: String
+    AllowedPattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+  AssetPrefix:
+    Type: String
+    Default: browser/20261026/
+    AllowedPattern: ^[A-Za-z0-9!_.()-]+(/[A-Za-z0-9!_.()-]+)*/$
+  MasterSecretArn:
+    Type: String
+    AllowedPattern: ^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  BootstrapSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  ApiId:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^[a-z0-9]+$
+    Description: Empty only for endpoint creation; bind the exact new API ID before route deployment.
+  InputSecretName:
+    Type: String
+    Default: authrim-dr-browser-input
+    AllowedPattern: ^[A-Za-z0-9/_+=.@-]{1,128}$
+  SpSecretName:
+    Type: String
+    Default: authrim-dr-browser-sp
+    AllowedPattern: ^[A-Za-z0-9/_+=.@-]{1,128}$
+Rules:
+  SeparateInputContainers:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: InputSecretName
+                - Ref: SpSecretName
+        AssertDescription: Input and SP secret containers must differ.
+Conditions:
+  HasAuthStateTable:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AuthStateTableArn
+          - ''
+  HasApiId:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: ApiId
+          - ''
+  NeedsEndpointCreation:
+    Fn::Equals:
+      - Ref: ApiId
+      - ''
+Resources:
+  BrowserInputSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why:
+          Stores synthetic fixture inputs, written by the operator and read only by the private browser
+          DB job.
+        must:
+          - Initial marker only; never change SecretString after job/operator initialization.
+          - Do not export secret values or use this container for real customer data.
+    Properties:
+      Name:
+        Ref: InputSecretName
+      Description:
+        Stores synthetic fixture inputs, written by the operator and read only by the private
+        browser DB job.
+      SecretString: '{"formatVersion":1,"uninitialized":true}'
+      Tags:
+        - Key: authrim:stack
+          Value:
+            Ref: AWS::StackName
+  BrowserSpSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why:
+          Stores only browser-state DB credentials and pinned public certificate, written by the private
+          DB job.
+        must:
+          - Initial marker only; never change SecretString after job/operator initialization.
+          - Do not export secret values or use this container for real customer data.
+    Properties:
+      Name:
+        Ref: SpSecretName
+      Description:
+        Stores only browser-state DB credentials and pinned public certificate, written by
+        the private DB job.
+      SecretString: '{"formatVersion":1,"uninitialized":true}'
+      Tags:
+        - Key: authrim:stack
+          Value:
+            Ref: AWS::StackName
+  DbBootstrapPermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Caps the independent browser DB maintenance job.
+        must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
+          - Only this job may read the exact master secret.
+          - Serving/SP roles must never acquire this boundary.
+          - SP preparation may only write the dedicated SP input container.
+    Properties:
+      Path: /authrim-dr/boundary/
+      ManagedPolicyName:
+        Fn::Sub: ${AWS::StackName}-db-bootstrap-boundary
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Fn::If:
+              - HasAuthStateTable
+              - Sid: SelectedAuthState
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:ConditionCheckItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource:
+                  Ref: AuthStateTableArn
+              - Ref: AWS::NoValue
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${DbBootstrapStackName}/job:*
+          - Effect: Allow
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource:
+              - Ref: MasterSecretArn
+              - Ref: BrowserInputSecret
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:PutSecretValue
+              - secretsmanager:DescribeSecret
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DbBootstrapStackName}-runtime-??????
+          - Effect: Allow
+            Action: s3:GetObjectVersion
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${AssetsBucketName}/${AssetPrefix}*
+          - Effect: Deny
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+            Condition:
+              ArnEquals:
+                lambda:SourceFunctionArn:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DbBootstrapStackName}-job
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:PutSecretValue
+            Resource:
+              Ref: BrowserSpSecret
+  DbBootstrapCfnServiceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Deploys the private job.
+        must:
+          - Exact resource, role and boundary scope.
+          - No network, public URLs, or serving resource changes.
+    Properties:
+      Path: /authrim-dr/cfn/
+      RoleName:
+        Fn::Sub: ${AWS::StackName}-db-bootstrap-cfn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: private-maintenance-stack-only
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: iam:CreateRole
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/maintenance/${DbBootstrapStackName}-job
+                Condition:
+                  ArnEquals:
+                    iam:PermissionsBoundary:
+                      Ref: DbBootstrapPermissionsBoundary
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/maintenance/${DbBootstrapStackName}-job
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${DbBootstrapStackName}-job
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/maintenance/${DbBootstrapStackName}-job
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: lambda.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:UpdateFunctionConfiguration
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DbBootstrapStackName}-job
+                Condition:
+                  StringEquals:
+                    lambda:VpcIds:
+                      Ref: VpcId
+                  ForAllValues:StringEquals:
+                    lambda:SubnetIds:
+                      Ref: PrivateSubnetIds
+                    lambda:SecurityGroupIds:
+                      - Ref: BootstrapSecurityGroupId
+                  'Null':
+                    lambda:VpcIds: 'false'
+                    lambda:SubnetIds: 'false'
+                    lambda:SecurityGroupIds: 'false'
+              - Effect: Allow
+                Action:
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionCodeSigningConfig
+                  - lambda:GetFunctionRecursionConfig
+                  - lambda:GetRuntimeManagementConfig
+                  - lambda:GetFunctionScalingConfig
+                  - lambda:UpdateFunctionCode
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                  - lambda:GetFunctionConcurrency
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DbBootstrapStackName}-job
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - ec2:GetSecurityGroupsForVpc
+                  - ec2:DescribeNetworkInterfaces
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Ref: AWS::Region
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DescribeLogStreams
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:ListTagsForResource
+                  - logs:GetDataProtectionPolicy
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${DbBootstrapStackName}/job
+                  - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${DbBootstrapStackName}/job:*
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeIndexPolicies
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Ref: AWS::Region
+              - Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:TagResource
+                  - secretsmanager:UntagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DbBootstrapStackName}-runtime-??????
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${AssetsBucketName}/${AssetPrefix}*
+  BrowserIdpPermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Caps idp serving permissions independently from DB administration.
+        must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
+          - Read only the dedicated secret; no master access, secret writes or database administration.
+          - ENI APIs are usable by the Lambda service but denied to function code.
+    Properties:
+      Path: /authrim-dr/boundary/
+      ManagedPolicyName:
+        Fn::Sub: ${AWS::StackName}-idp-boundary
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Fn::If:
+              - HasAuthStateTable
+              - Sid: SelectedAuthState
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:ConditionCheckItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource:
+                  Ref: AuthStateTableArn
+              - Ref: AWS::NoValue
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/idp:*
+          - Effect: Allow
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DbBootstrapStackName}-runtime-??????
+          - Effect: Allow
+            Action: s3:GetObjectVersion
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${AssetsBucketName}/${AssetPrefix}*
+          - Effect: Deny
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+            Condition:
+              ArnEquals:
+                lambda:SourceFunctionArn:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-idp
+  BrowserSpPermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Caps sp serving permissions independently from DB administration.
+        must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
+          - Read only the dedicated secret; no master access, secret writes or database administration.
+          - ENI APIs are usable by the Lambda service but denied to function code.
+    Properties:
+      Path: /authrim-dr/boundary/
+      ManagedPolicyName:
+        Fn::Sub: ${AWS::StackName}-sp-boundary
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Fn::If:
+              - HasAuthStateTable
+              - Sid: SelectedAuthState
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DescribeTable
+                Resource:
+                  Ref: AuthStateTableArn
+              - Ref: AWS::NoValue
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/sp:*
+          - Effect: Allow
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource:
+              Ref: BrowserSpSecret
+          - Effect: Deny
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+            Condition:
+              ArnEquals:
+                lambda:SourceFunctionArn:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-sp
+  BrowserCfnServiceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            # CreateStage enforces this exact permission despite its omission from the IAM catalog.
+            - W3037
+      authrim:StageTaggingPermissionException:
+        evidence:
+          - Live AWS::ApiGatewayV2::Stage handlers.create.permissions includes apigateway:TagResource.
+          - CreateStage denies TagResource on the stage collection even with all scoped POST/PUT tag variants.
+        constraint: Literal action is limited to the bound API stage collection; no wildcard grant.
+        validation: Access Analyzer INVALID_ACTION is a documented exception for this action only.
+      com.aws.cloudformation.Context:
+        why: Deploys only this browser API and two serving functions, with no network mutation authority.
+        must:
+          - Create an empty API with the exact rehearsal name and tag, then bind ApiId.
+          - No custom domains, certificates, DNS, VPC writes, or source-DR resource writes.
+          - Function logs only; this rehearsal does not create account-wide API access-log delivery policies.
+    Properties:
+      Path: /authrim-dr/cfn/
+      RoleName:
+        Fn::Sub: ${AWS::StackName}-browser-cfn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: isolated-browser-workload
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: iam:CreateRole
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/browser/${BrowserStackName}-idp
+                Condition:
+                  ArnEquals:
+                    iam:PermissionsBoundary:
+                      Ref: BrowserIdpPermissionsBoundary
+              - Effect: Allow
+                Action: iam:CreateRole
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/browser/${BrowserStackName}-sp
+                Condition:
+                  ArnEquals:
+                    iam:PermissionsBoundary:
+                      Ref: BrowserSpPermissionsBoundary
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/browser/${BrowserStackName}-idp
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/browser/${BrowserStackName}-sp
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${BrowserStackName}-idp
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${BrowserStackName}-sp
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/browser/${BrowserStackName}-idp
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/authrim-dr/browser/${BrowserStackName}-sp
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: lambda.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:UpdateFunctionConfiguration
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-idp
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-sp
+                Condition:
+                  StringEquals:
+                    lambda:VpcIds:
+                      Ref: VpcId
+                  ForAllValues:StringEquals:
+                    lambda:SubnetIds:
+                      Ref: PrivateSubnetIds
+                    lambda:SecurityGroupIds:
+                      - Ref: BootstrapSecurityGroupId
+                  'Null':
+                    lambda:VpcIds: 'false'
+                    lambda:SubnetIds: 'false'
+                    lambda:SecurityGroupIds: 'false'
+              - Effect: Allow
+                Action:
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionCodeSigningConfig
+                  - lambda:GetFunctionRecursionConfig
+                  - lambda:GetRuntimeManagementConfig
+                  - lambda:GetFunctionScalingConfig
+                  - lambda:UpdateFunctionCode
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                  - lambda:GetFunctionConcurrency
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                  - lambda:GetPolicy
+                  - lambda:RemovePermission
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-idp
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-sp
+              - Effect: Allow
+                Action: lambda:AddPermission
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-idp
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-sp
+                Condition:
+                  StringEquals:
+                    lambda:Principal: apigateway.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeNetworkInterfaces
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Ref: AWS::Region
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DescribeLogStreams
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:ListTagsForResource
+                  - logs:GetDataProtectionPolicy
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/idp
+                  - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/idp:*
+                  - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/sp
+                  - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/sp:*
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeIndexPolicies
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Ref: AWS::Region
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${AssetsBucketName}/${AssetPrefix}*
+              - Fn::If:
+                  - NeedsEndpointCreation
+                  - Effect: Allow
+                    Action: apigateway:POST
+                    Resource:
+                      Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis
+                    Condition:
+                      StringEquals:
+                        aws:RequestTag/authrim:stack:
+                          Ref: BrowserStackName
+                        apigateway:Request/ApiName:
+                          Fn::Sub: ${BrowserStackName}-synthetic
+                      Bool:
+                        apigateway:Request/DisableExecuteApiEndpoint: 'false'
+                  - Ref: AWS::NoValue
+              - Fn::If:
+                  - NeedsEndpointCreation
+                  - Effect: Allow
+                    Action: apigateway:POST
+                    Resource:
+                      Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/tags/arn%3A${AWS::Partition}%3Aapigateway%3A${AWS::Region}%3A%3A%2Fv2%2Fapis%2F*
+                    Condition:
+                      StringEquals:
+                        aws:RequestTag/authrim:stack:
+                          Ref: BrowserStackName
+                  - Ref: AWS::NoValue
+              - Fn::If:
+                  - NeedsEndpointCreation
+                  - Effect: Allow
+                    Action: apigateway:GET
+                    Resource:
+                      Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/*
+                    Condition:
+                      StringEquals:
+                        aws:ResourceTag/authrim:stack:
+                          Ref: BrowserStackName
+                  - Ref: AWS::NoValue
+              - Fn::If:
+                  - HasApiId
+                  - Effect: Allow
+                    Action:
+                      - apigateway:GET
+                      - apigateway:PATCH
+                      - apigateway:DELETE
+                    Resource:
+                      Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${ApiId}
+                  - Ref: AWS::NoValue
+              - Fn::If:
+                  - HasApiId
+                  - Effect: Allow
+                    Action:
+                      - apigateway:GET
+                      - apigateway:POST
+                      - apigateway:PATCH
+                      - apigateway:PUT
+                      - apigateway:DELETE
+                    Resource:
+                      - Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${ApiId}/*
+                      - Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/tags/arn%3A${AWS::Partition}%3Aapigateway%3A${AWS::Region}%3A%3A%2Fv2%2Fapis%2F${ApiId}
+                      - Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/tags/arn%3A${AWS::Partition}%3Aapigateway%3A${AWS::Region}%3A%3A%2Fv2%2Fapis%2F${ApiId}%2Fstages%2F%24default
+                  - Ref: AWS::NoValue
+              - Fn::If:
+                  - HasApiId
+                  - Effect: Allow
+                    Action: apigateway:TagResource
+                    Resource:
+                      Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${ApiId}/stages
+                  - Ref: AWS::NoValue
+  BrowserOperatorPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Adds browser-rehearsal capabilities without editing existing operator policies.
+        must:
+          - No access-stack modification, direct serving invocation, secret reads, or DNS/network writes.
+    Properties:
+      PolicyName:
+        Fn::Sub: ${AWS::StackName}-operator
+      Roles:
+        - Ref: OperatorRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - cloudformation:CreateChangeSet
+              - cloudformation:UpdateStack
+              - cloudformation:RollbackStack
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${BrowserStackName}/*
+            Condition:
+              ArnEquals:
+                cloudformation:RoleArn:
+                  Fn::GetAtt:
+                    - BrowserCfnServiceRole
+                    - Arn
+          - Effect: Allow
+            Action:
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:DeleteChangeSet
+              - cloudformation:DescribeChangeSet
+              - cloudformation:DescribeStacks
+              - cloudformation:DescribeStackEvents
+              - cloudformation:ListStackResources
+              - cloudformation:GetTemplate
+              - cloudformation:TagResource
+              - cloudformation:UntagResource
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${BrowserStackName}/*
+          - Effect: Allow
+            Action: cloudformation:CreateChangeSet
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${DbBootstrapStackName}/*
+            Condition:
+              ArnEquals:
+                cloudformation:RoleArn:
+                  Fn::GetAtt:
+                    - DbBootstrapCfnServiceRole
+                    - Arn
+          - Effect: Allow
+            Action:
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:DeleteChangeSet
+              - cloudformation:DescribeChangeSet
+              - cloudformation:DescribeStacks
+              - cloudformation:DescribeStackEvents
+              - cloudformation:ListStackResources
+              - cloudformation:GetTemplate
+              - cloudformation:TagResource
+              - cloudformation:UntagResource
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${DbBootstrapStackName}/*
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource:
+              - Fn::GetAtt:
+                  - BrowserCfnServiceRole
+                  - Arn
+              - Fn::GetAtt:
+                  - DbBootstrapCfnServiceRole
+                  - Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: cloudformation.amazonaws.com
+          - Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+              - lambda:GetFunctionConfiguration
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${DbBootstrapStackName}-job
+          - Effect: Allow
+            Action:
+              - lambda:GetFunctionConfiguration
+              - lambda:GetPolicy
+              - lambda:ListFunctionUrlConfigs
+            Resource:
+              - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-idp
+              - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BrowserStackName}-sp
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${AssetsBucketName}/${AssetPrefix}*
+          - Effect: Allow
+            Action: secretsmanager:PutSecretValue
+            Resource:
+              Ref: BrowserInputSecret
+          - Effect: Allow
+            Action: s3:GetBucketVersioning
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${AssetsBucketName}
+          - Effect: Allow
+            Action:
+              - logs:DescribeLogStreams
+              - logs:FilterLogEvents
+              - logs:GetLogEvents
+            Resource:
+              - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/idp
+              - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/idp:*
+              - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/sp
+              - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-browser/${BrowserStackName}/sp:*
+              - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${DbBootstrapStackName}/job
+              - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${DbBootstrapStackName}/job:*
+          - Fn::If:
+              - HasApiId
+              - Effect: Allow
+                Action: apigateway:GET
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${ApiId}
+                  - Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${ApiId}/*
+              - Ref: AWS::NoValue
+Outputs:
+  BrowserCfnServiceRoleArn:
+    Description: Exact dedicated CloudFormation service role.
+    Value:
+      Fn::GetAtt:
+        - BrowserCfnServiceRole
+        - Arn
+  DbBootstrapCfnServiceRoleArn:
+    Description: Exact dedicated CloudFormation service role.
+    Value:
+      Fn::GetAtt:
+        - DbBootstrapCfnServiceRole
+        - Arn
+  BrowserIdpPermissionsBoundaryArn:
+    Description: Independent maximum permissions for the corresponding execution role.
+    Value:
+      Ref: BrowserIdpPermissionsBoundary
+  BrowserSpPermissionsBoundaryArn:
+    Description: Independent maximum permissions for the corresponding execution role.
+    Value:
+      Ref: BrowserSpPermissionsBoundary
+  DbBootstrapPermissionsBoundaryArn:
+    Description: Independent maximum permissions for the corresponding execution role.
+    Value:
+      Ref: DbBootstrapPermissionsBoundary
+  BrowserInputSecretArn:
+    Description: Container ARN only; never a secret value.
+    Value:
+      Ref: BrowserInputSecret
+  BrowserSpSecretArn:
+    Description: Container ARN only; never a secret value.
+    Value:
+      Ref: BrowserSpSecret
+  BoundApiId:
+    Description: Empty before endpoint creation; exact API after binding.
+    Value:
+      Ref: ApiId

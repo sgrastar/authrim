@@ -103,3 +103,23 @@ describe('Agent Access Cloudflare composition root', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 });
+
+describe('Agent Access Worker source guard', () => {
+  it('guards MCP admission before authentication or dispatch', async () => {
+    const response = await worker.fetch!(
+      new Request('https://issuer.example/mcp'),
+      { ENABLE_SAML_DR_EXPORT: 'true' } as never,
+      context
+    );
+    expect(response.status).toBe(503);
+  });
+  it('guards scheduled bulk and baseline mutations before creating coordinators', async () => {
+    await expect(
+      worker.scheduled!(
+        {} as ScheduledController,
+        { ENABLE_SAML_DR_EXPORT: 'true' } as never,
+        context
+      )
+    ).rejects.toThrow('saml_dr_writer_unavailable');
+  });
+});

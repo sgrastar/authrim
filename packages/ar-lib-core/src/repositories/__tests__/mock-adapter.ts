@@ -17,6 +17,9 @@ interface MockTable {
  * In-memory implementation for testing.
  */
 export class MockDatabaseAdapter implements DatabaseAdapter {
+  getType(): string {
+    return 'mock';
+  }
   private tables: Map<string, MockTable> = new Map();
   private queryLog: Array<{ sql: string; params?: unknown[] }> = [];
 

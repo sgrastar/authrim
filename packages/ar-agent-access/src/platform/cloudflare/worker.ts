@@ -1,4 +1,8 @@
 import {
+  runSamlDrCoveredFetch,
+  runSamlDrCoveredOperation,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import {
   AdminAgentAccessRepository,
   AgentBaselineRepository,
   AgentBulkRepository,
@@ -435,31 +439,36 @@ export async function checkAgentAccessReadiness(
 
 const worker: ExportedHandler<CloudflareAgentAccessWorkerEnv> = {
   async fetch(request, env, context) {
-    const path = new URL(request.url).pathname;
-    if (path === '/health/live' || path === '/api/health') {
-      return Response.json({ status: 'ok', service: 'ar-agent-access' });
-    }
-    if (path === '/health/ready') {
-      const readiness = await checkAgentAccessReadiness(env);
-      return Response.json(readiness, {
-        status: readiness.status === 'ok' ? 200 : 503,
-        headers: { 'cache-control': 'no-store' },
-      });
-    }
-    if (path !== '/mcp') return new Response(null, { status: 404 });
-    return mcp.fetch!(request, env, context);
+    return runSamlDrCoveredFetch(env, context, async (coveredEnv, coveredContext) => {
+      const path = new URL(request.url).pathname;
+      if (path === '/health/live' || path === '/api/health') {
+        return Response.json({ status: 'ok', service: 'ar-agent-access' });
+      }
+      if (path === '/health/ready') {
+        const readiness = await checkAgentAccessReadiness(coveredEnv ?? env);
+        return Response.json(readiness, {
+          status: readiness.status === 'ok' ? 200 : 503,
+          headers: { 'cache-control': 'no-store' },
+        });
+      }
+      if (path !== '/mcp') return new Response(null, { status: 404 });
+      return mcp.fetch!(request, coveredEnv ?? env, coveredContext ?? context);
+    });
   },
-  async scheduled(_controller, env, _context) {
-    const baseline = baselineRemediationCoordinator(env);
-    const bulk = bulkCoordinator(env);
-    await runAgentAccessScheduledTasks({
-      evaluateBaselines: () => baseline.evaluateScheduled(),
-      runBaselineRemediation: () => baseline.runScheduled(),
-      runBulkPlans: () => bulk.runScheduled(),
-      cleanupMcpSessions: () => cleanupExpiredAgentAccessMcpSessions(env),
+  async scheduled(_controller, env, context) {
+    return runSamlDrCoveredOperation(env, context, async (env) => {
+      const baseline = baselineRemediationCoordinator(env);
+      const bulk = bulkCoordinator(env);
+      await runAgentAccessScheduledTasks({
+        evaluateBaselines: () => baseline.evaluateScheduled(),
+        runBaselineRemediation: () => baseline.runScheduled(),
+        runBulkPlans: () => bulk.runScheduled(),
+        cleanupMcpSessions: () => cleanupExpiredAgentAccessMcpSessions(env),
+      });
     });
   },
 };
 
+export const SAML_DR_WRITER_SURFACES = ['fetch', 'scheduled'] as const;
 export default worker;
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

@@ -1,11 +1,13 @@
 import { openTenantBackupDownload } from '@authrim/ar-lib-core/services/tenant-portability/published-artifact-reader';
 import { Hono } from 'hono';
+import { readTenantBackupExportReceipt } from '../../tenant-backup-export-receipt';
 import { bodyLimit } from 'hono/body-limit';
 import { createMiddleware } from 'hono/factory';
 import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   getTenantIdFromContext,
   ensureDatabaseAdapter,
   requireDedicatedAdminDatabaseAdapter,
@@ -67,6 +69,18 @@ tenantBackupsRouter.use('*', async (c, next) => {
   c.header('Cache-Control', 'no-store');
   return next();
 });
+
+/**
+ * With the SAML DR extension on, a backup also carries the environment's platform settings and
+ * secrets, which belong to no tenant. Only a global administrator holding the export permission
+ * for every tenant may ask for one.
+ */
+function mayExportSamlDrData(env: Env, auth: AdminAuthContext): boolean {
+  return (
+    env.ENABLE_SAML_DR_EXPORT !== 'true' ||
+    hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.BACKUPS_EXPORT)
+  );
+}
 
 function tenantAuth(auth: AdminAuthContext | undefined) {
   if (!auth?.tenantId) throw new Error('backup_auth_context_missing');
@@ -633,6 +647,51 @@ tenantBackupsRouter.post('/:operationId/approve', async (c) => {
   );
 });
 
+tenantBackupsRouter.get('/:operationId/export-receipt', async (c) => {
+  const auth = tenantAuth(c.get('adminAuth'));
+  if (!hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.BACKUPS_EXPORT))
+    return c.json({ error: 'backup_forbidden' }, 403);
+  if (!isFreshAdminHuman(auth, Date.now()))
+    return c.json({ error: 'backup_fresh_auth_required' }, 403);
+  const database = requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup');
+  const id = c.req.param('operationId');
+  let intent;
+  try {
+    intent = await new TenantBackupRequestStore(database).load(auth.tenantId, id);
+  } catch {
+    return c.json({ error: 'backup_operation_not_found' }, 404);
+  }
+  if (intent.kind !== 'export') return c.json({ error: 'backup_export_receipt_unavailable' }, 409);
+  if (
+    intent.selection.logs.sensitive &&
+    !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.BACKUPS_SENSITIVE)
+  )
+    return c.json({ error: 'backup_forbidden' }, 403);
+  let receipt;
+  try {
+    receipt = await readTenantBackupExportReceipt({
+      database,
+      tenantId: auth.tenantId,
+      operationId: id,
+      intent,
+      now: Date.now,
+      signal: c.req.raw.signal,
+    });
+  } catch {
+    return c.json({ error: 'backup_export_receipt_unavailable' }, 409);
+  }
+  if (
+    !(await writeAdminAuditLog(c, {
+      action: 'tenant_backup.export_receipt_read',
+      resourceType: 'tenant_backup',
+      resourceId: id,
+      result: 'success',
+    }))
+  )
+    return c.json({ error: 'backup_audit_unavailable' }, 503);
+  return c.json(receipt);
+});
+
 tenantBackupsRouter.get('/:operationId/download', async (c) => {
   const auth = tenantAuth(c.get('adminAuth'));
   if (!hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.BACKUPS_EXPORT))
@@ -836,6 +895,7 @@ tenantBackupsRouter.post('/exports', async (c) => {
   const auth = tenantAuth(c.get('adminAuth'));
   if (!hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.BACKUPS_EXPORT))
     return c.json({ error: 'backup_forbidden' }, 403);
+  if (!mayExportSamlDrData(c.env, auth)) return c.json({ error: 'backup_forbidden' }, 403);
   const body: unknown = await c.req.json().catch(() => null);
   if (!body || typeof body !== 'object' || Array.isArray(body))
     return c.json({ error: 'invalid_backup_request' }, 400);

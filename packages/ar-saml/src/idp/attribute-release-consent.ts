@@ -85,6 +85,9 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
     consentRecordId: string;
   };
 }): Promise<SAMLAttributeReleaseConsentCheckResult> {
+  if (input.env.SAML_RUNTIME_PORTS && input.spConfig.attributeReleaseConsent?.enabled) {
+    throw new Error('saml_idp_runtime_consent_policy_unsupported');
+  }
   if (input.attributes.length === 0) {
     return { action: 'release', attributeSetHash: null, reasonCodes: [] };
   }
@@ -118,6 +121,15 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
     'saml_sp',
     input.spConfig.entityId
   );
+  if (
+    input.env.SAML_RUNTIME_PORTS &&
+    !trustPolicy?.trusted &&
+    !trustPolicy?.skip_authorization_consent
+  ) {
+    // This runtime only admits imported trusted SPs. A missing or unreadable trust row must
+    // not fall through to the legacy consent-requirements error fallback.
+    throw new Error('saml_idp_runtime_consent_policy_unavailable');
+  }
   if (trustPolicy?.trusted || trustPolicy?.skip_authorization_consent) {
     return { action: 'release', attributeSetHash: null, reasonCodes: ['release.trusted_saml_sp'] };
   }

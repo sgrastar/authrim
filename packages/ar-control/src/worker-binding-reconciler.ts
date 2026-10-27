@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   CloudflareControlApiError,
   activeWorkerDeployment,
@@ -373,7 +374,7 @@ export class WorkerBindingReconciler {
         offset < workerGroups.length;
         offset += MAX_PARALLEL_WORKER_RECONCILIATIONS
       ) {
-        const outcomes = await Promise.all(
+        const outcomes = await samlDrAll(
           workerGroups
             .slice(offset, offset + MAX_PARALLEL_WORKER_RECONCILIATIONS)
             .map(async (workerTargets) => {
@@ -383,7 +384,7 @@ export class WorkerBindingReconciler {
         for (const outcome of outcomes.flat()) result[outcome] += 1;
       }
     } finally {
-      await Promise.all(
+      await samlDrAll(
         [...acquiredEnvironmentIds].map((environmentId) =>
           this.repository.releaseReconcilerLease({ environmentId, ownerId })
         )
@@ -687,12 +688,12 @@ export class WorkerBindingReconciler {
       const now = this.now();
       const failure = classifyError(error);
       if (failure.permanent) {
-        await Promise.all(
+        await samlDrAll(
           targets.map((target) => this.repository.markBlocked(target, failure.code, now))
         );
         return targets.map(() => 'blocked' as const);
       }
-      await Promise.all(
+      await samlDrAll(
         targets.map((target) =>
           this.repository.recordTransientError(target, failure.code, retryAt(error, now), now)
         )
@@ -832,12 +833,12 @@ export class WorkerBindingReconciler {
       const now = this.now();
       const failure = classifyError(error);
       if (failure.permanent) {
-        await Promise.all(
+        await samlDrAll(
           targets.map((target) => this.repository.markBlocked(target, failure.code, now))
         );
         return targets.map(() => 'blocked' as const);
       }
-      await Promise.all(
+      await samlDrAll(
         targets.map((target) =>
           this.repository.recordTransientError(target, failure.code, retryAt(error, now), now)
         )

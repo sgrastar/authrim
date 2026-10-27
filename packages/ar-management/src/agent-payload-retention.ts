@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { AgentBulkRepository, AgentConfigurationRepository } from '@authrim/ar-agent-access/core';
 import {
   requireDedicatedAdminDatabaseAdapter,
@@ -22,7 +23,7 @@ export async function purgeExpiredAgentPayloads(
 ): Promise<AgentPayloadRetentionSummary> {
   const configuration = new AgentConfigurationRepository(adapter);
   const bulk = new AgentBulkRepository(adapter);
-  const [configurationPlansPurged, bulkPlansPurged] = await Promise.all([
+  const [configurationPlansPurged, bulkPlansPurged] = await samlDrAll([
     configuration.purgeExpiredPayloads(now, limit),
     bulk.purgePayloads(now, limit),
   ]);

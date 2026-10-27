@@ -1,0 +1,629 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Authrim SAML IdP disaster-recovery workload for one existing issuer host -
+  deploys only private Lambda and regional HTTP ingress; databases, secrets,
+  certificate, DNS, and restored activation evidence are provisioned separately.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: One issuer host -> regional HTTP API v2 -> private Node.js Lambda -> pre-restored PostgreSQL.
+    must:
+      - Keep the original issuer host, SAML entityID, signing key, and WebAuthn origin at cutover.
+      - Do not create, migrate, or delete Core, PII, or AWS state databases in this stack.
+      - Do not change authoritative DNS until restore readiness and external SP checks pass.
+
+Parameters:
+  DynamoDbGatewayPrefixListId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^pl-[0-9a-f]+$'
+    Description: Foundation DynamoDB gateway prefix list; required exactly when AuthStateTableArn is set.
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'
+    Description: Exact selected foundation auth-state table ARN; empty preserves PostgreSQL state.
+  IssuerHost:
+    Type: String
+    Description: Existing public issuer hostname, without scheme, port, path, or trailing dot.
+    AllowedPattern: '^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*[a-z0-9]$'
+  HttpApiId:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '^[a-z0-9]+$'
+    Description: Exact empty HTTP API ID exported by the foundation stack.
+  CertificateArn:
+    Type: String
+    Description: Existing ACM certificate ARN in this Region covering IssuerHost.
+    AllowedPattern: '^arn:(aws|aws-cn|aws-us-gov):acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-fA-F-]+$'
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC containing the private PostgreSQL databases.
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Existing private subnets in at least two Availability Zones.
+  DatabaseSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Existing database security group; this stack adds an ingress rule from its Lambda group.
+  DatabasePort:
+    Type: Number
+    Default: 5432
+    MinValue: 1
+    MaxValue: 65535
+  SecretsEndpointSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >-
+      Existing Secrets Manager interface VPC endpoint security group; this stack adds
+      inbound TCP 443 from its Lambda security group.
+  S3GatewayPrefixListId:
+    Type: String
+    AllowedPattern: '^pl-[0-9a-f]+$'
+    Description: >-
+      Existing S3 gateway VPC endpoint managed prefix list ID, with routes from
+      every selected private subnet to the snapshot bucket.
+  RuntimeSecretArn:
+    Type: String
+    Description: >-
+      Existing Secrets Manager secret ARN containing database URLs, restore passphrase,
+      and Flow/Lookup keys;
+      never pass the secret value to CloudFormation.
+    AllowedPattern: '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$'
+  RuntimePermissionsBoundaryArn:
+    Type: String
+    Description: >-
+      Mandatory bootstrap-managed permissions boundary for the dedicated runtime role.
+    AllowedPattern: '^arn:(aws|aws-cn|aws-us-gov):iam::[0-9]{12}:policy/authrim-dr/boundary/[A-Za-z0-9+=,.@_-]+$'
+  RuntimeSecretVersionId:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9-]{32,64}$'
+    Description: Pinned immutable Secrets Manager version ID to fetch at cold start.
+  RuntimeSecretKmsKeyArn:
+    Type: String
+    Default: ''
+    Description: Customer managed KMS key ARN for RuntimeSecretArn, if used.
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+$'
+  ManifestBucket:
+    Type: String
+    Description: Existing versioned, encrypted S3 bucket containing the runtime manifest and backup objects.
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+  ManifestKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    AllowedPattern: '^[^*?]+$'
+    Description: Exact S3 object key of the non-secret runtime manifest.
+  ManifestVersionId:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    Description: Pinned S3 version ID for the runtime manifest.
+  ManifestSha256:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{64}$'
+    Description: Trusted lowercase SHA256 of the exact versioned manifest bytes.
+  BackupObjectPrefix:
+    Type: String
+    MinLength: 2
+    MaxLength: 1023
+    AllowedPattern: '^[^*?]+/$'
+    Description: Narrow S3 key prefix containing only selected versioned backup parts and supplement.
+  BucketOwnerAccountId:
+    Type: String
+    AllowedPattern: '^[0-9]{12}$'
+    Description: Expected AWS account ID owning ManifestBucket, checked by the runtime S3 client.
+  SnapshotKmsKeyArn:
+    Type: String
+    Default: ''
+    Description: Customer managed KMS key ARN for snapshot objects, if used.
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+$'
+  ArtifactBucket:
+    Type: String
+    Description: Existing versioned S3 bucket in this Region containing the Lambda ZIP.
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+  ArtifactKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    Description: Immutable release ZIP object key; package root must contain lambda.mjs.
+  ArtifactObjectVersion:
+    Type: String
+    MinLength: 1
+    Description: Pinned S3 version ID of the Lambda ZIP.
+  ReservedConcurrency:
+    Type: Number
+    Default: 2
+    MinValue: 0
+    MaxValue: 100
+    Description: Initial two concurrent requests; set zero to disable service before cutover.
+  ApiRateLimit:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 1000
+    Description: Initial requests per second; size with database connections and Lambda concurrency.
+  ApiBurstLimit:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 5000
+  AlarmTopicArn:
+    Type: String
+    Default: ''
+    Description: Optional existing SNS topic ARN for Lambda error and throttle alarms.
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):sns:[a-z0-9-]+:[0-9]{12}:.+$'
+
+Rules:
+  RequireAuthStateEndpoint:
+    RuleCondition: !Not [!Equals [!Ref AuthStateTableArn, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref DynamoDbGatewayPrefixListId, '']]
+        AssertDescription: DynamoDB state requires the selected foundation endpoint prefix list.
+  RejectUnusedAuthStateEndpoint:
+    RuleCondition: !Equals [!Ref AuthStateTableArn, '']
+    Assertions:
+      - Assert: !Equals [!Ref DynamoDbGatewayPrefixListId, '']
+        AssertDescription: PostgreSQL state must not include a DynamoDB prefix list.
+
+Conditions:
+  HasAuthStateTable:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AuthStateTableArn
+          - ''
+  HasRuntimeSecretKmsKey: !Not [!Equals [!Ref RuntimeSecretKmsKeyArn, '']]
+  HasSnapshotKmsKey: !Not [!Equals [!Ref SnapshotKmsKeyArn, '']]
+  HasAlarmTopic: !Not [!Equals [!Ref AlarmTopicArn, '']]
+
+Resources:
+  AuthStateRuntimeEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Condition: HasAuthStateTable
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Adds private DynamoDB connectivity only when the selected runtime uses it.
+        must:
+          - Limit egress to TCP 443 and the verified regional DynamoDB prefix list.
+    Properties:
+      GroupId: !Ref RuntimeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: !Ref DynamoDbGatewayPrefixListId
+      Description: Authentication state via private DynamoDB gateway
+
+  RuntimeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Restricts the serving function to restored PostgreSQL and private secret/snapshot retrieval.
+        must:
+          - No inbound rules or internet-wide egress.
+          - Existing database and endpoint groups must allow return traffic from this group.
+    Properties:
+      GroupDescription: Authrim SAML IdP private Lambda egress
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: 'authrim:stack'
+          Value: !Ref 'AWS::StackName'
+      SecurityGroupEgress:
+        - Description: PostgreSQL to pre-restored databases
+          IpProtocol: tcp
+          FromPort: !Ref DatabasePort
+          ToPort: !Ref DatabasePort
+          DestinationSecurityGroupId: !Ref DatabaseSecurityGroupId
+        - Description: Secrets Manager through the existing private VPC endpoint
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId: !Ref SecretsEndpointSecurityGroupId
+        - Description: Versioned S3 snapshot reads through the existing gateway endpoint
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationPrefixListId: !Ref S3GatewayPrefixListId
+
+  RuntimeDatabaseIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets only this stack's serving Lambda reach the foundation PostgreSQL group.
+        must:
+          - Keep source bound to RuntimeSecurityGroup and destination at DatabasePort.
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroupId
+      Description: PostgreSQL from the Authrim serving Lambda only
+      IpProtocol: tcp
+      FromPort: !Ref DatabasePort
+      ToPort: !Ref DatabasePort
+      SourceSecurityGroupId: !Ref RuntimeSecurityGroup
+
+  RuntimeSecretsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets only this stack's serving Lambda use the private Secrets Manager endpoint.
+        must:
+          - Keep source bound to RuntimeSecurityGroup and port at 443.
+    Properties:
+      GroupId: !Ref SecretsEndpointSecurityGroupId
+      Description: HTTPS from the Authrim serving Lambda only
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref RuntimeSecurityGroup
+
+  RuntimeLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Explicit finite retention for operational function logs; runtime must redact sensitive fields.
+        must:
+          - Never log SAML assertions, credentials, secrets, or raw request bodies.
+    Properties:
+      LogGroupName: !Sub '/authrim/aws-saml/${AWS::StackName}/lambda'
+      RetentionInDays: 14
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Stores status-only HTTP access evidence without path, IP, headers, query, or body.
+        must:
+          - Keep access log format free of request and response payloads and identifiers beyond request ID.
+    Properties:
+      LogGroupName: !Sub '/authrim/aws-saml/${AWS::StackName}/api'
+      RetentionInDays: 14
+
+  RuntimeRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Dedicated serving role grants only selected versioned snapshot objects, secret, logs, and Lambda VPC ENI operations.
+        must:
+          - Optional DynamoDB access is data-only and limited to the selected table; no table administration.
+          - No database admin, deployment artifact read, bucket listing, or wildcard Secrets Manager access.
+          - EC2 network permissions are for Lambda service setup; function code is explicitly denied below.
+          - Keep the bootstrap-managed permissions boundary and the dedicated authrim-dr path.
+    Properties:
+      Path: /authrim-dr/workload/
+      RoleName: !Sub '${AWS::StackName}-runtime'
+      PermissionsBoundary: !Ref RuntimePermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: serving-baseline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Fn::If:
+                  - HasAuthStateTable
+                  - Sid: SelectedAuthState
+                    Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:UpdateItem
+                      - dynamodb:ConditionCheckItem
+                      - dynamodb:Query
+                      - dynamodb:Scan
+                      - dynamodb:DescribeTable
+                    Resource:
+                      Ref: AuthStateTableArn
+                  - Ref: AWS::NoValue
+              - Sid: WriteOnlyOwnFunctionLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${RuntimeLogGroup}:*'
+              - Sid: ReadOnlyPinnedRuntimeSecret
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref RuntimeSecretArn
+              - Sid: ReadOnlyVersionedRestoreObjects
+                Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::${ManifestBucket}/${ManifestKey}'
+                  - !Sub 'arn:${AWS::Partition}:s3:::${ManifestBucket}/${BackupObjectPrefix}*'
+              - Sid: ManageLambdaVpcInterfaces
+                Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'
+
+  RuntimeSecretKmsPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasRuntimeSecretKmsKey
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows customer managed key decryption only through Secrets Manager for this secret.
+        must:
+          - Keep key ARN and SecretARN encryption context scoped to the configured secret.
+    Properties:
+      PolicyName: runtime-secret-decrypt
+      Roles:
+        - !Ref RuntimeRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: kms:Decrypt
+            Resource: !Ref RuntimeSecretKmsKeyArn
+            Condition:
+              StringEquals:
+                kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.${AWS::URLSuffix}'
+                kms:EncryptionContext:SecretARN: !Ref RuntimeSecretArn
+
+  SnapshotKmsPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasSnapshotKmsKey
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows decryption of the configured snapshot KMS key only through regional S3.
+        must:
+          - Keep the key ARN exact and paired with versioned object access.
+    Properties:
+      PolicyName: runtime-snapshot-decrypt
+      Roles:
+        - !Ref RuntimeRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: kms:Decrypt
+            Resource: !Ref SnapshotKmsKeyArn
+            Condition:
+              StringEquals:
+                kms:ViaService: !Sub 's3.${AWS::Region}.${AWS::URLSuffix}'
+
+  RuntimeFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Runs the verified offline-activated SAML/passkey runtime with bounded database concurrency.
+        must:
+          - ZIP, runtime secret version, and manifest version must refer to the same approved restore release.
+          - Never migrate, restore, or contact Cloudflare from this serving function.
+          - Restore activation evidence must be checked before any request is served.
+    Properties:
+      Description: Authrim emergency SAML IdP for one issuer host
+      Runtime: nodejs24.x
+      Handler: lambda.handler
+      Role: !GetAtt RuntimeRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+        S3ObjectVersion: !Ref ArtifactObjectVersion
+      MemorySize: 2048
+      Timeout: 30
+      EphemeralStorage:
+        Size: 1024
+      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref RuntimeSecurityGroup
+        SubnetIds: !Ref PrivateSubnetIds
+      Environment:
+        Variables:
+          AUTHRIM_AWS_RUNTIME_SECRET_ARN: !Ref RuntimeSecretArn
+          AUTHRIM_AWS_RUNTIME_SECRET_VERSION_ID: !Ref RuntimeSecretVersionId
+          AUTHRIM_AWS_MANIFEST_BUCKET: !Ref ManifestBucket
+          AUTHRIM_AWS_MANIFEST_KEY: !Ref ManifestKey
+          AUTHRIM_AWS_MANIFEST_VERSION_ID: !Ref ManifestVersionId
+          AUTHRIM_AWS_MANIFEST_SHA256: !Ref ManifestSha256
+          AUTHRIM_AWS_BUCKET_OWNER: !Ref BucketOwnerAccountId
+          AUTHRIM_AWS_ISSUER_ORIGIN: !Sub 'https://${IssuerHost}'
+          NODE_EXTRA_CA_CERTS: /var/task/certs/rds-ca.pem
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: WARN
+        SystemLogLevel: WARN
+        LogGroup: !Ref RuntimeLogGroup
+
+  DenyFunctionCodeVpcApis:
+    Type: AWS::IAM::Policy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lambda service can manage ENIs while application code cannot invoke the same EC2 APIs.
+        must:
+          - Condition on this exact source function ARN so Lambda service VPC setup remains possible.
+    Properties:
+      PolicyName: deny-function-code-vpc-apis
+      Roles:
+        - !Ref RuntimeRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+            Condition:
+              ArnEquals:
+                lambda:SourceFunctionArn: !GetAtt RuntimeFunction.Arn
+
+  LambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApiId
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RuntimeFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 30000
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Passes original paths to the existing application's strict route allowlist.
+        must:
+          - Keep application route filtering, tenant host checks, and trusted source-IP handling active.
+    Properties:
+      ApiId: !Ref HttpApiId
+      RouteKey: $default
+      AuthorizationType: NONE
+      Target: !Join ['', ['integrations/', !Ref LambdaIntegration]]
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Publishes the root HTTP route with bounded request rate and non-PII access evidence.
+        must:
+          - No source IP, raw path, query, headers, request body, or response body in access logs.
+    Properties:
+      ApiId: !Ref HttpApiId
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingRateLimit: !Ref ApiRateLimit
+        ThrottlingBurstLimit: !Ref ApiBurstLimit
+      AccessLogSettings:
+        DestinationArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ApiAccessLogGroup}'
+        Format: '{"requestId":"$context.requestId","route":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength"}'
+
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref RuntimeFunction
+      Principal: apigateway.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApiId}/*/*'
+
+  IssuerDomain:
+    Type: AWS::ApiGatewayV2::DomainName
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Prepositions the original HTTPS issuer identity without taking ownership of DNS.
+        must:
+          - Certificate must cover the unchanged issuer host in the stack Region.
+          - Do not change DNS from Cloudflare until the restored tenant passes readiness and SP checks.
+    Properties:
+      DomainName: !Ref IssuerHost
+      RoutingMode: API_MAPPING_ONLY
+      DomainNameConfigurations:
+        - EndpointType: REGIONAL
+          CertificateArn: !Ref CertificateArn
+          SecurityPolicy: TLS_1_2
+      Tags:
+        authrim:stack: !Ref 'AWS::StackName'
+
+  RootApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    DependsOn:
+      - DenyFunctionCodeVpcApis
+      - DefaultRoute
+      - InvokePermission
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Preserves SAML and WebAuthn root paths at the existing issuer host.
+        must:
+          - No path prefix or alternate public issuer URL.
+    Properties:
+      ApiId: !Ref HttpApiId
+      DomainName: !Ref IssuerDomain
+      Stage: !Ref ApiStage
+
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Authrim SAML IdP Lambda invocation errors in five minutes.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RuntimeFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmTopic, [!Ref AlarmTopicArn], !Ref 'AWS::NoValue']
+
+  LambdaThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Authrim SAML IdP Lambda throttles in five minutes.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RuntimeFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmTopic, [!Ref AlarmTopicArn], !Ref 'AWS::NoValue']
+
+  ApiServerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Detects application 503 readiness failures that return normally from Lambda and do not raise its Errors metric.
+        must:
+          - Use the HTTP API 5xx metric with this API ID and stage; Lambda Errors alone misses handled failures.
+    Properties:
+      AlarmDescription: Authrim SAML IdP HTTP API 5xx responses in one minute.
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApiId
+        - Name: Stage
+          Value: !Ref ApiStage
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmTopic, [!Ref AlarmTopicArn], !Ref 'AWS::NoValue']
+
+Outputs:
+  IssuerHost:
+    Description: Existing issuer hostname; its authoritative DNS is not changed by this stack.
+    Value: !Ref IssuerHost
+  RegionalDomainName:
+    Description: Regional API Gateway DNS target for a later controlled cutover.
+    Value: !GetAtt IssuerDomain.RegionalDomainName
+  RegionalHostedZoneId:
+    Description: API Gateway hosted zone ID for a later Route 53 alias, if applicable.
+    Value: !GetAtt IssuerDomain.RegionalHostedZoneId
+  LambdaSecurityGroupId:
+    Description: Database and Secrets Manager endpoint ingress rules reference this group.
+    Value: !Ref RuntimeSecurityGroup
+  LambdaFunctionArn:
+    Description: Serving function ARN; cutover still requires explicit DNS and restore readiness.
+    Value: !GetAtt RuntimeFunction.Arn
+  ApiId:
+    Description: Regional HTTP API identifier; default execute-api endpoint is disabled.
+    Value: !Ref HttpApiId

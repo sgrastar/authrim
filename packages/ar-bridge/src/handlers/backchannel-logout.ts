@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * Back-Channel Logout Handler
  * POST /auth/external/:provider/backchannel-logout
@@ -453,7 +454,7 @@ async function notifyDownstream(
       })
     );
 
-    const [backchannel, webhook] = await Promise.all([
+    const [backchannel, webhook] = await samlDrAll([
       sendBackchannelLogoutFanout(env, {
         tenantId,
         issuer: logoutIssuer,
@@ -500,7 +501,7 @@ async function notifyDownstream(
               reason: 'webhook_settings_unavailable',
             })
           ),
-      Promise.all(audits),
+      samlDrAll(audits),
     ]);
 
     log.info('Downstream logout for upstream notice completed', {

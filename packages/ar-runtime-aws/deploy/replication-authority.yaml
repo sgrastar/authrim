@@ -1,0 +1,318 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Authrim opt-in replication write authority - signed, scoped control RPC backed by
+  separately initialized PostgreSQL; does not create databases, credentials, DNS or tenant runtimes.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: CF/AWS writers -> scoped HMAC RPC -> private Lambda -> independent PostgreSQL authority.
+    must:
+      - Install authority-schema.sql and least-privilege database credentials explicitly before use.
+      - Pin one Secrets Manager version containing database URL and scoped credentials.
+      - Do not expire outstanding write permits or promote an unreachable primary automatically.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets with access to the supplied database and Secrets Manager endpoint.
+  DatabaseSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Authority PostgreSQL group; review attachments before applying new ingress.
+  DatabasePort:
+    Type: Number
+    Default: 5432
+    MinValue: 1
+    MaxValue: 65535
+  SecretsEndpointSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Existing private Secrets Manager endpoint group; review attachments before deployment.
+  AuthoritySecretArn:
+    Type: String
+    AllowedPattern: '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$'
+    Description: Existing secret ARN, never its value. Must be in this account and region.
+  AuthoritySecretVersionId:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9-]{32,64}$'
+  SecretKmsKeyArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:(aws|aws-cn|aws-us-gov):kms:[a-z0-9-]+:[0-9]{12}:key/[a-fA-F0-9-]+$'
+  RuntimePermissionsBoundaryArn:
+    Type: String
+    AllowedPattern: '^arn:(aws|aws-cn|aws-us-gov):iam::[0-9]{12}:policy/[A-Za-z0-9/+=,.@_-]+$'
+    Description: Existing boundary reviewed for this isolated runtime; no provisioning permissions.
+  ArtifactBucket:
+    Type: String
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+  ArtifactKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  ArtifactObjectVersion:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    AllowedPattern: '^(?!null$).+$'
+  ReservedConcurrency:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 32
+
+Conditions:
+  HasSecretKmsKey: !Not [!Equals [!Ref SecretKmsKeyArn, '']]
+
+Resources:
+  AuthorityLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Retains service diagnostics independently from the runtime lifecycle.
+        must: [Never log credentials, RPC bodies or database connection strings.]
+    Properties:
+      RetentionInDays: 30
+  AccessLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Retains bounded HTTP outcomes without request bodies or caller addresses.
+        must: [Do not add secret headers, query strings or RPC payloads to access logs.]
+    Properties:
+      RetentionInDays: 30
+  RuntimeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Restricts authority traffic to the supplied PostgreSQL and private secret endpoint.
+        must: [No ingress or public outbound access.]
+    Properties:
+      GroupDescription: Authrim replication authority private runtime
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: !Ref DatabasePort
+          ToPort: !Ref DatabasePort
+          DestinationSecurityGroupId: !Ref DatabaseSecurityGroupId
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId: !Ref SecretsEndpointSecurityGroupId
+  DatabaseIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Admits only this authority runtime to the existing PostgreSQL instance.
+        must: [Keep source bound to RuntimeSecurityGroup.]
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroupId
+      IpProtocol: tcp
+      FromPort: !Ref DatabasePort
+      ToPort: !Ref DatabasePort
+      SourceSecurityGroupId: !Ref RuntimeSecurityGroup
+  SecretEndpointIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows exact private secret reads from this authority runtime.
+        must: [Keep source bound to RuntimeSecurityGroup and port to 443.]
+    Properties:
+      GroupId: !Ref SecretsEndpointSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref RuntimeSecurityGroup
+  RuntimeRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Separates authority execution from tenant runtime and operator permissions.
+        must: [No database provisioning, S3 snapshot reads or secret writes.]
+    Properties:
+      Path: /authrim-replication/
+      PermissionsBoundary: !Ref RuntimePermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: authority-runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${AuthorityLogs}:*'
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AuthoritySecretArn
+              - Sid: LambdaVpcInterfaces
+                Effect: Allow
+                Action:
+                  [
+                    ec2:CreateNetworkInterface,
+                    ec2:DescribeNetworkInterfaces,
+                    ec2:DescribeSubnets,
+                    ec2:DeleteNetworkInterface,
+                    ec2:AssignPrivateIpAddresses,
+                    ec2:UnassignPrivateIpAddresses,
+                  ]
+                Resource: '*'
+  SecretKmsPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasSecretKmsKey
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Decrypts the optional customer-managed secret key through Secrets Manager only.
+        must: [Keep exact key and SecretARN encryption context.]
+    Properties:
+      PolicyName: authority-secret-key
+      Roles: [!Ref RuntimeRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: kms:Decrypt
+            Resource: !Ref SecretKmsKeyArn
+            Condition:
+              StringEquals:
+                kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.${AWS::URLSuffix}'
+                kms:EncryptionContext:SecretARN: !Ref AuthoritySecretArn
+  AuthorityFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Runs only the replication authority, independently of login or restore handlers.
+        must:
+          - Bundle only replication-authority.mjs and its verified CA roots.
+          - Startup must not create or migrate the authority schema.
+          - Synchronous RPC only; no asynchronous event source or retry queue.
+    Properties:
+      Runtime: nodejs24.x
+      Handler: replication-authority.handler
+      Role: !GetAtt RuntimeRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+        S3ObjectVersion: !Ref ArtifactObjectVersion
+      MemorySize: 512
+      Timeout: 30
+      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      VpcConfig:
+        SecurityGroupIds: [!Ref RuntimeSecurityGroup]
+        SubnetIds: !Ref PrivateSubnetIds
+      Environment:
+        Variables:
+          AUTHRIM_REPLICATION_AUTHORITY_ACCOUNT_ID: !Ref AWS::AccountId
+          AUTHRIM_REPLICATION_AUTHORITY_SECRET_ARN: !Ref AuthoritySecretArn
+          AUTHRIM_REPLICATION_AUTHORITY_SECRET_VERSION_ID: !Ref AuthoritySecretVersionId
+          NODE_EXTRA_CA_CERTS: /var/task/certs/rds-ca.pem
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: WARN
+        SystemLogLevel: WARN
+        LogGroup: !Ref AuthorityLogs
+  DenyCodeVpcApis:
+    Type: AWS::IAM::Policy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lambda service manages interfaces while application code cannot invoke those APIs.
+        must: [Retain the SourceFunctionArn denial when the function changes.]
+    Properties:
+      PolicyName: deny-authority-code-vpc-apis
+      Roles: [!Ref RuntimeRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Action:
+              [
+                ec2:CreateNetworkInterface,
+                ec2:DescribeNetworkInterfaces,
+                ec2:DescribeSubnets,
+                ec2:DeleteNetworkInterface,
+                ec2:AssignPrivateIpAddresses,
+                ec2:UnassignPrivateIpAddresses,
+              ]
+            Resource: '*'
+            Condition:
+              ArnEquals:
+                lambda:SourceFunctionArn: !GetAtt AuthorityFunction.Arn
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Provider-independent HTTPS endpoint; application HMAC scopes each RPC identity.
+        must: [No unsigned application action or CORS browser credential flow.]
+    Properties:
+      ProtocolType: HTTP
+  Integration:
+    Type: AWS::ApiGatewayV2::Integration
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Forwards synchronous RPC requests to the isolated authority handler.
+        must: [Keep the payload format compatible with the Lambda HTTP adapter.]
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorityFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 30000
+  RpcRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes only the signed machine RPC entry point.
+        must:
+          [The application must authenticate and scope every RPC before accessing authority state.]
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /replication/v1/rpc
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${Integration}'
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows only this account and exact API RPC route to invoke the authority.
+        must: [Retain SourceAccount and exact route SourceArn.]
+    Properties:
+      FunctionName: !Ref AuthorityFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/POST/replication/v1/rpc'
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Publishes the authority route with bounded traffic and retained outcome-only access logs.
+        must: [Keep the root-path endpoint aligned with the configured RPC URL.]
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 50
+        ThrottlingBurstLimit: 100
+      AccessLogSettings:
+        DestinationArn: !GetAtt AccessLogs.Arn
+        Format: '{"requestId":"$context.requestId","status":"$context.status","responseLatency":"$context.responseLatency"}'
+
+Outputs:
+  AuthorityEndpoint:
+    Description: Exact endpoint for the explicit writer/controller configuration.
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/replication/v1/rpc'
+  FunctionArn:
+    Description: Isolated authority Lambda ARN.
+    Value: !GetAtt AuthorityFunction.Arn

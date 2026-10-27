@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { runSamlDrCoveredOperation } from '../tenant-portability/saml-dr-writer';
 
 vi.mock('../logging-runtime-emitter', () => ({
   emitRuntimeLogRecords: vi.fn(async () => ({ tenantKey: 'tk_test', targetResults: [] })),
@@ -773,6 +774,87 @@ describe('EventDispatcher', () => {
   // ===========================================================================
 
   describe('after hooks', () => {
+    it('retains admission for an unawaited event and its asynchronous source hook', async () => {
+      let finish!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const handler = vi.fn(async () => {
+        await pending;
+      });
+      (hookRegistry as { getAfterHooks: ReturnType<typeof vi.fn> }).getAfterHooks.mockReturnValue([
+        { id: 'dr-hook', name: 'DR Hook', eventPattern: '*', handler, async: true },
+      ]);
+      const complete = vi.fn(async () => undefined);
+      const env = {
+        ENABLE_SAML_DR_EXPORT: 'true',
+        SAML_DR_MUTATION_CONTROL: {
+          acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+          completeEnvironmentBackupMutationPermit: complete,
+        },
+      };
+      const run = runSamlDrCoveredOperation(env, undefined, async () => {
+        void dispatcher.publish({
+          type: 'auth.login.succeeded',
+          tenantId: 'tenant_default',
+          data: {},
+        });
+      });
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+      expect(complete).not.toHaveBeenCalled();
+      finish();
+      await run;
+      expect(complete).toHaveBeenCalledOnce();
+    });
+
+    it('retains admission for a timed-out source hook until its underlying effect settles', async () => {
+      vi.useFakeTimers();
+      try {
+        let finish!: () => void;
+        const pending = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        const handler = vi.fn(async () => {
+          await pending;
+        });
+        (hookRegistry as { getAfterHooks: ReturnType<typeof vi.fn> }).getAfterHooks.mockReturnValue(
+          [
+            {
+              id: 'dr-timeout-hook',
+              name: 'DR Hook',
+              eventPattern: '*',
+              handler,
+              timeoutMs: 5,
+              async: false,
+            },
+          ]
+        );
+        const complete = vi.fn(async () => undefined);
+        const env = {
+          ENABLE_SAML_DR_EXPORT: 'true',
+          SAML_DR_MUTATION_CONTROL: {
+            acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+            completeEnvironmentBackupMutationPermit: complete,
+          },
+        };
+        const run = runSamlDrCoveredOperation(env, undefined, async () => {
+          await dispatcher.publish({
+            type: 'auth.login.succeeded',
+            tenantId: 'tenant_default',
+            data: {},
+          });
+        });
+        await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+        await vi.advanceTimersByTimeAsync(10);
+        expect(complete).not.toHaveBeenCalled();
+        finish();
+        await run;
+        expect(complete).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should execute sync after hooks', async () => {
       const afterHandler = vi.fn().mockResolvedValue(undefined);
       hookRegistry.getAfterHooks.mockReturnValue([

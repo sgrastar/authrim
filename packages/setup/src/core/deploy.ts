@@ -297,6 +297,8 @@ export interface DeployOptions {
   expectedWorkerVersionIds?: Readonly<Record<string, string | undefined>>;
   /** Secret values keyed by Wrangler secret name. Only each Worker's allow-list is written. */
   secrets?: Readonly<Record<string, string>>;
+  /** Explicit opt-in; never upload the writer credential to standalone Workers. */
+  replicationWriter?: boolean;
   /**
    * The Lookup HMAC slots the runtime resolves with (Control's active slot and, during a rotation,
    * its previous slot), from the environment lock. Unknown: either slot satisfies a Worker.
@@ -540,9 +542,11 @@ export const REQUIRED_WORKER_SECRET_KINDS: Readonly<
  */
 export function requiredWorkerSecretNames(
   component: WorkerComponent,
-  lookupHmacSlots: readonly LookupHmacSlot[] | undefined
+  lookupHmacSlots: readonly LookupHmacSlot[] | undefined,
+  replicationWriter = false
 ): { all: SecretName[]; anyOf: SecretName[][] } {
   const all: SecretName[] = [];
+  if (replicationWriter) all.push('AUTHRIM_REPLICATION_WRITER_SECRET');
   const anyOf: SecretName[][] = [];
   for (const kind of REQUIRED_WORKER_SECRET_KINDS[component] ?? []) {
     if (kind === 'lookup_hmac') {
@@ -634,7 +638,10 @@ export async function listDeployedWorkerSecretNames(
  * to the deployed Worker. A Worker that does not exist yet can only receive them now.
  */
 export async function findMissingRequiredWorkerSecrets(
-  options: Pick<DeployOptions, 'secrets' | 'existingComponents' | 'lookupHmacSlots'>,
+  options: Pick<
+    DeployOptions,
+    'secrets' | 'existingComponents' | 'lookupHmacSlots' | 'replicationWriter'
+  >,
   components: readonly WorkerComponent[],
   listSecretNames: (component: WorkerComponent) => Promise<Set<string>>
 ): Promise<MissingRequiredWorkerSecret[]> {
@@ -642,7 +649,11 @@ export async function findMissingRequiredWorkerSecrets(
   const distributed = (name: string) => Boolean(options.secrets?.[name]?.trim());
   const missing: MissingRequiredWorkerSecret[] = [];
   for (const component of components) {
-    const required = requiredWorkerSecretNames(component, options.lookupHmacSlots);
+    const required = requiredWorkerSecretNames(
+      component,
+      options.lookupHmacSlots,
+      options.replicationWriter
+    );
     if (required.anyOf.length > 0 && existing.has(component)) {
       // An existing environment has Control's key state: deploying without it would accept a
       // slot the runtime does not use. Only an initial deployment may go by "either slot".
@@ -671,15 +682,20 @@ export async function findMissingRequiredWorkerSecrets(
  * whose fingerprint differs from the one Control published for that slot.
  */
 export function assertDistributedSecretValues(
-  options: Pick<DeployOptions, 'secrets' | 'lookupHmacFingerprints'>,
+  options: Pick<DeployOptions, 'secrets' | 'lookupHmacFingerprints' | 'replicationWriter'>,
   components: readonly WorkerComponent[]
 ): void {
-  const names = new Set(components.flatMap((component) => getSecretNamesForWorker(component)));
+  const names = new Set(
+    components.flatMap((component) => getSecretNamesForWorker(component, options))
+  );
   for (const name of names) {
     const value = options.secrets?.[name];
     if (value === undefined) continue;
     if (!value.trim()) {
       throw new Error(`deploy_secret_value_blank:${name}`);
+    }
+    if (name === 'AUTHRIM_REPLICATION_WRITER_SECRET' && !/^[a-f0-9]{64}$/u.test(value)) {
+      throw new Error('deploy_secret_value_invalid:AUTHRIM_REPLICATION_WRITER_SECRET');
     }
     const slot = /^LOOKUP_HMAC_KEY_SLOT_([AB])$/u.exec(name)?.[1] as LookupHmacSlot | undefined;
     const expected = slot ? options.lookupHmacFingerprints?.[slot] : undefined;
@@ -1457,13 +1473,14 @@ function getVarArgs(component: WorkerComponent, options: DeployOptions): string[
 
 function getSecretsForWorker(
   component: WorkerComponent,
-  secrets: Readonly<Record<string, string>> | undefined
+  secrets: Readonly<Record<string, string>> | undefined,
+  options: Pick<DeployOptions, 'replicationWriter'> = {}
 ): Record<string, string> {
   if (!secrets) {
     return {};
   }
   return Object.fromEntries(
-    getSecretNamesForWorker(component)
+    getSecretNamesForWorker(component, options)
       // A blank value is never sent: it would replace a working secret with nothing.
       .filter((name) => secrets[name] !== undefined && secrets[name].trim() !== '')
       .map((name) => [name, secrets[name]])
@@ -1726,7 +1743,7 @@ async function deployWorkerDirect(
   try {
     await options.workerScriptOwnership?.assertBeforeMutation(context.workerName);
     secretFile = await createTemporarySecretFile(
-      getSecretsForWorker(context.component, options.secrets)
+      getSecretsForWorker(context.component, options.secrets, options)
     );
     outputDirectory = await mkdtemp(join(tmpdir(), 'authrim-wrangler-output-'));
     const commandResult = await runWithAdaptiveRetry(
@@ -1941,7 +1958,7 @@ async function uploadWorkerVersion(
   try {
     await options.workerScriptOwnership?.assertBeforeMutation(context.workerName);
     secretFile = await createTemporarySecretFile(
-      getSecretsForWorker(context.component, options.secrets)
+      getSecretsForWorker(context.component, options.secrets, options)
     );
     outputDirectory = await mkdtemp(join(tmpdir(), 'authrim-wrangler-output-'));
     const commandResult = await runWithAdaptiveRetry(
@@ -4054,7 +4071,8 @@ export function updateLockWithDeployments(lock: AuthrimLock, results: DeployResu
 /** Load only the local secret files needed by the selected Workers. */
 export async function loadDeploySecretsFromKeys(
   keysDir: string | undefined,
-  workers?: WorkerComponent[]
+  workers?: WorkerComponent[],
+  options: Pick<DeployOptions, 'replicationWriter'> = {}
 ): Promise<Record<string, string>> {
   const targetSet = new Set(workers ?? CORE_WORKER_COMPONENTS);
   const visitDependencies = (component: WorkerComponent): void => {
@@ -4069,7 +4087,9 @@ export async function loadDeploySecretsFromKeys(
     visitDependencies(component);
   }
   const targetWorkers = [...targetSet];
-  const secretNames = new Set(targetWorkers.flatMap((worker) => getSecretNamesForWorker(worker)));
+  const secretNames = new Set(
+    targetWorkers.flatMap((worker) => getSecretNamesForWorker(worker, options))
+  );
   const secrets: Record<string, string> = {};
 
   for (const secretName of secretNames) {
@@ -4094,7 +4114,11 @@ export async function loadDeploySecretsFromKeys(
       // A Lookup HMAC key file may end in a newline (editors and `echo` add one). Control's
       // fingerprint covers the key without surrounding whitespace, and the runtime hashes the
       // secret exactly as delivered, so the trimmed key is what must be distributed.
-      secrets[secretName] = LOOKUP_HMAC_SECRET_NAME.test(secretName) ? value.trim() : value;
+      secrets[secretName] =
+        LOOKUP_HMAC_SECRET_NAME.test(secretName) ||
+        secretName === 'AUTHRIM_REPLICATION_WRITER_SECRET'
+          ? value.trim()
+          : value;
     }
   }
   return secrets;
@@ -4112,13 +4136,13 @@ async function uploadSecretsWithoutLease(
 ): Promise<{ success: boolean; errors: string[] }> {
   const { env, rootDir, onProgress, dryRun } = options;
   const errors: string[] = [];
-  const targetWorkers = getSecretTargetWorkers(workers);
+  const targetWorkers = getSecretTargetWorkers(workers, options);
   const throttle = makeThrottle(options);
 
   await runBoundedPool(targetWorkers, throttle, async (component) => {
     const workerName = getWorkerName(env, component);
     const packageDir = join(rootDir, 'packages', component);
-    const workerSecrets = getSecretsForWorker(component, secrets);
+    const workerSecrets = getSecretsForWorker(component, secrets, options);
     if (!existsSync(packageDir) || Object.keys(workerSecrets).length === 0) {
       return;
     }
@@ -4182,7 +4206,7 @@ export async function uploadSecrets(
   workers?: WorkerComponent[]
 ): Promise<{ success: boolean; errors: string[] }> {
   await assertDeployConfigLockProof(options);
-  const components = getSecretTargetWorkers(workers);
+  const components = getSecretTargetWorkers(workers, options);
   if (options.deploymentLeaseSession || options.dryRun || !options.deploymentLease) {
     return uploadSecretsWithoutLease(secrets, options, workers);
   }

@@ -1911,9 +1911,11 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       if (keysDirectory) {
         await ensureSupplementalKeyFiles(keysDirectory.path);
       }
-      const deploymentSecrets = await loadDeploySecretsFromKeys(keysDirectory?.path, [
-        ...components,
-      ]);
+      const deploymentSecrets = await loadDeploySecretsFromKeys(
+        keysDirectory?.path,
+        [...components],
+        { replicationWriter: config.features.replicationWriter !== undefined }
+      );
       const deploymentControlDatabase = workingLock.d1.CONTROL_DB;
       if (!deploymentControlDatabase) {
         throw new Error('control_database_required_for_worker_deployment_lease');
@@ -1936,6 +1938,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           ])
         ),
         secrets: deploymentSecrets,
+        replicationWriter: config.features.replicationWriter !== undefined,
         ...lookupHmacDeployOptions(workingLock.controlKeyState?.lookupHmac),
         deploymentLease: {
           controlDatabaseId: deploymentControlDatabase.id,

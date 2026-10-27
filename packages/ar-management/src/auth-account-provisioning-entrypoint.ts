@@ -1,3 +1,4 @@
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
   assertLoginMethodRemovalLeaseHeld,
@@ -1034,12 +1035,21 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   | SamlAccountProvisioningRpcProps
 > {
   async listExternalIdpPiiSourceShards(input: unknown): Promise<ExternalIdpPiiSourceShard[]> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#listExternalIdpPiiSourceShards(input, env)
+    );
+  }
+
+  async #listExternalIdpPiiSourceShards(
+    input: unknown,
+    env: Env
+  ): Promise<ExternalIdpPiiSourceShard[]> {
     try {
-      authorizedExternalIdp(this.ctx.props, this.env);
+      authorizedExternalIdp(this.ctx.props, env);
       const validated = validateExternalIdpPiiSourceShardListInput(input);
-      if (!this.env.CONTROL) throw new Error('external_idp_pii_source_list_control_unavailable');
+      if (!env.CONTROL) throw new Error('external_idp_pii_source_list_control_unavailable');
       return validateExternalIdpPiiSourceShards(
-        await this.env.CONTROL.listAccountRouteSourceShards({
+        await env.CONTROL.listAccountRouteSourceShards({
           dataRole: 'tenant_pii',
           afterShardId: validated.afterShardId,
           limit: validated.limit,
@@ -1059,10 +1069,19 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   }
 
   async getExternalIdpRouteRemovalStatus(input: unknown): Promise<ExternalIdpRouteRemovalResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#getExternalIdpRouteRemovalStatus(input, env)
+    );
+  }
+
+  async #getExternalIdpRouteRemovalStatus(
+    input: unknown,
+    env: Env
+  ): Promise<ExternalIdpRouteRemovalResult> {
     try {
-      authorizedExternalIdp(this.ctx.props, this.env);
+      authorizedExternalIdp(this.ctx.props, env);
       const validated = validateExternalIdpRouteRemovalStatusInput(input);
-      const context = await resolveAccountDataContext(this.env, {
+      const context = await resolveAccountDataContext(env, {
         tenantId: validated.tenantId,
         accountId: validated.accountId,
       });
@@ -1113,159 +1132,161 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   }
 
   async removeExternalIdpRoute(input: unknown): Promise<ExternalIdpRouteRemovalResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#removeExternalIdpRoute(input, env)
+    );
+  }
+
+  async #removeExternalIdpRoute(input: unknown, env: Env): Promise<ExternalIdpRouteRemovalResult> {
     try {
-      authorizedExternalIdp(this.ctx.props, this.env);
+      authorizedExternalIdp(this.ctx.props, env);
       const validated = validateExternalIdpRouteRemovalInput(input);
-      return await runTenantBackupCoveredEffect(
-        this.env,
-        { tenantId: validated.tenantId },
-        async () => {
-          const context = await resolveAccountDataContext(this.env, {
-            tenantId: validated.tenantId,
-            accountId: validated.accountId,
-          });
-          if (
-            context.accountId !== validated.accountId ||
-            context.legacyUserId !== validated.userId
-          ) {
-            throw new Error('external_idp_route_removal_account_mismatch');
-          }
-          const tenantPii = ensureDatabaseAdapter(context.piiDb, 'external-idp-route-removal-pii');
-          const [issuerDigest, subjectDigest] = await Promise.all([
-            sha256Hex(validated.providerId),
-            sha256Hex(validated.providerUserId),
-          ]);
-          const routeProjectionJson = JSON.stringify(context.membership.routeProjection);
-          const existing = await tenantPii.queryOne<{
-            operation_id: string;
-            account_id: string;
-            user_id: string;
-            issuer_sha256: string;
-            subject_sha256: string;
-            route_projection_json: string;
-            state: string;
-          }>(
-            `SELECT operation_id, account_id, user_id, issuer_sha256, subject_sha256,
+      return await runTenantBackupCoveredEffect(env, { tenantId: validated.tenantId }, async () => {
+        const context = await resolveAccountDataContext(env, {
+          tenantId: validated.tenantId,
+          accountId: validated.accountId,
+        });
+        if (
+          context.accountId !== validated.accountId ||
+          context.legacyUserId !== validated.userId
+        ) {
+          throw new Error('external_idp_route_removal_account_mismatch');
+        }
+        const tenantPii = ensureDatabaseAdapter(context.piiDb, 'external-idp-route-removal-pii');
+        const [issuerDigest, subjectDigest] = await Promise.all([
+          sha256Hex(validated.providerId),
+          sha256Hex(validated.providerUserId),
+        ]);
+        const routeProjectionJson = JSON.stringify(context.membership.routeProjection);
+        const existing = await tenantPii.queryOne<{
+          operation_id: string;
+          account_id: string;
+          user_id: string;
+          issuer_sha256: string;
+          subject_sha256: string;
+          route_projection_json: string;
+          state: string;
+        }>(
+          `SELECT operation_id, account_id, user_id, issuer_sha256, subject_sha256,
                 route_projection_json, state
            FROM external_identifier_unlink_operations WHERE operation_id = ?`,
-            [validated.operationId],
-            { consistencyClass: 'primary_required' }
-          );
-          if (
-            existing &&
-            (existing.account_id !== validated.accountId ||
-              existing.user_id !== validated.userId ||
-              existing.issuer_sha256 !== issuerDigest ||
-              existing.subject_sha256 !== subjectDigest ||
-              existing.route_projection_json !== routeProjectionJson ||
-              !['pending', 'directory_pending', 'completed'].includes(existing.state))
-          ) {
-            throw new Error('external_idp_route_removal_operation_conflict');
-          }
-          if (!existing) {
-            const authority = await tenantPii.queryOne<{
-              id: string;
-              user_id: string;
-              provider_id: string;
-              provider_user_id: string;
-              provisioning_state: string;
-            }>(
-              `SELECT id, user_id, provider_id, provider_user_id, provisioning_state
+          [validated.operationId],
+          { consistencyClass: 'primary_required' }
+        );
+        if (
+          existing &&
+          (existing.account_id !== validated.accountId ||
+            existing.user_id !== validated.userId ||
+            existing.issuer_sha256 !== issuerDigest ||
+            existing.subject_sha256 !== subjectDigest ||
+            existing.route_projection_json !== routeProjectionJson ||
+            !['pending', 'directory_pending', 'completed'].includes(existing.state))
+        ) {
+          throw new Error('external_idp_route_removal_operation_conflict');
+        }
+        if (!existing) {
+          const authority = await tenantPii.queryOne<{
+            id: string;
+            user_id: string;
+            provider_id: string;
+            provider_user_id: string;
+            provisioning_state: string;
+          }>(
+            `SELECT id, user_id, provider_id, provider_user_id, provisioning_state
              FROM linked_identities
             WHERE id = ? AND tenant_id = ? AND user_id = ?`,
-              [validated.linkedIdentityId, validated.tenantId, validated.userId],
-              { consistencyClass: 'primary_required' }
-            );
-            if (
-              !authority ||
-              authority.id !== validated.linkedIdentityId ||
-              authority.user_id !== validated.userId ||
-              authority.provider_id !== validated.providerId ||
-              authority.provider_user_id !== validated.providerUserId ||
-              authority.provisioning_state !== 'active'
-            ) {
-              throw new Error('external_idp_route_removal_authority_not_found');
-            }
-            // The caller's removal lease must still be its own right before the removal writes.
-            if (validated.removalLeaseOwner) {
-              await assertLoginMethodRemovalLeaseHeld(
-                this.env,
-                validated.tenantId,
-                validated.userId,
-                validated.removalLeaseOwner
-              );
-            }
-            const now = Math.floor(Date.now() / 1000);
-            const results = await tenantPii.batch([
-              {
-                sql: `INSERT INTO external_identifier_unlink_operations (
-               operation_id, tenant_id, account_id, user_id, issuer_json, subject_json,
-               issuer_sha256, subject_sha256, route_projection_json, state,
-               attempt_count, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
-                params: [
-                  validated.operationId,
-                  validated.tenantId,
-                  validated.accountId,
-                  validated.userId,
-                  JSON.stringify(validated.providerId),
-                  JSON.stringify(validated.providerUserId),
-                  issuerDigest,
-                  subjectDigest,
-                  routeProjectionJson,
-                  now,
-                  now,
-                ],
-              },
-              {
-                sql: `DELETE FROM linked_identities
-                   WHERE id = ? AND tenant_id = ? AND user_id = ?
-                     AND provider_id = ? AND provider_user_id = ?
-                     AND provisioning_state = 'active'`,
-                params: [
-                  validated.linkedIdentityId,
-                  validated.tenantId,
-                  validated.userId,
-                  validated.providerId,
-                  validated.providerUserId,
-                ],
-              },
-            ]);
-            if (results[0]?.rowsAffected !== 1 || results[1]?.rowsAffected !== 1) {
-              throw new Error('external_idp_route_removal_write_conflict');
-            }
-          }
-          const reflected = await tenantPii.queryOne<{
-            state: string;
-            account_id: string;
-            user_id: string;
-          }>(
-            `SELECT state, account_id, user_id FROM external_identifier_unlink_operations
-          WHERE operation_id = ?`,
-            [validated.operationId],
-            { consistencyClass: 'primary_required' }
-          );
-          const remaining = await tenantPii.queryOne<{ id: string }>(
-            'SELECT id FROM linked_identities WHERE id = ? AND tenant_id = ? AND user_id = ?',
             [validated.linkedIdentityId, validated.tenantId, validated.userId],
             { consistencyClass: 'primary_required' }
           );
           if (
-            !reflected ||
-            reflected.account_id !== validated.accountId ||
-            reflected.user_id !== validated.userId ||
-            !['pending', 'directory_pending', 'completed'].includes(reflected.state) ||
-            remaining
+            !authority ||
+            authority.id !== validated.linkedIdentityId ||
+            authority.user_id !== validated.userId ||
+            authority.provider_id !== validated.providerId ||
+            authority.provider_user_id !== validated.providerUserId ||
+            authority.provisioning_state !== 'active'
           ) {
-            throw new Error('external_idp_route_removal_reflection_conflict');
+            throw new Error('external_idp_route_removal_authority_not_found');
           }
-          return {
-            status: reflected.state === 'completed' ? 201 : 202,
-            operationId: validated.operationId,
-            accountId: validated.accountId,
-          };
+          // The caller's removal lease must still be its own right before the removal writes.
+          if (validated.removalLeaseOwner) {
+            await assertLoginMethodRemovalLeaseHeld(
+              env,
+              validated.tenantId,
+              validated.userId,
+              validated.removalLeaseOwner
+            );
+          }
+          const now = Math.floor(Date.now() / 1000);
+          const results = await tenantPii.batch([
+            {
+              sql: `INSERT INTO external_identifier_unlink_operations (
+               operation_id, tenant_id, account_id, user_id, issuer_json, subject_json,
+               issuer_sha256, subject_sha256, route_projection_json, state,
+               attempt_count, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
+              params: [
+                validated.operationId,
+                validated.tenantId,
+                validated.accountId,
+                validated.userId,
+                JSON.stringify(validated.providerId),
+                JSON.stringify(validated.providerUserId),
+                issuerDigest,
+                subjectDigest,
+                routeProjectionJson,
+                now,
+                now,
+              ],
+            },
+            {
+              sql: `DELETE FROM linked_identities
+                   WHERE id = ? AND tenant_id = ? AND user_id = ?
+                     AND provider_id = ? AND provider_user_id = ?
+                     AND provisioning_state = 'active'`,
+              params: [
+                validated.linkedIdentityId,
+                validated.tenantId,
+                validated.userId,
+                validated.providerId,
+                validated.providerUserId,
+              ],
+            },
+          ]);
+          if (results[0]?.rowsAffected !== 1 || results[1]?.rowsAffected !== 1) {
+            throw new Error('external_idp_route_removal_write_conflict');
+          }
         }
-      );
+        const reflected = await tenantPii.queryOne<{
+          state: string;
+          account_id: string;
+          user_id: string;
+        }>(
+          `SELECT state, account_id, user_id FROM external_identifier_unlink_operations
+          WHERE operation_id = ?`,
+          [validated.operationId],
+          { consistencyClass: 'primary_required' }
+        );
+        const remaining = await tenantPii.queryOne<{ id: string }>(
+          'SELECT id FROM linked_identities WHERE id = ? AND tenant_id = ? AND user_id = ?',
+          [validated.linkedIdentityId, validated.tenantId, validated.userId],
+          { consistencyClass: 'primary_required' }
+        );
+        if (
+          !reflected ||
+          reflected.account_id !== validated.accountId ||
+          reflected.user_id !== validated.userId ||
+          !['pending', 'directory_pending', 'completed'].includes(reflected.state) ||
+          remaining
+        ) {
+          throw new Error('external_idp_route_removal_reflection_conflict');
+        }
+        return {
+          status: reflected.state === 'completed' ? 201 : 202,
+          operationId: validated.operationId,
+          accountId: validated.accountId,
+        };
+      });
     } catch (error) {
       rethrowBackupMutationUnavailable(error);
       if (
@@ -1281,10 +1302,19 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   }
 
   async publishExternalIdpRoute(input: unknown): Promise<ExternalIdpRoutePublicationResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#publishExternalIdpRoute(input, env)
+    );
+  }
+
+  async #publishExternalIdpRoute(
+    input: unknown,
+    env: Env
+  ): Promise<ExternalIdpRoutePublicationResult> {
     try {
-      const environmentId = authorizedExternalIdp(this.ctx.props, this.env);
+      const environmentId = authorizedExternalIdp(this.ctx.props, env);
       const validated = validateExternalIdpRouteInput(input);
-      const context = await resolveAccountDataContext(this.env, {
+      const context = await resolveAccountDataContext(env, {
         tenantId: validated.tenantId,
         accountId: validated.accountId,
       });
@@ -1326,7 +1356,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         subject: validated.providerUserId,
       });
       const result = await publishAccountExternalSubjectAddition(
-        this.env,
+        env,
         {
           operationId: validated.operationId,
           idempotencyKey: validated.idempotencyKey,
@@ -1366,10 +1396,19 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   }
 
   async publishAuthPasskeyRoute(input: unknown): Promise<AuthPasskeyRoutePublicationResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#publishAuthPasskeyRoute(input, env)
+    );
+  }
+
+  async #publishAuthPasskeyRoute(
+    input: unknown,
+    env: Env
+  ): Promise<AuthPasskeyRoutePublicationResult> {
     try {
-      const environmentId = authorized(this.ctx.props, this.env);
+      const environmentId = authorized(this.ctx.props, env);
       const validated = validatePasskeyRouteInput(input);
-      const context = await resolveAccountDataContext(this.env, {
+      const context = await resolveAccountDataContext(env, {
         tenantId: validated.tenantId,
         accountId: validated.accountId,
       });
@@ -1408,7 +1447,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         throw new Error('auth_passkey_route_authority_not_found');
       }
       const result = await publishAccountExternalSubjectAddition(
-        this.env,
+        env,
         {
           operationId: validated.operationId,
           idempotencyKey: validated.idempotencyKey,
@@ -1448,10 +1487,19 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   }
 
   async publishAuthDirectoryRoute(input: unknown): Promise<AuthDirectoryRoutePublicationResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#publishAuthDirectoryRoute(input, env)
+    );
+  }
+
+  async #publishAuthDirectoryRoute(
+    input: unknown,
+    env: Env
+  ): Promise<AuthDirectoryRoutePublicationResult> {
     try {
-      const environmentId = authorized(this.ctx.props, this.env);
+      const environmentId = authorized(this.ctx.props, env);
       const validated = validateDirectoryRouteInput(input);
-      const context = await resolveAccountDataContext(this.env, {
+      const context = await resolveAccountDataContext(env, {
         tenantId: validated.tenantId,
         accountId: validated.accountId,
       });
@@ -1472,7 +1520,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         throw new Error('auth_directory_route_authority_not_found');
       }
       const result = await publishAccountExternalSubjectAddition(
-        this.env,
+        env,
         {
           operationId: validated.operationId,
           idempotencyKey: validated.idempotencyKey,
@@ -1512,10 +1560,16 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   }
 
   async publishAuthDidRoute(input: unknown): Promise<AuthDidRoutePublicationResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#publishAuthDidRoute(input, env)
+    );
+  }
+
+  async #publishAuthDidRoute(input: unknown, env: Env): Promise<AuthDidRoutePublicationResult> {
     try {
-      const environmentId = authorized(this.ctx.props, this.env, { authOnly: true });
+      const environmentId = authorized(this.ctx.props, env, { authOnly: true });
       const validated = validateDidRouteInput(input);
-      const context = await resolveAccountDataContext(this.env, {
+      const context = await resolveAccountDataContext(env, {
         tenantId: validated.tenantId,
         accountId: validated.accountId,
       });
@@ -1555,7 +1609,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         subject: validated.did,
       });
       const result = await publishAccountExternalSubjectAddition(
-        this.env,
+        env,
         {
           operationId: validated.operationId,
           idempotencyKey: validated.idempotencyKey,
@@ -1594,11 +1648,20 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   async getAuthAccountProvisioningStatus(
     input: unknown
   ): Promise<AuthAccountProvisioningStatusResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#getAuthAccountProvisioningStatus(input, env)
+    );
+  }
+
+  async #getAuthAccountProvisioningStatus(
+    input: unknown,
+    env: Env
+  ): Promise<AuthAccountProvisioningStatusResult> {
     try {
-      authorized(this.ctx.props, this.env);
+      authorized(this.ctx.props, env);
       const validated = validateStatusInput(input);
       const operationAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-        this.env,
+        env,
         'auth-account-provisioning-status',
         { tenantId: validated.tenantId }
       );
@@ -1635,14 +1698,20 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   }
 
   async provisionAuthAccount(input: unknown): Promise<AuthAccountProvisioningResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#provisionAuthAccount(input, env)
+    );
+  }
+
+  async #provisionAuthAccount(input: unknown, env: Env): Promise<AuthAccountProvisioningResult> {
     try {
-      const environmentId = authorized(this.ctx.props, this.env);
+      const environmentId = authorized(this.ctx.props, env);
       const validated = validateInput(input);
       if (validated.externalIdentity !== undefined && validated.externalIdentity !== null) {
         throw new Error('auth_account_provisioning_input_invalid');
       }
       return await provisionValidatedAccount(
-        this.env,
+        env,
         this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
         environmentId,
         validated
@@ -1663,14 +1732,23 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   }
 
   async provisionExternalIdpAccount(input: unknown): Promise<AuthAccountProvisioningResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#provisionExternalIdpAccount(input, env)
+    );
+  }
+
+  async #provisionExternalIdpAccount(
+    input: unknown,
+    env: Env
+  ): Promise<AuthAccountProvisioningResult> {
     try {
-      const environmentId = authorizedExternalIdp(this.ctx.props, this.env);
+      const environmentId = authorizedExternalIdp(this.ctx.props, env);
       const validated = validateInput(input);
       if (validated.flow !== 'external_idp' || !validated.externalIdentity) {
         throw new Error('external_idp_account_provisioning_input_invalid');
       }
       return await provisionValidatedAccount(
-        this.env,
+        env,
         this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
         environmentId,
         validated
@@ -1695,14 +1773,23 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   async getExternalIdpAccountProvisioningStatus(
     input: unknown
   ): Promise<AuthAccountProvisioningStatusResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#getExternalIdpAccountProvisioningStatus(input, env)
+    );
+  }
+
+  async #getExternalIdpAccountProvisioningStatus(
+    input: unknown,
+    env: Env
+  ): Promise<AuthAccountProvisioningStatusResult> {
     try {
-      authorizedExternalIdp(this.ctx.props, this.env);
+      authorizedExternalIdp(this.ctx.props, env);
       const validated = validateStatusInput(input);
       if (validated.flow !== 'external_idp') {
         throw new Error('external_idp_account_provisioning_status_input_invalid');
       }
       const operationAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-        this.env,
+        env,
         'external-idp-account-provisioning-status',
         { tenantId: validated.tenantId }
       );

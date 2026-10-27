@@ -133,6 +133,32 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   ),
 
   rule({
+    pattern: '/api/admin/replication-environments/grants',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BACKUPS_MANAGE],
+    description: 'authorize metadata-only environment inventory delegation',
+  }),
+  rule({
+    pattern: '/api/admin/replication-environments/grants/:grantId/revoke',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BACKUPS_MANAGE],
+    description: 'revoke metadata-only environment inventory delegation',
+  }),
+
+  rule({
+    pattern: '/api/admin/replication-backups/grants',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BACKUPS_MANAGE, ADMIN_PERMISSIONS.BACKUPS_EXPORT],
+    description: 'authorize scoped automated backup export',
+  }),
+  rule({
+    pattern: '/api/admin/replication-backups/grants/:grantId/revoke',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BACKUPS_MANAGE, ADMIN_PERMISSIONS.BACKUPS_EXPORT],
+    description: 'revoke scoped automated backup export',
+  }),
+
+  rule({
     pattern: '/api/admin/agent-write/clients/:id/metadata',
     methods: ['PUT'],
     permissions: [ADMIN_PERMISSIONS.CLIENTS_UPDATE],
