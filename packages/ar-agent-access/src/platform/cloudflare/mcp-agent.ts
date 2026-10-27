@@ -1,3 +1,7 @@
+import {
+  runSamlDrCoveredOperation,
+  type SamlDrWriterEnv,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { McpAgent } from 'agents/mcp';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
@@ -5,6 +9,7 @@ import {
   createAgentAccessMcpServer,
   type AgentAccessMcpRequestContext,
   type AgentAccessMcpServerDependencies,
+  type AgentAccessMcpServer,
 } from '../../protocol/mcp';
 import {
   sanitizeCloudflareAgentAccessMcpPropsForStorage,
@@ -214,11 +219,44 @@ export async function destroyCloudflareAgentAccessMcpSession(input: {
   await agent._cf_scheduleDestroy();
 }
 
+/** Fence each application dispatch, including calls arriving on an already-open SDK transport. */
+export function createCoveredCloudflareMcpApplication<E extends SamlDrWriterEnv>(
+  env: E,
+  context: Pick<ExecutionContext, 'waitUntil'>,
+  createApplication: (env: E) => AgentAccessMcpServer
+): AgentAccessMcpServer {
+  const application = createApplication(env);
+  const invoke = <T>(operation: (application: AgentAccessMcpServer) => Promise<T>): Promise<T> =>
+    runSamlDrCoveredOperation(env, context, (coveredEnv) =>
+      operation(coveredEnv === env ? application : createApplication(coveredEnv))
+    );
+  return {
+    protocolRevision: application.protocolRevision,
+    listTools: (...args) => invoke((app) => app.listTools(...args)),
+    callTool: (...args) => invoke((app) => app.callTool(...args)),
+    listResources: (...args) => invoke((app) => app.listResources(...args)),
+    listResourceTemplates: (...args) => invoke((app) => app.listResourceTemplates(...args)),
+    readResource: (...args) => invoke((app) => app.readResource(...args)),
+    listPrompts: (...args) => invoke((app) => app.listPrompts(...args)),
+    getPrompt: (...args) => invoke((app) => app.getPrompt(...args)),
+  };
+}
+
+export const SAML_DR_WRITER_SURFACES = [
+  'mcp:AgentAccessMcpAgent.listTools',
+  'mcp:AgentAccessMcpAgent.callTool',
+  'mcp:AgentAccessMcpAgent.listResources',
+  'mcp:AgentAccessMcpAgent.listResourceTemplates',
+  'mcp:AgentAccessMcpAgent.readResource',
+  'mcp:AgentAccessMcpAgent.listPrompts',
+  'mcp:AgentAccessMcpAgent.getPrompt',
+] as const;
+
 /**
  * Creates the Cloudflare runtime shell around the platform-neutral MCP application. Tool,
  * Resource, and Prompt definitions remain in protocol/mcp and are never declared in this class.
  */
-export function createCloudflareAgentAccessMcpAgent<Env extends Cloudflare.Env>(
+export function createCloudflareAgentAccessMcpAgent<Env extends Cloudflare.Env & SamlDrWriterEnv>(
   options: CloudflareAgentAccessMcpAgentOptions<Env>
 ): CloudflareAgentAccessMcpAgentClass<Env> {
   class AgentAccessMcpAgent extends McpAgent<
@@ -229,14 +267,16 @@ export function createCloudflareAgentAccessMcpAgent<Env extends Cloudflare.Env>(
     initialState: CloudflareAgentAccessMcpState = {};
 
     server: Server = createAgentAccessMcpSdkServer(
-      createAgentAccessMcpServer(
-        options.createDependencies(
-          this.env,
-          getCloudflareAgentAccessCurrentRequest,
-          createCloudflareAgentDiscoveryProfileStore({
-            getState: () => this.state,
-            setState: (state) => this.setState(state),
-          })
+      createCoveredCloudflareMcpApplication(this.env, this.ctx, (env) =>
+        createAgentAccessMcpServer(
+          options.createDependencies(
+            env,
+            getCloudflareAgentAccessCurrentRequest,
+            createCloudflareAgentDiscoveryProfileStore({
+              getState: () => this.state,
+              setState: (state) => this.setState(state),
+            })
+          )
         )
       ),
       () => {

@@ -57,20 +57,28 @@ export async function consumeStoredAuthnRequest(
   requestId: string,
   spEntityId: string
 ): Promise<SAMLRequestData> {
-  const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
-    buildSAMLRequestStoreInstanceName(tenantId, 'idp', spEntityId)
-  );
-  const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
-  const response = await samlRequestStore.fetch(
-    `https://saml-request-store/consume/${encodeURIComponent(requestId)}`,
-    { method: 'POST' }
-  );
-
-  if (!response.ok) {
-    throw new Error('Stored SAML request not found or already used');
+  let storedRequest: SAMLRequestData | null;
+  if (env.SAML_RUNTIME_PORTS) {
+    storedRequest = await env.SAML_RUNTIME_PORTS.requests.consume({
+      tenantId,
+      spEntityId,
+      requestId,
+    });
+  } else {
+    const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
+      buildSAMLRequestStoreInstanceName(tenantId, 'idp', spEntityId)
+    );
+    const samlRequestStore = env.SAML_REQUEST_STORE.get(samlRequestStoreId);
+    const response = await samlRequestStore.fetch(
+      `https://saml-request-store/consume/${encodeURIComponent(requestId)}`,
+      { method: 'POST' }
+    );
+    storedRequest = response.ok ? await response.json<SAMLRequestData>() : null;
   }
 
-  const storedRequest: SAMLRequestData = await response.json();
+  if (!storedRequest) {
+    throw new Error('Stored SAML request not found or already used');
+  }
   if (
     storedRequest.type !== 'authn_request' ||
     storedRequest.issuer !== spEntityId ||
@@ -97,6 +105,27 @@ export async function storeAuthnRequest(
 ): Promise<void> {
   const requestTtlSeconds =
     knownRequestTtlSeconds ?? (await resolveSamlRequestTtlSeconds(env, tenantId));
+  if (env.SAML_RUNTIME_PORTS) {
+    await env.SAML_RUNTIME_PORTS.requests.store({
+      tenantId,
+      spEntityId: authnRequest.issuer,
+      request: {
+        requestId: authnRequest.id,
+        issuer: authnRequest.issuer,
+        destination: authnRequest.destination ?? '',
+        acsUrl: authnRequest.assertionConsumerServiceURL,
+        binding: 'post',
+        type: 'authn_request',
+        data: authnRequest,
+        relayState,
+        context,
+        used: false,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + requestTtlSeconds * 1000,
+      },
+    });
+    return;
+  }
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
     buildSAMLRequestStoreInstanceName(tenantId, 'idp', authnRequest.issuer)
   );

@@ -1,3 +1,4 @@
+import { runSamlDrCoveredOperation } from '../services/tenant-portability/saml-dr-writer';
 /**
  * KeyManager Durable Object
  *
@@ -291,6 +292,67 @@ async function verifyImportedKeyPair(
  * - RSA: RS256 for OIDC ID tokens and access tokens
  * - EC: ES256/ES384/ES512 for SD-JWT VC (HAIP compliance)
  */
+/** Complete public source admission surface; checked against the class prototype in tests. */
+export const SAML_DR_KEY_MANAGER_SURFACE = {
+  guarded: [
+    'getActiveKeyRpc',
+    'getActiveKeyWithPrivateRpc',
+    'getAllPublicKeysRpc',
+    'getActiveOIDCSigningKeyWithPrivateRpc',
+    'getAllOIDCPublicKeysRpc',
+    'getRequestObjectDecryptionKeyRpc',
+    'rotateRequestObjectEncKeyRpc',
+    'rotateOIDCES256KeyRpc',
+    'rotateOIDCPS256KeyRpc',
+    'rotateKeysRpc',
+    'rotateKeysWithPrivateRpc',
+    'emergencyRotateKeysRpc',
+    'shouldRotateKeysRpc',
+    'getConfigRpc',
+    'updateConfigRpc',
+    'getStatusRpc',
+    'importTenantBackupStateRpc',
+    'getActiveECKeyRpc',
+    'getActiveECKeyWithPrivateRpc',
+    'signVCIAccessTokenRpc',
+    'signSDJWTIssuerRpc',
+    'signStatusListCredentialRpc',
+    'getAllECPublicKeysRpc',
+    'rotateECKeysRpc',
+    'rotateECKeysWithPrivateRpc',
+    'emergencyRotateECKeysRpc',
+    'getECStatusRpc',
+    'generateNewKey',
+    'setActiveKey',
+    'getActiveKey',
+    'getAllPublicKeys',
+    'getKey',
+    'rotateKeys',
+    'emergencyRotateKeys',
+    'shouldRotateKeys',
+    'updateConfig',
+    'getConfig',
+    'getOrCreateSecretRpc',
+    'rotateSecretRpc',
+    'storeCertificateForKey',
+    'importKey',
+    'generateNewECKey',
+    'setActiveECKey',
+    'getActiveECKey',
+    'getAllECPublicKeys',
+    'rotateECKeys',
+    'emergencyRotateECKeys',
+    'fetch',
+  ],
+  snapshot: [
+    'startTenantBackupSnapshotRpc',
+    'loadTenantBackupSnapshotRpc',
+    'releaseTenantBackupSnapshotRpc',
+    'assertTenantBackupSnapshotReleasedRpc',
+  ],
+  readonly: ['exportTenantBackupStateRpc', 'verifyTenantBackupStateRpc', 'getExistingSecretRpc'],
+} as const;
+
 export class KeyManager extends DurableObject<Env> {
   private keyManagerState: KeyManagerState | null = null;
   private ecKeyManagerState: ECKeyManagerState | null = null;
@@ -300,6 +362,9 @@ export class KeyManager extends DurableObject<Env> {
   private oidcPS256CreationPromise: Promise<StoredKey> | null = null;
   private requestObjectEncKeyManagerState: RequestObjectEncKeyManagerState | null = null;
   private requestObjectEncCreationPromise: Promise<StoredKey> | null = null;
+  #requiresAdmittedInitialization = false;
+  #admittedInitialization: Promise<void> | null = null;
+  #reloadBeforeOperation = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -308,18 +373,57 @@ export class KeyManager extends DurableObject<Env> {
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for cryptographic key management and migration
     this.initialization = ctx.blockConcurrencyWhile(async () => {
-      await this.initializeStateBlocking();
+      if (env.ENABLE_SAML_DR_EXPORT === 'true') {
+        await this.#loadExistingState();
+      } else {
+        await this.#initializeStateBlocking();
+      }
     });
   }
 
   /** The initialization the constructor started; a call made before it ends waits for it. */
   private readonly initialization: Promise<void>;
 
+  /** Loading an opted-in source cannot create or migrate authority before admission. */
+  async #loadExistingState(): Promise<void> {
+    const [rsa, ec, oidcEC, oidcPS256, requestObjectEnc] = await Promise.all([
+      this.ctx.storage.get<KeyManagerState>('state'),
+      this.ctx.storage.get<ECKeyManagerState>('ecState'),
+      this.ctx.storage.get<OIDCECKeyManagerState>('oidcECState'),
+      this.ctx.storage.get<OIDCPS256KeyManagerState>('oidcPS256State'),
+      this.ctx.storage.get<RequestObjectEncKeyManagerState>('requestObjectEncState'),
+    ]);
+    this.keyManagerState = rsa ?? null;
+    this.ecKeyManagerState = ec ?? null;
+    this.oidcECKeyManagerState = oidcEC ?? null;
+    this.oidcPS256KeyManagerState = oidcPS256 ?? null;
+    this.requestObjectEncKeyManagerState = requestObjectEnc ?? null;
+    this.#requiresAdmittedInitialization =
+      !rsa ||
+      !ec ||
+      !oidcEC ||
+      !oidcPS256 ||
+      !requestObjectEnc ||
+      rsa.keys.some((key) => 'isActive' in key && !('status' in key));
+    this.#reloadBeforeOperation = false;
+  }
+
+  /** Snapshot work runs under the caller's held boundary, never an ordinary writer permit. */
+  async #assertSnapshotAuthority(): Promise<void> {
+    await this.initialization;
+    if (this.env.ENABLE_SAML_DR_EXPORT === 'true') {
+      if (this.#requiresAdmittedInitialization || !this.keyManagerState)
+        throw new Error('saml_dr_key_manager_authority_uninitialized');
+      return;
+    }
+    await this.#initializeState();
+  }
+
   /**
    * Initialize state from Durable Storage
    * Called by blockConcurrencyWhile() in constructor
    */
-  private async initializeStateBlocking(): Promise<void> {
+  async #initializeStateBlocking(): Promise<void> {
     // Initialize RSA key state
     const stored = await this.ctx.storage.get<KeyManagerState>('state');
 
@@ -327,7 +431,7 @@ export class KeyManager extends DurableObject<Env> {
       this.keyManagerState = stored;
       this.keyManagerState.secrets ??= {};
       // Run migration if needed
-      await this.migrateIsActiveToStatus();
+      await this.#migrateIsActiveToStatus();
     } else {
       // Initialize with default configuration
       this.keyManagerState = {
@@ -341,7 +445,7 @@ export class KeyManager extends DurableObject<Env> {
         secrets: {},
       };
 
-      await this.saveState();
+      await this.#saveState();
     }
 
     // Initialize EC key state (Phase 9)
@@ -365,7 +469,7 @@ export class KeyManager extends DurableObject<Env> {
         lastRotation: null,
       };
 
-      await this.saveECState();
+      await this.#saveECState();
     }
 
     const storedOIDCECState = await this.ctx.storage.get<OIDCECKeyManagerState>('oidcECState');
@@ -381,7 +485,7 @@ export class KeyManager extends DurableObject<Env> {
         },
         lastRotation: null,
       };
-      await this.saveOIDCECState();
+      await this.#saveOIDCECState();
     }
 
     const storedOIDCPS256State =
@@ -398,7 +502,7 @@ export class KeyManager extends DurableObject<Env> {
         },
         lastRotation: null,
       };
-      await this.saveOIDCPS256State();
+      await this.#saveOIDCPS256State();
     }
 
     const storedRequestObjectEncState =
@@ -415,7 +519,7 @@ export class KeyManager extends DurableObject<Env> {
         },
         lastRotation: null,
       };
-      await this.saveRequestObjectEncState();
+      await this.#saveRequestObjectEncState();
     }
   }
 
@@ -427,55 +531,70 @@ export class KeyManager extends DurableObject<Env> {
    * RPC: Get the active signing key (without private key)
    */
   async getActiveKeyRpc(): Promise<Omit<StoredKey, 'privatePEM'> | null> {
-    const activeKey = await this.getActiveKey();
-    if (!activeKey) return null;
-    return this.sanitizeKey(activeKey);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const activeKey = await this.getActiveKey();
+      if (!activeKey) return null;
+      return this.#sanitizeKey(activeKey);
+    });
   }
 
   /**
    * RPC: Get the active signing key with private key (for internal use)
    */
   async getActiveKeyWithPrivateRpc(): Promise<StoredKey | null> {
-    return this.getActiveKey();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.getActiveKey();
+    });
   }
 
   /**
    * RPC: Get all public keys (for JWKS endpoint)
    */
   async getAllPublicKeysRpc(): Promise<JWK[]> {
-    return this.getAllPublicKeys();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.getAllPublicKeys();
+    });
   }
 
   /** RPC: Get or create the active key for an OIDC signing algorithm. */
   async getActiveOIDCSigningKeyWithPrivateRpc(
     algorithm: OIDCSigningAlgorithm
   ): Promise<StoredKey | StoredECKey> {
-    if (algorithm === 'RS256') {
-      return (await this.getActiveKey()) ?? (await this.rotateKeys());
-    }
-    if (algorithm === 'ES256') {
-      return this.ensureActiveOIDCES256Key();
-    }
-    if (algorithm === 'PS256') {
-      return this.ensureActiveOIDCPS256Key();
-    }
-    throw new Error('unsupported_oidc_signing_algorithm');
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      if (algorithm === 'RS256') {
+        return (await this.getActiveKey()) ?? (await this.rotateKeys());
+      }
+      if (algorithm === 'ES256') {
+        return this.#ensureActiveOIDCES256Key();
+      }
+      if (algorithm === 'PS256') {
+        return this.#ensureActiveOIDCPS256Key();
+      }
+      throw new Error('unsupported_oidc_signing_algorithm');
+    });
   }
 
   /** RPC: Public OIDC JWKS, including RSA and the purpose-separated OIDC ES256 key. */
   async getAllOIDCPublicKeysRpc(): Promise<JWK[]> {
-    if (!(await this.getActiveKey())) {
-      await this.rotateKeys();
-    }
-    await this.ensureActiveOIDCES256Key();
-    await this.ensureActiveOIDCPS256Key();
-    await this.ensureActiveRequestObjectEncKey();
-    return [
-      ...(await this.getAllPublicKeys()),
-      ...this.getAllOIDCECPublicKeys(),
-      ...this.getAllOIDCPS256PublicKeys(),
-      ...this.getAllRequestObjectEncPublicKeys(),
-    ];
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      if (!(await this.getActiveKey())) {
+        await this.rotateKeys();
+      }
+      await this.#ensureActiveOIDCES256Key();
+      await this.#ensureActiveOIDCPS256Key();
+      await this.#ensureActiveRequestObjectEncKey();
+      return [
+        ...(await this.getAllPublicKeys()),
+        ...this.#getAllOIDCECPublicKeys(),
+        ...this.#getAllOIDCPS256PublicKeys(),
+        ...this.#getAllRequestObjectEncPublicKeys(),
+      ];
+    });
   }
 
   /**
@@ -483,73 +602,101 @@ export class KeyManager extends DurableObject<Env> {
    * overlapping), else the active one. Null when the kid names none of them.
    */
   async getRequestObjectDecryptionKeyRpc(kid?: string): Promise<StoredKey | null> {
-    await this.initializeState();
-    if (kid === undefined) return this.ensureActiveRequestObjectEncKey();
-    const now = Date.now();
-    return (
-      this.getRequestObjectEncState().keys.find(
-        (key) => key.kid === kid && isUsableRequestObjectEncKey(key, now)
-      ) ?? null
-    );
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      if (kid === undefined) return this.#ensureActiveRequestObjectEncKey();
+      const now = Date.now();
+      return (
+        this.#getRequestObjectEncState().keys.find(
+          (key) => key.kid === kid && isUsableRequestObjectEncKey(key, now)
+        ) ?? null
+      );
+    });
   }
 
   /** RPC: Rotate only the request object encryption key. */
   async rotateRequestObjectEncKeyRpc(): Promise<Omit<StoredKey, 'privatePEM'>> {
-    await this.initializeState();
-    return this.sanitizeKey(await this.rotateRequestObjectEncKey());
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.#sanitizeKey(await this.#rotateRequestObjectEncKey());
+    });
   }
 
   /** RPC: Rotate only the purpose-separated OIDC ES256 key. */
   async rotateOIDCES256KeyRpc(): Promise<Omit<StoredECKey, 'privatePEM'>> {
-    return this.sanitizeECKey(await this.rotateOIDCES256Key());
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.#sanitizeECKey(await this.#rotateOIDCES256Key());
+    });
   }
 
   /** RPC: Rotate only the purpose-separated OIDC PS256 key. */
   async rotateOIDCPS256KeyRpc(): Promise<Omit<StoredKey, 'privatePEM'>> {
-    return this.sanitizeKey(await this.rotateOIDCPS256Key());
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.#sanitizeKey(await this.#rotateOIDCPS256Key());
+    });
   }
 
   /**
    * RPC: Rotate keys
    */
   async rotateKeysRpc(): Promise<Omit<StoredKey, 'privatePEM'>> {
-    const newKey = await this.rotateKeys();
-    return this.sanitizeKey(newKey);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const newKey = await this.rotateKeys();
+      return this.#sanitizeKey(newKey);
+    });
   }
 
   /**
    * RPC: Rotate keys (with private key for internal use)
    */
   async rotateKeysWithPrivateRpc(): Promise<StoredKey> {
-    return this.rotateKeys();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.rotateKeys();
+    });
   }
 
   /**
    * RPC: Emergency key rotation
    */
   async emergencyRotateKeysRpc(reason: string): Promise<{ oldKid: string; newKid: string }> {
-    return this.emergencyRotateKeys(reason);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.emergencyRotateKeys(reason);
+    });
   }
 
   /**
    * RPC: Check if rotation is needed
    */
   async shouldRotateKeysRpc(): Promise<boolean> {
-    return this.shouldRotateKeys();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.shouldRotateKeys();
+    });
   }
 
   /**
    * RPC: Get configuration
    */
   async getConfigRpc(): Promise<KeyRotationConfig> {
-    return this.getConfig();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.getConfig();
+    });
   }
 
   /**
    * RPC: Update configuration
    */
   async updateConfigRpc(config: Partial<KeyRotationConfig>): Promise<void> {
-    return this.updateConfig(config);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.updateConfig(config);
+    });
   }
 
   /**
@@ -567,34 +714,36 @@ export class KeyManager extends DurableObject<Env> {
     activeKeyId: string | null;
     lastRotation: number | null;
   }> {
-    await this.initializeState();
-    const state = this.getState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const state = this.#getState();
 
-    const keys = state.keys.map((k) => ({
-      kid: k.kid,
-      status: k.status,
-      createdAt: k.createdAt,
-      expiresAt: k.expiresAt,
-      revokedAt: k.revokedAt,
-      revokedReason: k.revokedReason,
-    }));
+      const keys = state.keys.map((k) => ({
+        kid: k.kid,
+        status: k.status,
+        createdAt: k.createdAt,
+        expiresAt: k.expiresAt,
+        revokedAt: k.revokedAt,
+        revokedReason: k.revokedReason,
+      }));
 
-    return {
-      keys,
-      activeKeyId: state.activeKeyId,
-      lastRotation: state.lastRotation,
-    };
+      return {
+        keys,
+        activeKeyId: state.activeKeyId,
+        lastRotation: state.lastRotation,
+      };
+    });
   }
 
   /** Export every tenant OIDC/VC signing generation and managed secret for an encrypted DR bundle. */
   async exportTenantBackupStateRpc(): Promise<KeyManagerTenantBackupSnapshot> {
-    await this.initializeState();
-    return normalizeKeyManagerTenantBackupSnapshot(this.currentTenantBackupState());
+    await this.#assertSnapshotAuthority();
+    return normalizeKeyManagerTenantBackupSnapshot(await this.#sourceSnapshotState());
   }
 
   /** Freeze one immutable operation-owned view while the cross-store admission lock is held. */
   async startTenantBackupSnapshotRpc(snapshotId: string): Promise<void> {
-    await this.initializeState();
+    await this.#assertSnapshotAuthority();
     if (!TENANT_BACKUP_SNAPSHOT_ID.test(snapshotId))
       throw new Error('backup_key_manager_snapshot_id_invalid');
     const key = `${TENANT_BACKUP_SNAPSHOT_KEY_PREFIX}${snapshotId}`;
@@ -603,12 +752,12 @@ export class KeyManager extends DurableObject<Env> {
       await normalizeKeyManagerTenantBackupSnapshot(existing);
       return;
     }
-    await this.ctx.storage.put(key, this.currentTenantBackupState());
+    await this.ctx.storage.put(key, await this.#sourceSnapshotState());
   }
 
   /** Read the frozen state instead of a later live key generation. */
   async loadTenantBackupSnapshotRpc(snapshotId: string): Promise<KeyManagerTenantBackupSnapshot> {
-    await this.initializeState();
+    await this.#assertSnapshotAuthority();
     if (!TENANT_BACKUP_SNAPSHOT_ID.test(snapshotId))
       throw new Error('backup_key_manager_snapshot_id_invalid');
     const snapshot = await this.ctx.storage.get<KeyManagerTenantBackupSnapshot>(
@@ -648,73 +797,75 @@ export class KeyManager extends DurableObject<Env> {
     oidcKeys: number;
     secrets: number;
   }> {
-    await this.initializeState();
-    const snapshot = await normalizeKeyManagerTenantBackupSnapshot(input);
-    const current = this.currentTenantBackupState();
-    const exactRetry = keyManagerTenantBackupSnapshotsEqual(current, snapshot);
-    const replaceBootstrapKey =
-      options !== undefined &&
-      !Array.isArray(options) &&
-      Object.keys(options).length === 1 &&
-      options.replaceBootstrapKey === true;
-    const singleActivePurposeKey = (value: {
-      keys: Array<{ kid: string; status: KeyStatus }>;
-      activeKeyId: string | null;
-    }) =>
-      value.keys.length === 0
-        ? value.activeKeyId === null
-        : value.keys.length === 1 &&
-          value.keys[0]?.status === 'active' &&
-          value.activeKeyId === value.keys[0]?.kid;
-    const bootstrapOnly =
-      current.rsa.keys.length === 1 &&
-      current.rsa.keys[0]?.status === 'active' &&
-      current.rsa.activeKeyId === current.rsa.keys[0]?.kid &&
-      current.rsa.lastRotation !== null &&
-      Object.keys(current.rsa.secrets).length === 0 &&
-      current.vcEc.keys.length === 0 &&
-      singleActivePurposeKey(current.oidcEs256) &&
-      singleActivePurposeKey(current.oidcPs256) &&
-      singleActivePurposeKey(current.requestObjectEnc);
-    if (
-      !exactRetry &&
-      !keyManagerTenantBackupSnapshotIsEmpty(current) &&
-      !(replaceBootstrapKey && bootstrapOnly)
-    )
-      throw new Error('backup_key_manager_target_not_empty');
-    if (!exactRetry) {
-      await this.ctx.storage.transaction(async (transaction) => {
-        await transaction.put({
-          state: snapshot.rsa,
-          ecState: snapshot.vcEc,
-          oidcECState: snapshot.oidcEs256,
-          oidcPS256State: snapshot.oidcPs256,
-          requestObjectEncState: snapshot.requestObjectEnc,
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const snapshot = await normalizeKeyManagerTenantBackupSnapshot(input);
+      const current = this.#currentTenantBackupState();
+      const exactRetry = keyManagerTenantBackupSnapshotsEqual(current, snapshot);
+      const replaceBootstrapKey =
+        options !== undefined &&
+        !Array.isArray(options) &&
+        Object.keys(options).length === 1 &&
+        options.replaceBootstrapKey === true;
+      const singleActivePurposeKey = (value: {
+        keys: Array<{ kid: string; status: KeyStatus }>;
+        activeKeyId: string | null;
+      }) =>
+        value.keys.length === 0
+          ? value.activeKeyId === null
+          : value.keys.length === 1 &&
+            value.keys[0]?.status === 'active' &&
+            value.activeKeyId === value.keys[0]?.kid;
+      const bootstrapOnly =
+        current.rsa.keys.length === 1 &&
+        current.rsa.keys[0]?.status === 'active' &&
+        current.rsa.activeKeyId === current.rsa.keys[0]?.kid &&
+        current.rsa.lastRotation !== null &&
+        Object.keys(current.rsa.secrets).length === 0 &&
+        current.vcEc.keys.length === 0 &&
+        singleActivePurposeKey(current.oidcEs256) &&
+        singleActivePurposeKey(current.oidcPs256) &&
+        singleActivePurposeKey(current.requestObjectEnc);
+      if (
+        !exactRetry &&
+        !keyManagerTenantBackupSnapshotIsEmpty(current) &&
+        !(replaceBootstrapKey && bootstrapOnly)
+      )
+        throw new Error('backup_key_manager_target_not_empty');
+      if (!exactRetry) {
+        await this.ctx.storage.transaction(async (transaction) => {
+          await transaction.put({
+            state: snapshot.rsa,
+            ecState: snapshot.vcEc,
+            oidcECState: snapshot.oidcEs256,
+            oidcPS256State: snapshot.oidcPs256,
+            requestObjectEncState: snapshot.requestObjectEnc,
+          });
         });
-      });
-      this.keyManagerState = structuredClone(snapshot.rsa);
-      this.ecKeyManagerState = structuredClone(snapshot.vcEc);
-      this.oidcECKeyManagerState = structuredClone(snapshot.oidcEs256);
-      this.oidcPS256KeyManagerState = structuredClone(snapshot.oidcPs256);
-      this.requestObjectEncKeyManagerState = structuredClone(snapshot.requestObjectEnc);
-    }
-    return {
-      imported: !exactRetry,
-      rsaKeys: snapshot.rsa.keys.length,
-      vcKeys: snapshot.vcEc.keys.length,
-      oidcKeys:
-        snapshot.oidcEs256.keys.length +
-        snapshot.oidcPs256.keys.length +
-        snapshot.requestObjectEnc.keys.length,
-      secrets: Object.keys(snapshot.rsa.secrets).length,
-    };
+        this.keyManagerState = structuredClone(snapshot.rsa);
+        this.ecKeyManagerState = structuredClone(snapshot.vcEc);
+        this.oidcECKeyManagerState = structuredClone(snapshot.oidcEs256);
+        this.oidcPS256KeyManagerState = structuredClone(snapshot.oidcPs256);
+        this.requestObjectEncKeyManagerState = structuredClone(snapshot.requestObjectEnc);
+      }
+      return {
+        imported: !exactRetry,
+        rsaKeys: snapshot.rsa.keys.length,
+        vcKeys: snapshot.vcEc.keys.length,
+        oidcKeys:
+          snapshot.oidcEs256.keys.length +
+          snapshot.oidcPs256.keys.length +
+          snapshot.requestObjectEnc.keys.length,
+        secrets: Object.keys(snapshot.rsa.secrets).length,
+      };
+    });
   }
 
   /** Re-verify key pairs and compare the complete stored rotation state after restore. */
   async verifyTenantBackupStateRpc(input: unknown): Promise<boolean> {
-    await this.initializeState();
+    await this.#assertSnapshotAuthority();
     const expected = await normalizeKeyManagerTenantBackupSnapshot(input);
-    return keyManagerTenantBackupSnapshotsEqual(this.currentTenantBackupState(), expected);
+    return keyManagerTenantBackupSnapshotsEqual(await this.#sourceSnapshotState(), expected);
   }
 
   // ==========================================
@@ -725,157 +876,181 @@ export class KeyManager extends DurableObject<Env> {
    * RPC: Get the active EC signing key for a specific algorithm (without private key)
    */
   async getActiveECKeyRpc(algorithm: ECAlgorithm): Promise<Omit<StoredECKey, 'privatePEM'> | null> {
-    const activeKey = await this.getActiveECKey(algorithm);
-    if (!activeKey) return null;
-    return this.sanitizeECKey(activeKey);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const activeKey = await this.getActiveECKey(algorithm);
+      if (!activeKey) return null;
+      return this.#sanitizeECKey(activeKey);
+    });
   }
 
   /**
    * RPC: Get the active EC signing key with private key (for internal VC signing)
    */
   async getActiveECKeyWithPrivateRpc(algorithm: ECAlgorithm): Promise<StoredECKey | null> {
-    return this.getActiveECKey(algorithm);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.getActiveECKey(algorithm);
+    });
   }
 
   /** Sign the narrowly defined VCI access-token contract without exporting key material. */
   async signVCIAccessTokenRpc(input: SignVCIAccessTokenInput): Promise<SignVCIAccessTokenResult> {
-    const tenantId = input.tenantId?.trim();
-    const userId = input.userId?.trim();
-    const offerId = input.offerId?.trim();
-    const configurationId = input.credentialConfigurationId?.trim();
-    const issuer = input.issuer?.trim();
-    if (
-      !tenantId ||
-      tenantId.length > 128 ||
-      !userId ||
-      userId.length > 256 ||
-      !offerId ||
-      offerId.length > 512 ||
-      !configurationId ||
-      configurationId.length > 256 ||
-      !issuer ||
-      issuer.length > 2048
-    ) {
-      throw new Error('invalid_vci_access_token_signing_input');
-    }
-    const expiresIn = Math.min(Math.max(input.expiresInSeconds ?? 3600, 60), 3600);
-    const activeKey = await this.getActiveECKey('ES256');
-    if (!activeKey) throw new Error('vci_access_token_signing_key_unavailable');
-    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
-    const now = Math.floor(Date.now() / 1000);
-    const jti = crypto.randomUUID();
-    const token = await new SignJWT({
-      tenant_id: tenantId,
-      offer_id: offerId,
-      credential_configuration_id: configurationId,
-      scope: 'credential',
-    })
-      .setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: activeKey.kid })
-      .setSubject(userId)
-      .setIssuedAt(now)
-      .setJti(jti)
-      .setExpirationTime(now + expiresIn)
-      .setIssuer(issuer)
-      .setAudience(issuer)
-      .sign(privateKey);
-    return { token, kid: activeKey.kid, jti };
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const tenantId = input.tenantId?.trim();
+      const userId = input.userId?.trim();
+      const offerId = input.offerId?.trim();
+      const configurationId = input.credentialConfigurationId?.trim();
+      const issuer = input.issuer?.trim();
+      if (
+        !tenantId ||
+        tenantId.length > 128 ||
+        !userId ||
+        userId.length > 256 ||
+        !offerId ||
+        offerId.length > 512 ||
+        !configurationId ||
+        configurationId.length > 256 ||
+        !issuer ||
+        issuer.length > 2048
+      ) {
+        throw new Error('invalid_vci_access_token_signing_input');
+      }
+      const expiresIn = Math.min(Math.max(input.expiresInSeconds ?? 3600, 60), 3600);
+      const activeKey = await this.getActiveECKey('ES256');
+      if (!activeKey) throw new Error('vci_access_token_signing_key_unavailable');
+      const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+      const now = Math.floor(Date.now() / 1000);
+      const jti = crypto.randomUUID();
+      const token = await new SignJWT({
+        tenant_id: tenantId,
+        offer_id: offerId,
+        credential_configuration_id: configurationId,
+        scope: 'credential',
+      })
+        .setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: activeKey.kid })
+        .setSubject(userId)
+        .setIssuedAt(now)
+        .setJti(jti)
+        .setExpirationTime(now + expiresIn)
+        .setIssuer(issuer)
+        .setAudience(issuer)
+        .sign(privateKey);
+      return { token, kid: activeKey.kid, jti };
+    });
   }
 
   /** Sign a bounded SD-JWT VC issuer payload without exporting the EC private key. */
   async signSDJWTIssuerRpc(payload: JWTPayload): Promise<SignSDJWTIssuerResult> {
-    const now = Math.floor(Date.now() / 1000);
-    const issuer = typeof payload.iss === 'string' ? payload.iss.trim() : '';
-    const vct = typeof payload.vct === 'string' ? payload.vct.trim() : '';
-    const encodedPayload = JSON.stringify(payload);
-    const disclosureHashes = payload._sd;
-    if (
-      !issuer ||
-      issuer.length > 2048 ||
-      !vct ||
-      vct.length > 512 ||
-      typeof payload.iat !== 'number' ||
-      Math.abs(payload.iat - now) > 300 ||
-      payload._sd_alg !== 'sha-256' ||
-      encodedPayload.length > 64 * 1024 ||
-      (disclosureHashes !== undefined &&
-        (!Array.isArray(disclosureHashes) ||
-          disclosureHashes.length > 128 ||
-          disclosureHashes.some((value) => typeof value !== 'string' || value.length > 128)))
-    ) {
-      throw new Error('invalid_sd_jwt_issuer_signing_input');
-    }
-    const activeKey = await this.getActiveECKey('ES256');
-    if (!activeKey) throw new Error('sd_jwt_issuer_signing_key_unavailable');
-    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
-    const token = await new SignJWT(payload)
-      .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: activeKey.kid })
-      .sign(privateKey);
-    return { token, kid: activeKey.kid };
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const now = Math.floor(Date.now() / 1000);
+      const issuer = typeof payload.iss === 'string' ? payload.iss.trim() : '';
+      const vct = typeof payload.vct === 'string' ? payload.vct.trim() : '';
+      const encodedPayload = JSON.stringify(payload);
+      const disclosureHashes = payload._sd;
+      if (
+        !issuer ||
+        issuer.length > 2048 ||
+        !vct ||
+        vct.length > 512 ||
+        typeof payload.iat !== 'number' ||
+        Math.abs(payload.iat - now) > 300 ||
+        payload._sd_alg !== 'sha-256' ||
+        encodedPayload.length > 64 * 1024 ||
+        (disclosureHashes !== undefined &&
+          (!Array.isArray(disclosureHashes) ||
+            disclosureHashes.length > 128 ||
+            disclosureHashes.some((value) => typeof value !== 'string' || value.length > 128)))
+      ) {
+        throw new Error('invalid_sd_jwt_issuer_signing_input');
+      }
+      const activeKey = await this.getActiveECKey('ES256');
+      if (!activeKey) throw new Error('sd_jwt_issuer_signing_key_unavailable');
+      const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+      const token = await new SignJWT(payload)
+        .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: activeKey.kid })
+        .sign(privateKey);
+      return { token, kid: activeKey.kid };
+    });
   }
 
   /** Sign the fixed Bitstring Status List JWT contract without exporting key material. */
   async signStatusListCredentialRpc(payload: JWTPayload): Promise<SignStatusListCredentialResult> {
-    const now = Math.floor(Date.now() / 1000);
-    const vc = payload.vc as
-      | {
-          type?: unknown;
-          credentialSubject?: {
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const now = Math.floor(Date.now() / 1000);
+      const vc = payload.vc as
+        | {
             type?: unknown;
-            statusPurpose?: unknown;
-            encodedList?: unknown;
-          };
-        }
-      | undefined;
-    const subject = vc?.credentialSubject;
-    const encodedPayload = JSON.stringify(payload);
-    if (
-      typeof payload.iss !== 'string' ||
-      !payload.iss.startsWith('did:web:') ||
-      typeof payload.sub !== 'string' ||
-      !payload.sub.startsWith('https://') ||
-      typeof payload.iat !== 'number' ||
-      Math.abs(payload.iat - now) > 300 ||
-      typeof payload.exp !== 'number' ||
-      payload.exp <= now ||
-      payload.exp > now + 86400 ||
-      !Array.isArray(vc?.type) ||
-      !vc.type.includes('BitstringStatusListCredential') ||
-      subject?.type !== 'BitstringStatusList' ||
-      !['revocation', 'suspension'].includes(String(subject.statusPurpose)) ||
-      typeof subject.encodedList !== 'string' ||
-      encodedPayload.length > 4 * 1024 * 1024
-    ) {
-      throw new Error('invalid_status_list_signing_input');
-    }
-    const activeKey = await this.getActiveECKey('ES256');
-    if (!activeKey) throw new Error('status_list_signing_key_unavailable');
-    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
-    const token = await new SignJWT(payload)
-      .setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: activeKey.kid })
-      .sign(privateKey);
-    return { token, kid: activeKey.kid };
+            credentialSubject?: {
+              type?: unknown;
+              statusPurpose?: unknown;
+              encodedList?: unknown;
+            };
+          }
+        | undefined;
+      const subject = vc?.credentialSubject;
+      const encodedPayload = JSON.stringify(payload);
+      if (
+        typeof payload.iss !== 'string' ||
+        !payload.iss.startsWith('did:web:') ||
+        typeof payload.sub !== 'string' ||
+        !payload.sub.startsWith('https://') ||
+        typeof payload.iat !== 'number' ||
+        Math.abs(payload.iat - now) > 300 ||
+        typeof payload.exp !== 'number' ||
+        payload.exp <= now ||
+        payload.exp > now + 86400 ||
+        !Array.isArray(vc?.type) ||
+        !vc.type.includes('BitstringStatusListCredential') ||
+        subject?.type !== 'BitstringStatusList' ||
+        !['revocation', 'suspension'].includes(String(subject.statusPurpose)) ||
+        typeof subject.encodedList !== 'string' ||
+        encodedPayload.length > 4 * 1024 * 1024
+      ) {
+        throw new Error('invalid_status_list_signing_input');
+      }
+      const activeKey = await this.getActiveECKey('ES256');
+      if (!activeKey) throw new Error('status_list_signing_key_unavailable');
+      const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+      const token = await new SignJWT(payload)
+        .setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: activeKey.kid })
+        .sign(privateKey);
+      return { token, kid: activeKey.kid };
+    });
   }
 
   /**
    * RPC: Get all EC public keys (for JWKS endpoint)
    */
   async getAllECPublicKeysRpc(): Promise<JWK[]> {
-    return this.getAllECPublicKeys();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.getAllECPublicKeys();
+    });
   }
 
   /**
    * RPC: Rotate EC keys for a specific algorithm
    */
   async rotateECKeysRpc(algorithm: ECAlgorithm): Promise<Omit<StoredECKey, 'privatePEM'>> {
-    const newKey = await this.rotateECKeys(algorithm);
-    return this.sanitizeECKey(newKey);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const newKey = await this.rotateECKeys(algorithm);
+      return this.#sanitizeECKey(newKey);
+    });
   }
 
   /**
    * RPC: Rotate EC keys with private key (for internal use)
    */
   async rotateECKeysWithPrivateRpc(algorithm: ECAlgorithm): Promise<StoredECKey> {
-    return this.rotateECKeys(algorithm);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.rotateECKeys(algorithm);
+    });
   }
 
   /**
@@ -885,7 +1060,10 @@ export class KeyManager extends DurableObject<Env> {
     algorithm: ECAlgorithm,
     reason: string
   ): Promise<{ oldKid: string; newKid: string }> {
-    return this.emergencyRotateECKeys(algorithm, reason);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.emergencyRotateECKeys(algorithm, reason);
+    });
   }
 
   /**
@@ -905,25 +1083,28 @@ export class KeyManager extends DurableObject<Env> {
     activeKeyIds: Record<ECAlgorithm, string | null>;
     lastRotation: number | null;
   }> {
-    await this.initializeECState();
-    const state = this.getECState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
+      const state = this.#getECState();
 
-    const keys = state.keys.map((k) => ({
-      kid: k.kid,
-      algorithm: k.algorithm,
-      curve: k.curve,
-      status: k.status,
-      createdAt: k.createdAt,
-      expiresAt: k.expiresAt,
-      revokedAt: k.revokedAt,
-      revokedReason: k.revokedReason,
-    }));
+      const keys = state.keys.map((k) => ({
+        kid: k.kid,
+        algorithm: k.algorithm,
+        curve: k.curve,
+        status: k.status,
+        createdAt: k.createdAt,
+        expiresAt: k.expiresAt,
+        revokedAt: k.revokedAt,
+        revokedReason: k.revokedReason,
+      }));
 
-    return {
-      keys,
-      activeKeyIds: state.activeKeyIds,
-      lastRotation: state.lastRotation,
-    };
+      return {
+        keys,
+        activeKeyIds: state.activeKeyIds,
+        lastRotation: state.lastRotation,
+      };
+    });
   }
 
   // ==========================================
@@ -936,23 +1117,34 @@ export class KeyManager extends DurableObject<Env> {
    *
    * Note: With blockConcurrencyWhile() in constructor, this is now a no-op guard.
    */
-  private async initializeState(): Promise<void> {
+  async #initializeState(): Promise<void> {
     await this.initialization;
+    if (this.#reloadBeforeOperation) await this.#loadExistingState();
+    if (this.#requiresAdmittedInitialization) {
+      this.#admittedInitialization ??= this.#initializeStateBlocking()
+        .then(() => {
+          this.#requiresAdmittedInitialization = false;
+        })
+        .finally(() => {
+          this.#admittedInitialization = null;
+        });
+      await this.#admittedInitialization;
+    }
     if (this.keyManagerState !== null) {
       return;
     }
 
     // Safety fallback (should not happen with blockConcurrencyWhile)
     log.warn('initializeState called but not initialized - this should not happen');
-    await this.initializeStateBlocking();
+    await this.#initializeStateBlocking();
   }
 
   /**
    * Migrate from old isActive field to new status field
    * This is a one-time migration for backward compatibility
    */
-  private async migrateIsActiveToStatus(): Promise<void> {
-    const state = this.getState();
+  async #migrateIsActiveToStatus(): Promise<void> {
+    const state = this.#getState();
     let needsMigration = false;
 
     for (const key of state.keys) {
@@ -967,99 +1159,133 @@ export class KeyManager extends DurableObject<Env> {
 
     if (needsMigration) {
       log.info('Migrated isActive to status field');
-      await this.saveState();
+      await this.#saveState();
     }
   }
 
   /**
    * Get state with assertion that it has been initialized
    */
-  private getState(): KeyManagerState {
+  #getState(): KeyManagerState {
     if (!this.keyManagerState) {
       throw new Error('KeyManager state not initialized');
     }
     return this.keyManagerState;
   }
 
-  private currentTenantBackupState(): KeyManagerTenantBackupSnapshot {
+  #currentTenantBackupState(): KeyManagerTenantBackupSnapshot {
     return structuredClone({
       kind: 'authrim.key_manager_tenant_backup.v1',
       version: 1,
-      rsa: { ...this.getState(), secrets: this.getState().secrets ?? {} },
-      vcEc: this.getECState(),
-      oidcEs256: this.getOIDCECState(),
-      oidcPs256: this.getOIDCPS256State(),
-      requestObjectEnc: this.getRequestObjectEncState(),
+      rsa: { ...this.#getState(), secrets: this.#getState().secrets ?? {} },
+      vcEc: this.#getECState(),
+      oidcEs256: this.#getOIDCECState(),
+      oidcPs256: this.#getOIDCPS256State(),
+      requestObjectEnc: this.#getRequestObjectEncState(),
+    });
+  }
+
+  /** A failed save must never turn an uncommitted in-memory value into backup authority. */
+  async #sourceSnapshotState(): Promise<KeyManagerTenantBackupSnapshot> {
+    if (this.env.ENABLE_SAML_DR_EXPORT !== 'true') return this.#currentTenantBackupState();
+    return this.ctx.storage.transaction(async (storage) => {
+      const [rsa, vcEc, oidcEs256, oidcPs256, requestObjectEnc] = await Promise.all([
+        storage.get<KeyManagerState>('state'),
+        storage.get<ECKeyManagerState>('ecState'),
+        storage.get<OIDCECKeyManagerState>('oidcECState'),
+        storage.get<OIDCPS256KeyManagerState>('oidcPS256State'),
+        storage.get<RequestObjectEncKeyManagerState>('requestObjectEncState'),
+      ]);
+      if (!rsa || !vcEc || !oidcEs256 || !oidcPs256 || !requestObjectEnc)
+        throw new Error('saml_dr_key_manager_authority_uninitialized');
+      return structuredClone({
+        kind: 'authrim.key_manager_tenant_backup.v1',
+        version: 1,
+        rsa: { ...rsa, secrets: rsa.secrets ?? {} },
+        vcEc,
+        oidcEs256,
+        oidcPs256,
+        requestObjectEnc,
+      });
     });
   }
 
   /**
    * Save state to durable storage
    */
-  private async saveState(): Promise<void> {
+  async #saveState(): Promise<void> {
     if (this.keyManagerState) {
-      await this.ctx.storage.put('state', this.keyManagerState);
+      await this.#persistSourceState('state', this.keyManagerState);
     }
   }
 
   /**
    * Save EC key state to durable storage
    */
-  private async saveECState(): Promise<void> {
+  async #saveECState(): Promise<void> {
     if (this.ecKeyManagerState) {
-      await this.ctx.storage.put('ecState', this.ecKeyManagerState);
+      await this.#persistSourceState('ecState', this.ecKeyManagerState);
     }
   }
 
-  private async saveOIDCECState(): Promise<void> {
+  async #saveOIDCECState(): Promise<void> {
     if (this.oidcECKeyManagerState) {
-      await this.ctx.storage.put('oidcECState', this.oidcECKeyManagerState);
+      await this.#persistSourceState('oidcECState', this.oidcECKeyManagerState);
     }
   }
 
-  private async saveOIDCPS256State(): Promise<void> {
+  async #saveOIDCPS256State(): Promise<void> {
     if (this.oidcPS256KeyManagerState) {
-      await this.ctx.storage.put('oidcPS256State', this.oidcPS256KeyManagerState);
+      await this.#persistSourceState('oidcPS256State', this.oidcPS256KeyManagerState);
     }
   }
 
-  private async saveRequestObjectEncState(): Promise<void> {
+  async #saveRequestObjectEncState(): Promise<void> {
     if (this.requestObjectEncKeyManagerState) {
-      await this.ctx.storage.put('requestObjectEncState', this.requestObjectEncKeyManagerState);
+      await this.#persistSourceState('requestObjectEncState', this.requestObjectEncKeyManagerState);
     }
   }
 
-  private getRequestObjectEncState(): RequestObjectEncKeyManagerState {
+  async #persistSourceState(key: string, value: unknown): Promise<void> {
+    try {
+      await this.ctx.storage.put(key, value);
+    } catch (error) {
+      if (this.env.ENABLE_SAML_DR_EXPORT === 'true') this.#reloadBeforeOperation = true;
+      throw error;
+    }
+  }
+
+  #getRequestObjectEncState(): RequestObjectEncKeyManagerState {
     if (!this.requestObjectEncKeyManagerState) {
       throw new Error('Request object encryption KeyManager state not initialized');
     }
     return this.requestObjectEncKeyManagerState;
   }
 
-  private getAllRequestObjectEncPublicKeys(): JWK[] {
+  #getAllRequestObjectEncPublicKeys(): JWK[] {
     const now = Date.now();
-    return this.getRequestObjectEncState()
+    return this.#getRequestObjectEncState()
       .keys.filter((key) => isUsableRequestObjectEncKey(key, now))
       .map((key) => key.publicJWK);
   }
 
-  private async ensureActiveRequestObjectEncKey(): Promise<StoredKey> {
-    const state = this.getRequestObjectEncState();
+  async #ensureActiveRequestObjectEncKey(): Promise<StoredKey> {
+    const state = this.#getRequestObjectEncState();
     const active = state.keys.find(
       (key) => key.kid === state.activeKeyId && key.status === 'active'
     );
     if (active) return active;
 
     if (!this.requestObjectEncCreationPromise) {
-      this.requestObjectEncCreationPromise = this.rotateRequestObjectEncKey().finally(() => {
+      this.requestObjectEncCreationPromise = this.#rotateRequestObjectEncKey().finally(() => {
         this.requestObjectEncCreationPromise = null;
       });
     }
     return this.requestObjectEncCreationPromise;
   }
 
-  private async rotateRequestObjectEncKey(): Promise<StoredKey> {
-    const state = this.getRequestObjectEncState();
+  async #rotateRequestObjectEncKey(): Promise<StoredKey> {
+    const state = this.#getRequestObjectEncState();
     const now = Date.now();
     const previousActive = state.keys.find((key) => key.status === 'active');
     if (previousActive) {
@@ -1083,53 +1309,53 @@ export class KeyManager extends DurableObject<Env> {
     state.keys = state.keys.filter(
       (key) => key.status === 'active' || !key.expiresAt || key.expiresAt >= now
     );
-    await this.saveRequestObjectEncState();
+    await this.#saveRequestObjectEncState();
     return newKey;
   }
 
-  private getOIDCECState(): OIDCECKeyManagerState {
+  #getOIDCECState(): OIDCECKeyManagerState {
     if (!this.oidcECKeyManagerState) {
       throw new Error('OIDC EC KeyManager state not initialized');
     }
     return this.oidcECKeyManagerState;
   }
 
-  private getOIDCPS256State(): OIDCPS256KeyManagerState {
+  #getOIDCPS256State(): OIDCPS256KeyManagerState {
     if (!this.oidcPS256KeyManagerState) {
       throw new Error('OIDC PS256 KeyManager state not initialized');
     }
     return this.oidcPS256KeyManagerState;
   }
 
-  private getAllOIDCECPublicKeys(): JWK[] {
-    return this.getOIDCECState()
+  #getAllOIDCECPublicKeys(): JWK[] {
+    return this.#getOIDCECState()
       .keys.filter((key) => key.status !== 'revoked')
       .map((key) => key.publicJWK);
   }
 
-  private getAllOIDCPS256PublicKeys(): JWK[] {
-    return this.getOIDCPS256State()
+  #getAllOIDCPS256PublicKeys(): JWK[] {
+    return this.#getOIDCPS256State()
       .keys.filter((key) => key.status !== 'revoked')
       .map((key) => key.publicJWK);
   }
 
-  private async ensureActiveOIDCES256Key(): Promise<StoredECKey> {
-    const state = this.getOIDCECState();
+  async #ensureActiveOIDCES256Key(): Promise<StoredECKey> {
+    const state = this.#getOIDCECState();
     const active = state.keys.find(
       (key) => key.kid === state.activeKeyId && key.status === 'active'
     );
     if (active) return active;
 
     if (!this.oidcES256CreationPromise) {
-      this.oidcES256CreationPromise = this.rotateOIDCES256Key().finally(() => {
+      this.oidcES256CreationPromise = this.#rotateOIDCES256Key().finally(() => {
         this.oidcES256CreationPromise = null;
       });
     }
     return this.oidcES256CreationPromise;
   }
 
-  private async rotateOIDCES256Key(): Promise<StoredECKey> {
-    const state = this.getOIDCECState();
+  async #rotateOIDCES256Key(): Promise<StoredECKey> {
+    const state = this.#getOIDCECState();
     const now = Date.now();
     const previousActive = state.keys.find((key) => key.status === 'active');
     if (previousActive) {
@@ -1154,27 +1380,27 @@ export class KeyManager extends DurableObject<Env> {
     state.keys = state.keys.filter(
       (key) => key.status === 'active' || !key.expiresAt || key.expiresAt >= now
     );
-    await this.saveOIDCECState();
+    await this.#saveOIDCECState();
     return newKey;
   }
 
-  private async ensureActiveOIDCPS256Key(): Promise<StoredKey> {
-    const state = this.getOIDCPS256State();
+  async #ensureActiveOIDCPS256Key(): Promise<StoredKey> {
+    const state = this.#getOIDCPS256State();
     const active = state.keys.find(
       (key) => key.kid === state.activeKeyId && key.status === 'active'
     );
     if (active) return active;
 
     if (!this.oidcPS256CreationPromise) {
-      this.oidcPS256CreationPromise = this.rotateOIDCPS256Key().finally(() => {
+      this.oidcPS256CreationPromise = this.#rotateOIDCPS256Key().finally(() => {
         this.oidcPS256CreationPromise = null;
       });
     }
     return this.oidcPS256CreationPromise;
   }
 
-  private async rotateOIDCPS256Key(): Promise<StoredKey> {
-    const state = this.getOIDCPS256State();
+  async #rotateOIDCPS256Key(): Promise<StoredKey> {
+    const state = this.#getOIDCPS256State();
     const now = Date.now();
     const previousActive = state.keys.find((key) => key.status === 'active');
     if (previousActive) {
@@ -1197,14 +1423,14 @@ export class KeyManager extends DurableObject<Env> {
     state.keys = state.keys.filter(
       (key) => key.status === 'active' || !key.expiresAt || key.expiresAt >= now
     );
-    await this.saveOIDCPS256State();
+    await this.#saveOIDCPS256State();
     return newKey;
   }
 
   /**
    * Ensure EC state is initialized
    */
-  private async initializeECState(): Promise<void> {
+  async #initializeECState(): Promise<void> {
     if (this.ecKeyManagerState !== null) {
       return;
     }
@@ -1229,14 +1455,14 @@ export class KeyManager extends DurableObject<Env> {
         },
         lastRotation: null,
       };
-      await this.saveECState();
+      await this.#saveECState();
     }
   }
 
   /**
    * Get EC state with assertion that it has been initialized
    */
-  private getECState(): ECKeyManagerState {
+  #getECState(): ECKeyManagerState {
     if (!this.ecKeyManagerState) {
       throw new Error('EC KeyManager state not initialized');
     }
@@ -1247,77 +1473,83 @@ export class KeyManager extends DurableObject<Env> {
    * Generate a new key and add it to the key set
    */
   async generateNewKey(options: { modulusLength?: number } = {}): Promise<StoredKey> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const kid = this.generateKeyId();
-    const keySet = await generateKeySet(kid, options.modulusLength);
+      const kid = this.#generateKeyId();
+      const keySet = await generateKeySet(kid, options.modulusLength);
 
-    log.debug('generateNewKey - keySet', {
-      kid,
-      hasPEM: !!keySet.privatePEM,
-      pemLength: keySet.privatePEM?.length,
+      log.debug('generateNewKey - keySet', {
+        kid,
+        hasPEM: !!keySet.privatePEM,
+        pemLength: keySet.privatePEM?.length,
+      });
+
+      const newKey: StoredKey = {
+        kid,
+        publicJWK: keySet.publicJWK,
+        privatePEM: keySet.privatePEM,
+        createdAt: Date.now(),
+        status: 'overlap', // New keys start as overlap until set as active
+      };
+
+      log.debug('generateNewKey - newKey', {
+        kid: newKey.kid,
+        hasPEM: !!newKey.privatePEM,
+        pemLength: newKey.privatePEM?.length,
+      });
+
+      const state = this.#getState();
+      state.keys.push(newKey);
+      await this.#saveState();
+
+      return newKey;
     });
-
-    const newKey: StoredKey = {
-      kid,
-      publicJWK: keySet.publicJWK,
-      privatePEM: keySet.privatePEM,
-      createdAt: Date.now(),
-      status: 'overlap', // New keys start as overlap until set as active
-    };
-
-    log.debug('generateNewKey - newKey', {
-      kid: newKey.kid,
-      hasPEM: !!newKey.privatePEM,
-      pemLength: newKey.privatePEM?.length,
-    });
-
-    const state = this.getState();
-    state.keys.push(newKey);
-    await this.saveState();
-
-    return newKey;
   }
 
   /**
    * Set a key as the active signing key
    */
   async setActiveKey(kid: string): Promise<void> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const state = this.getState();
-    const key = state.keys.find((k) => k.kid === kid);
-    if (!key) {
-      // SECURITY: Do not expose kid value in error to prevent key enumeration
-      throw new Error('Key not found');
-    }
+      const state = this.#getState();
+      const key = state.keys.find((k) => k.kid === kid);
+      if (!key) {
+        // SECURITY: Do not expose kid value in error to prevent key enumeration
+        throw new Error('Key not found');
+      }
 
-    // Set previous active key to overlap status with expiry
-    const previousActiveKey = state.keys.find((k) => k.status === 'active');
-    if (previousActiveKey) {
-      previousActiveKey.status = 'overlap';
-      // Set expiry to 24 hours from now (overlap period)
-      previousActiveKey.expiresAt = Date.now() + 24 * 60 * 60 * 1000;
-    }
+      // Set previous active key to overlap status with expiry
+      const previousActiveKey = state.keys.find((k) => k.status === 'active');
+      if (previousActiveKey) {
+        previousActiveKey.status = 'overlap';
+        // Set expiry to 24 hours from now (overlap period)
+        previousActiveKey.expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+      }
 
-    // Set new key as active
-    key.status = 'active';
-    state.activeKeyId = kid;
-    await this.saveState();
+      // Set new key as active
+      key.status = 'active';
+      state.activeKeyId = kid;
+      await this.#saveState();
+    });
   }
 
   /**
    * Get the active signing key
    */
   async getActiveKey(): Promise<StoredKey | null> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const state = this.getState();
-    if (!state.activeKeyId) {
-      return null;
-    }
+      const state = this.#getState();
+      if (!state.activeKeyId) {
+        return null;
+      }
 
-    return state.keys.find((k) => k.kid === state.activeKeyId) || null;
+      return state.keys.find((k) => k.kid === state.activeKeyId) || null;
+    });
   }
 
   /**
@@ -1325,78 +1557,84 @@ export class KeyManager extends DurableObject<Env> {
    * Excludes revoked keys from JWKS
    */
   async getAllPublicKeys(): Promise<JWK[]> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const state = this.getState();
-    // Only return active and overlap keys, exclude revoked keys
-    return state.keys.filter((k) => k.status !== 'revoked').map((k) => k.publicJWK);
+      const state = this.#getState();
+      // Only return active and overlap keys, exclude revoked keys
+      return state.keys.filter((k) => k.status !== 'revoked').map((k) => k.publicJWK);
+    });
   }
 
   /**
    * Get a specific key by kid
    */
   async getKey(kid: string): Promise<StoredKey | null> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const state = this.getState();
-    return state.keys.find((k) => k.kid === kid) || null;
+      const state = this.#getState();
+      return state.keys.find((k) => k.kid === kid) || null;
+    });
   }
 
   /**
    * Rotate keys (generate new key and set as active)
    */
   async rotateKeys(options: { modulusLength?: number } = {}): Promise<StoredKey> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    // Generate new key
-    const newKey = await this.generateNewKey(options);
+      // Generate new key
+      const newKey = await this.generateNewKey(options);
 
-    // Set new key as active
-    await this.setActiveKey(newKey.kid);
+      // Set new key as active
+      await this.setActiveKey(newKey.kid);
 
-    // Update last rotation timestamp
-    const state = this.getState();
-    state.lastRotation = Date.now();
+      // Update last rotation timestamp
+      const state = this.#getState();
+      state.lastRotation = Date.now();
 
-    // Clean up expired keys
-    await this.cleanupExpiredKeys();
+      // Clean up expired keys
+      await this.#cleanupExpiredKeys();
 
-    await this.saveState();
+      await this.#saveState();
 
-    // Return the key from state.keys to ensure it's the current version after cleanup
-    const rotatedKey = state.keys.find((k) => k.kid === newKey.kid);
-    if (!rotatedKey) {
-      throw new Error('Rotated key not found in state after rotation');
-    }
+      // Return the key from state.keys to ensure it's the current version after cleanup
+      const rotatedKey = state.keys.find((k) => k.kid === newKey.kid);
+      if (!rotatedKey) {
+        throw new Error('Rotated key not found in state after rotation');
+      }
 
-    log.debug('rotateKeys - returning key', {
-      kid: rotatedKey.kid,
-      hasPEM: !!rotatedKey.privatePEM,
-      pemLength: rotatedKey.privatePEM?.length,
+      log.debug('rotateKeys - returning key', {
+        kid: rotatedKey.kid,
+        hasPEM: !!rotatedKey.privatePEM,
+        pemLength: rotatedKey.privatePEM?.length,
+      });
+
+      // Explicitly reconstruct the object to ensure all properties are enumerable and serializable
+      const result: StoredKey = {
+        kid: rotatedKey.kid,
+        publicJWK: rotatedKey.publicJWK,
+        privatePEM: rotatedKey.privatePEM,
+        createdAt: rotatedKey.createdAt,
+        status: rotatedKey.status,
+        certificatePEM: rotatedKey.certificatePEM,
+        certificateCreatedAt: rotatedKey.certificateCreatedAt,
+        certificateSha256Thumbprint: rotatedKey.certificateSha256Thumbprint,
+        expiresAt: rotatedKey.expiresAt,
+        revokedAt: rotatedKey.revokedAt,
+        revokedReason: rotatedKey.revokedReason,
+      };
+
+      log.debug('rotateKeys - reconstructed result', {
+        kid: result.kid,
+        hasPEM: !!result.privatePEM,
+        pemLength: result.privatePEM?.length,
+      });
+
+      return result;
     });
-
-    // Explicitly reconstruct the object to ensure all properties are enumerable and serializable
-    const result: StoredKey = {
-      kid: rotatedKey.kid,
-      publicJWK: rotatedKey.publicJWK,
-      privatePEM: rotatedKey.privatePEM,
-      createdAt: rotatedKey.createdAt,
-      status: rotatedKey.status,
-      certificatePEM: rotatedKey.certificatePEM,
-      certificateCreatedAt: rotatedKey.certificateCreatedAt,
-      certificateSha256Thumbprint: rotatedKey.certificateSha256Thumbprint,
-      expiresAt: rotatedKey.expiresAt,
-      revokedAt: rotatedKey.revokedAt,
-      revokedReason: rotatedKey.revokedReason,
-    };
-
-    log.debug('rotateKeys - reconstructed result', {
-      kid: result.kid,
-      hasPEM: !!result.privatePEM,
-      pemLength: result.privatePEM?.length,
-    });
-
-    return result;
   }
 
   /**
@@ -1407,42 +1645,44 @@ export class KeyManager extends DurableObject<Env> {
    * @returns Object with old and new key IDs
    */
   async emergencyRotateKeys(reason: string): Promise<{ oldKid: string; newKid: string }> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const state = this.getState();
-    const now = Date.now();
+      const state = this.#getState();
+      const now = Date.now();
 
-    // Find current active key
-    const currentActiveKey = state.keys.find((k) => k.status === 'active');
-    if (!currentActiveKey) {
-      throw new Error('No active key found to revoke');
-    }
+      // Find current active key
+      const currentActiveKey = state.keys.find((k) => k.status === 'active');
+      if (!currentActiveKey) {
+        throw new Error('No active key found to revoke');
+      }
 
-    // Generate new key
-    const newKey = await this.generateNewKey();
-    newKey.status = 'active';
+      // Generate new key
+      const newKey = await this.generateNewKey();
+      newKey.status = 'active';
 
-    // Immediately revoke old key (NO overlap period for security)
-    currentActiveKey.status = 'revoked';
-    currentActiveKey.revokedAt = now;
-    currentActiveKey.revokedReason = reason;
+      // Immediately revoke old key (NO overlap period for security)
+      currentActiveKey.status = 'revoked';
+      currentActiveKey.revokedAt = now;
+      currentActiveKey.revokedReason = reason;
 
-    // Update state
-    state.activeKeyId = newKey.kid;
-    state.lastRotation = now;
-    await this.saveState();
+      // Update state
+      state.activeKeyId = newKey.kid;
+      state.lastRotation = now;
+      await this.#saveState();
 
-    log.warn('Emergency rotation executed', {
-      oldKid: currentActiveKey.kid,
-      newKid: newKey.kid,
-      reason,
-      timestamp: new Date(now).toISOString(),
+      log.warn('Emergency rotation executed', {
+        oldKid: currentActiveKey.kid,
+        newKid: newKey.kid,
+        reason,
+        timestamp: new Date(now).toISOString(),
+      });
+
+      return {
+        oldKid: currentActiveKey.kid,
+        newKid: newKey.kid,
+      };
     });
-
-    return {
-      oldKid: currentActiveKey.kid,
-      newKid: newKey.kid,
-    };
   }
 
   /**
@@ -1451,8 +1691,8 @@ export class KeyManager extends DurableObject<Env> {
    * - Overlap keys: removed after expiry
    * - Revoked keys: kept for retention period for audit purposes
    */
-  private async cleanupExpiredKeys(): Promise<void> {
-    const state = this.getState();
+  async #cleanupExpiredKeys(): Promise<void> {
+    const state = this.#getState();
     const retentionMillis = state.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
     const now = Date.now();
 
@@ -1482,65 +1722,96 @@ export class KeyManager extends DurableObject<Env> {
    * Check if key rotation is needed
    */
   async shouldRotateKeys(): Promise<boolean> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const state = this.getState();
-    if (!state.lastRotation) {
-      return true; // No keys have been generated yet
-    }
+      const state = this.#getState();
+      if (!state.lastRotation) {
+        return true; // No keys have been generated yet
+      }
 
-    const rotationIntervalMillis = state.config.rotationIntervalDays * 24 * 60 * 60 * 1000;
-    const timeSinceLastRotation = Date.now() - state.lastRotation;
+      const rotationIntervalMillis = state.config.rotationIntervalDays * 24 * 60 * 60 * 1000;
+      const timeSinceLastRotation = Date.now() - state.lastRotation;
 
-    return timeSinceLastRotation >= rotationIntervalMillis;
+      return timeSinceLastRotation >= rotationIntervalMillis;
+    });
   }
 
   /**
    * Update key rotation configuration
    */
   async updateConfig(config: Partial<KeyRotationConfig>): Promise<void> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const state = this.getState();
-    state.config = {
-      ...state.config,
-      ...config,
-    };
+      const state = this.#getState();
+      state.config = {
+        ...state.config,
+        ...config,
+      };
 
-    await this.saveState();
+      await this.#saveState();
+    });
   }
 
   /**
    * Get current configuration
    */
   async getConfig(): Promise<KeyRotationConfig> {
-    await this.initializeState();
-    const state = this.getState();
-    return state.config;
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const state = this.#getState();
+      return state.config;
+    });
   }
 
   async getOrCreateSecretRpc(secretRef: string): Promise<StoredSecret> {
-    return this.getOrCreateSecret(secretRef);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.#getOrCreateSecret(secretRef);
+    });
+  }
+
+  /** Read an established secret under a snapshot hold without inventing missing authority. */
+  async getExistingSecretRpc(secretRef: string): Promise<StoredSecret | null> {
+    validateSecretRef(secretRef);
+    await this.initialization;
+    if (this.env.ENABLE_SAML_DR_EXPORT === 'true') await this.#assertSnapshotAuthority();
+    const state =
+      this.env.ENABLE_SAML_DR_EXPORT === 'true'
+        ? await this.ctx.storage.get<KeyManagerState>('state')
+        : this.keyManagerState;
+    if (!state && this.env.ENABLE_SAML_DR_EXPORT === 'true')
+      throw new Error('saml_dr_key_manager_authority_uninitialized');
+    const existing = state?.secrets
+      ? (Object.getOwnPropertyDescriptor(state.secrets, secretRef)?.value as
+          | StoredSecret
+          | undefined)
+      : undefined;
+    return existing ? structuredClone(existing) : null;
   }
 
   async rotateSecretRpc(secretRef: string): Promise<StoredSecret> {
-    return this.rotateSecret(secretRef);
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      return this.#rotateSecret(secretRef);
+    });
   }
 
   /**
    * Generate a unique key ID using cryptographically secure random
    */
-  private generateKeyId(): string {
+  #generateKeyId(): string {
     const timestamp = Date.now();
     const random = crypto.randomUUID();
     return `key-${timestamp}-${random}`;
   }
 
-  private async getOrCreateSecret(secretRef: string): Promise<StoredSecret> {
+  async #getOrCreateSecret(secretRef: string): Promise<StoredSecret> {
     validateSecretRef(secretRef);
-    await this.initializeState();
+    await this.#initializeState();
 
-    const state = this.getState();
+    const state = this.#getState();
     state.secrets ??= {};
 
     const existing = Object.getOwnPropertyDescriptor(state.secrets, secretRef)?.value as
@@ -1552,7 +1823,7 @@ export class KeyManager extends DurableObject<Env> {
 
     const secret: StoredSecret = {
       secretRef,
-      active: this.generateSecretVersion(),
+      active: this.#generateSecretVersion(),
       updatedAt: Date.now(),
     };
     Object.defineProperty(state.secrets, secretRef, {
@@ -1561,20 +1832,20 @@ export class KeyManager extends DurableObject<Env> {
       configurable: true,
       writable: true,
     });
-    await this.saveState();
+    await this.#saveState();
     return secret;
   }
 
-  private async rotateSecret(secretRef: string): Promise<StoredSecret> {
-    const current = await this.getOrCreateSecret(secretRef);
+  async #rotateSecret(secretRef: string): Promise<StoredSecret> {
+    const current = await this.#getOrCreateSecret(secretRef);
     current.previous = current.active;
-    current.active = this.generateSecretVersion();
+    current.active = this.#generateSecretVersion();
     current.updatedAt = Date.now();
-    await this.saveState();
+    await this.#saveState();
     return current;
   }
 
-  private generateSecretVersion(): StoredSecretVersion {
+  #generateSecretVersion(): StoredSecretVersion {
     const bytes = new Uint8Array(32);
     crypto.getRandomValues(bytes);
     const value = btoa(String.fromCharCode(...bytes))
@@ -1590,99 +1861,103 @@ export class KeyManager extends DurableObject<Env> {
   }
 
   async storeCertificateForKey(input: StoreCertificateRequest): Promise<StoredKey> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const state = this.getState();
-    const key = state.keys.find((k) => k.kid === input.kid);
-    if (!key) {
-      throw new Error('Key not found');
-    }
+      const state = this.#getState();
+      const key = state.keys.find((k) => k.kid === input.kid);
+      if (!key) {
+        throw new Error('Key not found');
+      }
 
-    if (key.certificatePEM) {
+      if (key.certificatePEM) {
+        return key;
+      }
+
+      if (
+        !input.certificatePEM.startsWith('-----BEGIN CERTIFICATE-----') ||
+        !input.certificatePEM.includes('-----END CERTIFICATE-----') ||
+        input.certificatePEM.length > 16 * 1024
+      ) {
+        throw new Error('Invalid certificate PEM');
+      }
+
+      key.certificatePEM = input.certificatePEM;
+      key.certificateCreatedAt = input.certificateCreatedAt ?? Date.now();
+      key.certificateSha256Thumbprint = input.certificateSha256Thumbprint;
+
+      await this.#saveState();
       return key;
-    }
-
-    if (
-      !input.certificatePEM.startsWith('-----BEGIN CERTIFICATE-----') ||
-      !input.certificatePEM.includes('-----END CERTIFICATE-----') ||
-      input.certificatePEM.length > 16 * 1024
-    ) {
-      throw new Error('Invalid certificate PEM');
-    }
-
-    key.certificatePEM = input.certificatePEM;
-    key.certificateCreatedAt = input.certificateCreatedAt ?? Date.now();
-    key.certificateSha256Thumbprint = input.certificateSha256Thumbprint;
-
-    await this.saveState();
-    return key;
+    });
   }
 
   async importKey(input: ImportKeyRequest): Promise<StoredKey> {
-    await this.initializeState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
 
-    const kid = typeof input.kid === 'string' ? input.kid.trim() : '';
-    if (!kid || kid.length > 256 || /[\u0000-\u001f\u007f]/.test(kid)) {
-      throw new Error('Invalid key ID');
-    }
-    if (!isImportablePublicJWK(input.publicJWK)) {
-      throw new Error('Invalid public JWK');
-    }
-    if (!isImportablePrivatePEM(input.privatePEM)) {
-      throw new Error('Invalid private PEM');
-    }
-    if (input.certificatePEM && !isImportableCertificatePEM(input.certificatePEM)) {
-      throw new Error('Invalid certificate PEM');
-    }
-    const verifiedPublicJWK = await verifyImportedKeyPair(kid, input.publicJWK, input.privatePEM);
-
-    const state = this.getState();
-    const status = normalizeImportedKeyStatus(input.status);
-    const existing = state.keys.find((key) => key.kid === kid);
-    if (existing) {
-      if (existing.privatePEM !== input.privatePEM) {
-        throw new Error('Imported key conflicts with existing key ID');
+      const kid = typeof input.kid === 'string' ? input.kid.trim() : '';
+      if (!kid || kid.length > 256 || /[\u0000-\u001f\u007f]/.test(kid)) {
+        throw new Error('Invalid key ID');
       }
-      existing.publicJWK = verifiedPublicJWK;
-      existing.status = status;
-      existing.createdAt = normalizeTimestamp(input.createdAt, existing.createdAt);
-      existing.certificatePEM = input.certificatePEM ?? existing.certificatePEM;
-      existing.certificateCreatedAt = normalizeTimestamp(
-        input.certificateCreatedAt,
-        existing.certificateCreatedAt
-      );
-      existing.certificateSha256Thumbprint =
-        input.certificateSha256Thumbprint ?? existing.certificateSha256Thumbprint;
+      if (!isImportablePublicJWK(input.publicJWK)) {
+        throw new Error('Invalid public JWK');
+      }
+      if (!isImportablePrivatePEM(input.privatePEM)) {
+        throw new Error('Invalid private PEM');
+      }
+      if (input.certificatePEM && !isImportableCertificatePEM(input.certificatePEM)) {
+        throw new Error('Invalid certificate PEM');
+      }
+      const verifiedPublicJWK = await verifyImportedKeyPair(kid, input.publicJWK, input.privatePEM);
+
+      const state = this.#getState();
+      const status = normalizeImportedKeyStatus(input.status);
+      const existing = state.keys.find((key) => key.kid === kid);
+      if (existing) {
+        if (existing.privatePEM !== input.privatePEM) {
+          throw new Error('Imported key conflicts with existing key ID');
+        }
+        existing.publicJWK = verifiedPublicJWK;
+        existing.status = status;
+        existing.createdAt = normalizeTimestamp(input.createdAt, existing.createdAt);
+        existing.certificatePEM = input.certificatePEM ?? existing.certificatePEM;
+        existing.certificateCreatedAt = normalizeTimestamp(
+          input.certificateCreatedAt,
+          existing.certificateCreatedAt
+        );
+        existing.certificateSha256Thumbprint =
+          input.certificateSha256Thumbprint ?? existing.certificateSha256Thumbprint;
+        if (status === 'active') {
+          this.#moveOtherActiveKeysToOverlap(kid);
+          state.activeKeyId = kid;
+        }
+        await this.#saveState();
+        return existing;
+      }
+
       if (status === 'active') {
-        this.moveOtherActiveKeysToOverlap(kid);
+        this.#moveOtherActiveKeysToOverlap(kid);
         state.activeKeyId = kid;
       }
-      await this.saveState();
-      return existing;
-    }
 
-    if (status === 'active') {
-      this.moveOtherActiveKeysToOverlap(kid);
-      state.activeKeyId = kid;
-    }
-
-    const key: StoredKey = {
-      kid,
-      publicJWK: verifiedPublicJWK,
-      privatePEM: input.privatePEM,
-      createdAt: normalizeTimestamp(input.createdAt, Date.now()),
-      status,
-      certificatePEM: input.certificatePEM,
-      certificateCreatedAt: normalizeTimestamp(input.certificateCreatedAt, undefined),
-      certificateSha256Thumbprint: input.certificateSha256Thumbprint,
-    };
-    state.keys.push(key);
-    await this.saveState();
-    return key;
+      const key: StoredKey = {
+        kid,
+        publicJWK: verifiedPublicJWK,
+        privatePEM: input.privatePEM,
+        createdAt: normalizeTimestamp(input.createdAt, Date.now()),
+        status,
+        certificatePEM: input.certificatePEM,
+        certificateCreatedAt: normalizeTimestamp(input.certificateCreatedAt, undefined),
+        certificateSha256Thumbprint: input.certificateSha256Thumbprint,
+      };
+      state.keys.push(key);
+      await this.#saveState();
+      return key;
+    });
   }
 
-  private moveOtherActiveKeysToOverlap(nextActiveKid: string): void {
-    const state = this.getState();
+  #moveOtherActiveKeysToOverlap(nextActiveKid: string): void {
+    const state = this.#getState();
     for (const key of state.keys) {
       if (key.kid !== nextActiveKid && key.status === 'active') {
         key.status = 'overlap';
@@ -1701,81 +1976,90 @@ export class KeyManager extends DurableObject<Env> {
    * @param algorithm - EC algorithm (ES256, ES384, ES512)
    */
   async generateNewECKey(algorithm: ECAlgorithm): Promise<StoredECKey> {
-    await this.initializeECState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
 
-    const kid = this.generateECKeyId(algorithm);
-    const keySet = await generateECKeySet(kid, algorithm);
+      const kid = this.#generateECKeyId(algorithm);
+      const keySet = await generateECKeySet(kid, algorithm);
 
-    log.debug('generateNewECKey - keySet', {
-      kid,
-      algorithm,
-      curve: keySet.curve,
-      hasPEM: !!keySet.privatePEM,
-      pemLength: keySet.privatePEM?.length,
+      log.debug('generateNewECKey - keySet', {
+        kid,
+        algorithm,
+        curve: keySet.curve,
+        hasPEM: !!keySet.privatePEM,
+        pemLength: keySet.privatePEM?.length,
+      });
+
+      const newKey: StoredECKey = {
+        kid,
+        algorithm,
+        curve: keySet.curve,
+        publicJWK: keySet.publicJWK,
+        privatePEM: keySet.privatePEM,
+        createdAt: Date.now(),
+        status: 'overlap', // New keys start as overlap until set as active
+      };
+
+      const state = this.#getECState();
+      state.keys.push(newKey);
+      await this.#saveECState();
+
+      return newKey;
     });
-
-    const newKey: StoredECKey = {
-      kid,
-      algorithm,
-      curve: keySet.curve,
-      publicJWK: keySet.publicJWK,
-      privatePEM: keySet.privatePEM,
-      createdAt: Date.now(),
-      status: 'overlap', // New keys start as overlap until set as active
-    };
-
-    const state = this.getECState();
-    state.keys.push(newKey);
-    await this.saveECState();
-
-    return newKey;
   }
 
   /**
    * Set an EC key as the active signing key for its algorithm
    */
   async setActiveECKey(kid: string): Promise<void> {
-    await this.initializeECState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
 
-    const state = this.getECState();
-    const key = state.keys.find((k) => k.kid === kid);
-    if (!key) {
-      // SECURITY: Do not expose kid value in error to prevent key enumeration
-      throw new Error('EC key not found');
-    }
-
-    const algorithm = key.algorithm;
-
-    // Set previous active key for this algorithm to overlap status with expiry
-    const previousActiveKeyId = state.activeKeyIds[algorithm];
-    if (previousActiveKeyId) {
-      const previousActiveKey = state.keys.find((k) => k.kid === previousActiveKeyId);
-      if (previousActiveKey) {
-        previousActiveKey.status = 'overlap';
-        // Set expiry to 24 hours from now (overlap period)
-        previousActiveKey.expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+      const state = this.#getECState();
+      const key = state.keys.find((k) => k.kid === kid);
+      if (!key) {
+        // SECURITY: Do not expose kid value in error to prevent key enumeration
+        throw new Error('EC key not found');
       }
-    }
 
-    // Set new key as active
-    key.status = 'active';
-    state.activeKeyIds[algorithm] = kid;
-    await this.saveECState();
+      const algorithm = key.algorithm;
+
+      // Set previous active key for this algorithm to overlap status with expiry
+      const previousActiveKeyId = state.activeKeyIds[algorithm];
+      if (previousActiveKeyId) {
+        const previousActiveKey = state.keys.find((k) => k.kid === previousActiveKeyId);
+        if (previousActiveKey) {
+          previousActiveKey.status = 'overlap';
+          // Set expiry to 24 hours from now (overlap period)
+          previousActiveKey.expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+        }
+      }
+
+      // Set new key as active
+      key.status = 'active';
+      state.activeKeyIds[algorithm] = kid;
+      await this.#saveECState();
+    });
   }
 
   /**
    * Get the active EC signing key for a specific algorithm
    */
   async getActiveECKey(algorithm: ECAlgorithm): Promise<StoredECKey | null> {
-    await this.initializeECState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
 
-    const state = this.getECState();
-    const activeKeyId = state.activeKeyIds[algorithm];
-    if (!activeKeyId) {
-      return null;
-    }
+      const state = this.#getECState();
+      const activeKeyId = state.activeKeyIds[algorithm];
+      if (!activeKeyId) {
+        return null;
+      }
 
-    return state.keys.find((k) => k.kid === activeKeyId) || null;
+      return state.keys.find((k) => k.kid === activeKeyId) || null;
+    });
   }
 
   /**
@@ -1783,62 +2067,68 @@ export class KeyManager extends DurableObject<Env> {
    * Excludes revoked keys from JWKS
    */
   async getAllECPublicKeys(): Promise<JWK[]> {
-    await this.initializeECState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
 
-    const state = this.getECState();
-    // Only return active and overlap keys, exclude revoked keys
-    return state.keys.filter((k) => k.status !== 'revoked').map((k) => k.publicJWK);
+      const state = this.#getECState();
+      // Only return active and overlap keys, exclude revoked keys
+      return state.keys.filter((k) => k.status !== 'revoked').map((k) => k.publicJWK);
+    });
   }
 
   /**
    * Rotate EC keys for a specific algorithm (generate new key and set as active)
    */
   async rotateECKeys(algorithm: ECAlgorithm): Promise<StoredECKey> {
-    await this.initializeECState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
 
-    // Generate new key
-    const newKey = await this.generateNewECKey(algorithm);
+      // Generate new key
+      const newKey = await this.generateNewECKey(algorithm);
 
-    // Set new key as active
-    await this.setActiveECKey(newKey.kid);
+      // Set new key as active
+      await this.setActiveECKey(newKey.kid);
 
-    // Update last rotation timestamp
-    const state = this.getECState();
-    state.lastRotation = Date.now();
+      // Update last rotation timestamp
+      const state = this.#getECState();
+      state.lastRotation = Date.now();
 
-    // Clean up expired EC keys
-    await this.cleanupExpiredECKeys();
+      // Clean up expired EC keys
+      await this.#cleanupExpiredECKeys();
 
-    await this.saveECState();
+      await this.#saveECState();
 
-    // Return the key from state.keys to ensure it's the current version after cleanup
-    const rotatedKey = state.keys.find((k) => k.kid === newKey.kid);
-    if (!rotatedKey) {
-      throw new Error('Rotated EC key not found in state after rotation');
-    }
+      // Return the key from state.keys to ensure it's the current version after cleanup
+      const rotatedKey = state.keys.find((k) => k.kid === newKey.kid);
+      if (!rotatedKey) {
+        throw new Error('Rotated EC key not found in state after rotation');
+      }
 
-    log.debug('rotateECKeys - returning key', {
-      kid: rotatedKey.kid,
-      algorithm: rotatedKey.algorithm,
-      hasPEM: !!rotatedKey.privatePEM,
-      pemLength: rotatedKey.privatePEM?.length,
+      log.debug('rotateECKeys - returning key', {
+        kid: rotatedKey.kid,
+        algorithm: rotatedKey.algorithm,
+        hasPEM: !!rotatedKey.privatePEM,
+        pemLength: rotatedKey.privatePEM?.length,
+      });
+
+      // Explicitly reconstruct the object to ensure all properties are serializable
+      const result: StoredECKey = {
+        kid: rotatedKey.kid,
+        algorithm: rotatedKey.algorithm,
+        curve: rotatedKey.curve,
+        publicJWK: rotatedKey.publicJWK,
+        privatePEM: rotatedKey.privatePEM,
+        createdAt: rotatedKey.createdAt,
+        status: rotatedKey.status,
+        expiresAt: rotatedKey.expiresAt,
+        revokedAt: rotatedKey.revokedAt,
+        revokedReason: rotatedKey.revokedReason,
+      };
+
+      return result;
     });
-
-    // Explicitly reconstruct the object to ensure all properties are serializable
-    const result: StoredECKey = {
-      kid: rotatedKey.kid,
-      algorithm: rotatedKey.algorithm,
-      curve: rotatedKey.curve,
-      publicJWK: rotatedKey.publicJWK,
-      privatePEM: rotatedKey.privatePEM,
-      createdAt: rotatedKey.createdAt,
-      status: rotatedKey.status,
-      expiresAt: rotatedKey.expiresAt,
-      revokedAt: rotatedKey.revokedAt,
-      revokedReason: rotatedKey.revokedReason,
-    };
-
-    return result;
   }
 
   /**
@@ -1853,56 +2143,59 @@ export class KeyManager extends DurableObject<Env> {
     algorithm: ECAlgorithm,
     reason: string
   ): Promise<{ oldKid: string; newKid: string }> {
-    await this.initializeECState();
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
 
-    const state = this.getECState();
-    const now = Date.now();
+      const state = this.#getECState();
+      const now = Date.now();
 
-    // Find current active key for this algorithm
-    const currentActiveKeyId = state.activeKeyIds[algorithm];
-    if (!currentActiveKeyId) {
-      throw new Error(`No active EC key found for algorithm ${algorithm}`);
-    }
+      // Find current active key for this algorithm
+      const currentActiveKeyId = state.activeKeyIds[algorithm];
+      if (!currentActiveKeyId) {
+        throw new Error(`No active EC key found for algorithm ${algorithm}`);
+      }
 
-    const currentActiveKey = state.keys.find((k) => k.kid === currentActiveKeyId);
-    if (!currentActiveKey) {
-      // SECURITY: Do not expose kid value in error to prevent key enumeration
-      throw new Error('Active EC key not found');
-    }
+      const currentActiveKey = state.keys.find((k) => k.kid === currentActiveKeyId);
+      if (!currentActiveKey) {
+        // SECURITY: Do not expose kid value in error to prevent key enumeration
+        throw new Error('Active EC key not found');
+      }
 
-    // Generate new key
-    const newKey = await this.generateNewECKey(algorithm);
-    newKey.status = 'active';
+      // Generate new key
+      const newKey = await this.generateNewECKey(algorithm);
+      newKey.status = 'active';
 
-    // Immediately revoke old key (NO overlap period for security)
-    currentActiveKey.status = 'revoked';
-    currentActiveKey.revokedAt = now;
-    currentActiveKey.revokedReason = reason;
+      // Immediately revoke old key (NO overlap period for security)
+      currentActiveKey.status = 'revoked';
+      currentActiveKey.revokedAt = now;
+      currentActiveKey.revokedReason = reason;
 
-    // Update state
-    state.activeKeyIds[algorithm] = newKey.kid;
-    state.lastRotation = now;
-    await this.saveECState();
+      // Update state
+      state.activeKeyIds[algorithm] = newKey.kid;
+      state.lastRotation = now;
+      await this.#saveECState();
 
-    log.warn('Emergency EC rotation executed', {
-      algorithm,
-      oldKid: currentActiveKey.kid,
-      newKid: newKey.kid,
-      reason,
-      timestamp: new Date(now).toISOString(),
+      log.warn('Emergency EC rotation executed', {
+        algorithm,
+        oldKid: currentActiveKey.kid,
+        newKid: newKey.kid,
+        reason,
+        timestamp: new Date(now).toISOString(),
+      });
+
+      return {
+        oldKid: currentActiveKey.kid,
+        newKid: newKey.kid,
+      };
     });
-
-    return {
-      oldKid: currentActiveKey.kid,
-      newKid: newKey.kid,
-    };
   }
 
   /**
    * Clean up expired EC keys based on retention period
    */
-  private async cleanupExpiredECKeys(): Promise<void> {
-    const state = this.getECState();
+  async #cleanupExpiredECKeys(): Promise<void> {
+    const state = this.#getECState();
     const retentionMillis = state.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
     const now = Date.now();
 
@@ -1931,7 +2224,7 @@ export class KeyManager extends DurableObject<Env> {
   /**
    * Generate a unique EC key ID
    */
-  private generateECKeyId(algorithm: ECAlgorithm): string {
+  #generateECKeyId(algorithm: ECAlgorithm): string {
     const timestamp = Date.now();
     const random = crypto.randomUUID();
     return `ec-${algorithm.toLowerCase()}-${timestamp}-${random}`;
@@ -1940,8 +2233,7 @@ export class KeyManager extends DurableObject<Env> {
   /**
    * Sanitize EC key data for safe HTTP response (remove private key material)
    */
-  private sanitizeECKey(key: StoredECKey): Omit<StoredECKey, 'privatePEM'> {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  #sanitizeECKey(key: StoredECKey): Omit<StoredECKey, 'privatePEM'> {
     const { privatePEM: _privatePEM, ...safeKey } = key;
     return safeKey;
   }
@@ -1956,7 +2248,7 @@ export class KeyManager extends DurableObject<Env> {
    * @param request - The incoming HTTP request
    * @returns True if authenticated, false otherwise
    */
-  private authenticate(request: Request): boolean {
+  #authenticate(request: Request): boolean {
     const authHeader = request.headers.get('Authorization');
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -1979,7 +2271,7 @@ export class KeyManager extends DurableObject<Env> {
   /**
    * Create an unauthorized response
    */
-  private unauthorizedResponse(): Response {
+  #unauthorizedResponse(): Response {
     return new Response(
       JSON.stringify({
         error: 'Unauthorized',
@@ -1998,8 +2290,7 @@ export class KeyManager extends DurableObject<Env> {
   /**
    * Sanitize key data for safe HTTP response (remove private key material)
    */
-  private sanitizeKey(key: StoredKey): Omit<StoredKey, 'privatePEM'> {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  #sanitizeKey(key: StoredKey): Omit<StoredKey, 'privatePEM'> {
     const { privatePEM: _privatePEM, ...safeKey } = key;
     return safeKey;
   }
@@ -2008,506 +2299,511 @@ export class KeyManager extends DurableObject<Env> {
    * Handle HTTP requests to the KeyManager Durable Object
    */
   async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const url = new URL(request.url);
+      const path = url.pathname;
 
-    // Public endpoints (no authentication required)
-    // /jwks is public because it only returns public keys for JWT verification
-    const isPublicEndpoint = path === '/jwks' && request.method === 'GET';
+      // Public endpoints (no authentication required)
+      // /jwks is public because it only returns public keys for JWT verification
+      const isPublicEndpoint = path === '/jwks' && request.method === 'GET';
 
-    // All other endpoints require authentication (including /internal/* for security)
-    if (!isPublicEndpoint && !this.authenticate(request)) {
-      return this.unauthorizedResponse();
-    }
+      // All other endpoints require authentication (including /internal/* for security)
+      if (!isPublicEndpoint && !this.#authenticate(request)) {
+        return this.#unauthorizedResponse();
+      }
 
-    try {
-      // GET /active - Get active signing key (public endpoints, no private key)
-      if (path === '/active' && request.method === 'GET') {
-        const activeKey = await this.getActiveKey();
+      try {
+        // GET /active - Get active signing key (public endpoints, no private key)
+        if (path === '/active' && request.method === 'GET') {
+          const activeKey = await this.getActiveKey();
 
-        if (!activeKey) {
-          return new Response(JSON.stringify({ error: 'No active key found' }), {
-            status: 404,
+          if (!activeKey) {
+            return new Response(JSON.stringify({ error: 'No active key found' }), {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+
+          // Sanitize key data (remove private key material)
+          const safeKey = this.#sanitizeKey(activeKey);
+
+          return new Response(JSON.stringify(safeKey), {
             headers: { 'Content-Type': 'application/json' },
           });
         }
 
-        // Sanitize key data (remove private key material)
-        const safeKey = this.sanitizeKey(activeKey);
+        // GET /internal/active-with-private - Get active signing key with private key (for internal use by op-token)
+        if (path === '/internal/active-with-private' && request.method === 'GET') {
+          const activeKey = await this.getActiveKey();
 
-        return new Response(JSON.stringify(safeKey), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+          if (!activeKey) {
+            return new Response(JSON.stringify({ error: 'No active key found' }), {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
 
-      // GET /internal/active-with-private - Get active signing key with private key (for internal use by op-token)
-      if (path === '/internal/active-with-private' && request.method === 'GET') {
-        const activeKey = await this.getActiveKey();
+          // Explicitly reconstruct the object to ensure all properties are serializable
+          const result: StoredKey = {
+            kid: activeKey.kid,
+            publicJWK: activeKey.publicJWK,
+            privatePEM: activeKey.privatePEM,
+            createdAt: activeKey.createdAt,
+            status: activeKey.status,
+            certificatePEM: activeKey.certificatePEM,
+            certificateCreatedAt: activeKey.certificateCreatedAt,
+            certificateSha256Thumbprint: activeKey.certificateSha256Thumbprint,
+            expiresAt: activeKey.expiresAt,
+            revokedAt: activeKey.revokedAt,
+            revokedReason: activeKey.revokedReason,
+          };
 
-        if (!activeKey) {
-          return new Response(JSON.stringify({ error: 'No active key found' }), {
-            status: 404,
+          // Return full key data including privatePEM for internal use
+          return new Response(JSON.stringify(result), {
             headers: { 'Content-Type': 'application/json' },
           });
         }
 
-        // Explicitly reconstruct the object to ensure all properties are serializable
-        const result: StoredKey = {
-          kid: activeKey.kid,
-          publicJWK: activeKey.publicJWK,
-          privatePEM: activeKey.privatePEM,
-          createdAt: activeKey.createdAt,
-          status: activeKey.status,
-          certificatePEM: activeKey.certificatePEM,
-          certificateCreatedAt: activeKey.certificateCreatedAt,
-          certificateSha256Thumbprint: activeKey.certificateSha256Thumbprint,
-          expiresAt: activeKey.expiresAt,
-          revokedAt: activeKey.revokedAt,
-          revokedReason: activeKey.revokedReason,
-        };
+        // POST /internal/certificate - Store a public certificate for an existing key once
+        if (path === '/internal/certificate' && request.method === 'POST') {
+          const body = await readRequestJsonWithLimit<StoreCertificateRequest>(
+            request,
+            MAX_KEY_MANAGER_JSON_BODY_BYTES
+          );
+          const key = await this.storeCertificateForKey(body);
 
-        // Return full key data including privatePEM for internal use
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+          return new Response(JSON.stringify(this.#sanitizeKey(key)), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
 
-      // POST /internal/certificate - Store a public certificate for an existing key once
-      if (path === '/internal/certificate' && request.method === 'POST') {
-        const body = await readRequestJsonWithLimit<StoreCertificateRequest>(
-          request,
-          MAX_KEY_MANAGER_JSON_BODY_BYTES
-        );
-        const key = await this.storeCertificateForKey(body);
+        // POST /internal/import-key - Restore an existing RSA signing key for DR recovery
+        if (path === '/internal/import-key' && request.method === 'POST') {
+          const body = await readRequestJsonWithLimit<ImportKeyRequest>(
+            request,
+            MAX_KEY_MANAGER_JSON_BODY_BYTES
+          );
+          const key = await this.importKey(body);
 
-        return new Response(JSON.stringify(this.sanitizeKey(key)), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+          return new Response(JSON.stringify({ success: true, key: this.#sanitizeKey(key) }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
 
-      // POST /internal/import-key - Restore an existing RSA signing key for DR recovery
-      if (path === '/internal/import-key' && request.method === 'POST') {
-        const body = await readRequestJsonWithLimit<ImportKeyRequest>(
-          request,
-          MAX_KEY_MANAGER_JSON_BODY_BYTES
-        );
-        const key = await this.importKey(body);
+        // GET /jwks - Get all public keys (JWKS format)
+        if (path === '/jwks' && request.method === 'GET') {
+          const keys = await this.getAllPublicKeys();
 
-        return new Response(JSON.stringify({ success: true, key: this.sanitizeKey(key) }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+          return new Response(JSON.stringify({ keys }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
 
-      // GET /jwks - Get all public keys (JWKS format)
-      if (path === '/jwks' && request.method === 'GET') {
-        const keys = await this.getAllPublicKeys();
+        // POST /rotate - Trigger key rotation (public endpoint, no private key)
+        if (path === '/rotate' && request.method === 'POST') {
+          const newKey = await this.rotateKeys();
 
-        return new Response(JSON.stringify({ keys }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+          // Sanitize key data (remove private key material)
+          const safeKey = this.#sanitizeKey(newKey);
 
-      // POST /rotate - Trigger key rotation (public endpoint, no private key)
-      if (path === '/rotate' && request.method === 'POST') {
-        const newKey = await this.rotateKeys();
+          return new Response(JSON.stringify({ success: true, key: safeKey }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
 
-        // Sanitize key data (remove private key material)
-        const safeKey = this.sanitizeKey(newKey);
+        // POST /internal/rotate - Trigger key rotation and return with private key (for internal use)
+        if (path === '/internal/rotate' && request.method === 'POST') {
+          const body = request.headers.get('Content-Type')?.includes('application/json')
+            ? ((await request.json().catch(() => ({}))) as { modulusLength?: unknown })
+            : {};
+          const modulusLength =
+            body.modulusLength === 2048 ||
+            body.modulusLength === 3072 ||
+            body.modulusLength === 4096
+              ? body.modulusLength
+              : undefined;
+          const newKey = await this.rotateKeys({ modulusLength });
 
-        return new Response(JSON.stringify({ success: true, key: safeKey }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+          log.debug('/internal/rotate - newKey', {
+            kid: newKey.kid,
+            modulusLength,
+            hasPEM: !!newKey.privatePEM,
+            pemLength: newKey.privatePEM?.length,
+          });
 
-      // POST /internal/rotate - Trigger key rotation and return with private key (for internal use)
-      if (path === '/internal/rotate' && request.method === 'POST') {
-        const body = request.headers.get('Content-Type')?.includes('application/json')
-          ? ((await request.json().catch(() => ({}))) as { modulusLength?: unknown })
-          : {};
-        const modulusLength =
-          body.modulusLength === 2048 || body.modulusLength === 3072 || body.modulusLength === 4096
-            ? body.modulusLength
-            : undefined;
-        const newKey = await this.rotateKeys({ modulusLength });
+          // Already reconstructed in rotateKeys(), so newKey should be serializable
+          const responseBody = { success: true, key: newKey };
+          const jsonString = JSON.stringify(responseBody);
 
-        log.debug('/internal/rotate - newKey', {
-          kid: newKey.kid,
-          modulusLength,
-          hasPEM: !!newKey.privatePEM,
-          pemLength: newKey.privatePEM?.length,
-        });
+          // Return full key data including privatePEM for internal use
+          return new Response(jsonString, {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
 
-        // Already reconstructed in rotateKeys(), so newKey should be serializable
-        const responseBody = { success: true, key: newKey };
-        const jsonString = JSON.stringify(responseBody);
+        const internalSecretPath = '/internal/secrets/';
+        if (path.startsWith(internalSecretPath)) {
+          const secretPath = path.slice(internalSecretPath.length);
+          const isSecretRotation = secretPath.endsWith('/rotate');
+          const secretRefPath = isSecretRotation
+            ? secretPath.slice(0, -'/rotate'.length)
+            : secretPath;
+          const secretRef = decodeURIComponent(secretRefPath);
 
-        // Return full key data including privatePEM for internal use
-        return new Response(jsonString, {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+          if (request.method === 'GET' && !isSecretRotation) {
+            const secret = await this.#getOrCreateSecret(secretRef);
+            return new Response(JSON.stringify(secret), {
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
 
-      const internalSecretPath = '/internal/secrets/';
-      if (path.startsWith(internalSecretPath)) {
-        const secretPath = path.slice(internalSecretPath.length);
-        const isSecretRotation = secretPath.endsWith('/rotate');
-        const secretRefPath = isSecretRotation
-          ? secretPath.slice(0, -'/rotate'.length)
-          : secretPath;
-        const secretRef = decodeURIComponent(secretRefPath);
+          if (request.method === 'POST' && isSecretRotation) {
+            const secret = await this.#rotateSecret(secretRef);
+            return new Response(JSON.stringify(secret), {
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+        }
 
-        if (request.method === 'GET' && !isSecretRotation) {
-          const secret = await this.getOrCreateSecret(secretRef);
+        const internalSecretMatch = path.match(/^\/internal\/secrets\/([^/]+)$/);
+        if (internalSecretMatch && request.method === 'GET') {
+          const secret = await this.#getOrCreateSecret(decodeURIComponent(internalSecretMatch[1]));
           return new Response(JSON.stringify(secret), {
             headers: { 'Content-Type': 'application/json' },
           });
         }
 
-        if (request.method === 'POST' && isSecretRotation) {
-          const secret = await this.rotateSecret(secretRef);
+        const internalSecretRotateMatch = path.match(/^\/internal\/secrets\/([^/]+)\/rotate$/);
+        if (internalSecretRotateMatch && request.method === 'POST') {
+          const secret = await this.#rotateSecret(decodeURIComponent(internalSecretRotateMatch[1]));
           return new Response(JSON.stringify(secret), {
             headers: { 'Content-Type': 'application/json' },
           });
         }
-      }
 
-      const internalSecretMatch = path.match(/^\/internal\/secrets\/([^/]+)$/);
-      if (internalSecretMatch && request.method === 'GET') {
-        const secret = await this.getOrCreateSecret(decodeURIComponent(internalSecretMatch[1]));
-        return new Response(JSON.stringify(secret), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+        // GET /should-rotate - Check if rotation is needed
+        if (path === '/should-rotate' && request.method === 'GET') {
+          const shouldRotate = await this.shouldRotateKeys();
 
-      const internalSecretRotateMatch = path.match(/^\/internal\/secrets\/([^/]+)\/rotate$/);
-      if (internalSecretRotateMatch && request.method === 'POST') {
-        const secret = await this.rotateSecret(decodeURIComponent(internalSecretRotateMatch[1]));
-        return new Response(JSON.stringify(secret), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // GET /should-rotate - Check if rotation is needed
-      if (path === '/should-rotate' && request.method === 'GET') {
-        const shouldRotate = await this.shouldRotateKeys();
-
-        return new Response(JSON.stringify({ shouldRotate }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // GET /config - Get configuration
-      if (path === '/config' && request.method === 'GET') {
-        const config = await this.getConfig();
-
-        return new Response(JSON.stringify(config), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // POST /config - Update configuration
-      if (path === '/config' && request.method === 'POST') {
-        const body = await readRequestJsonWithLimit<Partial<KeyRotationConfig>>(
-          request,
-          MAX_KEY_MANAGER_JSON_BODY_BYTES
-        );
-        await this.updateConfig(body);
-
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // POST /emergency-rotate - Emergency key rotation (immediate revocation)
-      if (path === '/emergency-rotate' && request.method === 'POST') {
-        const body = await readRequestJsonWithLimit<{ reason: string }>(
-          request,
-          MAX_KEY_MANAGER_JSON_BODY_BYTES
-        );
-
-        if (!body.reason || body.reason.length < 10) {
-          return new Response(
-            JSON.stringify({
-              error: 'Bad Request',
-              message: 'Reason is required (minimum 10 characters)',
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-
-        const result = await this.emergencyRotateKeys(body.reason);
-
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // GET /status - Get status of all keys (for admin dashboard)
-      if (path === '/status' && request.method === 'GET') {
-        await this.initializeState();
-        const state = this.getState();
-
-        // Sanitize keys (remove private key material)
-        const keys = state.keys.map((k) => ({
-          kid: k.kid,
-          status: k.status,
-          createdAt: k.createdAt,
-          expiresAt: k.expiresAt,
-          revokedAt: k.revokedAt,
-          revokedReason: k.revokedReason,
-        }));
-
-        return new Response(
-          JSON.stringify({
-            keys,
-            activeKeyId: state.activeKeyId,
-            lastRotation: state.lastRotation,
-          }),
-          {
+          return new Response(JSON.stringify({ shouldRotate }), {
             headers: { 'Content-Type': 'application/json' },
-          }
-        );
-      }
-
-      // ==========================================
-      // EC Key HTTP Endpoints (Phase 9: SD-JWT VC)
-      // ==========================================
-
-      // GET /ec/active/:algorithm - Get active EC signing key
-      if (path.startsWith('/ec/active/') && request.method === 'GET') {
-        const algorithm = path.split('/')[3] as ECAlgorithm;
-        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
-          return new Response(
-            JSON.stringify({
-              error: 'Bad Request',
-              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
+          });
         }
 
-        const activeKey = await this.getActiveECKey(algorithm);
+        // GET /config - Get configuration
+        if (path === '/config' && request.method === 'GET') {
+          const config = await this.getConfig();
 
-        if (!activeKey) {
-          return new Response(
-            JSON.stringify({ error: `No active EC key found for ${algorithm}` }),
-            {
-              status: 404,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-
-        // Sanitize key data (remove private key material)
-        const safeKey = this.sanitizeECKey(activeKey);
-
-        return new Response(JSON.stringify(safeKey), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // GET /internal/ec/active-with-private/:algorithm - Get active EC key with private key
-      if (path.startsWith('/internal/ec/active-with-private/') && request.method === 'GET') {
-        const algorithm = path.split('/')[4] as ECAlgorithm;
-        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
-          return new Response(
-            JSON.stringify({
-              error: 'Bad Request',
-              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-
-        const activeKey = await this.getActiveECKey(algorithm);
-
-        if (!activeKey) {
-          return new Response(
-            JSON.stringify({ error: `No active EC key found for ${algorithm}` }),
-            {
-              status: 404,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-
-        // Return full key data including privatePEM for internal VC signing
-        const result: StoredECKey = {
-          kid: activeKey.kid,
-          algorithm: activeKey.algorithm,
-          curve: activeKey.curve,
-          publicJWK: activeKey.publicJWK,
-          privatePEM: activeKey.privatePEM,
-          createdAt: activeKey.createdAt,
-          status: activeKey.status,
-          expiresAt: activeKey.expiresAt,
-          revokedAt: activeKey.revokedAt,
-          revokedReason: activeKey.revokedReason,
-        };
-
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // GET /ec/jwks - Get all EC public keys (JWKS format)
-      if (path === '/ec/jwks' && request.method === 'GET') {
-        const keys = await this.getAllECPublicKeys();
-
-        return new Response(JSON.stringify({ keys }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // POST /ec/rotate/:algorithm - Rotate EC keys for a specific algorithm
-      if (path.startsWith('/ec/rotate/') && request.method === 'POST') {
-        const algorithm = path.split('/')[3] as ECAlgorithm;
-        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
-          return new Response(
-            JSON.stringify({
-              error: 'Bad Request',
-              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-
-        const newKey = await this.rotateECKeys(algorithm);
-
-        // Sanitize key data (remove private key material)
-        const safeKey = this.sanitizeECKey(newKey);
-
-        return new Response(JSON.stringify({ success: true, key: safeKey }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // POST /internal/ec/rotate/:algorithm - Rotate EC keys and return with private key
-      if (path.startsWith('/internal/ec/rotate/') && request.method === 'POST') {
-        const algorithm = path.split('/')[4] as ECAlgorithm;
-        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
-          return new Response(
-            JSON.stringify({
-              error: 'Bad Request',
-              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-
-        const newKey = await this.rotateECKeys(algorithm);
-
-        log.debug('/internal/ec/rotate - newKey', {
-          kid: newKey.kid,
-          algorithm: newKey.algorithm,
-          hasPEM: !!newKey.privatePEM,
-          pemLength: newKey.privatePEM?.length,
-        });
-
-        // Return full key data including privatePEM for internal VC signing
-        return new Response(JSON.stringify({ success: true, key: newKey }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // POST /ec/emergency-rotate/:algorithm - Emergency EC key rotation
-      if (path.startsWith('/ec/emergency-rotate/') && request.method === 'POST') {
-        const algorithm = path.split('/')[3] as ECAlgorithm;
-        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
-          return new Response(
-            JSON.stringify({
-              error: 'Bad Request',
-              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-
-        const body = await readRequestJsonWithLimit<{ reason: string }>(
-          request,
-          MAX_KEY_MANAGER_JSON_BODY_BYTES
-        );
-
-        if (!body.reason || body.reason.length < 10) {
-          return new Response(
-            JSON.stringify({
-              error: 'Bad Request',
-              message: 'Reason is required (minimum 10 characters)',
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-
-        const result = await this.emergencyRotateECKeys(algorithm, body.reason);
-
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      // GET /ec/status - Get status of all EC keys (for admin dashboard)
-      if (path === '/ec/status' && request.method === 'GET') {
-        await this.initializeECState();
-        const state = this.getECState();
-
-        // Sanitize keys (remove private key material)
-        const keys = state.keys.map((k) => ({
-          kid: k.kid,
-          algorithm: k.algorithm,
-          curve: k.curve,
-          status: k.status,
-          createdAt: k.createdAt,
-          expiresAt: k.expiresAt,
-          revokedAt: k.revokedAt,
-          revokedReason: k.revokedReason,
-        }));
-
-        return new Response(
-          JSON.stringify({
-            keys,
-            activeKeyIds: state.activeKeyIds,
-            lastRotation: state.lastRotation,
-          }),
-          {
+          return new Response(JSON.stringify(config), {
             headers: { 'Content-Type': 'application/json' },
-          }
-        );
-      }
+          });
+        }
 
-      return new Response('Not Found', { status: 404 });
-    } catch (error) {
-      if (error instanceof InvalidSecretRefError) {
-        return new Response(JSON.stringify({ error: 'Bad Request', message: error.message }), {
-          status: 400,
+        // POST /config - Update configuration
+        if (path === '/config' && request.method === 'POST') {
+          const body = await readRequestJsonWithLimit<Partial<KeyRotationConfig>>(
+            request,
+            MAX_KEY_MANAGER_JSON_BODY_BYTES
+          );
+          await this.updateConfig(body);
+
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // POST /emergency-rotate - Emergency key rotation (immediate revocation)
+        if (path === '/emergency-rotate' && request.method === 'POST') {
+          const body = await readRequestJsonWithLimit<{ reason: string }>(
+            request,
+            MAX_KEY_MANAGER_JSON_BODY_BYTES
+          );
+
+          if (!body.reason || body.reason.length < 10) {
+            return new Response(
+              JSON.stringify({
+                error: 'Bad Request',
+                message: 'Reason is required (minimum 10 characters)',
+              }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          const result = await this.emergencyRotateKeys(body.reason);
+
+          return new Response(JSON.stringify(result), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // GET /status - Get status of all keys (for admin dashboard)
+        if (path === '/status' && request.method === 'GET') {
+          await this.#initializeState();
+          const state = this.#getState();
+
+          // Sanitize keys (remove private key material)
+          const keys = state.keys.map((k) => ({
+            kid: k.kid,
+            status: k.status,
+            createdAt: k.createdAt,
+            expiresAt: k.expiresAt,
+            revokedAt: k.revokedAt,
+            revokedReason: k.revokedReason,
+          }));
+
+          return new Response(
+            JSON.stringify({
+              keys,
+              activeKeyId: state.activeKeyId,
+              lastRotation: state.lastRotation,
+            }),
+            {
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        // ==========================================
+        // EC Key HTTP Endpoints (Phase 9: SD-JWT VC)
+        // ==========================================
+
+        // GET /ec/active/:algorithm - Get active EC signing key
+        if (path.startsWith('/ec/active/') && request.method === 'GET') {
+          const algorithm = path.split('/')[3] as ECAlgorithm;
+          if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+            return new Response(
+              JSON.stringify({
+                error: 'Bad Request',
+                message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+              }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          const activeKey = await this.getActiveECKey(algorithm);
+
+          if (!activeKey) {
+            return new Response(
+              JSON.stringify({ error: `No active EC key found for ${algorithm}` }),
+              {
+                status: 404,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          // Sanitize key data (remove private key material)
+          const safeKey = this.#sanitizeECKey(activeKey);
+
+          return new Response(JSON.stringify(safeKey), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // GET /internal/ec/active-with-private/:algorithm - Get active EC key with private key
+        if (path.startsWith('/internal/ec/active-with-private/') && request.method === 'GET') {
+          const algorithm = path.split('/')[4] as ECAlgorithm;
+          if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+            return new Response(
+              JSON.stringify({
+                error: 'Bad Request',
+                message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+              }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          const activeKey = await this.getActiveECKey(algorithm);
+
+          if (!activeKey) {
+            return new Response(
+              JSON.stringify({ error: `No active EC key found for ${algorithm}` }),
+              {
+                status: 404,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          // Return full key data including privatePEM for internal VC signing
+          const result: StoredECKey = {
+            kid: activeKey.kid,
+            algorithm: activeKey.algorithm,
+            curve: activeKey.curve,
+            publicJWK: activeKey.publicJWK,
+            privatePEM: activeKey.privatePEM,
+            createdAt: activeKey.createdAt,
+            status: activeKey.status,
+            expiresAt: activeKey.expiresAt,
+            revokedAt: activeKey.revokedAt,
+            revokedReason: activeKey.revokedReason,
+          };
+
+          return new Response(JSON.stringify(result), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // GET /ec/jwks - Get all EC public keys (JWKS format)
+        if (path === '/ec/jwks' && request.method === 'GET') {
+          const keys = await this.getAllECPublicKeys();
+
+          return new Response(JSON.stringify({ keys }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // POST /ec/rotate/:algorithm - Rotate EC keys for a specific algorithm
+        if (path.startsWith('/ec/rotate/') && request.method === 'POST') {
+          const algorithm = path.split('/')[3] as ECAlgorithm;
+          if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+            return new Response(
+              JSON.stringify({
+                error: 'Bad Request',
+                message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+              }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          const newKey = await this.rotateECKeys(algorithm);
+
+          // Sanitize key data (remove private key material)
+          const safeKey = this.#sanitizeECKey(newKey);
+
+          return new Response(JSON.stringify({ success: true, key: safeKey }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // POST /internal/ec/rotate/:algorithm - Rotate EC keys and return with private key
+        if (path.startsWith('/internal/ec/rotate/') && request.method === 'POST') {
+          const algorithm = path.split('/')[4] as ECAlgorithm;
+          if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+            return new Response(
+              JSON.stringify({
+                error: 'Bad Request',
+                message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+              }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          const newKey = await this.rotateECKeys(algorithm);
+
+          log.debug('/internal/ec/rotate - newKey', {
+            kid: newKey.kid,
+            algorithm: newKey.algorithm,
+            hasPEM: !!newKey.privatePEM,
+            pemLength: newKey.privatePEM?.length,
+          });
+
+          // Return full key data including privatePEM for internal VC signing
+          return new Response(JSON.stringify({ success: true, key: newKey }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // POST /ec/emergency-rotate/:algorithm - Emergency EC key rotation
+        if (path.startsWith('/ec/emergency-rotate/') && request.method === 'POST') {
+          const algorithm = path.split('/')[3] as ECAlgorithm;
+          if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+            return new Response(
+              JSON.stringify({
+                error: 'Bad Request',
+                message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+              }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          const body = await readRequestJsonWithLimit<{ reason: string }>(
+            request,
+            MAX_KEY_MANAGER_JSON_BODY_BYTES
+          );
+
+          if (!body.reason || body.reason.length < 10) {
+            return new Response(
+              JSON.stringify({
+                error: 'Bad Request',
+                message: 'Reason is required (minimum 10 characters)',
+              }),
+              {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+              }
+            );
+          }
+
+          const result = await this.emergencyRotateECKeys(algorithm, body.reason);
+
+          return new Response(JSON.stringify(result), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // GET /ec/status - Get status of all EC keys (for admin dashboard)
+        if (path === '/ec/status' && request.method === 'GET') {
+          await this.#initializeECState();
+          const state = this.#getECState();
+
+          // Sanitize keys (remove private key material)
+          const keys = state.keys.map((k) => ({
+            kid: k.kid,
+            algorithm: k.algorithm,
+            curve: k.curve,
+            status: k.status,
+            createdAt: k.createdAt,
+            expiresAt: k.expiresAt,
+            revokedAt: k.revokedAt,
+            revokedReason: k.revokedReason,
+          }));
+
+          return new Response(
+            JSON.stringify({
+              keys,
+              activeKeyIds: state.activeKeyIds,
+              lastRotation: state.lastRotation,
+            }),
+            {
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        return new Response('Not Found', { status: 404 });
+      } catch (error) {
+        if (error instanceof InvalidSecretRefError) {
+          return new Response(JSON.stringify({ error: 'Bad Request', message: error.message }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        log.error('Request error', {}, error as Error);
+        return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+          status: 500,
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      log.error('Request error', {}, error as Error);
-      return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+    });
   }
 }

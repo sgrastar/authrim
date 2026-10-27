@@ -15,6 +15,10 @@ function envFailingAfterDiagnostics(thrown: unknown): never {
   const values: Record<string, unknown> = {
     AUTHRIM_DIAGNOSTIC_TIMING_ENABLED: '1',
     AUTHRIM_ENVIRONMENT_management: undefined,
+    // Read by the SAML DR gate in front of the app, before any middleware runs.
+    ENABLE_SAML_DR_EXPORT: undefined,
+    AUTHRIM_REPLICATION_WRITER: undefined,
+    AUTHRIM_REPLICATION_WRITER_SECRET: undefined,
   };
   let failed = false;
   return new Proxy(values, {

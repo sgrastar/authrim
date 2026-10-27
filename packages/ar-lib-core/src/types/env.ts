@@ -11,6 +11,11 @@ import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
 import type { JWK } from 'jose';
+import type { SAMLRuntimePorts } from './saml-runtime-ports';
+import type { AuthRuntimePorts } from './auth-runtime-ports';
+import type { RuntimeDataPorts } from './runtime-data-ports';
+import type { AuditRuntimePorts } from './audit-runtime-ports';
+import type { EventRuntimePorts } from './event-runtime-ports';
 import type { VCIssuerServiceBinding } from './vc-service';
 import type { ControlServiceBinding } from '../services/control-plane/control-plane-contracts';
 import type { AccountDirectoryServiceBinding } from '../services/lookup-directory/publication';
@@ -424,6 +429,14 @@ export interface PluginRunnerServiceBinding {
  * - PII_: PII encryption settings
  */
 export interface Env {
+  /** Optional deployment-owned database routing. Cloudflare continues using its registry. */
+  RUNTIME_DATA_PORTS?: RuntimeDataPorts;
+  AUDIT_RUNTIME_PORTS?: AuditRuntimePorts;
+  EVENT_RUNTIME_PORTS?: EventRuntimePorts;
+  /** Optional narrow SAML IdP state/key ports for non-Worker runtimes. */
+  SAML_RUNTIME_PORTS?: SAMLRuntimePorts;
+  /** Optional tenant-scoped sign-in state ports for non-Worker runtimes. */
+  AUTH_RUNTIME_PORTS?: AuthRuntimePorts;
   /** Setup-generated binding identity metadata; not a user-configurable backup option. */
   AUTHRIM_FIXED_DATABASE_IDS?: string;
   // D1 Databases
@@ -590,6 +603,15 @@ export interface Env {
   ENABLE_IDENTITY_STITCHING?: string; // "true" to enable automatic identity stitching
   ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL?: string; // "false" to allow unverified emails (not recommended)
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
+  /** Experimental source capture remains unavailable until all writers can be verified. */
+  ENABLE_SAML_DR_EXPORT?: string;
+  /** Opt-in cross-provider writer authority. Partial configuration fails closed. */
+  AUTHRIM_REPLICATION_WRITER?: string;
+  AUTHRIM_REPLICATION_WRITER_SECRET?: string;
+  SAML_DR_MUTATION_CONTROL?: Pick<
+    ControlServiceBinding,
+    'acquireEnvironmentBackupMutationPermit' | 'completeEnvironmentBackupMutationPermit'
+  >;
   TENANT_BACKUP_WRAPPING_KEY?: string; // Dedicated 32-byte hex key for temporary backup operation secrets
   ADMIN_CREDENTIAL_ENCRYPTION_KEY?: string; // Encryption key for Admin-managed external credentials
 

@@ -8,6 +8,12 @@ info:
     Worker. This document is safe to keep near the package because it describes externally
     observable HTTP contracts only. Do not add secrets, environment-specific credentials,
     vulnerability notes, or private operational runbooks here.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
   x-authrim-coverage: initial security-testing contract
 servers:
   - url: 'https://{tenant_domain}'
@@ -34541,10 +34547,135 @@ paths:
             },
         },
     }
+  /api/admin/tenant-backups/{operationId}/export-receipt:
+    get:
+      summary: Read independent verification metadata for a published encrypted backup
+      description: Requires backup read and export permissions and fresh human administrator MFA authentication within five minutes. Sensitive-log exports also require the sensitive-backup permission. Returns only a ready, sealed, unexpired publication and its source-owned manifest metadata. This receipt is obtained independently of the encrypted artifact. The parts array defines the exact order, byte lengths, and SHA-256 digests of encrypted segments in the concatenated download response; clients must verify every segment and reject extra or missing bytes. An audit event must be persisted before returning metadata. No content keys, object addresses, exported rows, or machine delegation are returned.
+      tags: [Tenant Backups]
+      parameters:
+        - in: path
+          name: operationId
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_.:-]{1,256}$'
+      responses:
+        '200':
+          description: Source-authenticated publication metadata. Responses must not be cached.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  [
+                    formatVersion,
+                    operationId,
+                    expiresAt,
+                    byteCount,
+                    boundaryUnixMs,
+                    receipt,
+                    selection,
+                    datasets,
+                  ]
+                properties:
+                  formatVersion:
+                    type: integer
+                    enum: [1]
+                  operationId:
+                    type: string
+                  expiresAt:
+                    type: integer
+                    description: Publication expiry as Unix milliseconds.
+                  byteCount:
+                    type: integer
+                    minimum: 1
+                  boundaryUnixMs:
+                    type: integer
+                    minimum: 0
+                    description: Source snapshot boundary as Unix milliseconds.
+                  receipt:
+                    type: object
+                    additionalProperties: false
+                    required: [source, bundleId, snapshotId, inventoryDigestSha256, parts]
+                    properties:
+                      source:
+                        type: object
+                        additionalProperties: false
+                        required: [tenantId, issuer, productVersion]
+                        properties:
+                          tenantId: { type: string }
+                          issuer: { type: string, format: uri }
+                          productVersion: { type: string }
+                      bundleId: { type: string, pattern: '^[a-f0-9]{32}$' }
+                      snapshotId: { type: string }
+                      inventoryDigestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                      parts:
+                        type: array
+                        minItems: 1
+                        maxItems: 10001
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required: [size, sha256]
+                          properties:
+                            size: { type: integer, minimum: 1 }
+                            sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  selection:
+                    type: object
+                    additionalProperties: false
+                    required: [settings, users, admin, artifacts, logs]
+                    properties:
+                      settings: { type: boolean }
+                      users: { type: boolean }
+                      admin: { type: boolean }
+                      artifacts: { type: boolean }
+                      logs:
+                        type: object
+                        additionalProperties: false
+                        required: [audit, other, sensitive, period]
+                        properties:
+                          audit: { type: boolean }
+                          other: { type: boolean }
+                          sensitive: { type: boolean }
+                          period:
+                            oneOf:
+                              - { type: integer, enum: [7, 30, 90] }
+                              - { type: string, enum: [all] }
+                  datasets:
+                    type: array
+                    minItems: 1
+                    maxItems: 4096
+                    description: The source operation's pinned installed dataset inventory, obtained independently of the artifact.
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, module, kind, store, schemaVersion, disposition]
+                      properties:
+                        id: { type: string }
+                        module: { type: string }
+                        kind: { type: string }
+                        store:
+                          {
+                            type: string,
+                            enum: [database, kv, durable_object, object, environment],
+                          }
+                        schemaVersion: { type: integer, minimum: 1 }
+                        disposition: { type: string, enum: [include, rebuild, external] }
+        '400':
+          description: Invalid operation identifier
+        '403':
+          description: Missing permission, tenant scope, or fresh human MFA authentication
+        '404':
+          description: Operation not found in the current tenant
+        '409':
+          description: Publication is not ready, has expired, or its verification metadata is unavailable
+        '503':
+          description: Audit persistence is unavailable
   /api/admin/tenant-backups/{operationId}/download:
     get:
       summary: Download a published encrypted tenant backup
-      description: Requires backup read and export permissions and fresh human administrator authentication. Backups containing sensitive logs also require the sensitive-backup permission. Downloads are available only for ready exports within seven days of publication. Each encrypted part is verified before transmission; a failed or expired stream terminates without a complete file. A download-start audit event must be persisted before transmission.
+      description: Requires backup read and export permissions and fresh human administrator authentication. Backups containing sensitive logs also require the sensitive-backup permission. Downloads are available only for ready exports within seven days of publication. Each encrypted part is verified before transmission; a failed or expired stream terminates without a complete file. The export-receipt endpoint provides independently authenticated ordered segment sizes and digests for splitting this concatenated response. A download-start audit event must be persisted before transmission.
       tags: [Tenant Backups]
       parameters:
         - in: path
@@ -34760,8 +34891,801 @@ paths:
             },
         },
     }
+  /api/admin/replication-backups/grants:
+    {
+      'post':
+        {
+          'summary': 'Authorize periodic export for one replication pair',
+          'description': 'Fresh human session MFA within five minutes and backup read, manage and export permissions are required. Sensitive selections additionally require the sensitive-backup permission. Audit persistence is required before any grant mutation. Returns a random 256-bit bearer credential once. Only its SHA-256 hash is stored. The immutable grant fixes source tenant, pair, source and destination deployment, issuer and selection. Expiry must be within thirty days. This credential cannot import data, approve restores or access the ordinary Admin API. The source must match installed replication configuration; the administrator explicitly approves the destination deployment identifier. No backup passphrase is accepted.',
+          'tags': ['Tenant Backups'],
+          'parameters': [],
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'Operation result. Responses are not cacheable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['grant', 'credential'],
+                              'properties':
+                                {
+                                  'grant':
+                                    {
+                                      'type': 'object',
+                                      'additionalProperties': false,
+                                      'required':
+                                        [
+                                          'id',
+                                          'createdBy',
+                                          'createdAt',
+                                          'expiresAt',
+                                          'revokedAt',
+                                          'scope',
+                                        ],
+                                      'properties':
+                                        {
+                                          'id':
+                                            {
+                                              'type': 'string',
+                                              'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                            },
+                                          'createdBy':
+                                            {
+                                              'type': 'string',
+                                              'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                            },
+                                          'createdAt': { 'type': 'integer' },
+                                          'expiresAt': { 'type': 'integer' },
+                                          'revokedAt': { 'type': 'integer', 'nullable': true },
+                                          'scope':
+                                            {
+                                              'type': 'object',
+                                              'additionalProperties': false,
+                                              'required':
+                                                [
+                                                  'version',
+                                                  'kind',
+                                                  'tenantId',
+                                                  'pairId',
+                                                  'sourceDeploymentId',
+                                                  'destinationDeploymentId',
+                                                  'issuer',
+                                                  'selection',
+                                                ],
+                                              'properties':
+                                                {
+                                                  'version': { 'type': 'integer', 'enum': [1] },
+                                                  'kind':
+                                                    {
+                                                      'type': 'string',
+                                                      'enum': ['tenant_backup_export'],
+                                                    },
+                                                  'tenantId':
+                                                    {
+                                                      'type': 'string',
+                                                      'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                                    },
+                                                  'pairId':
+                                                    {
+                                                      'type': 'string',
+                                                      'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                                    },
+                                                  'sourceDeploymentId':
+                                                    {
+                                                      'type': 'string',
+                                                      'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                                    },
+                                                  'destinationDeploymentId':
+                                                    {
+                                                      'type': 'string',
+                                                      'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                                    },
+                                                  'issuer': { 'type': 'string', 'format': 'uri' },
+                                                  'selection':
+                                                    {
+                                                      '$ref': '#/paths/~1api~1admin~1tenant-backups~1{operationId}~1export-receipt/get/responses/200/content/application~1json/schema/properties/selection',
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                  'credential': { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required':
+                            [
+                              'pairId',
+                              'sourceDeploymentId',
+                              'destinationDeploymentId',
+                              'selection',
+                              'expiresAt',
+                            ],
+                          'properties':
+                            {
+                              'pairId': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                              'sourceDeploymentId':
+                                { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                              'destinationDeploymentId':
+                                { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                              'selection':
+                                {
+                                  '$ref': '#/paths/~1api~1admin~1tenant-backups~1{operationId}~1export-receipt/get/responses/200/content/application~1json/schema/properties/selection',
+                                },
+                              'expiresAt':
+                                {
+                                  'type': 'integer',
+                                  'description': 'Unix milliseconds; after now and no more than thirty days from now.',
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/admin/replication-backups/grants/{grantId}/revoke:
+    {
+      'post':
+        {
+          'summary': 'Revoke periodic export authorization',
+          'description': 'Fresh human session MFA within five minutes and backup read, manage and export permissions are required. Sensitive selections additionally require the sensitive-backup permission. Audit persistence is required before any grant mutation. Revocation is permanent and audited. Repeating revocation retains the original revocation evidence. Subsequent machine requests are rejected; encrypted downloads also recheck the grant before emitting each part. Already admitted backup work is not cancelled by this action.',
+          'tags': ['Tenant Backups'],
+          'parameters':
+            [
+              {
+                'in': 'path',
+                'name': 'grantId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Operation result. Responses are not cacheable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['grant'],
+                              'properties':
+                                {
+                                  'grant':
+                                    {
+                                      'type': 'object',
+                                      'additionalProperties': false,
+                                      'required':
+                                        [
+                                          'id',
+                                          'createdBy',
+                                          'createdAt',
+                                          'expiresAt',
+                                          'revokedAt',
+                                          'scope',
+                                        ],
+                                      'properties':
+                                        {
+                                          'id':
+                                            {
+                                              'type': 'string',
+                                              'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                            },
+                                          'createdBy':
+                                            {
+                                              'type': 'string',
+                                              'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                            },
+                                          'createdAt': { 'type': 'integer' },
+                                          'expiresAt': { 'type': 'integer' },
+                                          'revokedAt': { 'type': 'integer', 'nullable': true },
+                                          'scope':
+                                            {
+                                              'type': 'object',
+                                              'additionalProperties': false,
+                                              'required':
+                                                [
+                                                  'version',
+                                                  'kind',
+                                                  'tenantId',
+                                                  'pairId',
+                                                  'sourceDeploymentId',
+                                                  'destinationDeploymentId',
+                                                  'issuer',
+                                                  'selection',
+                                                ],
+                                              'properties':
+                                                {
+                                                  'version': { 'type': 'integer', 'enum': [1] },
+                                                  'kind':
+                                                    {
+                                                      'type': 'string',
+                                                      'enum': ['tenant_backup_export'],
+                                                    },
+                                                  'tenantId':
+                                                    {
+                                                      'type': 'string',
+                                                      'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                                    },
+                                                  'pairId':
+                                                    {
+                                                      'type': 'string',
+                                                      'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                                    },
+                                                  'sourceDeploymentId':
+                                                    {
+                                                      'type': 'string',
+                                                      'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                                    },
+                                                  'destinationDeploymentId':
+                                                    {
+                                                      'type': 'string',
+                                                      'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                                    },
+                                                  'issuer': { 'type': 'string', 'format': 'uri' },
+                                                  'selection':
+                                                    {
+                                                      '$ref': '#/paths/~1api~1admin~1tenant-backups~1{operationId}~1export-receipt/get/responses/200/content/application~1json/schema/properties/selection',
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+        },
+    }
+  /api/replication-backups/{grantId}/exports:
+    {
+      'post':
+        {
+          'summary': 'Create a delegated encrypted export',
+          'description': 'Requires the grant-specific bearer credential and exact X-Tenant-Id. Every request rechecks expiry, revocation and installed source scope. Only exports created by this grant with the fixed issuer and selection are accessible. Audit persistence is required. The idempotency key is scoped to this grant. Selection cannot be supplied or expanded. Returns waiting/unlock; the client then completes the existing key challenge, encrypted envelope acceptance and start sequence. Passphrases remain local to the client.',
+          'tags': ['Tenant Backups'],
+          'parameters':
+            [
+              {
+                'in': 'path',
+                'name': 'grantId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'header',
+                'name': 'X-Tenant-Id',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                'description': 'Must match both the installed source deployment and the grant tenant.',
+              },
+            ],
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'Operation result. Responses are not cacheable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['id', 'state', 'phase', 'revision'],
+                              'properties':
+                                {
+                                  'id': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                                  'state': { 'type': 'string' },
+                                  'phase': { 'type': 'string' },
+                                  'revision': { 'type': 'integer', 'minimum': 0 },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+          'security': [{ 'replicationExportCredential': [] }],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['idempotencyKey'],
+                          'properties':
+                            {
+                              'idempotencyKey':
+                                { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/replication-backups/{grantId}/exports/{operationId}:
+    {
+      'get':
+        {
+          'summary': 'Read delegated export progress',
+          'description': 'Requires the grant-specific bearer credential and exact X-Tenant-Id. Every request rechecks expiry, revocation and installed source scope. Only exports created by this grant with the fixed issuer and selection are accessible. Audit persistence is required. Returns only the sanitized public operation view, never internal lease, request or ciphertext keys.',
+          'tags': ['Tenant Backups'],
+          'parameters':
+            [
+              {
+                'in': 'path',
+                'name': 'grantId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'path',
+                'name': 'operationId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'header',
+                'name': 'X-Tenant-Id',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                'description': 'Must match both the installed source deployment and the grant tenant.',
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Operation result. Responses are not cacheable.',
+                  'content': { 'application/json': { 'schema': { 'type': 'object' } } },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+          'security': [{ 'replicationExportCredential': [] }],
+        },
+    }
+  /api/replication-backups/{grantId}/exports/{operationId}/key-challenges:
+    {
+      'post':
+        {
+          'summary': 'Issue an export content-key challenge',
+          'description': 'Requires the grant-specific bearer credential and exact X-Tenant-Id. Every request rechecks expiry, revocation and installed source scope. Only exports created by this grant with the fixed issuer and selection are accessible. Audit persistence is required. Request body must be empty. The client uses RSA-OAEP SHA-256 and the returned context with the existing backup key-envelope protocol; no plaintext passphrase is sent.',
+          'tags': ['Tenant Backups'],
+          'parameters':
+            [
+              {
+                'in': 'path',
+                'name': 'grantId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'path',
+                'name': 'operationId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'header',
+                'name': 'X-Tenant-Id',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                'description': 'Must match both the installed source deployment and the grant tenant.',
+              },
+            ],
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'Operation result. Responses are not cacheable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['publicKey', 'context', 'submitExpiresAt'],
+                              'properties':
+                                {
+                                  'publicKey':
+                                    {
+                                      'type': 'object',
+                                      'additionalProperties': false,
+                                      'required': ['kty', 'n', 'e'],
+                                      'properties':
+                                        {
+                                          'kty': { 'type': 'string', 'enum': ['RSA'] },
+                                          'n': { 'type': 'string' },
+                                          'e': { 'type': 'string' },
+                                          'alg': { 'type': 'string' },
+                                          'ext': { 'type': 'boolean' },
+                                          'key_ops':
+                                            { 'type': 'array', 'items': { 'type': 'string' } },
+                                        },
+                                    },
+                                  'context':
+                                    {
+                                      'type': 'object',
+                                      'additionalProperties': false,
+                                      'required':
+                                        [
+                                          'tenantId',
+                                          'operationId',
+                                          'requestDigest',
+                                          'challengeId',
+                                          'expiresAt',
+                                        ],
+                                      'properties':
+                                        {
+                                          'tenantId':
+                                            {
+                                              'type': 'string',
+                                              'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                            },
+                                          'operationId':
+                                            {
+                                              'type': 'string',
+                                              'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                            },
+                                          'requestDigest':
+                                            { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                                          'challengeId':
+                                            {
+                                              'type': 'string',
+                                              'pattern': '^[A-Za-z0-9_.:-]{1,128}$',
+                                            },
+                                          'expiresAt': { 'type': 'integer' },
+                                        },
+                                    },
+                                  'submitExpiresAt': { 'type': 'integer' },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+          'security': [{ 'replicationExportCredential': [] }],
+        },
+    }
+  /api/replication-backups/{grantId}/exports/{operationId}/key-challenges/{challengeId}/accept:
+    {
+      'post':
+        {
+          'summary': 'Accept the encrypted export key envelope',
+          'description': 'Requires the grant-specific bearer credential and exact X-Tenant-Id. Every request rechecks expiry, revocation and installed source scope. Only exports created by this grant with the fixed issuer and selection are accessible. Audit persistence is required. The operation key store validates the challenge and its tenant, operation, request digest, creator and expiry before accepting the encrypted envelope and handoff.',
+          'tags': ['Tenant Backups'],
+          'parameters':
+            [
+              {
+                'in': 'path',
+                'name': 'grantId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'path',
+                'name': 'operationId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'path',
+                'name': 'challengeId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'header',
+                'name': 'X-Tenant-Id',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                'description': 'Must match both the installed source deployment and the grant tenant.',
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Operation result. Responses are not cacheable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['accepted'],
+                              'properties': { 'accepted': { 'type': 'boolean', 'enum': [true] } },
+                            },
+                        },
+                    },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+          'security': [{ 'replicationExportCredential': [] }],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['envelope', 'handoff'],
+                          'properties':
+                            {
+                              'envelope': { 'type': 'string', 'pattern': '^[a-f0-9]{186}$' },
+                              'handoff': { 'type': 'string', 'pattern': '^[a-f0-9]{512}$' },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/replication-backups/{grantId}/exports/{operationId}/start:
+    {
+      'post':
+        {
+          'summary': 'Queue the delegated export after key acceptance',
+          'description': 'Requires the grant-specific bearer credential and exact X-Tenant-Id. Every request rechecks expiry, revocation and installed source scope. Only exports created by this grant with the fixed issuer and selection are accessible. Audit persistence is required. Requires the current revision and an accepted, unexpired challenge belonging to this exact operation. Existing scheduled backup processing performs the durable export.',
+          'tags': ['Tenant Backups'],
+          'parameters':
+            [
+              {
+                'in': 'path',
+                'name': 'grantId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'path',
+                'name': 'operationId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'header',
+                'name': 'X-Tenant-Id',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                'description': 'Must match both the installed source deployment and the grant tenant.',
+              },
+            ],
+          'responses':
+            {
+              '202':
+                {
+                  'description': 'Operation result. Responses are not cacheable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['id', 'state', 'phase', 'revision'],
+                              'properties':
+                                {
+                                  'id': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                                  'state': { 'type': 'string' },
+                                  'phase': { 'type': 'string' },
+                                  'revision': { 'type': 'integer', 'minimum': 0 },
+                                },
+                            },
+                        },
+                    },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+          'security': [{ 'replicationExportCredential': [] }],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['revision', 'challengeId'],
+                          'properties':
+                            {
+                              'revision': { 'type': 'integer', 'minimum': 0 },
+                              'challengeId':
+                                { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/replication-backups/{grantId}/exports/{operationId}/export-receipt:
+    {
+      'get':
+        {
+          'summary': 'Read independent delegated export verification metadata',
+          'description': 'Requires the grant-specific bearer credential and exact X-Tenant-Id. Every request rechecks expiry, revocation and installed source scope. Only exports created by this grant with the fixed issuer and selection are accessible. Audit persistence is required. Only ready, sealed, unexpired publications are available. Ordered encrypted segment lengths and SHA-256 digests define the exact byte boundaries of the concatenated download. This response is independent of the artifact.',
+          'tags': ['Tenant Backups'],
+          'parameters':
+            [
+              {
+                'in': 'path',
+                'name': 'grantId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'path',
+                'name': 'operationId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'header',
+                'name': 'X-Tenant-Id',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                'description': 'Must match both the installed source deployment and the grant tenant.',
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Operation result. Responses are not cacheable.',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              '$ref': '#/paths/~1api~1admin~1tenant-backups~1{operationId}~1export-receipt/get/responses/200/content/application~1json/schema',
+                            },
+                        },
+                    },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+          'security': [{ 'replicationExportCredential': [] }],
+        },
+    }
+  /api/replication-backups/{grantId}/exports/{operationId}/download:
+    {
+      'get':
+        {
+          'summary': 'Download the delegated encrypted export',
+          'description': 'Requires the grant-specific bearer credential and exact X-Tenant-Id. Every request rechecks expiry, revocation and installed source scope. Only exports created by this grant with the fixed issuer and selection are accessible. Audit persistence is required. Every encrypted part is integrity-checked and the grant rechecked before transmission. Revocation, expiry or changed publication terminates the stream; clients must reject incomplete downloads and verify the separately authenticated export receipt.',
+          'tags': ['Tenant Backups'],
+          'parameters':
+            [
+              {
+                'in': 'path',
+                'name': 'grantId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'path',
+                'name': 'operationId',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+              },
+              {
+                'in': 'header',
+                'name': 'X-Tenant-Id',
+                'required': true,
+                'schema': { 'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,128}$' },
+                'description': 'Must match both the installed source deployment and the grant tenant.',
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Concatenated encrypted parts; no-store.',
+                  'content':
+                    {
+                      'application/octet-stream':
+                        { 'schema': { 'type': 'string', 'format': 'binary' } },
+                    },
+                },
+              '400': { 'description': 'Request rejected; no additional capability is granted.' },
+              '403': { 'description': 'Request rejected; no additional capability is granted.' },
+              '404': { 'description': 'Request rejected; no additional capability is granted.' },
+              '409': { 'description': 'Request rejected; no additional capability is granted.' },
+              '503': { 'description': 'Request rejected; no additional capability is granted.' },
+            },
+          'security': [{ 'replicationExportCredential': [] }],
+        },
+    }
+
 components:
   securitySchemes:
+    replicationExportCredential:
+      type: http
+      scheme: bearer
+      description: A 256-bit grant-specific export credential issued once after fresh human MFA. Does not authorize ordinary Admin APIs.
     adminBearer:
       type: http
       scheme: bearer

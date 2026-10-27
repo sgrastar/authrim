@@ -2491,6 +2491,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     challengeShards,
   };
   config.features = {
+    samlDrExport: config.features.samlDrExport,
     queue: { enabled: enableQueue },
     r2: { enabled: enableR2 },
     pluginDynamicWorkers: config.features.pluginDynamicWorkers,

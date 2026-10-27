@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   createEventDispatcherFromEnv,
   ensureDatabaseAdapter,
@@ -1030,7 +1031,7 @@ export function createRoutingOutboxProcessor(
           adapter: ensureDatabaseAdapter(tenantCore, 'account-lifecycle-event'),
         });
       } catch {
-        await Promise.all(
+        await samlDrAll(
           events.map((event) =>
             releaseAccountLifecycleEventFailure(
               tenantCore.withSession('first-primary'),
@@ -1043,7 +1044,7 @@ export function createRoutingOutboxProcessor(
         processedRows += events.length;
         continue;
       }
-      await Promise.all(
+      await samlDrAll(
         events.map(async (event) => {
           const eventSession = tenantCore.withSession('first-primary');
           const nowSeconds = Math.floor(input.nowMs() / 1000);

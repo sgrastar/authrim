@@ -1,3 +1,4 @@
+import { readSamlDrFlowRuntimeEnabled } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-runtime-settings';
 import type { Context } from 'hono';
 import {
   consentPresentationKey,
@@ -801,6 +802,7 @@ function readLoginRuntimeFlagFromSettings(
 }
 
 async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<boolean> {
+  if (env.ENABLE_SAML_DR_EXPORT === 'true') return readSamlDrFlowRuntimeEnabled(env, tenantId);
   const cacheKey = getLoginRuntimeFeatureFlagCacheKey(env, tenantId);
   const cached = loginRuntimeFeatureFlagCache.get(cacheKey);
   const now = Date.now();
@@ -888,7 +890,7 @@ async function resolveAssignment(
          AND a.target_type = ?
          AND a.target_id = ?
          AND a.flow_kind = ?
-         AND a.enabled = 1
+         AND a.enabled = TRUE
          AND f.status = 'published'
          AND f.deleted_at IS NULL`,
       [tenantId, target.targetType, target.targetId, flowKind]
@@ -904,7 +906,7 @@ async function resolveAssignment(
        AND a.target_type = 'tenant'
        AND a.target_id IS NULL
        AND a.flow_kind = ?
-       AND a.enabled = 1
+       AND a.enabled = TRUE
        AND f.status = 'published'
        AND f.deleted_at IS NULL`,
     [tenantId, flowKind]
@@ -4439,7 +4441,7 @@ async function recordRuntimeConsent(input: {
     getRequestHeader(input.c, 'X-Forwarded-For') ||
     '';
   const ipHash = ipAddress
-    ? await hashIpAddress(ipAddress, input.tenantId, input.c.env.KV ?? null)
+    ? await hashIpAddress(ipAddress, input.tenantId, input.c.env.KV ?? null, input.c.env)
     : undefined;
   const userAgent = getRequestHeader(input.c, 'User-Agent');
   await insertFlowConsentRecords({

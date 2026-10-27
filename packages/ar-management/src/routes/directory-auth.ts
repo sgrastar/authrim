@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { z } from '../zod';
 import type { Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
@@ -736,7 +737,7 @@ export async function getDirectoryAuthOverviewHandler(c: Context<{ Bindings: Env
     supportBundles,
     configHistory,
     advisories,
-  ] = await Promise.all([
+  ] = await samlDrAll([
     listDirectoryAuthMigrationCampaigns(adapter, tenantId),
     listDirectoryAuthMigrationUserStates(adapter, tenantId, { limit: 20 }),
     ensureDirectoryAuthTenantPolicy(adapter, tenantId, adminActorId(c)),
@@ -785,7 +786,7 @@ export async function listDirectoryAuthMigrationCampaignsHandler(c: Context<{ Bi
 
   const adapter = coreAdapter(c, tenantId);
   await ensureDirectoryAuthDefaults(adapter, tenantId, adminActorId(c));
-  const [campaigns, tenantPolicy] = await Promise.all([
+  const [campaigns, tenantPolicy] = await samlDrAll([
     listDirectoryAuthMigrationCampaigns(adapter, tenantId),
     ensureDirectoryAuthTenantPolicy(adapter, tenantId, adminActorId(c)),
   ]);

@@ -265,8 +265,16 @@ function activeAccountClause(includeInactive: boolean | undefined): string {
     : " AND lifecycle_state = 'active' AND directory_publication_state = 'active'";
 }
 
-function unixToIso(value: number | null | undefined): string {
-  const timestamp = value ?? 0;
+function timestampNumber(value: number | string | null | undefined): number {
+  const timestamp = typeof value === 'string' ? Number(value) : (value ?? 0);
+  if (typeof value === 'string' && (!/^-?\d+$/.test(value) || !Number.isSafeInteger(timestamp))) {
+    throw new Error('canonical_projection_timestamp_invalid');
+  }
+  return timestamp;
+}
+
+function unixToIso(value: number | string | null | undefined): string {
+  const timestamp = timestampNumber(value);
   const absolute = Math.abs(timestamp);
   const milliseconds =
     absolute < 100_000_000_000
@@ -479,7 +487,9 @@ export class CanonicalRuntimeUserProjectionRepository {
       active: account.lifecycle_state === 'active' && subject.lifecycle_state === 'active' ? 1 : 0,
       custom_attributes_json: null,
       created_at: unixToIso(account.created_at),
-      updated_at: unixToIso(Math.max(account.updated_at, subject.updated_at)),
+      updated_at: unixToIso(
+        Math.max(timestampNumber(account.updated_at), timestampNumber(subject.updated_at))
+      ),
     };
   }
 
@@ -598,8 +608,12 @@ export class CanonicalSensitiveValueResolver implements CanonicalRuntimeValueRes
     if (ref.tenantId !== context.tenantId) {
       throw new Error('canonical sensitive value ref tenant mismatch');
     }
+    // node-pg decodes JSONB before returning rows. Preserve the JSON text contract that
+    // parseJson uses (including JSON strings such as an email address).
+    const valueColumn =
+      this.adapter.getType?.() === 'postgres' ? 'value_json::text AS value_json' : 'value_json';
     const row = await this.adapter.queryOne<{ value_json: string | null }>(
-      `SELECT value_json
+      `SELECT ${valueColumn}
          FROM identity_sensitive_values
         WHERE tenant_id = ?
           AND owner_type = 'runtime_user'

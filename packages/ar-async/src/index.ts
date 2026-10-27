@@ -8,6 +8,7 @@
  * - CIBA (Client Initiated Backchannel Authentication)
  */
 
+import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
@@ -158,5 +159,13 @@ app.post('/api/ciba/conformance-action', cibaConformanceActionHandler);
  */
 app.get('/api/ciba/test', cibaTestPageHandler);
 
+// Keep deferred effects inside the source-export admission permit.
+const unguardedFetch = app.fetch.bind(app);
+app.fetch = (request, env, context) =>
+  runSamlDrCoveredFetch(env, context, (coveredEnv, coveredContext) =>
+    Promise.resolve(unguardedFetch(request, coveredEnv, coveredContext))
+  );
+
+export const SAML_DR_WRITER_SURFACES = ['fetch'] as const;
 export default app;
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

@@ -1,0 +1,749 @@
+openapi: 3.2.0
+info:
+  title: Authrim Local AWS Setup API
+  version: 0.4.2
+  description: |
+    Local setup operations for PostgreSQL SAML DR deployment and experimental
+    Aurora DSQL evaluation. Every request requires the current setup session token
+    and an Origin matching the loopback setup server. Planning does not deploy AWS
+    resources. Applying or resuming a reviewed plan is an explicit write action.
+    DSQL evaluation does not activate a SAML runtime or create a DSQL cluster.
+servers:
+  - url: http://localhost:{port}/api
+    variables:
+      port:
+        default: '3456'
+security:
+  - SetupSession: []
+paths:
+  /aws/check:
+    post:
+      operationId: checkAwsSetupConnection
+      summary: Check CLI availability and the selected AWS identity
+      description: A successful connection check does not prove deployment permissions.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionCheck'
+      responses:
+        '200':
+          description: Connection diagnostics; permissions are not proven by this check.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissionsVerified:
+                    const: false
+        default:
+          $ref: '#/components/responses/Error'
+  /aws/plan:
+    post:
+      operationId: planAwsPostgresSetup
+      summary: Prepare a pinned PostgreSQL deployment plan
+      description: |
+        Reads the explicitly selected public configuration file and prepares a local
+        plan. Credentials must remain in AWS profiles and secrets, not the request.
+        The configuration's target must match the account and region in this request.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - configPath
+                - accountId
+                - region
+              properties:
+                configPath:
+                  type: string
+                  description: Absolute path to a public AWS deployment configuration.
+                accountId:
+                  $ref: '#/components/schemas/AccountId'
+                region:
+                  type: string
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        default:
+          $ref: '#/components/responses/Error'
+  /aws/dsql/check:
+    post:
+      operationId: checkAwsDsqlEvaluation
+      summary: Check and pin an existing DSQL evaluation connection
+      description: |
+        Validates the target account, region, profile and connection configuration,
+        and performs a read-only database probe. Success prepares a reviewable
+        evaluation plan; it does not grant permission to activate SAML serving.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - accountId
+                - region
+                - profile
+                - configPath
+              properties:
+                accountId:
+                  $ref: '#/components/schemas/AccountId'
+                region:
+                  type: string
+                profile:
+                  type: string
+                configPath:
+                  type: string
+                  description: Absolute path to the DSQL connection configuration, without credentials.
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        default:
+          $ref: '#/components/responses/Error'
+  /aws/operations/{runId}/status:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    post:
+      operationId: readAwsSetupStatus
+      summary: Read a saved plan or deployment's progress
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '200':
+          description: Safe plan, stage progress, or final verification summary. No credentials are returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        default:
+          $ref: '#/components/responses/Error'
+  /aws/operations/{runId}/apply:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    post:
+      operationId: applyAwsSetupPlan
+      summary: Start the explicitly reviewed PostgreSQL deployment
+      description: |
+        Requires the exact plan digest returned during review. PostgreSQL plans
+        execute the configured deployment stages. DSQL plans are rejected here;
+        use the separate verification operation for synthetic evaluation.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        $ref: '#/components/requestBodies/ReviewedPlan'
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        default:
+          $ref: '#/components/responses/Error'
+  /aws/operations/{runId}/resume:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    post:
+      operationId: resumeAwsSetupPlan
+      summary: Resume a saved PostgreSQL deployment
+      description: |
+        Uses the same pinned plan and durable progress. A changed plan, unresolved
+        execution lock, or unsupported resume mode is rejected rather than creating
+        a replacement deployment. DSQL evaluation is not resumed as a SAML deployment.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        $ref: '#/components/requestBodies/ReviewedPlan'
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        default:
+          $ref: '#/components/responses/Error'
+  /aws/operations/{runId}/verify:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    post:
+      operationId: verifyAwsDsqlEvaluation
+      summary: Run synthetic identity-table checks on the reviewed DSQL connection
+      description: |
+        Requires a successful DSQL connection check and its exact plan digest.
+        Rechecks the account, execution identity, connection configuration and executable
+        digest before writing synthetic data in a new disposable namespace. No existing
+        application tables are imported or activated. Success includes cleanup of the
+        confirmed test objects and does not mean that SAML serving is supported on DSQL.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - planSha256
+              properties:
+                planSha256:
+                  type: string
+                  pattern: ^[a-f0-9]{64}$
+                userCount:
+                  type: integer
+                  minimum: 1
+                  maximum: 2000
+                  default: 1001
+      responses:
+        '202':
+          $ref: '#/components/responses/Accepted'
+        default:
+          $ref: '#/components/responses/Error'
+  /aws/configuration:
+    post:
+      operationId: createAwsSetupConfiguration
+      summary: Create a private local file containing public setup parameters
+      description: Validates configuration before saving to a new managed path. Unknown fields and
+        credentials are rejected. This operation never calls AWS or overwrites existing files.
+        PostgreSQL configurations create new stacks; external UI clients must subsequently match
+        authenticated backup data. The selected account and region must agree with all supplied
+        resource identities. Packaged UI deployment is not supported by this experimental profile.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - configuration
+              properties:
+                configuration:
+                  $ref: '#/components/schemas/ConfigurationInput'
+      responses:
+        '201':
+          description: Public configuration saved; no deployment has started.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - status
+                  - database
+                  - configPath
+                  - configSha256
+                properties:
+                  status:
+                    const: configured
+                  database:
+                    type: string
+                    enum:
+                      - postgresql
+                      - aurora-dsql
+                  configPath:
+                    type: string
+                    description: Managed absolute path used by the plan or DSQL check operation.
+                  configSha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+        default:
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    SetupSession:
+      type: apiKey
+      in: header
+      name: X-Session-Token
+  parameters:
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uri
+      description: Must exactly match the loopback origin serving the setup page.
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    AccountId:
+      type: string
+      pattern: ^\d{12}$
+    ConnectionCheck:
+      type: object
+      additionalProperties: false
+      required:
+        - accountId
+        - region
+        - profile
+      properties:
+        accountId:
+          $ref: '#/components/schemas/AccountId'
+        region:
+          type: string
+        profile:
+          type: string
+          description: Existing local AWS profile; no access key or password is accepted.
+    Status:
+      type: object
+      required:
+        - runId
+        - status
+        - browserLoginVerified
+      properties:
+        runId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - planning
+            - planned
+            - running
+            - inProgress
+            - complete
+            - blocked
+            - interrupted
+        currentStage:
+          type: string
+        plan:
+          type: object
+          properties:
+            planSha256:
+              type: string
+              pattern: ^[a-f0-9]{64}$
+            database:
+              type: string
+              enum:
+                - postgresql
+                - aurora-dsql
+            target:
+              type: object
+              properties:
+                accountId:
+                  $ref: '#/components/schemas/AccountId'
+                region:
+                  type: string
+            role:
+              type: string
+              enum:
+                - primary
+                - secondary
+            mode:
+              type: string
+              enum:
+                - browser-rehearsal
+                - existing-issuer
+                - identity-evaluation
+            stages:
+              type: array
+              items:
+                type: string
+            stacks:
+              type: array
+              description: PostgreSQL stack names and intended create or reuse disposition.
+              items:
+                type: object
+                properties:
+                  stage:
+                    type: string
+                  name:
+                    type: string
+                  disposition:
+                    type: string
+                    enum:
+                      - create
+                      - reuse
+            identities:
+              type: object
+              properties:
+                bootstrap:
+                  $ref: '#/components/schemas/ExecutionIdentity'
+                operator:
+                  $ref: '#/components/schemas/ExecutionIdentity'
+            issuerHost:
+              type: string
+              description: The configured existing issuer host, when applicable.
+            profile:
+              type: string
+              description: Reviewed DSQL evaluation profile.
+            principalArn:
+              type: string
+              description: Reviewed DSQL evaluation principal.
+            hostname:
+              type: string
+              description: Existing DSQL endpoint for evaluation.
+            fullRuntimeReady:
+              const: false
+            scope:
+              const: existing-cluster-only
+        browserLoginVerified:
+          const: false
+        result:
+          allOf:
+            - $ref: '#/components/schemas/DsqlEvaluationSummary'
+            - type: object
+              properties:
+                configurationReport:
+                  $ref: '#/components/schemas/DsqlEvaluationSummary'
+          description:
+            Identity evaluation results and, after successful identity evaluation, a separate
+            Flow and SAML SP configuration report. The operation completes only when both evaluations
+            and their cleanup succeed. These checks do not activate a DSQL SAML runtime.
+        stages:
+          type: object
+          additionalProperties:
+            type: string
+        origin:
+          type: string
+          format: uri
+        testSpUrl:
+          type: string
+          format: uri
+        code:
+          type: string
+          description: Redacted diagnostic code, never a raw provider error.
+    DsqlEvaluationSummary:
+      type: object
+      required:
+        - formatVersion
+        - mode
+        - fullRuntimeReady
+        - passed
+        - checks
+        - cleanup
+      properties:
+        formatVersion:
+          const: 1
+        mode:
+          type: string
+          enum: [read-only, synthetic-native-identity, synthetic-native-configuration]
+        fullRuntimeReady:
+          const: false
+        passed:
+          type: boolean
+        checks:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            required: [name, passed]
+            properties:
+              name:
+                type: string
+                description: Allowlisted evaluation check name.
+              passed:
+                type: boolean
+        cleanup:
+          type: string
+          enum: [not-needed, complete, failed, creation-unconfirmed]
+        schema:
+          type: string
+          pattern: '^authrim_dsql_(identity|configuration)_[a-f0-9]{32}$'
+        restoredRows:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+            maximum: 2000
+        chunks:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        maxChunkRows:
+          type: integer
+          minimum: 1
+          maximum: 100
+    ExecutionIdentity:
+      type: object
+      required:
+        - profile
+        - principalArn
+      properties:
+        profile:
+          type: string
+        principalArn:
+          type: string
+    ConfigurationInput:
+      oneOf:
+        - type: object
+          properties:
+            accountId:
+              type: string
+              pattern: ^\d{12}$
+            region:
+              type: string
+              pattern: ^[a-z]{2}(?:-[a-z]+)+-\d$
+            database:
+              type: string
+              const: aurora-dsql
+            hostname:
+              type: string
+              pattern: ^[a-z0-9]{26}\.dsql\.[a-z0-9-]+\.on\.aws$
+            user:
+              type: string
+              pattern: ^[a-z][a-z0-9_]{0,62}$
+          required:
+            - accountId
+            - region
+            - database
+            - hostname
+            - user
+          additionalProperties: false
+        - type: object
+          properties:
+            accountId:
+              type: string
+              pattern: ^\d{12}$
+            region:
+              type: string
+              pattern: ^[a-z]{2}(?:-[a-z]+)+-\d$
+            database:
+              type: string
+              const: postgresql
+            name:
+              type: string
+              pattern: ^[a-z][a-z0-9-]{0,27}$
+            role:
+              type: string
+              enum:
+                - primary
+                - secondary
+            mode:
+              type: string
+              enum:
+                - browser-rehearsal
+                - existing-issuer
+            bootstrapProfile:
+              type: string
+              pattern: ^[A-Za-z0-9_+=,.@-]{1,128}$
+            bootstrapPrincipalArn:
+              type: string
+              pattern: ^arn:aws:iam::\d{12}:(?:user|role)\/[A-Za-z0-9/+=,.@_-]+$
+            operatorProfile:
+              type: string
+              pattern: ^[A-Za-z0-9_+=,.@-]{1,128}$
+            caBundlePath:
+              type: string
+              maxLength: 4096
+              format: starts_with
+              pattern: ^\/.*
+            s3GatewayPrefixListId:
+              type: string
+              pattern: ^pl-[a-f0-9]{8,17}$
+            authState:
+              type: object
+              properties:
+                backend:
+                  type: string
+                  enum:
+                    - postgresql
+                    - dynamodb
+              required:
+                - backend
+              additionalProperties: false
+            dynamoDbGatewayPrefixListId:
+              type: string
+              pattern: ^pl-[a-f0-9]{8,17}$
+            components:
+              type: object
+              properties:
+                loginUi:
+                  type: boolean
+                  const: false
+                adminUi:
+                  type: boolean
+                  const: false
+              required:
+                - loginUi
+                - adminUi
+              additionalProperties: false
+            ui:
+              type: object
+              properties:
+                login:
+                  oneOf:
+                    - type: object
+                      properties:
+                        mode:
+                          type: string
+                          const: disabled
+                      required:
+                        - mode
+                      additionalProperties: false
+                    - type: object
+                      properties:
+                        mode:
+                          type: string
+                          const: embedded-rehearsal
+                      required:
+                        - mode
+                      additionalProperties: false
+                    - type: object
+                      properties:
+                        mode:
+                          type: string
+                          const: external
+                        baseUrl:
+                          type: string
+                          maxLength: 2048
+                        clientId:
+                          type: string
+                          pattern: ^[A-Za-z0-9_.:-]{1,128}$
+                        paths:
+                          type: object
+                          properties:
+                            login:
+                              type: string
+                              maxLength: 256
+                              pattern: ^\/[A-Za-z0-9_~./-]*$
+                            reauth:
+                              type: string
+                              maxLength: 256
+                              pattern: ^\/[A-Za-z0-9_~./-]*$
+                          required:
+                            - login
+                            - reauth
+                          additionalProperties: false
+                      required:
+                        - mode
+                        - baseUrl
+                        - clientId
+                        - paths
+                      additionalProperties: false
+                admin:
+                  oneOf:
+                    - type: object
+                      properties:
+                        mode:
+                          type: string
+                          const: disabled
+                      required:
+                        - mode
+                      additionalProperties: false
+                    - type: object
+                      properties:
+                        mode:
+                          type: string
+                          const: external
+                        baseUrl:
+                          type: string
+                          maxLength: 2048
+                      required:
+                        - mode
+                        - baseUrl
+                      additionalProperties: false
+              required:
+                - login
+                - admin
+              additionalProperties: false
+            issuer:
+              type: object
+              properties:
+                host:
+                  type: string
+                  pattern: ^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$
+                certificateArn:
+                  type: string
+                  pattern: ^arn:aws:acm:[a-z0-9-]+:\d{12}:certificate\/[a-f0-9-]+$
+                inputSecretArn:
+                  type: string
+                  pattern: ^arn:aws:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@!-]+$
+                inputSecretVersionId:
+                  type: string
+                  pattern: ^[A-Za-z0-9-]{32,64}$
+              required:
+                - host
+                - certificateArn
+                - inputSecretArn
+                - inputSecretVersionId
+              additionalProperties: false
+            fixture:
+              type: object
+              properties:
+                directory:
+                  type: string
+                  maxLength: 4096
+                  format: starts_with
+                  pattern: ^\/.*
+                descriptorSha256:
+                  type: string
+                  pattern: ^[a-f0-9]{64}$
+              required:
+                - directory
+                - descriptorSha256
+              additionalProperties: false
+          required:
+            - accountId
+            - region
+            - database
+            - name
+            - role
+            - mode
+            - bootstrapProfile
+            - bootstrapPrincipalArn
+            - operatorProfile
+            - caBundlePath
+            - s3GatewayPrefixListId
+            - components
+            - ui
+          additionalProperties: false
+  requestBodies:
+    ReviewedPlan:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+              - planSha256
+            properties:
+              planSha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+  responses:
+    Accepted:
+      description:
+        Operation accepted. Poll its authenticated status endpoint; browser closure does not
+        cancel it.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Status'
+    Error:
+      description: Invalid input, authentication/origin failure, conflict, or a redacted operation failure.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - success
+              - code
+            properties:
+              success:
+                const: false
+              code:
+                type: string
+              error:
+                type: string

@@ -2,6 +2,7 @@
  * Runs `work` over `items` with at most `size` running at once, keeping the order of the items in
  * the results. For handlers that do a few subrequests per tenant over a list of tenants.
  */
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   size: number,
@@ -15,6 +16,6 @@ export async function mapWithConcurrency<T, R>(
       results[index] = await work(items[index]);
     }
   });
-  await Promise.all(runners);
+  await samlDrAll(runners);
   return results;
 }

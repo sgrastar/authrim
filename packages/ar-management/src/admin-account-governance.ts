@@ -1,3 +1,8 @@
+import {
+  createAccountLegalHold,
+  releaseAccountLegalHold,
+  putAccountSupportContext,
+} from '@authrim/ar-lib-core/db/adapter';
 import type { Context } from 'hono';
 import {
   createAccountAuthContextFromHono,
@@ -320,22 +325,14 @@ export async function adminAccountSupportContextPutHandler(c: Context<{ Bindings
     const expectedVersion = body.expected_version as number;
     const now = Date.now();
     const encoded = JSON.stringify(document);
-    const result =
-      expectedVersion === 0
-        ? await adapter.execute(
-            `INSERT INTO account_support_contexts (
-               tenant_id, account_id, context_json, version, created_by, updated_by,
-               created_at, updated_at
-             ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
-             ON CONFLICT (tenant_id, account_id) DO NOTHING`,
-            [tenantId, accountId, encoded, actor, actor, now, now]
-          )
-        : await adapter.execute(
-            `UPDATE account_support_contexts
-                SET context_json = ?, version = version + 1, updated_by = ?, updated_at = ?
-              WHERE tenant_id = ? AND account_id = ? AND version = ?`,
-            [encoded, actor, now, tenantId, accountId, expectedVersion]
-          );
+    const result = await putAccountSupportContext(adapter, {
+      tenantId,
+      accountId,
+      actor,
+      expectedVersion,
+      contextJson: encoded,
+      now,
+    });
     if (result.rowsAffected !== 1) {
       return conflict(c, 'Support context was modified by another request');
     }
@@ -451,80 +448,18 @@ export async function adminAccountLegalHoldCreateHandler(c: Context<{ Bindings: 
     const eventId = `legal-hold-event:${keyDigest}`;
     const operationId = `legal-hold-projection:${keyDigest}`;
 
-    await adapter.batch([
-      {
-        sql: `INSERT INTO legal_holds (
-                id, tenant_id, subject_type, subject_id, state, reason_code, case_reference,
-                expires_at, version, created_by, created_at, updated_at
-              ) VALUES (?, ?, 'account', ?, 'active', ?, ?, ?, 1, ?, ?, ?)
-              ON CONFLICT (id) DO NOTHING`,
-        params: [
-          holdId,
-          tenantId,
-          accountId,
-          reasonCode,
-          caseReference,
-          expiresAt,
-          actor,
-          now,
-          now,
-        ],
-      },
-      {
-        sql: `INSERT INTO legal_hold_events (
-                event_id, hold_id, tenant_id, account_id, event_type, hold_version,
-                projection_generation, actor_id, reason_code, case_reference,
-                effective_at, created_at
-              )
-              SELECT ?, hold.id, hold.tenant_id, hold.subject_id, 'created', hold.version,
-                     authority.projection_generation, ?, hold.reason_code,
-                     hold.case_reference, hold.created_at, ?
-                FROM legal_holds hold
-                JOIN account_legal_hold_states authority
-                  ON authority.tenant_id = hold.tenant_id
-                 AND authority.account_id = hold.subject_id
-               WHERE hold.id = ? AND hold.tenant_id = ? AND hold.subject_id = ?
-                 AND hold.state = 'active' AND hold.version = 1 AND hold.reason_code = ?
-                 AND authority.projection_state = 'active'
-                 AND authority.active_hold_id = hold.id
-                 AND ((hold.case_reference IS NULL AND ? IS NULL) OR hold.case_reference = ?)
-                 AND ((hold.expires_at IS NULL AND ? IS NULL) OR hold.expires_at = ?)
-              ON CONFLICT DO NOTHING`,
-        params: [
-          eventId,
-          actor,
-          now,
-          holdId,
-          tenantId,
-          accountId,
-          reasonCode,
-          caseReference,
-          caseReference,
-          expiresAt,
-          expiresAt,
-        ],
-      },
-      {
-        sql: `INSERT INTO legal_hold_projection_outbox (
-                operation_id, tenant_id, hold_id, account_id, projection_generation, hold_version,
-                projection_state, next_attempt_at, created_at, updated_at
-              )
-              SELECT ?, hold.tenant_id, hold.id, hold.subject_id, authority.projection_generation,
-                     hold.version, 'active', ?, ?, ?
-                FROM legal_holds hold
-                JOIN account_legal_hold_states authority
-                  ON authority.tenant_id = hold.tenant_id
-                 AND authority.account_id = hold.subject_id
-               WHERE hold.id = ? AND hold.tenant_id = ?
-                 AND hold.subject_id = ? AND hold.state = 'active'
-                 AND hold.version = 1 AND authority.projection_state = 'active'
-                 AND authority.active_hold_id = hold.id AND EXISTS (
-                   SELECT 1 FROM legal_hold_events event WHERE event.event_id = ?
-                 )
-              ON CONFLICT (operation_id) DO NOTHING`,
-        params: [operationId, now, now, now, holdId, tenantId, accountId, eventId],
-      },
-    ]);
+    await createAccountLegalHold(adapter, {
+      holdId,
+      tenantId,
+      accountId,
+      reasonCode,
+      caseReference,
+      expiresAt,
+      actor,
+      now,
+      eventId,
+      operationId,
+    });
 
     const row = await adapter.queryOne<LegalHoldRow>(
       `SELECT id, subject_id, state, reason_code, case_reference, expires_at, version,
@@ -586,75 +521,17 @@ export async function adminAccountLegalHoldReleaseHandler(c: Context<{ Bindings:
     const eventDigest = await sha256Hex(`${tenantId}\0${holdId}\0release\0${key}`);
     const eventId = `legal-hold-event:${eventDigest}`;
     const operationId = `legal-hold-projection:${eventDigest}`;
-    const results = await adapter.batch([
-      {
-        sql: `UPDATE legal_holds
-                 SET state = 'released', released_by = ?, released_at = ?, release_reason = ?,
-                     version = version + 1, updated_at = ?
-               WHERE id = ? AND tenant_id = ? AND subject_type = 'account' AND subject_id = ?
-                 AND state = 'active' AND version = ?`,
-        params: [actor, now, reasonCode, now, holdId, tenantId, accountId, expectedVersion],
-      },
-      {
-        sql: `INSERT INTO legal_hold_events (
-                event_id, hold_id, tenant_id, account_id, event_type, hold_version,
-                projection_generation, actor_id, reason_code, case_reference,
-                effective_at, created_at
-              )
-              SELECT ?, hold.id, hold.tenant_id, hold.subject_id, 'released', hold.version,
-                     authority.projection_generation, ?, ?, hold.case_reference, ?, ?
-                FROM legal_holds hold
-                JOIN account_legal_hold_states authority
-                  ON authority.tenant_id = hold.tenant_id
-                 AND authority.account_id = hold.subject_id
-               WHERE hold.id = ? AND hold.tenant_id = ? AND hold.subject_id = ?
-                 AND hold.state = 'released' AND hold.version = ?
-                 AND authority.projection_state = 'inactive'
-                 AND authority.active_hold_id IS NULL
-              ON CONFLICT DO NOTHING`,
-        params: [
-          eventId,
-          actor,
-          reasonCode,
-          now,
-          now,
-          holdId,
-          tenantId,
-          accountId,
-          expectedVersion + 1,
-        ],
-      },
-      {
-        sql: `INSERT INTO legal_hold_projection_outbox (
-                operation_id, tenant_id, hold_id, account_id, projection_generation, hold_version,
-                projection_state, next_attempt_at, created_at, updated_at
-              )
-              SELECT ?, hold.tenant_id, hold.id, hold.subject_id, authority.projection_generation,
-                     hold.version, 'inactive', ?, ?, ?
-                FROM legal_holds hold
-                JOIN account_legal_hold_states authority
-                  ON authority.tenant_id = hold.tenant_id
-                 AND authority.account_id = hold.subject_id
-               WHERE hold.id = ? AND hold.tenant_id = ? AND hold.subject_id = ?
-                 AND hold.state = 'released' AND hold.version = ?
-                 AND authority.projection_state = 'inactive'
-                 AND authority.active_hold_id IS NULL AND EXISTS (
-                   SELECT 1 FROM legal_hold_events event WHERE event.event_id = ?
-                 )
-              ON CONFLICT (operation_id) DO NOTHING`,
-        params: [
-          operationId,
-          now,
-          now,
-          now,
-          holdId,
-          tenantId,
-          accountId,
-          expectedVersion + 1,
-          eventId,
-        ],
-      },
-    ]);
+    const results = await releaseAccountLegalHold(adapter, {
+      holdId,
+      tenantId,
+      accountId,
+      reasonCode,
+      expectedVersion,
+      actor,
+      now,
+      eventId,
+      operationId,
+    });
 
     const row = await adapter.queryOne<LegalHoldRow>(
       `SELECT id, subject_id, state, reason_code, case_reference, expires_at, version,

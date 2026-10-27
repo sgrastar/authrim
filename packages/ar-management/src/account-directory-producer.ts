@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   createLookupBlindIndexes,
   createLogger,
@@ -163,7 +164,7 @@ async function allocateAccountRouteWithElasticCapacity(
     ) {
       throw error;
     }
-    const capacity = await Promise.all(
+    const capacity = await samlDrAll(
       dataRoles.map((dataRole) =>
         callControlAccountAllocationRpc('ensure_capacity', () =>
           control.ensureTenantShardCapacity!({

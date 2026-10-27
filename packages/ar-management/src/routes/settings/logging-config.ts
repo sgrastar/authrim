@@ -13,6 +13,7 @@
  * @packageDocumentation
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { LogLevel, LogFormat } from '@authrim/ar-lib-core';
@@ -174,7 +175,7 @@ export async function updateLoggingConfig(c: Context<{ Bindings: Env }>) {
   }
 
   // Apply updates
-  await Promise.all(updates.map(({ key, value }) => c.env.AUTHRIM_CONFIG!.put(key, value)));
+  await samlDrAll(updates.map(({ key, value }) => c.env.AUTHRIM_CONFIG!.put(key, value)));
 
   return c.json({
     success: true,
@@ -205,7 +206,7 @@ export async function resetLoggingConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  await Promise.all([
+  await samlDrAll([
     c.env.AUTHRIM_CONFIG.delete(KV_KEY_LOG_LEVEL),
     c.env.AUTHRIM_CONFIG.delete(KV_KEY_LOG_FORMAT),
     c.env.AUTHRIM_CONFIG.delete(KV_KEY_LOG_HASH_USER_ID),

@@ -14,6 +14,7 @@
  * - Records are stored in KV with 7-day TTL by default
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { LogoutKVHelpers, getLogger, type Env } from '@authrim/ar-lib-core';
 
@@ -211,7 +212,7 @@ export async function clearAllLogoutFailures(c: Context<{ Bindings: Env }>) {
     const clientIds = await LogoutKVHelpers.listFailures(kv, 1000);
 
     // Clear each one
-    await Promise.all(clientIds.map((clientId) => LogoutKVHelpers.clearFailure(kv, clientId)));
+    await samlDrAll(clientIds.map((clientId) => LogoutKVHelpers.clearFailure(kv, clientId)));
 
     return c.json({
       success: true,

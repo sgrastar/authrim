@@ -1,3 +1,4 @@
+import { samlDrAll, samlDrTrackEffect } from './tenant-portability/saml-dr-writer';
 import { validateAccountRegistrationStates } from './account-webhook-fields';
 /**
  * Event Dispatcher Service
@@ -244,7 +245,14 @@ export class EventDispatcherImpl implements IEventDispatcher {
   /**
    * Publish a single event.
    */
-  async publish<T = Record<string, unknown>>(
+  publish<T = Record<string, unknown>>(
+    payload: EventPublishPayload<T>,
+    options?: EventPublishOptions
+  ): Promise<EventPublishResult> {
+    return samlDrTrackEffect(this.publishOwned(payload, options));
+  }
+
+  private async publishOwned<T = Record<string, unknown>>(
     payload: EventPublishPayload<T>,
     options?: EventPublishOptions
   ): Promise<EventPublishResult> {
@@ -350,7 +358,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
       }
 
       // 6. Parallel delivery to handlers and webhooks
-      const [handlerResults, webhookResults] = await Promise.all([
+      const [handlerResults, webhookResults] = await samlDrAll([
         // Internal handlers
         options?.skipInternalHandlers
           ? { executed: 0, failed: 0, skipped: 0 }
@@ -388,9 +396,11 @@ export class EventDispatcherImpl implements IEventDispatcher {
       };
 
       // 9. Execute After Hooks (fire-and-forget for async hooks)
-      this.executeAfterHooks(event, execContext, publishResult).catch((error) => {
-        log.error('After hook error', { eventId }, error as Error);
-      });
+      samlDrTrackEffect(this.executeAfterHooks(event, execContext, publishResult)).catch(
+        (error) => {
+          log.error('After hook error', { eventId }, error as Error);
+        }
+      );
 
       // 10. Return result
       return publishResult;
@@ -421,7 +431,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
     options?: EventPublishOptions
   ): Promise<EventPublishResult[]> {
     // Process events concurrently
-    return Promise.all(events.map((event) => this.publish(event, options)));
+    return samlDrAll(events.map((event) => this.publish(event, options)));
   }
 
   // ===========================================================================
@@ -547,7 +557,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
     for (let i = 0; i < webhooks.length; i += this.options.maxConcurrentWebhooks) {
       const batch = webhooks.slice(i, i + this.options.maxConcurrentWebhooks);
 
-      const results = await Promise.all(
+      const results = await samlDrAll(
         batch.map((webhook) => this.sendToWebhook(event, webhook, accountWebhookData))
       );
 
@@ -558,13 +568,17 @@ export class EventDispatcherImpl implements IEventDispatcher {
         if (result.success) {
           sent++;
           // Record success asynchronously
-          this.webhookRegistry.recordSuccess(webhook.id, webhook.tenantId).catch(() => {});
+          samlDrTrackEffect(this.webhookRegistry.recordSuccess(webhook.id, webhook.tenantId)).catch(
+            () => {}
+          );
         } else if (result.skipped) {
           skipped++;
         } else {
           failed++;
           // Record failure asynchronously
-          this.webhookRegistry.recordFailure(webhook.id, webhook.tenantId).catch(() => {});
+          samlDrTrackEffect(this.webhookRegistry.recordFailure(webhook.id, webhook.tenantId)).catch(
+            () => {}
+          );
 
           errors.push({
             target: 'webhook',
@@ -781,7 +795,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
 
     // Fire async hooks without waiting
     for (const hook of asyncHooks) {
-      hook.handler(event, result, context).catch((error) => {
+      samlDrTrackEffect(hook.handler(event, result, context)).catch((error) => {
         log.error('Async after hook failed', { hookId: hook.id }, error as Error);
       });
     }
@@ -839,7 +853,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
    */
   private async executeWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     return Promise.race([
-      promise,
+      samlDrTrackEffect(promise),
       new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('Operation timed out')), timeoutMs);
       }),

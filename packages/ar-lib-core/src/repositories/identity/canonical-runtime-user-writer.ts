@@ -296,11 +296,20 @@ export class CanonicalRuntimeUserWriter {
     if (!account) {
       return false;
     }
+    // The Core authority row is written before crossing into the PII database. A hold
+    // racing this admission must conflict/retry; new holds cannot enter a deleting account.
+    // A failed later step leaves a durable deleting fence and can be resumed safely.
+    const admitted = await this.repository.transitionAccountLifecycle(
+      account.id,
+      account.lifecycle_state === 'deleted' ? 'deleted' : 'deleting'
+    );
+    if (!admitted) throw new Error('account_deletion_not_admitted');
     await captureAccountDeletionSnapshot(this.sensitiveValueAdapter, account);
     const accountTransitioned = await this.repository.transitionAccountLifecycle(
       account.id,
       'deleted'
     );
+    if (!accountTransitioned) throw new Error('account_deletion_not_admitted');
     if (account.primary_subject_id) {
       await this.repository.transitionSubjectLifecycle(account.primary_subject_id, 'deleted');
     }

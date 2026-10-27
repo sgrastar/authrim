@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -145,7 +146,7 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
   do {
     const page = await kv.list({ prefix, cursor, limit: 1000 });
     for (let offset = 0; offset < page.keys.length; offset += 25) {
-      await Promise.all(page.keys.slice(offset, offset + 25).map(({ name }) => kv.delete(name)));
+      await samlDrAll(page.keys.slice(offset, offset + 25).map(({ name }) => kv.delete(name)));
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
@@ -156,7 +157,7 @@ async function deleteClientOwnedConfiguration(
   tenantId: string,
   clientId: string
 ): Promise<void> {
-  await Promise.all([
+  await samlDrAll([
     deleteKvPrefix(env.SETTINGS, `settings:client:${tenantId}:${clientId}:`),
     env.AUTHRIM_CONFIG?.delete(buildContractKey(env, 'client', tenantId, clientId)),
   ]);

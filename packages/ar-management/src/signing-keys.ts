@@ -7,6 +7,7 @@
  * - POST /api/admin/signing-keys/emergency-rotate - Perform emergency rotation
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -174,7 +175,7 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
     // Invalidate JWKS KV cache and bump version signal immediately
     const log = getLogger(c).module('SIGNING-KEYS');
     try {
-      await Promise.all([invalidateJwksKvCache(c.env, tenantId), bumpKeyVersion(c.env, tenantId)]);
+      await samlDrAll([invalidateJwksKvCache(c.env, tenantId), bumpKeyVersion(c.env, tenantId)]);
       log.info('Emergency rotation: JWKS cache and version signal updated', { tenantId });
     } catch (error) {
       log.error('Failed to invalidate JWKS cache after emergency rotation', {}, error as Error);

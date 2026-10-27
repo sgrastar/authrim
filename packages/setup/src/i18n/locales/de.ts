@@ -782,6 +782,29 @@ const de: Translations = {
   'web.lightMode': 'Hell',
   'web.systemMode': 'System',
 
+  // Web UI cloud platform selection
+  'web.platform.title': 'Cloud-Plattform auswählen',
+  'web.platform.description': 'Wählen Sie die Cloud aus, in der Sie Authrim einrichten möchten.',
+  'web.platform.cloudflareAction': 'Auf Cloudflare einrichten',
+  'web.platform.cloudflareDescription': 'Authrim auf Cloudflare Workers einrichten.',
+  'web.platform.awsAction': 'Auf AWS einrichten',
+  'web.platform.development': 'In Entwicklung',
+  'web.platform.awsScope': 'Derzeit nur SAML DR unterstützt',
+  'web.platform.choose': 'Auswählen',
+  'web.platform.back': 'Zurück zur Cloud-Auswahl',
+  'web.platform.awsTitle': 'SAML DR auf AWS vorbereiten',
+  'web.platform.awsDescription':
+    'Bereiten Sie eine SAML-IdP-Wiederherstellungsumgebung für einen Cloudflare-Ausfall vor.',
+  'web.platform.awsGuide':
+    'Die AWS-Setup-Befehle unterstützen derzeit die Prüfung der Voraussetzungen und die Bereitstellungsplanung. Die Einrichtung im Browser ist in Entwicklung.',
+  'web.platform.awsPrerequisites':
+    'Bereiten Sie ein AWS-Konto, eine Region und ein Profil für die Anmeldung über die dedizierte Rolle vor.',
+  'web.platform.awsCommand': 'Befehl zur Prüfung der Voraussetzungen',
+  'web.platform.awsCommandNote':
+    'Ersetzen Sie die Konto-ID und den Profilnamen durch Ihre AWS-Einstellungen.',
+  'web.platform.targetPending': 'Nicht ausgewählt',
+  'web.platform.chooseCloudflare': 'Weiter zur Cloudflare-Einrichtung',
+
   // Web UI Prerequisites
   'web.prereq.title': 'Start',
   'web.prereq.checking': 'Überprüfe...',

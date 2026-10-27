@@ -1,3 +1,4 @@
+import { samlDrAll } from '../services/tenant-portability/saml-dr-writer';
 /**
  * D1 Database Retry Utilities
  *
@@ -224,7 +225,7 @@ export async function retryD1Batch(
     async () => {
       // D1 batch() method executes multiple statements in a transaction
       // All succeed or all fail (ACID guarantees)
-      const results = await Promise.all(operations.map((stmt) => stmt.run()));
+      const results = await samlDrAll(operations.map((stmt) => stmt.run()));
       return results;
     },
     operationName,

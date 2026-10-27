@@ -12,6 +12,7 @@
  * @packageDocumentation
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -541,7 +542,7 @@ async function seedTenantDefaultSettings(env: Env, tenantId: string) {
     await canonicalStore.markProjected(category, scope, version);
   };
 
-  await Promise.all([
+  await samlDrAll([
     env.AUTHRIM_CONFIG?.put(`settings:tenant:${tenantId}:tenant`, JSON.stringify(tenantSettings)),
     env.AUTHRIM_CONFIG?.put(
       `settings:tenant:${tenantId}:email-settings`,
@@ -1344,7 +1345,7 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
   for (let offset = 0; offset < keys.length; offset += 25) {
-    await Promise.all(keys.slice(offset, offset + 25).map((key) => kv.delete(key)));
+    await samlDrAll(keys.slice(offset, offset + 25).map((key) => kv.delete(key)));
   }
 }
 
@@ -2197,7 +2198,7 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
         "UPDATE tenants SET lifecycle_state = 'deleted', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
         [Math.floor(Date.now() / 1000), id]
       );
-      await Promise.all([
+      await samlDrAll([
         c.env.AUTHRIM_CONFIG?.delete(buildContractKey(c.env, 'tenant', id)),
         c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:tenant`),
         c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:email-settings`),

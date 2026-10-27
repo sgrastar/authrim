@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env, DeviceInstallation, DeviceSecret, Session } from '@authrim/ar-lib-core';
@@ -540,7 +541,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
   if (repositories instanceof Response) return repositories;
   const { repo, installationRepo } = repositories;
   const legacySecrets = await repo.findByUserId(access.sub, tenantId, true);
-  const migratedInstallations = await Promise.all(
+  const migratedInstallations = await samlDrAll(
     legacySecrets.map((device) => installationRepo.ensureForDeviceSecret(device))
   );
   const currentInstallation = access.currentInstallationId

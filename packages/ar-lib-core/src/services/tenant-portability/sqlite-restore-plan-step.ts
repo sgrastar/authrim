@@ -1,3 +1,4 @@
+import { samlDrAll } from './saml-dr-writer';
 import type { TenantBundleManifest } from './bundle-manifest';
 import type { TenantBackupStepContext, TenantBackupStepResult } from './operation-executor';
 import { TENANT_BACKUP_MAX_SQLITE_DATASETS } from './installed-sqlite-datasets';
@@ -163,7 +164,7 @@ export async function runTenantBackupSqliteRestorePlanStep(input: {
 
   for (let from = cursor.targetIndex; from < input.targets.length; from += 4) {
     const group = input.targets.slice(from, from + 4);
-    const resources = await Promise.all(group.map((target) => target.initialize()));
+    const resources = await samlDrAll(group.map((target) => target.initialize()));
     for (const [offset, target] of group.entries()) {
       const resource = resources[offset] ?? fail();
       if (

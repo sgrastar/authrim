@@ -1,3 +1,4 @@
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { DurableObject } from 'cloudflare:workers';
 import {
   ensureDatabaseAdapter,
@@ -177,6 +178,12 @@ class DirectoryRelayVerifyFailure extends Error {
   }
 }
 
+/** Complete public source admission surface; checked against the class prototype in tests. */
+export const SAML_DR_DIRECTORY_RELAY_SURFACE = {
+  guarded: ['webSocketMessage'],
+  snapshot: [],
+} as const;
+
 export class DirectoryConnectorRelay extends DurableObject<Env> {
   private readonly pending = new Map<string, DirectoryRelayPendingRequest>();
 
@@ -188,73 +195,79 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     const url = new URL(request.url);
 
     if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-      return this.handleWebSocketUpgrade(request);
+      return this.#handleWebSocketUpgrade(request);
     }
 
     if (request.method === 'POST' && url.pathname === '/verify-password') {
-      return this.handleVerifyPassword(request);
+      return this.#handleVerifyPassword(request);
     }
 
     if (request.method === 'GET' && url.pathname === '/status') {
-      return this.handleStatus(request);
+      return this.#handleStatus(request);
     }
 
     if (request.method === 'GET' && url.pathname === '/events') {
-      return this.handleEvents(request);
+      return this.#handleEvents(request);
     }
 
     return jsonResponse({ error: 'not_found' }, 404);
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    let parsed: unknown;
-    try {
-      const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
-      parsed = JSON.parse(text);
-    } catch {
-      this.sendError(ws, 'invalid_json', 'Message must be valid JSON');
-      return;
-    }
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      let parsed: unknown;
+      try {
+        const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
+        parsed = JSON.parse(text);
+      } catch {
+        this.#sendError(ws, 'invalid_json', 'Message must be valid JSON');
+        return;
+      }
 
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      (parsed as { protocol?: unknown }).protocol === DIRECTORY_RELAY_PROTOCOL &&
-      !relayProtocolVersionsCompatible(parsed as Record<string, unknown>)
-    ) {
-      this.sendError(ws, 'incompatible_relay_protocol', 'Relay protocol version is not compatible');
-      ws.close(1008, 'incompatible relay protocol');
-      return;
-    }
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        (parsed as { protocol?: unknown }).protocol === DIRECTORY_RELAY_PROTOCOL &&
+        !relayProtocolVersionsCompatible(parsed as Record<string, unknown>)
+      ) {
+        this.#sendError(
+          ws,
+          'incompatible_relay_protocol',
+          'Relay protocol version is not compatible'
+        );
+        ws.close(1008, 'incompatible relay protocol');
+        return;
+      }
 
-    if (!isDirectoryRelayClientMessage(parsed)) {
-      this.sendError(ws, 'unknown_message_type', 'Unknown relay message type');
-      return;
-    }
+      if (!isDirectoryRelayClientMessage(parsed)) {
+        this.#sendError(ws, 'unknown_message_type', 'Unknown relay message type');
+        return;
+      }
 
-    if (parsed.type === 'auth.response') {
-      await this.handleAuthResponse(ws, parsed);
-      return;
-    }
+      if (parsed.type === 'auth.response') {
+        await this.#handleAuthResponse(ws, parsed);
+        return;
+      }
 
-    if (parsed.type === 'verify.error') {
-      await this.handleVerifyError(ws, parsed);
-      return;
-    }
+      if (parsed.type === 'verify.error') {
+        await this.#handleVerifyError(ws, parsed);
+        return;
+      }
 
-    await this.handleVerifyResponse(ws, parsed);
+      await this.#handleVerifyResponse(ws, parsed);
+    });
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    await this.deleteConnectionRecord(ws, 'closed');
+    await this.#deleteConnectionRecord(ws, 'closed');
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    await this.deleteConnectionRecord(ws, 'error');
+    await this.#deleteConnectionRecord(ws, 'error');
   }
 
-  private async handleWebSocketUpgrade(request: Request): Promise<Response> {
+  async #handleWebSocketUpgrade(request: Request): Promise<Response> {
     const route = parseRelayRoute(new URL(request.url).pathname);
     if (!route) {
       return new Response('Invalid relay route', { status: 404 });
@@ -265,7 +278,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       return new Response('Relay connector is not configured', { status: 404 });
     }
     const runtime = relayRuntimeSettings(settings);
-    const blockedUntil = await this.authFailureBlockedUntil(route.tenantId, route.connectorId);
+    const blockedUntil = await this.#authFailureBlockedUntil(route.tenantId, route.connectorId);
     if (blockedUntil && blockedUntil > Date.now()) {
       return jsonResponse(
         {
@@ -291,11 +304,11 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(attachment);
-    this.scheduleAuthenticationTimeout(server, attachment);
-    await this.updateStatus(route.tenantId, route.connectorId, {
+    this.#scheduleAuthenticationTimeout(server, attachment);
+    await this.#updateStatus(route.tenantId, route.connectorId, {
       lastConnectedAt: new Date(now).toISOString(),
     });
-    await this.recordEvent(route.tenantId, route.connectorId, {
+    await this.#recordEvent(route.tenantId, route.connectorId, {
       type: 'directory_relay.connection.challenge_issued',
     });
 
@@ -317,13 +330,13 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     });
   }
 
-  private async handleAuthResponse(
+  async #handleAuthResponse(
     ws: WebSocket,
     message: DirectoryRelayAuthResponseMessage
   ): Promise<void> {
-    const attachment = this.getAttachment(ws);
+    const attachment = this.#getAttachment(ws);
     if (!attachment) {
-      this.sendError(ws, 'missing_connection_state', 'Connection state is missing');
+      this.#sendError(ws, 'missing_connection_state', 'Connection state is missing');
       ws.close(1011, 'missing connection state');
       return;
     }
@@ -334,32 +347,32 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       message.challenge_id !== attachment.challengeId ||
       message.nonce !== attachment.nonce
     ) {
-      this.sendError(ws, 'auth_context_mismatch', 'Authentication context mismatch');
-      await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+      this.#sendError(ws, 'auth_context_mismatch', 'Authentication context mismatch');
+      await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
         type: 'directory_relay.connection.rejected',
         code: 'auth_context_mismatch',
       });
-      await this.recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
+      await this.#recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
       ws.close(1008, 'auth context mismatch');
       return;
     }
     if (Date.now() > attachment.challengeExpiresAt || !validRecentTimestamp(message.timestamp)) {
-      this.sendError(ws, 'stale_auth_challenge', 'Authentication challenge expired');
-      await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+      this.#sendError(ws, 'stale_auth_challenge', 'Authentication challenge expired');
+      await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
         type: 'directory_relay.connection.rejected',
         code: 'stale_auth_challenge',
       });
-      await this.recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
+      await this.#recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
       ws.close(1008, 'stale auth challenge');
       return;
     }
-    if (await this.usedNonceExists(attachment.tenantId, attachment.connectorId, message.nonce)) {
-      this.sendError(ws, 'replayed_auth_challenge', 'Authentication challenge replayed');
-      await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+    if (await this.#usedNonceExists(attachment.tenantId, attachment.connectorId, message.nonce)) {
+      this.#sendError(ws, 'replayed_auth_challenge', 'Authentication challenge replayed');
+      await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
         type: 'directory_relay.connection.rejected',
         code: 'replayed_auth_challenge',
       });
-      await this.recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
+      await this.#recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
       ws.close(1008, 'replayed auth challenge');
       return;
     }
@@ -379,13 +392,13 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
         )
       : undefined;
     if (!settings || settings.transport !== 'relay' || !resolvedSecret) {
-      this.sendError(ws, 'relay_auth_failed', 'Relay authentication failed');
-      await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+      this.#sendError(ws, 'relay_auth_failed', 'Relay authentication failed');
+      await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
         type: 'directory_relay.connection.rejected',
         code: 'relay_auth_failed',
         keyId: message.key_id,
       });
-      await this.recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
+      await this.#recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
       ws.close(1008, 'relay authentication failed');
       return;
     }
@@ -402,21 +415,21 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     });
     const expected = await signDirectoryRelayCanonical(canonical, resolvedSecret.secret);
     if (!constantTimeHexEqual(expected, message.signature)) {
-      this.sendError(ws, 'relay_auth_failed', 'Relay authentication failed');
-      await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+      this.#sendError(ws, 'relay_auth_failed', 'Relay authentication failed');
+      await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
         type: 'directory_relay.connection.rejected',
         code: 'relay_auth_failed',
         keyId: message.key_id,
       });
-      await this.recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
+      await this.#recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
       ws.close(1008, 'relay authentication failed');
       return;
     }
 
-    const accepted = await this.recordFleetRegistration(attachment, message);
+    const accepted = await this.#recordFleetRegistration(attachment, message);
     if (!accepted) {
-      this.sendError(ws, 'relay_auth_failed', 'Relay authentication failed');
-      await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+      this.#sendError(ws, 'relay_auth_failed', 'Relay authentication failed');
+      await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
         type: 'directory_relay.connection.rejected',
         code: 'relay_instance_rejected',
         keyId: message.key_id,
@@ -425,9 +438,9 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       return;
     }
 
-    await this.markNonceUsed(attachment.tenantId, attachment.connectorId, message.nonce, settings);
-    await this.closeOtherAuthenticatedSockets(ws, attachment);
-    await this.clearAuthenticationFailures(attachment.tenantId, attachment.connectorId);
+    await this.#markNonceUsed(attachment.tenantId, attachment.connectorId, message.nonce, settings);
+    await this.#closeOtherAuthenticatedSockets(ws, attachment);
+    await this.#clearAuthenticationFailures(attachment.tenantId, attachment.connectorId);
     await this.ctx.storage.put<DirectoryRelayConnectionRecord>(
       connectionRecordKey(attachment.connectionId),
       {
@@ -438,11 +451,11 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
         authenticatedAt: Date.now(),
       }
     );
-    await this.updateStatus(attachment.tenantId, attachment.connectorId, {
+    await this.#updateStatus(attachment.tenantId, attachment.connectorId, {
       lastAuthenticatedAt: new Date().toISOString(),
       authenticatedKeyId: message.key_id,
     });
-    await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+    await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
       type: 'directory_relay.connection.authenticated',
       keyId: message.key_id,
     });
@@ -458,33 +471,33 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     );
   }
 
-  private scheduleAuthenticationTimeout(ws: WebSocket, attachment: DirectoryRelayAttachment): void {
+  #scheduleAuthenticationTimeout(ws: WebSocket, attachment: DirectoryRelayAttachment): void {
     setTimeout(
       () => {
-        this.isAuthenticated(ws)
+        this.#isAuthenticated(ws)
           .then(async (authenticated) => {
             if (!authenticated) {
-              await this.recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
-              await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+              await this.#recordAuthenticationFailure(attachment.tenantId, attachment.connectorId);
+              await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
                 type: 'directory_relay.connection.rejected',
                 code: 'auth_timeout',
               });
               ws.close(1008, 'relay authentication timeout');
-              await this.deleteConnectionRecord(ws, 'auth_timeout');
+              await this.#deleteConnectionRecord(ws, 'auth_timeout');
               return undefined;
             }
             return undefined;
           })
           .catch(async () => {
             ws.close(1011, 'relay authentication check failed');
-            await this.deleteConnectionRecord(ws, 'auth_check_failed');
+            await this.#deleteConnectionRecord(ws, 'auth_check_failed');
           });
       },
       Math.max(0, attachment.challengeExpiresAt - Date.now() + 1000)
     );
   }
 
-  private async recordFleetRegistration(
+  async #recordFleetRegistration(
     attachment: DirectoryRelayAttachment,
     message: DirectoryRelayAuthResponseMessage
   ): Promise<boolean> {
@@ -516,7 +529,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     return result.accepted;
   }
 
-  private async handleVerifyPassword(request: Request): Promise<Response> {
+  async #handleVerifyPassword(request: Request): Promise<Response> {
     if (!request.body) {
       return connectorError('invalid_relay_request', false, 400);
     }
@@ -561,11 +574,11 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       return connectorError('relay_connector_not_configured', false, 404);
     }
     const runtime = relayRuntimeSettings(settings);
-    if (this.pendingCount(tenantId, connectorId) >= runtime.maxPendingRequests) {
-      await this.updateStatus(tenantId, connectorId, {
+    if (this.#pendingCount(tenantId, connectorId) >= runtime.maxPendingRequests) {
+      await this.#updateStatus(tenantId, connectorId, {
         lastVerifyFailedAt: new Date().toISOString(),
       });
-      await this.recordEvent(tenantId, connectorId, {
+      await this.#recordEvent(tenantId, connectorId, {
         type: 'directory_relay.overloaded',
         requestId,
         code: 'relay_overloaded',
@@ -574,16 +587,16 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       return connectorError('relay_overloaded', true, 429);
     }
 
-    const ws = await this.authenticatedWebSocket(tenantId, connectorId);
+    const ws = await this.#authenticatedWebSocket(tenantId, connectorId);
     if (!ws) {
       return connectorError('relay_connector_offline', true, 503);
     }
 
     const id = crypto.randomUUID();
-    await this.updateStatus(tenantId, connectorId, {
+    await this.#updateStatus(tenantId, connectorId, {
       lastVerifyStartedAt: new Date().toISOString(),
     });
-    await this.recordEvent(tenantId, connectorId, {
+    await this.#recordEvent(tenantId, connectorId, {
       type: 'directory_relay.verify.forwarded',
       requestId,
     });
@@ -624,10 +637,10 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       const pending = this.pending.get(id);
       if (pending) clearTimeout(pending.timeout);
       this.pending.delete(id);
-      await this.updateStatus(tenantId, connectorId, {
+      await this.#updateStatus(tenantId, connectorId, {
         lastVerifyFailedAt: new Date().toISOString(),
       });
-      await this.recordEvent(tenantId, connectorId, {
+      await this.#recordEvent(tenantId, connectorId, {
         type: 'directory_relay.verify.failed',
         requestId,
         code: 'relay_send_failed',
@@ -638,10 +651,10 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
 
     try {
       const response = await responsePromise;
-      await this.updateStatus(tenantId, connectorId, {
+      await this.#updateStatus(tenantId, connectorId, {
         lastVerifySucceededAt: new Date().toISOString(),
       });
-      await this.recordEvent(tenantId, connectorId, {
+      await this.#recordEvent(tenantId, connectorId, {
         type: 'directory_relay.verify.succeeded',
         requestId,
         result: response.result,
@@ -650,10 +663,10 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     } catch (error) {
       const code = error instanceof Error ? error.message : 'relay_verify_error';
       const retryable = error instanceof DirectoryRelayVerifyFailure ? error.retryable : true;
-      await this.updateStatus(tenantId, connectorId, {
+      await this.#updateStatus(tenantId, connectorId, {
         lastVerifyFailedAt: new Date().toISOString(),
       });
-      await this.recordEvent(tenantId, connectorId, {
+      await this.#recordEvent(tenantId, connectorId, {
         type:
           code === 'relay_verify_timeout'
             ? 'directory_relay.verify.timeout'
@@ -669,18 +682,18 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     }
   }
 
-  private async handleVerifyResponse(
+  async #handleVerifyResponse(
     ws: WebSocket,
     message: DirectoryRelayVerifyResponseMessage
   ): Promise<void> {
-    if (!(await this.isAuthenticated(ws))) {
-      this.sendError(ws, 'unauthenticated', 'Relay connection is not authenticated');
+    if (!(await this.#isAuthenticated(ws))) {
+      this.#sendError(ws, 'unauthenticated', 'Relay connection is not authenticated');
       ws.close(1008, 'unauthenticated');
       return;
     }
     const pending = this.pending.get(message.id);
     if (!pending) {
-      this.sendError(ws, 'unknown_request_id', 'Unknown relay verification request');
+      this.#sendError(ws, 'unknown_request_id', 'Unknown relay verification request');
       return;
     }
     if (
@@ -690,7 +703,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     ) {
       this.pending.delete(message.id);
       clearTimeout(pending.timeout);
-      await this.recordEvent(pending.tenantId, pending.connectorId, {
+      await this.#recordEvent(pending.tenantId, pending.connectorId, {
         type: 'directory_relay.verify.failed',
         requestId: pending.requestId,
         code: 'relay_response_mismatch',
@@ -705,18 +718,18 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     pending.resolve(message);
   }
 
-  private async handleVerifyError(
+  async #handleVerifyError(
     ws: WebSocket,
     message: DirectoryRelayVerifyErrorMessage
   ): Promise<void> {
-    if (!(await this.isAuthenticated(ws))) {
-      this.sendError(ws, 'unauthenticated', 'Relay connection is not authenticated');
+    if (!(await this.#isAuthenticated(ws))) {
+      this.#sendError(ws, 'unauthenticated', 'Relay connection is not authenticated');
       ws.close(1008, 'unauthenticated');
       return;
     }
     const pending = this.pending.get(message.id);
     if (!pending) {
-      this.sendError(ws, 'unknown_request_id', 'Unknown relay verification request');
+      this.#sendError(ws, 'unknown_request_id', 'Unknown relay verification request');
       return;
     }
     if (
@@ -726,7 +739,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     ) {
       this.pending.delete(message.id);
       clearTimeout(pending.timeout);
-      await this.recordEvent(pending.tenantId, pending.connectorId, {
+      await this.#recordEvent(pending.tenantId, pending.connectorId, {
         type: 'directory_relay.verify.failed',
         requestId: pending.requestId,
         code: 'relay_response_mismatch',
@@ -739,7 +752,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     this.pending.delete(message.id);
     clearTimeout(pending.timeout);
     const relayCode = relayVerifyErrorCode(message.error);
-    await this.recordEvent(pending.tenantId, pending.connectorId, {
+    await this.#recordEvent(pending.tenantId, pending.connectorId, {
       type: 'directory_relay.verify.failed',
       requestId: pending.requestId,
       code: relayCode,
@@ -750,7 +763,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     );
   }
 
-  private async handleStatus(request: Request): Promise<Response> {
+  async #handleStatus(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const tenantId = stringValue(url.searchParams.get('tenant_id'));
     const connectorId = stringValue(url.searchParams.get('connector_id'));
@@ -766,15 +779,15 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     const websockets = this.ctx.getWebSockets();
     let authenticated = 0;
     for (const ws of websockets) {
-      if (await this.isAuthenticated(ws, true)) authenticated += 1;
+      if (await this.#isAuthenticated(ws, true)) authenticated += 1;
     }
-    this.cleanupExpiredPending();
+    this.#cleanupExpiredPending();
     return jsonResponse({
       ok: true,
       connections: websockets.length,
       authenticated_connections: authenticated,
       pending_requests:
-        tenantId && connectorId ? this.pendingCount(tenantId, connectorId) : this.pending.size,
+        tenantId && connectorId ? this.#pendingCount(tenantId, connectorId) : this.pending.size,
       max_pending_requests: runtime.maxPendingRequests,
       verify_timeout_ms: runtime.verifyTimeoutMs,
       challenge_ttl_ms: runtime.challengeTtlMs,
@@ -792,12 +805,9 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     });
   }
 
-  private async authenticatedWebSocket(
-    tenantId: string,
-    connectorId: string
-  ): Promise<WebSocket | null> {
+  async #authenticatedWebSocket(tenantId: string, connectorId: string): Promise<WebSocket | null> {
     for (const ws of this.ctx.getWebSockets()) {
-      const attachment = this.getAttachment(ws);
+      const attachment = this.#getAttachment(ws);
       if (
         !attachment ||
         attachment.tenantId !== tenantId ||
@@ -805,12 +815,12 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       ) {
         continue;
       }
-      if (await this.isAuthenticated(ws, true)) return ws;
+      if (await this.#isAuthenticated(ws, true)) return ws;
     }
     return null;
   }
 
-  private async handleEvents(request: Request): Promise<Response> {
+  async #handleEvents(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const tenantId = stringValue(url.searchParams.get('tenant_id'));
     const connectorId = stringValue(url.searchParams.get('connector_id'));
@@ -827,8 +837,8 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     });
   }
 
-  private async isAuthenticated(ws: WebSocket, validateKey = false): Promise<boolean> {
-    const attachment = this.getAttachment(ws);
+  async #isAuthenticated(ws: WebSocket, validateKey = false): Promise<boolean> {
+    const attachment = this.#getAttachment(ws);
     if (!attachment) return false;
     const record = await this.ctx.storage.get<DirectoryRelayConnectionRecord>(
       connectionRecordKey(attachment.connectionId)
@@ -855,13 +865,13 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
         )
       : undefined;
     if (resolvedSecret) return true;
-    await this.deleteConnectionRecord(ws, 'authenticated_key_expired');
+    await this.#deleteConnectionRecord(ws, 'authenticated_key_expired');
     ws.close(1008, 'authenticated key expired');
     return false;
   }
 
-  private pendingCount(tenantId: string, connectorId: string): number {
-    this.cleanupExpiredPending();
+  #pendingCount(tenantId: string, connectorId: string): number {
+    this.#cleanupExpiredPending();
     let count = 0;
     for (const pending of this.pending.values()) {
       if (pending.tenantId === tenantId && pending.connectorId === connectorId) count += 1;
@@ -869,7 +879,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     return count;
   }
 
-  private cleanupExpiredPending(now = Date.now()): void {
+  #cleanupExpiredPending(now = Date.now()): void {
     for (const [id, pending] of this.pending.entries()) {
       if (pending.expiresAt > now) continue;
       this.pending.delete(id);
@@ -878,7 +888,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     }
   }
 
-  private async updateStatus(
+  async #updateStatus(
     tenantId: string,
     connectorId: string,
     patch: Partial<DirectoryRelayStatusRecord>
@@ -894,7 +904,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     });
   }
 
-  private async authFailureBlockedUntil(
+  async #authFailureBlockedUntil(
     tenantId: string,
     connectorId: string
   ): Promise<number | undefined> {
@@ -907,7 +917,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     return undefined;
   }
 
-  private async recordAuthenticationFailure(tenantId: string, connectorId: string): Promise<void> {
+  async #recordAuthenticationFailure(tenantId: string, connectorId: string): Promise<void> {
     const settings = await findConnectorSettings(this.env, tenantId, connectorId);
     const runtime = settings ? relayRuntimeSettings(settings) : defaultRelayRuntimeSettings();
     const key = authFailureRecordKey(tenantId, connectorId);
@@ -925,15 +935,11 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     });
   }
 
-  private async clearAuthenticationFailures(tenantId: string, connectorId: string): Promise<void> {
+  async #clearAuthenticationFailures(tenantId: string, connectorId: string): Promise<void> {
     await this.ctx.storage.delete(authFailureRecordKey(tenantId, connectorId));
   }
 
-  private async usedNonceExists(
-    tenantId: string,
-    connectorId: string,
-    nonce: string
-  ): Promise<boolean> {
+  async #usedNonceExists(tenantId: string, connectorId: string, nonce: string): Promise<boolean> {
     const key = usedNonceRecordKey(tenantId, connectorId, nonce);
     const record = await this.ctx.storage.get<DirectoryRelayUsedNonceRecord>(key);
     if (!record) return false;
@@ -942,7 +948,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     return false;
   }
 
-  private async markNonceUsed(
+  async #markNonceUsed(
     tenantId: string,
     connectorId: string,
     nonce: string,
@@ -957,42 +963,42 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     );
   }
 
-  private async closeOtherAuthenticatedSockets(
+  async #closeOtherAuthenticatedSockets(
     current: WebSocket,
     currentAttachment: DirectoryRelayAttachment
   ): Promise<void> {
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === current) continue;
-      const attachment = this.getAttachment(ws);
+      const attachment = this.#getAttachment(ws);
       if (
         attachment?.tenantId === currentAttachment.tenantId &&
         attachment.connectorId === currentAttachment.connectorId &&
-        (await this.isAuthenticated(ws))
+        (await this.#isAuthenticated(ws))
       ) {
-        await this.deleteConnectionRecord(ws, 'replaced');
+        await this.#deleteConnectionRecord(ws, 'replaced');
         ws.close(1000, 'replaced by newer relay connection');
       }
     }
   }
 
-  private async deleteConnectionRecord(ws: WebSocket, reason: string): Promise<void> {
-    const attachment = this.getAttachment(ws);
+  async #deleteConnectionRecord(ws: WebSocket, reason: string): Promise<void> {
+    const attachment = this.#getAttachment(ws);
     if (attachment) {
       const key = connectionRecordKey(attachment.connectionId);
       const record = await this.ctx.storage.get<DirectoryRelayConnectionRecord>(key);
       await this.ctx.storage.delete(key);
       if (record?.authenticated) {
-        this.rejectPendingForConnector(
+        this.#rejectPendingForConnector(
           attachment.tenantId,
           attachment.connectorId,
           'relay_connection_closed'
         );
       }
-      await this.updateStatus(attachment.tenantId, attachment.connectorId, {
+      await this.#updateStatus(attachment.tenantId, attachment.connectorId, {
         lastDisconnectAt: new Date().toISOString(),
         lastDisconnectReason: reason,
       });
-      await this.recordEvent(attachment.tenantId, attachment.connectorId, {
+      await this.#recordEvent(attachment.tenantId, attachment.connectorId, {
         type: 'directory_relay.connection.closed',
         code: reason,
         keyId: record?.keyId,
@@ -1000,7 +1006,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     }
   }
 
-  private async recordEvent(
+  async #recordEvent(
     tenantId: string,
     connectorId: string,
     event: Omit<DirectoryRelayEventRecord, 'id' | 'timestamp' | 'tenantId' | 'connectorId'>
@@ -1022,7 +1028,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     await this.ctx.storage.put<DirectoryRelayEventListRecord>(key, { events });
   }
 
-  private rejectPendingForConnector(tenantId: string, connectorId: string, code: string): void {
+  #rejectPendingForConnector(tenantId: string, connectorId: string, code: string): void {
     for (const [id, pending] of this.pending.entries()) {
       if (pending.tenantId !== tenantId || pending.connectorId !== connectorId) continue;
       this.pending.delete(id);
@@ -1031,7 +1037,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     }
   }
 
-  private getAttachment(ws: WebSocket): DirectoryRelayAttachment | null {
+  #getAttachment(ws: WebSocket): DirectoryRelayAttachment | null {
     try {
       return ws.deserializeAttachment() as DirectoryRelayAttachment | null;
     } catch {
@@ -1040,7 +1046,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
     return null;
   }
 
-  private sendError(ws: WebSocket, code: string, message: string): void {
+  #sendError(ws: WebSocket, code: string, message: string): void {
     ws.send(
       JSON.stringify({
         type: 'error',

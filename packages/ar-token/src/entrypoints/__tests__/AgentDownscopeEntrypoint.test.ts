@@ -6,7 +6,11 @@ import type {
 } from '@authrim/ar-agent-access/core';
 import { computeAgentBulkChildCapabilityDigest } from '@authrim/ar-agent-access/core';
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
-import { exchangeAgentAccessToken, issueAgentBulkChildToken } from '../AgentDownscopeEntrypoint';
+import {
+  AgentDownscopeEntrypoint,
+  exchangeAgentAccessToken,
+  issueAgentBulkChildToken,
+} from '../AgentDownscopeEntrypoint';
 
 const grant: AgentGrantContract = {
   grantId: 'grant-1',
@@ -598,4 +602,17 @@ describe('AgentDownscopeEntrypoint', () => {
       })
     ).rejects.toThrow('authorization_changed');
   });
+});
+
+describe('Agent downscope RPC source guard', () => {
+  it.each(['exchangeAgentAccessToken', 'issueAgentBulkChildToken'] as const)(
+    'requires admission on named RPC %s before validation or token writes',
+    async (method) => {
+      const entrypoint = new AgentDownscopeEntrypoint(
+        {} as ExecutionContext,
+        { ENABLE_SAML_DR_EXPORT: 'true' } as never
+      );
+      await expect(entrypoint[method]({} as never)).rejects.toThrow('saml_dr_writer_unavailable');
+    }
+  );
 });

@@ -48,6 +48,13 @@ import { buildSAMLIdPSigningContext } from '../common/idp-signing';
  * Handle IdP metadata request
  */
 export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<Response> {
+  return handleIdPMetadataWithOptions(c, { includeSLO: true });
+}
+
+export async function handleIdPMetadataWithOptions(
+  c: Context<{ Bindings: Env }>,
+  options: { includeSLO: boolean }
+): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-IDP');
   const tenantId = resolveSAMLTenantIdFromContext(c);
@@ -92,6 +99,7 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
     issuerUrl,
     signingCertificates,
     institution,
+    includeSLO: options.includeSLO,
   });
 
   if (shouldSignSAMLMetadata(env)) {
@@ -116,6 +124,8 @@ export interface IdPMetadataOptions {
   entityId: string;
   issuerUrl: string;
   signingCertificates: SAMLMetadataSigningCertificate[];
+  /** Defaults to true for the existing Cloudflare IdP metadata contract. */
+  includeSLO?: boolean;
   validUntil?: string;
   /**
    * The tenant's institution. Its scopes are published as shibmd:Scope, and its names are the
@@ -176,17 +186,19 @@ export function buildIdPMetadata(options: IdPMetadataOptions): string {
     appendChild(idpSsoDescriptor, buildSigningKeyDescriptor(doc, signingCertificate));
   }
 
-  // Add SingleLogoutService endpoints. In the SAML metadata schema this belongs to
-  // SSODescriptorType and must appear before NameIDFormat.
-  const sloPost = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
-  setAttribute(sloPost, 'Binding', BINDING_URIS.HTTP_POST);
-  setAttribute(sloPost, 'Location', `${issuerUrl}/saml/idp/slo`);
-  appendChild(idpSsoDescriptor, sloPost);
+  // Add SingleLogoutService endpoints only when this runtime serves them. The Cloudflare worker
+  // keeps the existing metadata by default; a limited runtime must not advertise absent routes.
+  if (options.includeSLO !== false) {
+    const sloPost = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
+    setAttribute(sloPost, 'Binding', BINDING_URIS.HTTP_POST);
+    setAttribute(sloPost, 'Location', `${issuerUrl}/saml/idp/slo`);
+    appendChild(idpSsoDescriptor, sloPost);
 
-  const sloRedirect = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
-  setAttribute(sloRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
-  setAttribute(sloRedirect, 'Location', `${issuerUrl}/saml/idp/slo`);
-  appendChild(idpSsoDescriptor, sloRedirect);
+    const sloRedirect = createElement(doc, SAML_NAMESPACES.MD, 'SingleLogoutService', 'md');
+    setAttribute(sloRedirect, 'Binding', BINDING_URIS.HTTP_REDIRECT);
+    setAttribute(sloRedirect, 'Location', `${issuerUrl}/saml/idp/slo`);
+    appendChild(idpSsoDescriptor, sloRedirect);
+  }
 
   // Add NameIDFormat elements
   const supportedFormats = [

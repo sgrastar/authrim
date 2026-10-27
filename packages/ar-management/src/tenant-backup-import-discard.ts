@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   buildContractKey,
   deleteTenantExistsCache,
@@ -114,7 +115,7 @@ async function sweepKvPrefix(
   let deletedNow = 0;
   for (let page = 0; page < KV_LIST_PAGES_PER_CALL; page++) {
     const listed = await kv.list({ prefix, cursor: cursor ?? undefined, limit: KV_KEYS_PER_PAGE });
-    await Promise.all(listed.keys.map((key) => kv.delete(key.name)));
+    await samlDrAll(listed.keys.map((key) => kv.delete(key.name)));
     deleted += listed.keys.length;
     deletedNow += listed.keys.length;
     if (listed.list_complete)
@@ -595,7 +596,7 @@ export function createTenantBackupImportDiscard(input: {
 
   /** The KV copies the provisioning cleanup removes outside the settings prefixes. */
   const deleteConfigKv = async (tenantId: string) => {
-    await Promise.all([
+    await samlDrAll([
       env.AUTHRIM_CONFIG?.delete(buildContractKey(env, 'tenant', tenantId)),
       env.AUTHRIM_CONFIG?.delete(`settings:tenant:${tenantId}:tenant`),
       env.AUTHRIM_CONFIG?.delete(`settings:tenant:${tenantId}:email-settings`),

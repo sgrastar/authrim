@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { z } from './zod';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
@@ -159,7 +160,7 @@ async function mapBounded<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(values.length);
   let cursor = 0;
-  await Promise.all(
+  await samlDrAll(
     Array.from({ length: Math.min(PLATFORM_FANOUT_CONCURRENCY, values.length) }, async () => {
       while (cursor < values.length) {
         const index = cursor++;

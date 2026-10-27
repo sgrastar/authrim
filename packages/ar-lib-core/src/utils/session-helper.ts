@@ -185,6 +185,17 @@ export function getSessionStoreBySessionId(
     resolution.shardIndex
   );
 
+  if (env.AUTH_RUNTIME_PORTS) {
+    const store = env.AUTH_RUNTIME_PORTS.sessions.forSession({
+      tenantId: normalizedTenantId,
+      sessionId,
+    });
+    if (!store) throw new Error('auth_runtime_session_store_unavailable');
+    // The existing helper returns a DO stub type for callers that invoke RPC methods.
+    // The alternate runtime supplies those RPC methods without a DO namespace.
+    return { stub: store as unknown as SessionStoreStub, resolution, instanceName };
+  }
+
   const stub = getRegionAwareDOStub(
     env.SESSION_STORE as unknown as DurableObjectNamespace,
     instanceName,
@@ -222,6 +233,40 @@ export async function getSessionStoreForNewSession(
   instanceName: string;
 }> {
   const normalizedTenantId = requireTenantId(tenantId, 'New session store routing');
+
+  if (env.AUTH_RUNTIME_PORTS) {
+    const sessionId = await env.AUTH_RUNTIME_PORTS.sessions.newSessionId({
+      tenantId: normalizedTenantId,
+    });
+    const parsed = parseRegionShardedSessionId(sessionId);
+    const randomPart = parsed?.randomPart.slice('session_'.length);
+    if (!parsed || !randomPart || !/^[A-Za-z0-9_-]{22,}$/u.test(randomPart)) {
+      throw new Error('auth_runtime_session_id_invalid');
+    }
+    const resolution: ShardResolution = {
+      generation: parsed.generation,
+      regionKey: parsed.regionKey,
+      shardIndex: parsed.shardIndex,
+    };
+    const instanceName = buildRegionInstanceName(
+      normalizedTenantId,
+      resolution.regionKey,
+      'session',
+      resolution.shardIndex
+    );
+    const store = env.AUTH_RUNTIME_PORTS.sessions.forSession({
+      tenantId: normalizedTenantId,
+      sessionId,
+    });
+    if (!store) throw new Error('auth_runtime_session_store_unavailable');
+    return {
+      stub: store as unknown as SessionStoreStub,
+      sessionId,
+      resolution,
+      instanceName,
+    };
+  }
+
   const { sessionId, shardIndex, regionKey, generation } = await generateRegionShardedSessionId(
     env,
     normalizedTenantId

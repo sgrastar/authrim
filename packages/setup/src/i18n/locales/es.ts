@@ -782,6 +782,29 @@ const es: Translations = {
   'web.lightMode': 'Claro',
   'web.systemMode': 'Sistema',
 
+  // Web UI cloud platform selection
+  'web.platform.title': 'Elige una plataforma en la nube',
+  'web.platform.description': 'Elige la nube en la que quieres configurar Authrim.',
+  'web.platform.cloudflareAction': 'Configurar en Cloudflare',
+  'web.platform.cloudflareDescription': 'Configura Authrim en Cloudflare Workers.',
+  'web.platform.awsAction': 'Configurar en AWS',
+  'web.platform.development': 'En desarrollo',
+  'web.platform.awsScope': 'Actualmente solo admite SAML DR',
+  'web.platform.choose': 'Seleccionar',
+  'web.platform.back': 'Volver a la selección de nube',
+  'web.platform.awsTitle': 'Preparar SAML DR en AWS',
+  'web.platform.awsDescription':
+    'Prepara un entorno de recuperación del IdP SAML ante una caída de Cloudflare.',
+  'web.platform.awsGuide':
+    'Los comandos de configuración de AWS permiten comprobar los requisitos y planificar el despliegue. La configuración desde el navegador está en desarrollo.',
+  'web.platform.awsPrerequisites':
+    'Prepara una cuenta de AWS, una región y un perfil que inicie sesión mediante el rol dedicado.',
+  'web.platform.awsCommand': 'Comando de comprobación de requisitos',
+  'web.platform.awsCommandNote':
+    'Sustituye el ID de cuenta y el nombre del perfil por los de tu configuración de AWS.',
+  'web.platform.targetPending': 'Sin seleccionar',
+  'web.platform.chooseCloudflare': 'Continuar con la configuración de Cloudflare',
+
   // Web UI Prerequisites
   'web.prereq.title': 'Preparar',
   'web.prereq.checking': 'Verificando...',

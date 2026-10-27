@@ -1,3 +1,4 @@
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type {
   CreateCredentialOfferServiceInput,
@@ -122,90 +123,94 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
   async createCredentialOffer(
     input: CreateCredentialOfferServiceInput
   ): Promise<CreateCredentialOfferServiceResult> {
-    if (!isValidTenantIdentifier(input.tenantId)) {
-      throw new Error('invalid_tenant_id');
-    }
-    const userId = requireIdentifier(input.userId, 'user_id');
-    const credentialProfileId = requireIdentifier(
-      input.credentialProfileId,
-      'credential_profile_id'
-    );
-    const credentialConfigurationId = requireIdentifier(
-      input.credentialConfigurationId,
-      'credential_configuration_id'
-    );
-    const mappingVersionId = requireIdentifier(input.mappingVersionId, 'mapping_version_id');
-    if (
-      !Number.isSafeInteger(input.credentialProfileVersion) ||
-      input.credentialProfileVersion < 1
-    ) {
-      throw new Error('invalid_credential_profile_version');
-    }
-    if (!SNAPSHOT_HASH.test(input.mappingSnapshotHash)) {
-      throw new Error('invalid_mapping_snapshot_hash');
-    }
-    if (!SNAPSHOT_HASH.test(input.credentialProfileSnapshotHash)) {
-      throw new Error('invalid_credential_profile_snapshot_hash');
-    }
-    const credentialIssuer = normalizeIssuer(input.credentialIssuer);
-    const validated = validateClaims(input.claims, input.claimManifest);
-    if (!(await verifyProfileContract(this.env, input, validated.manifest))) {
-      throw new Error('invalid_credential_profile_contract');
-    }
-    const claimManifestHash = await sha256Base64url(JSON.stringify(validated.manifest));
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      if (!isValidTenantIdentifier(input.tenantId)) {
+        throw new Error('invalid_tenant_id');
+      }
+      const userId = requireIdentifier(input.userId, 'user_id');
+      const credentialProfileId = requireIdentifier(
+        input.credentialProfileId,
+        'credential_profile_id'
+      );
+      const credentialConfigurationId = requireIdentifier(
+        input.credentialConfigurationId,
+        'credential_configuration_id'
+      );
+      const mappingVersionId = requireIdentifier(input.mappingVersionId, 'mapping_version_id');
+      if (
+        !Number.isSafeInteger(input.credentialProfileVersion) ||
+        input.credentialProfileVersion < 1
+      ) {
+        throw new Error('invalid_credential_profile_version');
+      }
+      if (!SNAPSHOT_HASH.test(input.mappingSnapshotHash)) {
+        throw new Error('invalid_mapping_snapshot_hash');
+      }
+      if (!SNAPSHOT_HASH.test(input.credentialProfileSnapshotHash)) {
+        throw new Error('invalid_credential_profile_snapshot_hash');
+      }
+      const credentialIssuer = normalizeIssuer(input.credentialIssuer);
+      const validated = validateClaims(input.claims, input.claimManifest);
+      if (!(await verifyProfileContract(env, input, validated.manifest))) {
+        throw new Error('invalid_credential_profile_contract');
+      }
+      const claimManifestHash = await sha256Base64url(JSON.stringify(validated.manifest));
 
-    const requestedExpiry = input.expiresInSeconds ?? DEFAULT_EXPIRY_SECONDS;
-    if (!Number.isFinite(requestedExpiry)) {
-      throw new Error('invalid_offer_expiry');
-    }
-    const expiresInSeconds = Math.min(
-      Math.max(Math.trunc(requestedExpiry), MIN_EXPIRY_SECONDS),
-      MAX_EXPIRY_SECONDS
-    );
-    const createdAt = Date.now();
-    const expiresAt = createdAt + expiresInSeconds * 1000;
-    const { stub, offerId } = await getCredentialOfferStoreForNewOffer(
-      this.env,
-      input.tenantId,
-      userId,
-      crypto.randomUUID()
-    );
-    const preAuthorizedCode = generatePreAuthorizedCode(offerId, generateRandomString(32));
-    const transactionCode = input.transactionCodeRequired
-      ? generateNumericTransactionCode()
-      : undefined;
+      const requestedExpiry = input.expiresInSeconds ?? DEFAULT_EXPIRY_SECONDS;
+      if (!Number.isFinite(requestedExpiry)) {
+        throw new Error('invalid_offer_expiry');
+      }
+      const expiresInSeconds = Math.min(
+        Math.max(Math.trunc(requestedExpiry), MIN_EXPIRY_SECONDS),
+        MAX_EXPIRY_SECONDS
+      );
+      const createdAt = Date.now();
+      const expiresAt = createdAt + expiresInSeconds * 1000;
+      const { stub, offerId } = await getCredentialOfferStoreForNewOffer(
+        env,
+        input.tenantId,
+        userId,
+        crypto.randomUUID()
+      );
+      const preAuthorizedCode = generatePreAuthorizedCode(offerId, generateRandomString(32));
+      const transactionCode = input.transactionCodeRequired
+        ? generateNumericTransactionCode()
+        : undefined;
 
-    await (stub as unknown as CredentialOfferStoreRpcStub).createOfferRpc({
-      id: offerId,
-      tenantId: input.tenantId,
-      userId,
-      credentialProfileId,
-      credentialProfileVersion: input.credentialProfileVersion,
-      credentialProfileSnapshotHash: input.credentialProfileSnapshotHash,
-      credentialConfigurationId,
-      mappingVersionId,
-      mappingSnapshotHash: input.mappingSnapshotHash,
-      claimManifestHash,
-      claims: JSON.parse(validated.claimsJson) as Record<string, unknown>,
-      preAuthorizedCodeHash: await sha256Base64url(preAuthorizedCode),
-      txCodeHash: transactionCode
-        ? await hashTransactionCode(
-            this.env.VC_TRANSACTION_CODE_HMAC_SECRET,
-            input.tenantId,
-            offerId,
-            transactionCode
-          )
-        : undefined,
-      createdAt,
-      expiresAt,
+      await (stub as unknown as CredentialOfferStoreRpcStub).createOfferRpc({
+        id: offerId,
+        tenantId: input.tenantId,
+        userId,
+        credentialProfileId,
+        credentialProfileVersion: input.credentialProfileVersion,
+        credentialProfileSnapshotHash: input.credentialProfileSnapshotHash,
+        credentialConfigurationId,
+        mappingVersionId,
+        mappingSnapshotHash: input.mappingSnapshotHash,
+        claimManifestHash,
+        claims: JSON.parse(validated.claimsJson) as Record<string, unknown>,
+        preAuthorizedCodeHash: await sha256Base64url(preAuthorizedCode),
+        txCodeHash: transactionCode
+          ? await hashTransactionCode(
+              env.VC_TRANSACTION_CODE_HMAC_SECRET,
+              input.tenantId,
+              offerId,
+              transactionCode
+            )
+          : undefined,
+        createdAt,
+        expiresAt,
+      });
+
+      return {
+        offerId,
+        credentialOfferUri: `${credentialIssuer}/vci/offers/${encodeURIComponent(preAuthorizedCode)}`,
+        expiresAt,
+        claimManifestHash,
+        ...(transactionCode ? { transactionCode } : {}),
+      };
     });
-
-    return {
-      offerId,
-      credentialOfferUri: `${credentialIssuer}/vci/offers/${encodeURIComponent(preAuthorizedCode)}`,
-      expiresAt,
-      claimManifestHash,
-      ...(transactionCode ? { transactionCode } : {}),
-    };
   }
 }
+
+export const SAML_DR_WRITER_SURFACES = ['rpc:VCIssuerEntrypoint.createCredentialOffer'] as const;

@@ -33,6 +33,7 @@
  * - GET /api/check/health - Check API health (Phase 8.3)
  */
 
+import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
@@ -1225,5 +1226,13 @@ app.onError((err, c) => {
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 
+// Keep deferred effects inside the source-export admission permit.
+const unguardedFetch = app.fetch.bind(app);
+app.fetch = (request, env, context) =>
+  runSamlDrCoveredFetch(env, context, (coveredEnv, coveredContext) =>
+    Promise.resolve(unguardedFetch(request, coveredEnv, coveredContext))
+  );
+
+export const SAML_DR_WRITER_SURFACES = ['fetch'] as const;
 export default app;
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

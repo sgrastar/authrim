@@ -6,10 +6,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '../../types/env';
 import {
+  checkRateLimit,
   clearCloudProviderCache,
   clearRateLimitConfigCache,
   clearRateLimitFastPathCache,
   formatRateLimitProfileOverride,
+  getCloudProvider,
   getRateLimitProfileAsync,
   parseRateLimitProfileOverride,
   rateLimitMiddleware,
@@ -1691,6 +1693,64 @@ describe('Rate Limiting Middleware', () => {
       expect(res.headers.get('Cache-Control')).toBe('no-store');
       expect(res.headers.get('Pragma')).toBe('no-cache');
     });
+  });
+});
+
+describe('AWS runtime rate limiting', () => {
+  it('selects the typed atomic port with tenant, class, and trusted AWS provider', async () => {
+    const result = { allowed: true, remaining: 4, resetAt: 1234 };
+    const check = vi.fn().mockResolvedValue(result);
+    const env = { AUTH_RUNTIME_PORTS: { rateLimit: { check } } } as Env;
+
+    expect(await getCloudProvider(env)).toBe('aws');
+    await expect(
+      checkRateLimit(
+        env,
+        '203.0.113.7',
+        { maxRequests: 5, windowSeconds: 60, endpointClass: 'loginStart' },
+        'tenant-a'
+      )
+    ).resolves.toEqual(result);
+    expect(check).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      key: 'tenant:tenant-a:rate-limit:loginStart:203.0.113.7',
+      maxRequests: 5,
+      windowSeconds: 60,
+    });
+  });
+
+  it('ignores a forged Cloudflare IP header when AWS ingress supplied the final forwarded IP', async () => {
+    const check = vi.fn().mockResolvedValue({
+      allowed: true,
+      remaining: 4,
+      resetAt: Math.floor(Date.now() / 1000) + 60,
+    });
+    const env = { AUTH_RUNTIME_PORTS: { rateLimit: { check } } } as Env;
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', rateLimitMiddleware({ maxRequests: 5, windowSeconds: 60, keyScope: 'global' }));
+    app.get('/test', (c) => c.json({ ok: true }));
+
+    const response = await app.request(
+      '/test',
+      {
+        headers: {
+          'CF-Connecting-IP': '198.51.100.4',
+          'X-Forwarded-For': '198.51.100.4, 203.0.113.7',
+        },
+      },
+      env
+    );
+    expect(response.status).toBe(200);
+    expect(check).toHaveBeenCalledWith(
+      expect.objectContaining({ key: '203.0.113.7', maxRequests: 5 })
+    );
+  });
+
+  it('fails closed when an alternate runtime omits the atomic limiter', async () => {
+    const env = { AUTH_RUNTIME_PORTS: {} } as Env;
+    await expect(
+      checkRateLimit(env, '203.0.113.7', { maxRequests: 5, windowSeconds: 60 }, 'tenant-a')
+    ).rejects.toThrow('auth_runtime_rate_limit_unavailable');
   });
 });
 

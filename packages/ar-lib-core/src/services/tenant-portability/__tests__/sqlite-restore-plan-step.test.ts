@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { TenantBackupStepContext } from '../operation-executor';
 import type { DatabaseTenantBackupRestorePlanInventory } from '../restore-plan-inventory';
 import { runTenantBackupSqliteRestorePlanStep } from '../sqlite-restore-plan-step';
+import { runSamlDrCoveredOperation } from '../saml-dr-writer';
 
 const mocks = vi.hoisted(() => ({
   persistTarget: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
@@ -130,6 +131,50 @@ it('pins initialized targets and the sequence in one slice', async () => {
   ]);
   expect(inventory.seal).toHaveBeenCalled();
   expect(assertInputs.mock.calls.length).toBeGreaterThanOrEqual(3);
+});
+
+it('retains writer admission until sibling target initialization ends after one target fails', async () => {
+  let finish!: () => void;
+  const delayed = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const complete = vi.fn(async () => undefined);
+  const env = {
+    ENABLE_SAML_DR_EXPORT: 'true',
+    SAML_DR_MUTATION_CONTROL: {
+      acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+      completeEnvironmentBackupMutationPermit: complete,
+    },
+  };
+  const first = {
+    ...target,
+    initialize: vi.fn(async () => {
+      throw new Error('initialize_failed');
+    }),
+  };
+  const second = {
+    ...target,
+    targetId: 'core-other',
+    resourceId: 'd1-other',
+    provisioningId: 'provisioning-other',
+    initialize: vi.fn(async () => {
+      await delayed;
+      return {
+        ...resource,
+        targetId: 'core-other',
+        resourceId: 'd1-other',
+        provisioningId: 'provisioning-other',
+      };
+    }),
+  };
+  const pending = runSamlDrCoveredOperation(env, undefined, () => run(context, [first, second]));
+  const result = expect(pending).rejects.toThrow('initialize_failed');
+  await vi.waitFor(() => expect(second.initialize).toHaveBeenCalledOnce());
+  expect(complete).not.toHaveBeenCalled();
+  finish();
+  await result;
+  expect(complete).toHaveBeenCalledOnce();
+  expect(mocks.persistTarget).not.toHaveBeenCalled();
 });
 
 it('seals the complete plan before starting writes', async () => {
