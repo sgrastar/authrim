@@ -152,6 +152,8 @@ const id = createTranslation({
 	account_reauthTotpCodePlaceholder: 'Kode 6 atau 8 digit',
 	account_actionFailed: 'Operasi gagal',
 	account_remainingLoginMethodRequired: 'Tambahkan metode login lain sebelum menghapus metode ini.',
+	account_activityIncomplete: 'Hasil aktivitas belum lengkap. Coba lagi nanti.',
+	account_activityLoadMore: 'Muat aktivitas sebelumnya',
 	account_activityTitle: 'Aktivitas',
 	account_operationNameUpdated: 'Nama diubah',
 	account_operationPasskeyCreated: 'Passkey ditambahkan',

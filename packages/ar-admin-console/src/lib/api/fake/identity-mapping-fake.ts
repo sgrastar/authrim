@@ -722,7 +722,9 @@ export function createFakeIdentityMapping(
 			return {
 				sets: copy(
 					sets
-						.filter((s) => s.owner === owner || owner === 'tenant')
+						.filter(
+							(s) => s.owner === 'platform' || (owner === 'tenant' && tenantId === DEMO_TENANT)
+						)
 						.map(({ mappings: _m, ...s }) => s)
 				)
 			};
@@ -791,8 +793,9 @@ export function createFakeIdentityMapping(
 			applied.set(key, copy(answer));
 			return copy(answer);
 		},
-		async apps() {
+		async apps(tenantId) {
 			await pause();
+			if (tenantId !== DEMO_TENANT) return [];
 			return copy(
 				apps.map(({ client_id, name, identity_mapping }) => ({ client_id, name, identity_mapping }))
 			);
@@ -992,6 +995,7 @@ export function createFakeIdentityMapping(
 		},
 		async history(tenantId) {
 			await pause();
+			if (tenantId !== DEMO_TENANT) return [];
 			return copy(history.map((entry) => withRestorability(tenantId, entry)));
 		},
 		async previewRestore(tenantId, entryId) {

@@ -1,3 +1,4 @@
+import { logDetailQuery, type LogCursorPagination } from './log-pagination';
 import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
 
 export interface OperationalLogSummary {
@@ -29,6 +30,7 @@ async function parseResponse<T>(response: Response, fallbackMessage: string): Pr
 
 export const adminOperationalLogsAPI = {
 	async list(params?: {
+		cursor?: string;
 		subjectType?: string;
 		subjectId?: string;
 		action?: string;
@@ -40,21 +42,23 @@ export const adminOperationalLogsAPI = {
 		if (params?.subjectId) searchParams.set('subject_id', params.subjectId);
 		if (params?.action) searchParams.set('action', params.action);
 		if (params?.actorId) searchParams.set('actor_id', params.actorId);
+		if (params?.cursor) searchParams.set('cursor', params.cursor);
 		if (params?.limit) searchParams.set('limit', String(params.limit));
 
 		const query = searchParams.toString();
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/operational-logs${query ? `?${query}` : ''}`
 		);
-		return parseResponse<{ items: OperationalLogSummary[]; total: number }>(
-			response,
-			'Failed to load operational logs'
-		);
+		return parseResponse<{
+			items: OperationalLogSummary[];
+			total?: number;
+			pagination?: LogCursorPagination;
+		}>(response, 'Failed to load operational logs');
 	},
 
-	async get(id: string) {
+	async get(id: string, eventAt?: number) {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/operational-logs/${encodeURIComponent(id)}`
+			`${API_BASE_URL}/api/admin/operational-logs/${encodeURIComponent(id)}${logDetailQuery(eventAt)}`
 		);
 		return parseResponse<OperationalLogDetail>(response, 'Failed to load operational log detail');
 	}

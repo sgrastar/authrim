@@ -20,6 +20,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { toCsv } from '../admin-job-executor';
+import { createLogReadAdapter } from '../log-read-adapter';
 import {
   fromStoredAuditTimestamp,
   getAuditHotQuerySqlSpec,
@@ -213,7 +214,7 @@ export async function mfaCoverageReport(
   );
 }
 
-/** Audit log entries of a period (from inclusive, to exclusive), oldest first, from the hot store. */
+/** Audit log entries of a period (from inclusive, to exclusive), oldest first, including archives. */
 export async function auditLogReport(
   env: Env,
   auditProfile: AuditProfile,
@@ -225,6 +226,13 @@ export async function auditLogReport(
     throw new ReportUnavailableError('audit_log_not_queryable');
   }
   const context = support.context;
+  const logRead = createLogReadAdapter({
+    env,
+    tenantId,
+    adapter: context.adapter,
+    dataset: context.mode === 'legacy' ? 'core.audit_log' : 'core.event_log',
+    window: { fromMs: period.fromMs, toMs: period.toMs - 1 },
+  });
   const { tableName } = getAuditHotQuerySqlSpec(context);
   const toStored = (ms: number) =>
     context.createdAtUnit === 'milliseconds' ? ms : Math.floor(ms / 1000);
@@ -236,7 +244,7 @@ export async function auditLogReport(
          NULL AS actor, anonymized_user_id AS subject_user, client_id, error_code`
       : `id, created_at, action, NULL AS event_category, NULL AS result, severity,
          user_id AS actor, NULL AS subject_user, NULL AS client_id, NULL AS error_code`;
-  const rows = await context.adapter.query<Record<string, unknown> & { created_at: number }>(
+  const rows = await logRead.adapter.query<Record<string, unknown> & { created_at: number }>(
     `SELECT ${columns} FROM ${tableName}
       WHERE tenant_id = ? AND created_at >= ? AND created_at < ?
       ORDER BY created_at, id

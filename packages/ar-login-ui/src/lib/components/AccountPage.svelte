@@ -110,6 +110,32 @@
 		backupCodes: string[];
 	} | null>(null);
 	let operations = $state<AccountOperation[]>([]);
+	let operationsCursor = $state<string | undefined>();
+	let operationsError = $state('');
+	function receiveOperations(
+		result: Awaited<ReturnType<typeof accountAPI.getOperations>>,
+		append = false
+	) {
+		operationsError = result.error ? localizeApiError(result.error, $LL.account_loadFailed()) : '';
+		if (!result.data) return;
+		operations = append
+			? [
+					...new Map(
+						[...operations, ...result.data.operations].map((row) => [row.id, row])
+					).values()
+				]
+			: result.data.operations;
+		operationsCursor = result.data.pagination?.next_cursor ?? undefined;
+	}
+	async function loadMoreOperations() {
+		if (operationsLoading || !operationsCursor) return;
+		operationsLoading = true;
+		try {
+			receiveOperations(await accountAPI.getOperations(operationsCursor), true);
+		} finally {
+			operationsLoading = false;
+		}
+	}
 	let linkedIdentities = $state<AccountLinkedIdentity[]>([]);
 	let linkedIdentitiesLoading = $state(true);
 	let socialNotice = $state<{ kind: 'success' | 'error'; message: string } | null>(null);
@@ -164,6 +190,9 @@
 		if (!error) return fallback;
 		let message: string;
 		switch (error.error) {
+			case 'log_query_incomplete':
+				message = $LL.account_activityIncomplete();
+				break;
 			case 'invalid_request':
 				message = $LL.error_invalid_request();
 				break;
@@ -609,7 +638,7 @@
 		void accountAPI
 			.getOperations()
 			.then((result) => {
-				operations = result.data?.operations ?? [];
+				receiveOperations(result);
 			})
 			.finally(() => {
 				operationsLoading = false;
@@ -717,7 +746,7 @@
 			totpCredentials = totpResult?.data?.credentials ?? totpCredentials;
 			totpBackupCodes = totpResult?.data?.backup_codes ?? totpBackupCodes;
 			linkedIdentities = socialResult?.data?.identities ?? linkedIdentities;
-			operations = operationsResult?.data?.operations ?? operations;
+			if (operationsResult) receiveOperations(operationsResult);
 			await signalAllAcceptedCredentials(passkeysResult?.data?.webauthn_signal);
 			if (devicesResult) recordSecurityLoadError('devices', devicesResult.error);
 			if (sessionsResult) recordSecurityLoadError('sessions', sessionsResult.error);
@@ -901,7 +930,7 @@
 			return;
 		}
 		profile = result.data.profile;
-		operations = operationsResult.data?.operations ?? operations;
+		receiveOperations(operationsResult);
 		syncAuthFromAccountProfile(result.data.profile, result.data.session);
 		await signalCurrentUserDetails(profile);
 	}
@@ -1404,6 +1433,9 @@
 							<AccountActivityWidget
 								{operations}
 								loading={operationsLoading}
+								error={operationsError}
+								hasMore={!!operationsCursor}
+								onmore={loadMoreOperations}
 								title={accountWidgetTitle(field)}
 							/>
 						{:else if field.block_type === 'account_device_list_widget'}
@@ -1555,7 +1587,13 @@
 			/>
 		</AccountWidgetPanel>
 		<AccountConsentWidget {consents} loading={consentsLoading} error={consentError} />
-		<AccountActivityWidget {operations} loading={operationsLoading} />
+		<AccountActivityWidget
+			{operations}
+			loading={operationsLoading}
+			error={operationsError}
+			hasMore={!!operationsCursor}
+			onmore={loadMoreOperations}
+		/>
 	{/if}
 
 	{#snippet dialog()}

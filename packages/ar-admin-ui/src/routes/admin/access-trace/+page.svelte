@@ -1,5 +1,9 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { LogPager } from '$lib/admin/log-pager.svelte';
+	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	const logPager = new LogPager();
+	let loadGeneration = 0;
+	import { onMount, untrack } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { Modal } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
@@ -44,6 +48,8 @@
 
 	// Pagination
 	let currentPage = $state(1);
+	let queryEnd = Math.floor(Date.now() / 1000);
+	let queryScope = '';
 	let totalPages = $state(1);
 	let total = $state(0);
 	const pageSize = 50;
@@ -61,12 +67,25 @@
 	// =============================================================================
 
 	async function loadData() {
+		const mine = ++loadGeneration;
+		const scope = JSON.stringify([
+			settingsContext.tenantId,
+			selectedPeriod,
+			filterDecision,
+			filterSubject,
+			filterPermission
+		]);
+		if (scope !== queryScope) {
+			queryScope = scope;
+			queryEnd = Math.floor(Date.now() / 1000);
+		}
+		logPager.prepare(scope);
 		loading = true;
 		error = '';
 
 		try {
 			// Calculate time range based on period
-			const now = Math.floor(Date.now() / 1000);
+			const now = queryEnd;
 			let startTime: number;
 
 			switch (selectedPeriod) {
@@ -97,22 +116,34 @@
 					allowed: filterDecision === '' ? undefined : filterDecision === 'allow',
 					subject_id: filterSubject || undefined,
 					permission: filterPermission || undefined,
-					page: currentPage,
+					cursor: logPager.cursor,
+					page: logPager.info ? 1 : currentPage,
 					limit: pageSize
 				}),
 				adminAccessTraceAPI.getStats(selectedPeriod),
 				adminAccessTraceAPI.getTimeline(selectedPeriod)
 			]);
 
+			if (mine !== loadGeneration) return;
 			entries = entriesResult.entries;
-			totalPages = entriesResult.pagination.total_pages;
-			total = entriesResult.pagination.total;
+			if ('mode' in entriesResult.pagination) {
+				logPager.info = entriesResult.pagination;
+				totalPages = 0;
+				total = 0;
+			} else {
+				logPager.info = undefined;
+				totalPages = entriesResult.pagination.total_pages;
+				total = entriesResult.pagination.total;
+			}
 			stats = statsResult;
 			timeline = timelineResult.data;
 		} catch (e) {
+			if (mine !== loadGeneration) return;
+			stats = null;
+			timeline = [];
 			error = e instanceof Error ? e.message : $LL.admin_access_trace_load_failed();
 		} finally {
-			loading = false;
+			if (mine === loadGeneration) loading = false;
 		}
 	}
 
@@ -121,7 +152,9 @@
 		// Track dependencies by using them in a condition
 		const _deps = [settingsContext.tenantId, selectedPeriod, filterDecision, currentPage];
 		if (_deps) {
-			loadData();
+			untrack(() => {
+				void loadData();
+			});
 		}
 	});
 
@@ -201,7 +234,9 @@
 </svelte:head>
 
 {#snippet decisionActions()}
-	<span class="entry-count">{$LL.admin_access_trace_entries({ count: total })}</span>
+	{#if !logPager.info}<span class="entry-count"
+			>{$LL.admin_access_trace_entries({ count: total })}</span
+		>{/if}
 {/snippet}
 
 <AdminPageShell>
@@ -381,7 +416,14 @@
 		</AdminSection>
 
 		<!-- Pagination -->
-		{#if totalPages > 1}
+		{#if logPager.info}
+			<LogCursorPager
+				pager={logPager}
+				label={$LL.admin_access_trace_decisions()}
+				{loading}
+				reload={loadData}
+			/>
+		{:else if totalPages > 1}
 			<AdminPagination
 				label={$LL.admin_access_trace_decisions()}
 				info={$LL.admin_access_trace_page_of({ page: currentPage, totalPages })}

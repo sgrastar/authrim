@@ -157,6 +157,8 @@ const translation = {
 	account_reauthTotpCodePlaceholder: 'የ6 ወይም የ8 አሃዝ ኮድ',
 	account_actionFailed: 'ዘመቻው አልተሳካለትም።',
 	account_remainingLoginMethodRequired: 'ይህን ዘዴ ከመሰረዝዎ በፊት ሌላ የመግቢያ ዘዴ ይጨምሩ.',
+	account_activityIncomplete: 'የእንቅስቃሴ ውጤቶች ያልተሟሉ ናቸው። እባክዎ ቆይተው እንደገና ይሞክሩ።',
+	account_activityLoadMore: 'የቆዩ እንቅስቃሴዎችን ጫን',
 	account_activityTitle: 'እንቅስቃሴ',
 	account_operationNameUpdated: 'ስሙ ተቀይሯል',
 	account_operationPasskeyCreated: 'የማለፍ ቁልፍ ተጨምሯል',

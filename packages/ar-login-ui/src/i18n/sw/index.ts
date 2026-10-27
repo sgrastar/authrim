@@ -170,6 +170,8 @@ const translation = {
 	account_actionFailed: 'Operesheni hiyo ilishindwa',
 	account_remainingLoginMethodRequired:
 		'Ongeza mbinu nyingine ya kuingia kabla ya kufuta mbinu hii.',
+	account_activityIncomplete: 'Matokeo ya shughuli hayajakamilika. Tafadhali jaribu tena baadaye.',
+	account_activityLoadMore: 'Pakia shughuli za awali',
 	account_activityTitle: 'Shughuli',
 	account_operationNameUpdated: 'Jina limebadilishwa',
 	account_operationPasskeyCreated: 'Passkey imeongezwa',

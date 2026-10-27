@@ -1605,7 +1605,7 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/users/{id}/activity-log':
+  /api/admin/users/{id}/activity-log:
     get:
       tags:
         - Users
@@ -1645,7 +1645,15 @@ paths:
           $ref: '#/components/responses/AdminUserActivityLog'
         '404':
           $ref: '#/components/responses/Error'
-      description: List audit activity for a single user using hot audit storage when configured.
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+        '400':
+          $ref: '#/components/responses/Error'
+      description:
+        List audit activity for a single user using hot audit storage when configured. Retained
+        whole-row archives are included in supported log queries. A bounded query that cannot read
+        its required rows returns log_query_incomplete instead of partial statistics or an empty
+        success.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2105,16 +2113,35 @@ paths:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
+        - name: cursor
+          in: query
+          required: false
+          description:
+            Cursor returned by a previous response for this tenant and these filters. Start with
+            page 1; archived lists use cursors instead of page numbers.
+          schema:
+            type: string
+            maxLength: 4096
       responses:
         '200':
-          $ref: '#/components/responses/AdminAuditLogList'
-      description: >-
-        List Audit Logs in the Admin Miscellaneous area. Use this operation to retrieve audit log
-        data without mutating tenant state.
+          description: Audit events from the hot store and retained whole-row archives.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventListResponse'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+        '400':
+          $ref: '#/components/responses/Error'
+      description:
+        List Audit Logs in the Admin Miscellaneous area. Use this operation to retrieve audit
+        log data without mutating tenant state. Retained whole-row archives are included in
+        supported log queries. A bounded query that cannot read its required rows returns
+        log_query_incomplete instead of partial statistics or an empty success.
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/audit-logs/{id}':
+  /api/admin/audit-logs/{id}:
     get:
       tags:
         - Admin Miscellaneous
@@ -2122,12 +2149,58 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
+        - name: event_at
+          in: query
+          required: false
+          description:
+            Event time in Unix milliseconds from the list entry. Required to locate a whole-row
+            archived entry. Without this hint whole-row archives are not searched; existing indexed
+            archive-only lookups and detail permissions are preserved.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
       responses:
         '200':
-          $ref: '#/components/responses/AdminAuditLogEntry'
-      description: >-
-        Get Audit Log in the Admin Miscellaneous area. Use this operation to retrieve audit log data
-        without mutating tenant state.
+          description: The audit entry, including its retained details and optional resolved user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - id
+                  - action
+                  - createdAt
+                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                  action:
+                    type: string
+                  createdAt:
+                    type: string
+                    format: date-time
+                  metadata:
+                    type:
+                      - object
+                      - 'null'
+                    additionalProperties: true
+                  user:
+                    type:
+                      - object
+                      - 'null'
+                    additionalProperties: true
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      description:
+        Get Audit Log in the Admin Miscellaneous area. Use this operation to retrieve audit log
+        data without mutating tenant state. Retained whole-row archives are included in supported
+        log queries. A bounded query that cannot read its required rows returns log_query_incomplete
+        instead of partial statistics or an empty success.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -4051,9 +4124,11 @@ paths:
         - Admin Miscellaneous
       operationId: getApiAdminAccessTrace
       summary: List access trace entries.
-      description: >-
+      description:
         Lists permission-check audit entries for the current tenant, with filters for subject,
-        permission, decision, time range, and pagination.
+        permission, decision, time range, and pagination. Retained whole-row archives are included
+        in supported log queries. A bounded query that cannot read its required rows returns
+        log_query_incomplete instead of partial statistics or an empty success.
       responses:
         '200':
           $ref: '#/components/responses/AdminAccessTraceList'
@@ -4063,6 +4138,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -4106,7 +4183,7 @@ paths:
         - name: page
           in: query
           required: false
-          description: 'Page number, starting at 1.'
+          description: Page number, starting at 1.
           schema:
             type: integer
             minimum: 1
@@ -4114,19 +4191,31 @@ paths:
         - name: limit
           in: query
           required: false
-          description: 'Page size, clamped to 200 by the handler.'
+          description: Page size, clamped to 200 by the handler.
           schema:
             type: integer
             minimum: 1
             maximum: 200
             default: 50
-  '/api/admin/access-trace/{id}':
+        - name: cursor
+          in: query
+          required: false
+          description:
+            Cursor returned by a previous response for this tenant and these filters. Start with
+            page 1; archived lists use cursors instead of page numbers.
+          schema:
+            type: string
+            maxLength: 4096
+  /api/admin/access-trace/{id}:
     get:
       tags:
         - Admin Miscellaneous
       operationId: getApiAdminAccessTraceById
       summary: Get an access trace entry.
-      description: Returns one permission-check audit entry by id for the current tenant.
+      description: Returns one permission-check audit entry by id for the current tenant. Retained
+        whole-row archives are included in supported log queries. A bounded query that cannot read
+        its required rows returns log_query_incomplete instead of partial statistics or an empty
+        success.
       responses:
         '200':
           $ref: '#/components/responses/AdminAccessTraceEntry'
@@ -4138,6 +4227,8 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       parameters:
         - name: id
           in: path
@@ -4145,6 +4236,17 @@ paths:
           description: Access trace entry id.
           schema:
             type: string
+        - name: event_at
+          in: query
+          required: false
+          description:
+            Event time in Unix milliseconds from the list entry. Required to locate a whole-row
+            archived entry; without this hint only the hot store is consulted. Existing detail
+            permissions still apply.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -4154,9 +4256,11 @@ paths:
         - Admin Miscellaneous
       operationId: getApiAdminAccessTraceStats
       summary: Get access trace statistics.
-      description: >-
-        Returns access trace totals, allow rate, top denied permissions, top denied subjects, and
-        resolution-method distribution for a selected period.
+      description:
+        Returns access trace totals, allow rate, top denied permissions, top denied subjects,
+        and resolution-method distribution for a selected period. Retained whole-row archives are
+        included in supported log queries. A bounded query that cannot read its required rows
+        returns log_query_incomplete instead of partial statistics or an empty success.
       responses:
         '200':
           $ref: '#/components/responses/AdminAccessTraceStats'
@@ -4166,6 +4270,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -4189,7 +4295,11 @@ paths:
         - Admin Miscellaneous
       operationId: getApiAdminAccessTraceTimeline
       summary: Get access trace timeline.
-      description: Returns bucketed allow/deny counts for charting access decisions over time.
+      description:
+        Returns bucketed allow/deny counts for charting access decisions over time. Retained
+        whole-row archives are included in supported log queries. A bounded query that cannot read
+        its required rows returns log_query_incomplete instead of partial statistics or an empty
+        success.
       responses:
         '200':
           $ref: '#/components/responses/AdminAccessTraceTimeline'
@@ -4199,6 +4309,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -4219,7 +4331,7 @@ paths:
         - name: granularity
           in: query
           required: false
-          description: >-
+          description:
             Requested granularity. For 24h, `minute` produces one-minute buckets; other periods use
             handler-selected bucket sizes.
           schema:
@@ -6728,6 +6840,12 @@ paths:
             minimum: 1
             maximum: 200
             default: 100
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque position from pagination.next_cursor for the same tenant, grant, and filters.
+          schema:
+            type: string
       responses:
         '200':
           description: Grant audit events in reverse chronological order.
@@ -6752,6 +6870,8 @@ paths:
                         actor_sub: { type: [string, 'null'] }
                         metadata: { type: object, additionalProperties: true }
                         created_at: { type: integer, format: int64 }
+                  pagination:
+                    $ref: '#/components/schemas/LogCursorPagination'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -6760,6 +6880,12 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+      description:
+        Includes retained whole-row archive evidence. Archived history uses cursor pagination
+        without a total count. Required archive data that cannot be read returns
+        log_query_incomplete rather than an empty success.
   '/api/admin/agent-grants/{id}/resume':
     post:
       tags:
@@ -8273,14 +8399,13 @@ paths:
       summary: Generate a compliance report.
       description: >-
         Generates a report now and keeps its file encrypted for 30 days (downloadable once its
-        generation is audited: generating until then): access_review (an access
-        review's items, decisions and what applying them did; CSV), mfa_coverage (each admin and
-        active user and their factors; CSV), compliance_status (the status API's answer at this
-        moment; JSON), audit_log (audit log entries of a period of up to 366 days from the queryable
-        audit store; CSV). Rows identify people by their IDs, never adding names or email addresses;
-        the reasons reviewers wrote are included as written. A report of more
-        than 10,000 rows is not cut short: it is recorded as failed (too_large) and answered 422.
-        Generating is audited.
+        generation is audited: generating until then): access_review (an access review's items,
+        decisions and what applying them did; CSV), mfa_coverage (each admin and active user and
+        their factors; CSV), compliance_status (the status API's answer at this moment; JSON),
+        audit_log (audit log entries of a period of up to 366 days from the queryable audit store;
+        CSV). Rows identify people by their IDs, never adding names or email addresses; the reasons
+        reviewers wrote are included as written. A report of more than 10,000 rows is not cut short:
+        it is recorded as failed (too_large) and answered 422. Generating is audited.
       requestBody:
         required: true
         content:
@@ -8321,8 +8446,22 @@ paths:
                     $ref: '#/components/schemas/ComplianceReport'
         '503':
           description: >-
-            Report storage is not configured (report_storage_unavailable), or the report cannot be
-            generated or stored now.
+            Report storage is unavailable, generation cannot complete, or required retained log data
+            cannot be read (log_query_incomplete, complete: false). No partial audit report is
+            published.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                additionalProperties: true
+                properties:
+                  error:
+                    type: string
+                  complete:
+                    type: boolean
+                    const: false
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -8396,12 +8535,14 @@ paths:
         - Compliance
       operationId: getApiAdminComplianceStatus
       summary: Get tenant compliance status.
-      description: >-
+      description:
         Returns the tenant's compliance checks, each a fact read from what Authrim enforces and
-        tagged with the frameworks whose controls it supports (data retention being enforced,
-        audit logging, admin MFA, MFA required at sign-in, users' MFA coverage, role-based access),
-        each framework summed from its checks, and the facts behind them. Answers 503 when any
-        of them cannot be read instead of reporting a default as the state.
+        tagged with the frameworks whose controls it supports (data retention being enforced, audit
+        logging, admin MFA, MFA required at sign-in, users' MFA coverage, role-based access), each
+        framework summed from its checks, and the facts behind them. Answers 503 when any of them
+        cannot be read instead of reporting a default as the state. Retained whole-row archives are
+        included in supported log queries. A bounded query that cannot read its required rows
+        returns log_query_incomplete instead of partial statistics or an empty success.
       responses:
         '200':
           $ref: '#/components/responses/ComplianceStatus'
@@ -16052,9 +16193,12 @@ paths:
         - Admin Miscellaneous
       operationId: getApiAdminOperationalLogs
       summary: List operational logs.
-      description: >-
-        Lists non-expired operational log summaries for the current tenant. Optional filters match
-        subject type, subject id, action, and actor id; limit is clamped to 1..100.
+      description:
+        Lists non-expired operational log summaries for the current tenant. Optional filters
+        match subject type, subject id, action, and actor id; limit is clamped to 1..100. Retained
+        whole-row archives are included in supported log queries. A bounded query that cannot read
+        its required rows returns log_query_incomplete instead of partial statistics or an empty
+        success.
       parameters:
         - name: subject_type
           in: query
@@ -16084,6 +16228,15 @@ paths:
             minimum: 1
             maximum: 100
             default: 50
+        - name: cursor
+          in: query
+          required: false
+          description:
+            Cursor returned by a previous response for this tenant and these filters. Start with
+            page 1; archived lists use cursors instead of page numbers.
+          schema:
+            type: string
+            maxLength: 4096
       responses:
         '200':
           $ref: '#/components/responses/OperationalLogList'
@@ -16095,18 +16248,22 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/operational-logs/{id}':
+  /api/admin/operational-logs/{id}:
     get:
       tags:
         - Admin Miscellaneous
       operationId: getApiAdminOperationalLogsById
       summary: Get an operational log.
-      description: >-
-        Returns one operational log entry and sensitive details when allowed by direct permission or
-        an elevation grant. The read is audited when details are returned.
+      description: Returns one operational log entry and sensitive details when allowed by direct
+        permission or an elevation grant. The read is audited when details are returned. Retained
+        whole-row archives are included in supported log queries. A bounded query that cannot read
+        its required rows returns log_query_incomplete instead of partial statistics or an empty
+        success.
       responses:
         '200':
           $ref: '#/components/responses/OperationalLog'
@@ -16120,12 +16277,25 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+        - name: event_at
+          in: query
+          required: false
+          description:
+            Event time in Unix milliseconds from the list entry. Required to locate a whole-row
+            archived entry; without this hint only the hot store is consulted. Existing detail
+            permissions still apply.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -22736,9 +22906,11 @@ paths:
         - Stats
       operationId: getApiAdminStatsAuth
       summary: Get authentication statistics
-      description: >-
+      description:
         Returns authentication and token audit counts for a required time period, optionally
-        filtered by client ID.
+        filtered by client ID. Retained whole-row archives are included in supported log queries. A
+        bounded query that cannot read its required rows returns log_query_incomplete instead of
+        partial statistics or an empty success.
       responses:
         '200':
           $ref: '#/components/responses/AdminStatsAuth'
@@ -22748,6 +22920,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -22772,15 +22946,16 @@ paths:
           schema:
             type: string
           description: Optional client ID filter.
-  '/api/admin/stats/clients/{id}':
+  /api/admin/stats/clients/{id}:
     get:
       tags:
         - Stats
       operationId: getApiAdminStatsClientsById
       summary: Get client statistics
-      description: >-
-        Returns token, authentication, and usage statistics for a specific client in the requested
-        period.
+      description: Returns token, authentication, and usage statistics for a specific client in the
+        requested period. Retained whole-row archives are included in supported log queries. A
+        bounded query that cannot read its required rows returns log_query_incomplete instead of
+        partial statistics or an empty success.
       responses:
         '200':
           $ref: '#/components/responses/AdminStatsClient'
@@ -22790,6 +22965,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       parameters:
         - name: id
           in: path
@@ -22819,7 +22996,11 @@ paths:
         - Stats
       operationId: getApiAdminStatsGeography
       summary: Get geographic authentication statistics
-      description: Returns country and region aggregations derived from audit-log geolocation details.
+      description:
+        Returns country and region aggregations derived from audit-log geolocation details.
+        Retained whole-row archives are included in supported log queries. A bounded query that
+        cannot read its required rows returns log_query_incomplete instead of partial statistics or
+        an empty success.
       responses:
         '200':
           $ref: '#/components/responses/AdminStatsGeography'
@@ -22829,6 +23010,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -22853,7 +23036,11 @@ paths:
         - Stats
       operationId: getApiAdminStatsTimeline
       summary: Get authentication timeline
-      description: 'Returns time-bucketed authentication success, failure, and MFA usage counts.'
+      description:
+        Returns time-bucketed authentication success, failure, and MFA usage counts. Retained
+        whole-row archives are included in supported log queries. A bounded query that cannot read
+        its required rows returns log_query_incomplete instead of partial statistics or an empty
+        success.
       responses:
         '200':
           $ref: '#/components/responses/AdminStatsTimeline'
@@ -22863,6 +23050,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -22911,9 +23100,11 @@ paths:
         - Stats
       operationId: getApiAdminStatsTokens
       summary: Get token statistics
-      description: >-
-        Returns active session-token counts and today's issued/revoked token counters from audit
-        logs.
+      description:
+        Returns active session-token counts and today's issued/revoked token counters from
+        audit logs. Retained whole-row archives are included in supported log queries. A bounded
+        query that cannot read its required rows returns log_query_incomplete instead of partial
+        statistics or an empty success.
       responses:
         '200':
           $ref: '#/components/responses/AdminStatsTokens'
@@ -22923,6 +23114,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -26256,9 +26449,11 @@ paths:
         - Admin Audit
       operationId: getApiAdminAdminAuditLog
       summary: List admin audit log entries
-      description: >-
-        Lists admin audit log entries from DB_ADMIN with pagination and filters for actor, action,
-        resource type, result, severity, and date range.
+      description:
+        Lists admin audit log entries from DB_ADMIN with pagination and filters for actor,
+        action, resource type, result, severity, and date range. Retained whole-row archives are
+        included in supported log queries. A bounded query that cannot read its required rows
+        returns log_query_incomplete instead of partial statistics or an empty success.
       responses:
         '200':
           $ref: '#/components/responses/AdminAuditLogList'
@@ -26267,6 +26462,10 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+        '400':
           $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
@@ -26340,15 +26539,31 @@ paths:
           schema:
             type: string
           description: Inclusive end date or timestamp.
-  '/api/admin/admin-audit-log/{id}':
+        - name: cursor
+          in: query
+          required: false
+          description:
+            Cursor returned by a previous response for this tenant and these filters. Start with
+            page 1; archived lists use cursors instead of page numbers.
+          schema:
+            type: string
+            maxLength: 4096
+        - name: resource_id
+          in: query
+          schema:
+            type: string
+          description: Filter by the exact resource ID together with resource_type.
+  /api/admin/admin-audit-log/{id}:
     get:
       tags:
         - Admin Audit
       operationId: getApiAdminAdminAuditLogById
       summary: Get admin audit log entry
-      description: >-
-        Returns one admin audit log entry with actor information and, when permitted, before/after
-        sensitive detail metadata loaded from the detail artifact.
+      description: Returns one admin audit log entry with actor information and, when permitted,
+        before/after sensitive detail metadata loaded from the detail artifact. Retained whole-row
+        archives are included in supported log queries. A bounded query that cannot read its
+        required rows returns log_query_incomplete instead of partial statistics or an empty
+        success.
       responses:
         '200':
           $ref: '#/components/responses/AdminAuditLogEntry'
@@ -26360,12 +26575,27 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+        '400':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+        - name: event_at
+          in: query
+          required: false
+          description:
+            Event time in Unix milliseconds from the list entry. Required to locate a whole-row
+            archived entry; without this hint only the hot store is consulted. Existing detail
+            permissions still apply.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -26441,13 +26671,17 @@ paths:
             minimum: 1
             default: 7
           description: Number of days to include in the summary.
-  '/api/admin/admin-audit-log/user/{userId}':
+  /api/admin/admin-audit-log/user/{userId}:
     get:
       tags:
         - Admin Audit
       operationId: getApiAdminAdminAuditLogUserByUserId
       summary: List admin audit log entries for user
-      description: Lists audit log entries for one admin user in the current tenant with page metadata.
+      description:
+        Lists audit log entries for one admin user in the current tenant with page metadata.
+        Retained whole-row archives are included in supported log queries. A bounded query that
+        cannot read its required rows returns log_query_incomplete instead of partial statistics or
+        an empty success.
       responses:
         '200':
           $ref: '#/components/responses/AdminAuditLogList'
@@ -26456,6 +26690,10 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+        '400':
           $ref: '#/components/responses/Error'
       parameters:
         - name: userId
@@ -26480,6 +26718,15 @@ paths:
             maximum: 100
             default: 50
           description: Page size.
+        - name: cursor
+          in: query
+          required: false
+          description:
+            Cursor returned by a previous response for this tenant and these filters. Start with
+            page 1; archived lists use cursors instead of page numbers.
+          schema:
+            type: string
+            maxLength: 4096
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -47579,6 +47826,28 @@ components:
             result_summary: {}
             created_at: 1770000000000
             updated_at: 1770000000000
+    LogQueryIncomplete:
+      description:
+        The retained log query is incomplete. No partial entries or statistics are returned as
+        a successful result. Narrow the period or retry.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+              - error
+              - error_description
+              - complete
+            properties:
+              error:
+                type: string
+                const: log_query_incomplete
+              error_description:
+                type: string
+              complete:
+                type: boolean
+                const: false
   schemas:
     AdminCertificationProfile:
       type: object
@@ -50438,27 +50707,37 @@ components:
         created_at:
           type: integer
     AdminAuditLogListResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - items
-        - total
-        - page
-        - limit
-        - totalPages
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdminAuditLogEntryBase'
-        total:
-          type: integer
-        page:
-          type: integer
-        limit:
-          type: integer
-        totalPages:
-          type: integer
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - items
+            - total
+            - page
+            - limit
+            - totalPages
+          properties:
+            items: &a1
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminAuditLogEntryBase'
+            total:
+              type: integer
+            page:
+              type: integer
+            limit:
+              type: integer
+            totalPages:
+              type: integer
+        - type: object
+          additionalProperties: false
+          required:
+            - items
+            - pagination
+          properties:
+            items: *a1
+            pagination:
+              $ref: '#/components/schemas/LogCursorPagination'
     AdminAuditLogUser:
       type: object
       additionalProperties: false
@@ -52325,19 +52604,29 @@ components:
         has_detail:
           type: boolean
     OperationalLogListResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - items
-        - total
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/OperationalLogSummary'
-        total:
-          type: integer
-          minimum: 0
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - items
+            - total
+          properties:
+            items: &a1
+              type: array
+              items:
+                $ref: '#/components/schemas/OperationalLogSummary'
+            total:
+              type: integer
+              minimum: 0
+        - type: object
+          additionalProperties: false
+          required:
+            - items
+            - pagination
+          properties:
+            items: *a1
+            pagination:
+              $ref: '#/components/schemas/LogCursorPagination'
     OperationalLog:
       type: object
       additionalProperties: false
@@ -55768,26 +56057,28 @@ components:
           items:
             $ref: '#/components/schemas/AdminAccessTrace'
         pagination:
-          type: object
-          additionalProperties: false
-          required:
-            - page
-            - limit
-            - total
-            - total_pages
-          properties:
-            page:
-              type: integer
-              minimum: 1
-            limit:
-              type: integer
-              minimum: 1
-            total:
-              type: integer
-              minimum: 0
-            total_pages:
-              type: integer
-              minimum: 0
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+                - page
+                - limit
+                - total
+                - total_pages
+              properties:
+                page:
+                  type: integer
+                  minimum: 1
+                limit:
+                  type: integer
+                  minimum: 1
+                total:
+                  type: integer
+                  minimum: 0
+                total_pages:
+                  type: integer
+                  minimum: 0
+            - $ref: '#/components/schemas/LogCursorPagination'
     AdminAccessTraceEntryResponse:
       type: object
       additionalProperties: false
@@ -76461,6 +76752,74 @@ components:
         pii_status: deleted
         tombstone_created: true
         retention_days: 90
+    AuditEventListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - entries
+        - pagination
+      properties:
+        entries:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            required:
+              - id
+              - action
+              - createdAt
+            properties:
+              id:
+                type: string
+              action:
+                type: string
+              createdAt:
+                type: string
+                format: date-time
+        pagination:
+          oneOf:
+            - $ref: '#/components/schemas/LogCursorPagination'
+            - type: object
+              required:
+                - page
+                - limit
+                - total
+                - totalPages
+              properties:
+                page:
+                  type: integer
+                limit:
+                  type: integer
+                total:
+                  type: integer
+                totalPages:
+                  type: integer
+    LogCursorPagination:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - limit
+        - has_more
+        - next_cursor
+      properties:
+        mode:
+          type: string
+          const: cursor
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 200
+        has_more:
+          type: boolean
+        next_cursor:
+          type:
+            - string
+            - 'null'
+          maxLength: 4096
+      description:
+        Cursor pagination over retained log rows. Totals and page numbers are not returned.
+        Reuse the cursor with the same tenant, endpoint, and filters.
 x-tagGroups:
   - name: Admin Core
     tags:

@@ -874,6 +874,8 @@ function createMockContext(options: {
   const c = {
     req: {
       method: options.method || 'GET',
+      url: `https://op.example.com/api/admin/audit-logs?${new URLSearchParams(options.query ?? {}).toString()}`,
+      path: '/api/admin/audit-logs',
       query: (name: string) => options.query?.[name],
       param: (name: string) => options.params?.[name],
       json: options.jsonError
@@ -1522,7 +1524,8 @@ describe('Admin API Handlers', () => {
           return { name: 'event_log' };
         }
         if (sql.includes('FROM event_log') && sql.includes('WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['audit-from-tenant-a', 'tenant-b']);
+          expect(params).toEqual(['audit-from-tenant-a', 'tenant-b', expect.any(Number)]);
+          expect(sql).toContain('retention_until');
           return null;
         }
         return null;

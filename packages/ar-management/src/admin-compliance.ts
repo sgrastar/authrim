@@ -14,6 +14,8 @@
  */
 
 import type { Context } from 'hono';
+import { createLogReadAdapter } from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
@@ -67,9 +69,16 @@ async function auditLogStats(env: Env, auditProfile: AuditProfile, tenantId: str
     return { hotQueryStatus: hotQuery.status, total: null, last30Days: null };
   }
   const nowTs = Math.floor(Date.now() / 1000);
+  const context = hotQuery.context;
+  const logRead = createLogReadAdapter({
+    env,
+    tenantId,
+    adapter: context.adapter,
+    dataset: context.mode === 'legacy' ? 'core.audit_log' : 'core.event_log',
+  });
   const { tableName } = getAuditHotQuerySqlSpec(hotQuery.context);
   const [fromTs] = getAuditTimeRange(nowTs - 30 * 24 * 60 * 60, nowTs, hotQuery.context);
-  const row = await hotQuery.context.adapter.queryOne<{
+  const row = await logRead.adapter.queryOne<{
     total: number | null;
     last_30_days: number | null;
   }>(
@@ -150,6 +159,8 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
   try {
     return c.json(await readComplianceStatus(c));
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     log.warn('Compliance status could not be read', { tenantId, error: String(error) });
     return c.json(
       {

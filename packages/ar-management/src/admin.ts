@@ -1,3 +1,5 @@
+import { logDetailWindow, logPageRequest } from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin API Endpoints
  * User management, client management, and statistics for administrative dashboard
@@ -681,6 +683,8 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin suspend user error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -887,6 +891,8 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin lock user error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1106,6 +1112,8 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       reason_code: body.reason_code,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin activate user error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1454,6 +1462,8 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       message: 'User data has been permanently deleted',
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin anonymize user error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1466,12 +1476,14 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
 export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
 
     // Get query parameters
     const page = parseInt(c.req.query('page') || '1', 10);
     const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 100);
     const offset = (page - 1) * limit;
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      page: c.env.DB_ADMIN ? logPageRequest(c, tenantId, limit) : undefined,
+    });
 
     // Filters
     const userId = c.req.query('user_id');
@@ -1507,13 +1519,14 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
         anonymizedUserId: anonymizedUserId ?? undefined,
         resourceType: resourceType ?? undefined,
         resourceId: resourceId ?? undefined,
+        cursorPage: logPageRequest(c, tenantId, limit),
       });
 
       const userIdMap = await buildArchiveAuditUserIdMap(c, tenantId, archiveResult.entries);
 
       return c.json({
         entries: archiveResult.entries.map((entry) => formatArchiveAuditEntry(entry, userIdMap)),
-        pagination: {
+        pagination: archiveResult.pagination ?? {
           page,
           limit,
           total: archiveResult.total,
@@ -1612,7 +1625,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
           severity
         FROM audit_log
         ${whereClause}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ? OFFSET ?
       `;
 
@@ -1659,7 +1672,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
           created_at
         FROM event_log
         ${whereClause}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ? OFFSET ?
       `;
 
@@ -1732,6 +1745,8 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    const archivePage = context.archiveRead?.pagination();
+    if (archivePage) return c.json({ entries, pagination: archivePage });
     return c.json({
       entries,
       pagination: {
@@ -1742,6 +1757,8 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     if (isAuditLogStoreNotInitializedError(error)) {
       const page = parseInt(c.req.query('page') || '1', 10);
       const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 100);
@@ -1766,7 +1783,7 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const id = c.req.param('id')!;
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, logDetailWindow(c));
 
     if (!id) {
       return c.json(
@@ -1784,7 +1801,13 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
         return createAuditHotQueryUnsupportedResponse(c, hotQuery);
       }
 
-      const entry = await getArchiveAuditEventById(archiveQuery.context, tenantId, id);
+      const hint = logDetailWindow(c);
+      const entry = await getArchiveAuditEventById(
+        archiveQuery.context,
+        tenantId,
+        id,
+        hint.window.fromMs
+      );
       if (!entry) {
         return c.json(
           {
@@ -2003,6 +2026,8 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
       user,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin audit log get error', error);
     return c.json(
       {
@@ -2050,6 +2075,8 @@ export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
       publicJWK: keyData.publicJWK,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin signing key get error', error);
     return c.json(
       {
@@ -2219,6 +2246,8 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
       201
     );
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin token register error', error);
     return c.json(
       {
@@ -2302,6 +2331,8 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
         getTenantIdFromContext(c)
       );
     } catch (error) {
+      const incomplete = logQueryErrorResponse(c, error);
+      if (incomplete) return incomplete;
       logSanitizedError('Failed to create session', error);
       return c.json(
         {
@@ -2332,6 +2363,8 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       201
     );
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin test session create error', error);
     return c.json(
       {
@@ -2472,6 +2505,8 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         );
         resolvedOtpUser = accountData.user;
       } catch (error) {
+        const incomplete = logQueryErrorResponse(c, error);
+        if (incomplete) return incomplete;
         if (error instanceof Error && error.message === 'account_data_route_not_found') {
           if (!createUser) {
             return c.json(
@@ -2624,6 +2659,8 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
       201
     );
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const unavailableResponse = createDataTemporarilyUnavailableResponse(c, error);
     if (unavailableResponse) return unavailableResponse;
     logSanitizedError('Admin test email code error', error);
@@ -2709,6 +2746,8 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
       total: consents.length,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin user consents list error', error);
     return c.json(
       {
@@ -2830,6 +2869,8 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
       revokedAt: now,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin user consent revoke error', error);
     return c.json(
       {
@@ -2970,6 +3011,8 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
         : null,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN');
     log.error('Failed to get client usage statistics', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -3004,7 +3047,36 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
   const toParam = c.req.query('to');
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    let activityCursor: { created_at: number; id: string } | undefined;
+    if (cursor) {
+      try {
+        const value: unknown = JSON.parse(atob(cursor));
+        if (
+          !value ||
+          typeof value !== 'object' ||
+          !('created_at' in value) ||
+          typeof value.created_at !== 'number' ||
+          !Number.isSafeInteger(value.created_at) ||
+          value.created_at < 0 ||
+          !('id' in value) ||
+          typeof value.id !== 'string' ||
+          !value.id ||
+          value.id.length > 256
+        )
+          throw new Error();
+        activityCursor = { created_at: value.created_at, id: value.id };
+      } catch {
+        return c.json(
+          { error: 'invalid_request', error_description: 'Invalid activity cursor.' },
+          400
+        );
+      }
+    }
+    // The existing activity cursor stays in the SQL predicate; request one extra row for it.
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      page: { limit: limit + 1, scope: JSON.stringify([tenantId, c.req.path, userId]) },
+      storedCursorTime: activityCursor?.created_at,
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -3077,14 +3149,9 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     }
 
     // Apply cursor (created_at based)
-    if (cursor) {
-      try {
-        const decoded = JSON.parse(atob(cursor)) as { created_at: number; id: string };
-        query += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
-        bindings.push(decoded.created_at, decoded.created_at, decoded.id);
-      } catch {
-        // Invalid cursor, ignore
-      }
+    if (activityCursor) {
+      query += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
+      bindings.push(activityCursor.created_at, activityCursor.created_at, activityCursor.id);
     }
 
     query += ' ORDER BY created_at DESC, id DESC LIMIT ?';
@@ -3153,6 +3220,8 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN');
     log.error('Failed to get user activity log', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -3324,6 +3393,8 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       created_at: new Date(nowTs * 1000).toISOString(),
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN');
     log.error('Failed to queue email', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

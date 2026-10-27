@@ -648,6 +648,14 @@ type RootTranslation = {
 	 */
 	account_remainingLoginMethodRequired: string
 	/**
+	 * A​c​t​i​v​i​t​y​ ​r​e​s​u​l​t​s​ ​a​r​e​ ​i​n​c​o​m​p​l​e​t​e​.​ ​P​l​e​a​s​e​ ​r​e​t​r​y​ ​l​a​t​e​r​.
+	 */
+	account_activityIncomplete: string
+	/**
+	 * L​o​a​d​ ​o​l​d​e​r​ ​a​c​t​i​v​i​t​y
+	 */
+	account_activityLoadMore: string
+	/**
 	 * A​c​t​i​v​i​t​y
 	 */
 	account_activityTitle: string
@@ -2438,6 +2446,14 @@ export type TranslationFunctions = {
 	 * Add another login method before deleting this method.
 	 */
 	account_remainingLoginMethodRequired: () => LocalizedString
+	/**
+	 * Activity results are incomplete. Please retry later.
+	 */
+	account_activityIncomplete: () => LocalizedString
+	/**
+	 * Load older activity
+	 */
+	account_activityLoadMore: () => LocalizedString
 	/**
 	 * Activity
 	 */

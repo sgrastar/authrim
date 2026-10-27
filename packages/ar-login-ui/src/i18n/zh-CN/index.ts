@@ -139,6 +139,8 @@ const zhCN = createTranslation({
 	account_reauthTotpCodePlaceholder: '6 位或 8 位代码',
 	account_actionFailed: '操作失败',
 	account_remainingLoginMethodRequired: '删除此方式前，请先添加另一种登录方式。',
+	account_activityIncomplete: '未能完整获取活动记录，请稍后重试。',
+	account_activityLoadMore: '加载更早的活动',
 	account_activityTitle: '活动记录',
 	account_operationNameUpdated: '姓名已更改',
 	account_operationPasskeyCreated: '已添加 Passkey',

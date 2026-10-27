@@ -627,6 +627,9 @@ paths:
       operationId: getApiAccountOperations
       summary: List current user's Account Page operation history.
       description: Returns non-sensitive Account Page operation events for the authenticated user.
+        Includes retained archived rows for the authenticated user. Archived pages return cursor
+        pagination without a total or page number. An incomplete query returns 503 with
+        complete:false.
       responses:
         '200':
           $ref: '#/components/responses/AccountOperations'
@@ -634,6 +637,8 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
       parameters:
         - name: limit
           in: query
@@ -642,6 +647,12 @@ paths:
             type: integer
             minimum: 1
             maximum: 100
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+          description: Cursor returned by the previous response for the same authenticated user and filters.
       security: *accountSession
   /api/account/consents:
     get:
@@ -1478,6 +1489,28 @@ components:
               - consents
             format: json
   responses:
+    LogQueryIncomplete:
+      description:
+        The retained log query is incomplete. No partial entries or statistics are returned as
+        a successful result. Narrow the period or retry.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+              - error
+              - error_description
+              - complete
+            properties:
+              error:
+                type: string
+                const: log_query_incomplete
+              error_description:
+                type: string
+              complete:
+                type: boolean
+                const: false
     Ok:
       description: Successful JSON response.
       content:
@@ -1792,6 +1825,32 @@ components:
               profile:
                 sub: user_123
   schemas:
+    LogCursorPagination:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - limit
+        - has_more
+        - next_cursor
+      properties:
+        mode:
+          type: string
+          const: cursor
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 200
+        has_more:
+          type: boolean
+        next_cursor:
+          type:
+            - string
+            - 'null'
+          maxLength: 4096
+      description:
+        Cursor pagination over retained log rows. Totals and page numbers are not returned.
+        Reuse the cursor with the same tenant, endpoint, and filters.
     AccountLauncher:
       type: object
       additionalProperties: false
@@ -2198,6 +2257,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AccountOperation'
+        pagination:
+          $ref: '#/components/schemas/LogCursorPagination'
     IdentifierReplacementOperationResponse:
       type: object
       additionalProperties: false

@@ -153,6 +153,8 @@ const ru = createTranslation({
 	account_reauthTotpCodePlaceholder: '6- или 8-значный код',
 	account_actionFailed: 'Не удалось выполнить операцию',
 	account_remainingLoginMethodRequired: 'Добавьте другой способ входа перед удалением этого.',
+	account_activityIncomplete: 'Результаты активности неполные. Повторите попытку позже.',
+	account_activityLoadMore: 'Загрузить более раннюю активность',
 	account_activityTitle: 'Активность',
 	account_operationNameUpdated: 'Имя изменено',
 	account_operationPasskeyCreated: 'Passkey добавлен',

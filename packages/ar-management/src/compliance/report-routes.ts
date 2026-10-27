@@ -9,6 +9,7 @@
  * catalogued in the admin database, and its SHA-256 recorded and checked on download.
  */
 import type { Context } from 'hono';
+import { logQueryErrorResponse } from '../log-archive-query';
 import { legacyDatetimeString, z } from '../zod';
 import {
   AR_ERROR_CODES,
@@ -377,6 +378,8 @@ export async function createComplianceReport(c: Context<{ Bindings: Env }>) {
   try {
     report = await generate(c, tenantId, input, adminAdapter);
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     if (error instanceof ReportUnavailableError) {
       if (error.message === 'access_review_not_found') {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {

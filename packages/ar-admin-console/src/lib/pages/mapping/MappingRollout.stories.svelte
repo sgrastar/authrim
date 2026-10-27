@@ -1,18 +1,15 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
+	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeIdentityMapping } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import MappingRollout from './MappingRollout.svelte';
+	import MappingPageContent from './MappingPageContent.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Mapping/Give a default to tenants (MAP-01)',
-		component: MappingRollout,
-		// draft: not wired to a route. api-pending: the tenant list with each tenant's source and
-		// app counts (GET /api/admin/platform/identity-mapping/tenants) does not exist yet, and the
-		// bulk apply's impact does not yet split the apps left unchanged into App-specific and
-		// opted out (`apps_with_own_set`, `apps_opted_out`). The stories use an in-memory API.
-		tags: ['autodocs', 'draft', 'api-pending'],
+		title: 'Pages/Mapping/Tenants/List',
+		component: MappingPageContent,
+		// UI prototype: in-memory data, not connected to the deployed Admin API.
+		tags: ['autodocs', 'draft'],
 		parameters: {
 			layout: 'fullscreen',
 			docs: {
@@ -31,6 +28,8 @@
 		for (const name of ['Thyme', 'Willow']) {
 			await userEvent.click(canvas.getByRole('checkbox', { name: t('table.selectRow', { name }) }));
 		}
+		await userEvent.click(canvas.getByRole('button', { name: t('mc.nav.changeDefault') }));
+		await expect(canvas.getByRole('combobox', { name: t('mc.ro.setLabel') })).toHaveFocus();
 		await userEvent.selectOptions(
 			canvas.getByRole('combobox', { name: t('mc.ro.setLabel') }),
 			'fms_affil'
@@ -52,7 +51,7 @@
 
 <Story name="Tenants">
 	{#snippet template()}
-		<MappingRollout client={createFakeIdentityMapping()} />
+		<MappingPageContent page="tenants" client={createFakeIdentityMapping()} />
 	{/snippet}
 </Story>
 
@@ -77,7 +76,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingRollout client={createFakeIdentityMapping()} onpreview={fn()} />
+		<MappingPageContent page="tenants" client={createFakeIdentityMapping()} />
 	{/snippet}
 </Story>
 
@@ -92,7 +91,7 @@
 	}}
 >
 	{#snippet template()}
-		<MappingRollout client={createFakeIdentityMapping({ bulkLimit: 8 })} />
+		<MappingPageContent page="tenants" client={createFakeIdentityMapping({ bulkLimit: 8 })} />
 	{/snippet}
 </Story>
 
@@ -110,7 +109,10 @@
 	}}
 >
 	{#snippet template()}
-		<MappingRollout client={createFakeIdentityMapping({ bulkLimit: 8, failApplyRequest: 2 })} />
+		<MappingPageContent
+			page="tenants"
+			client={createFakeIdentityMapping({ bulkLimit: 8, failApplyRequest: 2 })}
+		/>
 	{/snippet}
 </Story>
 
@@ -130,7 +132,10 @@
 	}}
 >
 	{#snippet template()}
-		<MappingRollout client={createFakeIdentityMapping({ failOnce: ['rowan', 'sage'] })} />
+		<MappingPageContent
+			page="tenants"
+			client={createFakeIdentityMapping({ failOnce: ['rowan', 'sage'] })}
+		/>
 	{/snippet}
 </Story>
 
@@ -143,7 +148,10 @@
 	}}
 >
 	{#snippet template()}
-		<MappingRollout client={createFakeIdentityMapping({ impactUnavailable: ['kelp'] })} />
+		<MappingPageContent
+			page="tenants"
+			client={createFakeIdentityMapping({ impactUnavailable: ['kelp'] })}
+		/>
 	{/snippet}
 </Story>
 
@@ -157,7 +165,8 @@
 	}}
 >
 	{#snippet template()}
-		<MappingRollout
+		<MappingPageContent
+			page="tenants"
 			client={createFakeIdentityMapping({ pageSize: 8, settingsUnreadable: ['nettle'] })}
 		/>
 	{/snippet}
@@ -165,12 +174,15 @@
 
 <Story name="With a platform default">
 	{#snippet template()}
-		<MappingRollout client={createFakeIdentityMapping({ platformDefault: 'fms_groups' })} />
+		<MappingPageContent
+			page="tenants"
+			client={createFakeIdentityMapping({ platformDefault: 'fms_groups' })}
+		/>
 	{/snippet}
 </Story>
 
 <Story name="Loading">
 	{#snippet template()}
-		<MappingRollout client={createFakeIdentityMapping({ delay: 60_000 })} />
+		<MappingPageContent page="tenants" client={createFakeIdentityMapping({ delay: 60_000 })} />
 	{/snippet}
 </Story>

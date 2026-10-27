@@ -619,8 +619,11 @@ export const accountAPI = {
 			}
 		),
 
-	getOperations: () =>
-		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20'),
+	getOperations: (cursor?: string) =>
+		accountFetch<{
+			operations: AccountOperation[];
+			pagination?: { mode: 'cursor'; has_more: boolean; next_cursor: string | null };
+		}>(`/api/account/operations?limit=20${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`),
 
 	getConsents: (locale?: string) =>
 		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents', {
