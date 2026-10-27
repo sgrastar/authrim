@@ -13,9 +13,11 @@
 		path?: string;
 		/** Leave out for a header without a notification area. */
 		notifications?: readonly ShellNotification[];
+		/** An administrator of one tenant only: the header shows a plain scope, not a switcher. */
+		singleScope?: boolean;
 	}
 
-	let { path = '/admin/users/all', notifications }: Props = $props();
+	let { path = '/admin/users/all', notifications, singleScope = false }: Props = $props();
 
 	// Information is dismissed in place; the demo keeps what is left.
 	let dismissed = $state<string[]>([]);
@@ -26,11 +28,12 @@
 		resolveNavPath((current || path).split('?')[0]) ?? resolveNavPath('/admin')!
 	);
 
-	const scopes: ScopeOption[] = [
+	const allScopes: ScopeOption[] = [
 		{ id: 'platform', kind: 'platform', name: 'プラットフォーム全体', mark: '◆' },
 		{ id: 'acme', kind: 'tenant', name: 'Acme Corporation', mark: 'A' },
 		{ id: 'globex', kind: 'tenant', name: 'Globex Inc.', mark: 'G' }
 	];
+	const scopes = $derived(singleScope ? allScopes.filter((s) => s.id === 'acme') : allScopes);
 	let tenant = $state('acme');
 
 	function intercept(event: MouseEvent) {

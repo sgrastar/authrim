@@ -133,6 +133,12 @@
 	}}
 />
 
+<!-- One tenant only: the scope is a plain label, which has to shrink on a phone like the menu does. -->
+<Story
+	name="Notifications: single scope"
+	args={{ path: '/admin/users/all', notifications: many, singleScope: true }}
+/>
+
 <!-- For looking at: nothing runs on load, so a reload shows the sheet closed and still. -->
 <Story name="Notifications: several" args={{ path: '/admin/users/all', notifications: many }} />
 
@@ -155,6 +161,14 @@
 		const links = within(list).getAllByRole('link');
 		await expect(links[0]).toHaveTextContent(/signing certificate/);
 		await expect(links[0]).toHaveAttribute('href', '/admin/integrations/notifications?id=n3');
+		// The messages start in one column, however long the pills are (a language with longer names).
+		list.querySelectorAll('.notify__pill--row').forEach((pill, index) => {
+			pill.textContent = 'Ĉŕîţîçåļ ôñé ţŵö'.slice(0, 4 + ((index * 5) % 12));
+		});
+		const starts = [...list.querySelectorAll('.notify__item-body')].map((body) =>
+			Math.round(body.getBoundingClientRect().left)
+		);
+		await expect(new Set(starts).size).toBe(1);
 		// Only information can be dismissed on the spot (two items here).
 		const dismiss = within(list).getAllByRole('button', { name: /Dismiss|消す/ });
 		await expect(dismiss).toHaveLength(2);

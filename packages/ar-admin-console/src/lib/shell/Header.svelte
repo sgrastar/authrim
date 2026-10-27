@@ -74,7 +74,9 @@
 		flex-shrink: 0;
 	}
 
-	.topbar > :global(.popover:first-of-type) {
+	/* The scope switcher gives way first, whether it is a menu or (one scope only) a plain label. */
+	.topbar > :global(.popover:first-of-type),
+	.topbar > :global(.switcher--static) {
 		flex-shrink: 1;
 	}
 

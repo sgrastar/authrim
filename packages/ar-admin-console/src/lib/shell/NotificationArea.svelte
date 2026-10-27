@@ -338,11 +338,12 @@
 		line-height: 1;
 	}
 
-	/* In the list every pill is as wide as the longest, so the messages start in one column. */
+	/* In the list the pills share one column, as wide as the longest of them (see .notify__list),
+	   so the messages start at the same place whatever the language. */
 	.notify__pill--row {
-		flex: 0 0 5.8em;
-		align-self: flex-start;
+		align-self: start;
 		margin-block-start: 1px;
+		margin-inline-end: 10px;
 		text-align: center;
 	}
 
@@ -460,10 +461,13 @@
 		overflow: hidden;
 	}
 
+	/* Three columns every row shares: pill, message, dismiss. The pill column takes the width of the
+	   widest pill, so nothing is fixed to a number of characters. */
 	.notify__list {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr) auto;
+		align-content: start;
+		row-gap: 2px;
 		max-height: min(60vh, 420px);
 		margin: 0;
 		padding: 4px 8px 6px;
@@ -473,9 +477,10 @@
 	}
 
 	.notify__row {
-		display: flex;
-		align-items: flex-start;
-		gap: 4px;
+		display: grid;
+		grid-column: 1 / -1;
+		grid-template-columns: subgrid;
+		align-items: start;
 		border-radius: var(--radius-control);
 		font-size: var(--fs-body);
 	}
@@ -485,9 +490,9 @@
 	}
 
 	.notify__link {
-		display: flex;
-		flex: 1;
-		gap: 10px;
+		display: grid;
+		grid-column: 1 / 3;
+		grid-template-columns: subgrid;
 		min-width: 0;
 		padding: 8px 6px;
 		border-radius: var(--radius-control);
@@ -497,11 +502,12 @@
 
 	.notify__dismiss {
 		display: grid;
+		grid-column: 3;
 		place-items: center;
-		flex-shrink: 0;
 		width: var(--control-h-dense);
 		height: var(--control-h-dense);
 		margin-block-start: 2px;
+		margin-inline-start: 4px;
 		padding: 0;
 		border: 0;
 		border-radius: var(--radius-control);
