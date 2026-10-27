@@ -3,7 +3,7 @@
  * expectations are what zod-to-json-schema / zod 3 produced for the same schemas.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { validatePluginConfig, zodToJSONSchema } from '../core/schema';
 
@@ -133,7 +133,7 @@ describe('zodToJSONSchema legacy collections and unions', () => {
   it('does not overflow on a set of recursive elements', () => {
     type Node = { children: Set<Node> };
     const node: z.ZodType<Node> = z.lazy(() => z.object({ children: z.set(node) }));
-    expect(() => zodToJSONSchema(z.object({ tree: node }))).not.toThrow();
+    expect(() => zodToJSONSchema(z.object({ tree: node }), { onWarning: () => {} })).not.toThrow();
   });
 
   it.each([
@@ -169,6 +169,83 @@ describe('zodToJSONSchema legacy collections and unions', () => {
     ],
   ])('flattens %s like zod-to-json-schema', (_name, union, expected) => {
     expect(zodToJSONSchema(z.object({ u: union }))).toEqual(root({ u: expected }, ['u']));
+  });
+});
+
+describe('zodToJSONSchema element conversion warnings', () => {
+  it('warns once when a recursive element schema hits the depth limit', () => {
+    type Node = { children: Set<Node> };
+    const node: z.ZodType<Node> = z.lazy(() => z.object({ children: z.set(node) }));
+    const onWarning = vi.fn();
+    zodToJSONSchema(z.object({ tree: node }), { onWarning });
+    expect(onWarning).toHaveBeenCalledTimes(1);
+    expect(onWarning).toHaveBeenCalledWith(
+      'Plugin JSON Schema element left unconstrained: nesting too deep',
+      { role: 'set element', maxDepth: 8 }
+    );
+  });
+
+  it('warns once for a recursive map, not once per branch', () => {
+    type Node = { children: Map<string, Node> };
+    const node: z.ZodType<Node> = z.lazy(() => z.object({ children: z.map(z.string(), node) }));
+    const onWarning = vi.fn();
+    zodToJSONSchema(z.object({ tree: node }), { onWarning });
+    expect(onWarning).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns with the reason when an element cannot be converted, and keeps the rest', () => {
+    // An element whose own conversion pass fails while the enclosing pass succeeds.
+    const broken = z.string();
+    broken._zod.processJSONSchema = () => {
+      throw new Error('boom');
+    };
+    const onWarning = vi.fn();
+    const document = zodToJSONSchema(
+      z.object({ name: z.string().min(2), tags: z.set(broken).max(3) }),
+      { onWarning }
+    );
+    expect(onWarning).toHaveBeenCalledTimes(1);
+    expect(onWarning).toHaveBeenCalledWith(
+      'Plugin JSON Schema element left unconstrained: conversion failed',
+      { role: 'set element', conversionError: 'boom' }
+    );
+    expect(document.properties?.name).toEqual({ type: 'string', minLength: 2 });
+    expect(document.properties?.tags).toEqual({
+      type: 'array',
+      uniqueItems: true,
+      items: {},
+      maxItems: 3,
+    });
+  });
+
+  it('does not warn for schemas that convert completely', () => {
+    const onWarning = vi.fn();
+    zodToJSONSchema(z.object({ tags: z.set(z.string()), pairs: z.map(z.string(), z.number()) }), {
+      onWarning,
+    });
+    expect(onWarning).not.toHaveBeenCalled();
+  });
+
+  it('logs a structured warning by default, including the exception reason', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const broken = z.string();
+      broken._zod.processJSONSchema = () => {
+        throw new Error('boom');
+      };
+      zodToJSONSchema(z.object({ tags: z.set(broken) }));
+      expect(warn).toHaveBeenCalledTimes(1);
+      const entry = JSON.parse(String(warn.mock.calls[0][0])) as Record<string, unknown>;
+      expect(entry).toMatchObject({
+        level: 'warn',
+        message: 'Plugin JSON Schema element left unconstrained: conversion failed',
+        module: 'PluginSchema',
+        role: 'set element',
+        conversionError: 'boom',
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
