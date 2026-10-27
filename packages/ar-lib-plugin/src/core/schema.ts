@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { createLogger } from '@authrim/ar-lib-core/utils/logger';
 import {
   legacyZodErrorMessage,
   toLegacyZodIssues,
@@ -79,7 +80,12 @@ export function zodToJSONSchema<T>(
   schema: z.ZodType<T, unknown>,
   options?: SchemaConversionOptions
 ): JSONSchema7 {
-  const document = toLegacyJSONSchema(schema, options);
+  const state: ConversionState = {
+    depth: 0,
+    warn: options?.onWarning ?? logSchemaConversionWarning,
+    warned: new Set(),
+  };
+  const document = toLegacyJSONSchema(schema, state, options);
 
   if (!options?.name) {
     return document;
@@ -97,6 +103,7 @@ export function zodToJSONSchema<T>(
 
 function toLegacyJSONSchema(
   schema: z.core.$ZodType,
+  state: ConversionState,
   options?: SchemaConversionOptions
 ): JSONSchema7 {
   return z.toJSONSchema(schema, {
@@ -104,8 +111,32 @@ function toLegacyJSONSchema(
     io: 'input',
     unrepresentable: 'any',
     reused: options?.$refStrategy && options.$refStrategy !== 'none' ? 'ref' : 'inline',
-    override: ({ zodSchema, jsonSchema }) => keepLegacyJSONSchemaShape(zodSchema, jsonSchema),
+    override: ({ zodSchema, jsonSchema }) =>
+      keepLegacyJSONSchemaShape(zodSchema, jsonSchema, state),
   }) as JSONSchema7;
+}
+
+/** State of one `zodToJSONSchema()` call, shared by the passes that convert Set/Map elements. */
+interface ConversionState {
+  /** Set/Map element passes currently open. */
+  depth: number;
+  warn: SchemaConversionWarning;
+  /** Warnings already reported, so a recursive element schema reports each reason once. */
+  warned: Set<string>;
+}
+
+/**
+ * Default warning sink: a structured `warn` log entry. The logger reserves the `error`
+ * context key, so the exception reason travels as `conversionError`.
+ */
+export const logSchemaConversionWarning: SchemaConversionWarning = (message, data) => {
+  createLogger().module('PluginSchema').warn(message, data);
+};
+
+function reportOnce(state: ConversionState, message: string, data: Record<string, unknown>): void {
+  if (state.warned.has(message)) return;
+  state.warned.add(message);
+  state.warn(message, data);
 }
 
 const MAX_SAFE_INTEGER_BOUND = Number.MAX_SAFE_INTEGER;
@@ -121,7 +152,8 @@ const MAX_SAFE_INTEGER_BOUND = Number.MAX_SAFE_INTEGER;
  */
 function keepLegacyJSONSchemaShape(
   zodSchema: z.core.$ZodType,
-  jsonSchema: z.core.JSONSchema.BaseSchema
+  jsonSchema: z.core.JSONSchema.BaseSchema,
+  state: ConversionState
 ): void {
   const def = zodSchema._zod.def;
 
@@ -171,7 +203,7 @@ function keepLegacyJSONSchemaShape(
     const setDef = def as z.core.$ZodSetDef;
     jsonSchema.type = 'array';
     jsonSchema.uniqueItems = true;
-    jsonSchema.items = convertNested(setDef.valueType);
+    jsonSchema.items = convertNested(setDef.valueType, state, 'set element');
     for (const check of setDef.checks ?? []) {
       const checkDef = check._zod.def as {
         check?: string;
@@ -193,7 +225,10 @@ function keepLegacyJSONSchemaShape(
     jsonSchema.maxItems = 125;
     jsonSchema.items = {
       type: 'array',
-      items: [convertNested(mapDef.keyType), convertNested(mapDef.valueType)],
+      items: [
+        convertNested(mapDef.keyType, state, 'map key'),
+        convertNested(mapDef.valueType, state, 'map value'),
+      ],
       minItems: 2,
       maxItems: 2,
     } as z.core.JSONSchema.BaseSchema;
@@ -278,24 +313,39 @@ function flattenLiteralUnion(
 
 /** Nesting limit for Set/Map element conversion (recursive element schemas). */
 const MAX_NESTED_CONVERSION_DEPTH = 8;
-let nestedConversionDepth = 0;
 
 /**
  * Convert the element schema of a Set or Map. zod 4 cannot represent those types, so
- * the element is converted in its own pass; recursive element schemas (a lazy schema
- * that contains the same Set) stop at the depth limit with an unconstrained `{}`
- * instead of overflowing the stack.
+ * the element is converted in its own pass. Recursive element schemas (a lazy schema
+ * that contains the same Set) stop at the depth limit, and an element that cannot be
+ * converted at all is left out of the document. Either way the element becomes an
+ * unconstrained `{}` and a warning names the reason, so a schema that is looser than
+ * the zod schema it describes shows up in the logs instead of only in the Admin UI.
  */
-function convertNested(schema: z.core.$ZodType): z.core.JSONSchema.BaseSchema {
-  if (nestedConversionDepth >= MAX_NESTED_CONVERSION_DEPTH) return {};
-  nestedConversionDepth += 1;
+function convertNested(
+  schema: z.core.$ZodType,
+  state: ConversionState,
+  role: 'set element' | 'map key' | 'map value'
+): z.core.JSONSchema.BaseSchema {
+  if (state.depth >= MAX_NESTED_CONVERSION_DEPTH) {
+    reportOnce(state, 'Plugin JSON Schema element left unconstrained: nesting too deep', {
+      role,
+      maxDepth: MAX_NESTED_CONVERSION_DEPTH,
+    });
+    return {};
+  }
+  state.depth += 1;
   try {
-    const { $schema: _schema, ...converted } = toLegacyJSONSchema(schema);
+    const { $schema: _schema, ...converted } = toLegacyJSONSchema(schema, state);
     return converted as z.core.JSONSchema.BaseSchema;
-  } catch {
+  } catch (error) {
+    reportOnce(state, 'Plugin JSON Schema element left unconstrained: conversion failed', {
+      role,
+      conversionError: error instanceof Error ? error.message : String(error),
+    });
     return {};
   } finally {
-    nestedConversionDepth -= 1;
+    state.depth -= 1;
   }
 }
 
@@ -328,7 +378,15 @@ export interface SchemaConversionOptions {
 
   /** Custom $ref strategy */
   $refStrategy?: 'none' | 'root' | 'relative';
+
+  /**
+   * Called when part of the schema could not be converted and was left unconstrained.
+   * Defaults to a structured `warn` log.
+   */
+  onWarning?: SchemaConversionWarning;
 }
+
+export type SchemaConversionWarning = (message: string, data?: Record<string, unknown>) => void;
 
 // =============================================================================
 // Plugin Schema Utilities
