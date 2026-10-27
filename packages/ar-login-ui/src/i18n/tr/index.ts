@@ -167,6 +167,8 @@ const translation = {
 	account_reauthTotpCodePlaceholder: '6 veya 8 rakamlı kod',
 	account_actionFailed: 'Operasyon başarısız oldu.',
 	account_remainingLoginMethodRequired: 'Bu yöntemi silmeden önce başka bir giriş yöntemi ekleyin.',
+	account_activityIncomplete: 'Etkinlik sonuçları eksik. Lütfen daha sonra tekrar deneyin.',
+	account_activityLoadMore: 'Önceki etkinlikleri yükle',
 	account_activityTitle: 'Etkinlik',
 	account_operationNameUpdated: 'Ad güncellendi',
 	account_operationPasskeyCreated: 'Geçiş anahtarı eklendi',

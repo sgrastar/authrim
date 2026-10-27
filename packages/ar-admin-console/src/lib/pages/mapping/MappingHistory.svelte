@@ -12,10 +12,9 @@
 	import EmptyState from '$lib/ui/patterns/EmptyState.svelte';
 	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
 	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
 	import DateTime from '$lib/ui/time/DateTime.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import MappingSection from './MappingSection.svelte';
 	import { toast } from '$lib/ui/toast/toast.svelte';
 	import { changeText, label, levelValueText } from './labels';
 
@@ -29,15 +28,21 @@
 	interface Props {
 		client: IdentityMappingClient;
 		tenantId: string;
+		clientId?: string;
+		onbusy?: (busy: boolean) => void;
+		onchanged?: () => void;
 	}
 
-	let { client, tenantId }: Props = $props();
+	let { client, tenantId, clientId, onbusy, onchanged }: Props = $props();
 
 	let entries = $state<HistoryEntry[] | null>(null);
 	let loadError = $state(false);
 	let opening = $state('');
 	let plan = $state<RestorePreview | null>(null);
 	let restoring = $state(false);
+	$effect(() => {
+		onbusy?.(restoring);
+	});
 	let dialogError = $state('');
 
 	/** Each load counts up; an answer for an older tenant is dropped. */
@@ -52,7 +57,10 @@
 		dialogError = '';
 		try {
 			const answer = await client.history(tenantId);
-			if (mine === generation) entries = answer;
+			if (mine === generation)
+				entries = clientId
+					? answer.filter((entry) => entry.tier === 'client' && entry.client_id === clientId)
+					: answer;
 		} catch {
 			if (mine === generation) loadError = true;
 		}
@@ -97,6 +105,7 @@
 		restoring = true;
 		try {
 			await client.restore(confirmed.tenantId, confirmed.entryId, confirmed.version);
+			onchanged?.();
 			plan = null;
 			toast.success(t('mc.hist.restored'));
 			await load();
@@ -113,9 +122,7 @@
 	const affected = $derived(plan?.apps.filter((app) => app.changes.length > 0) ?? []);
 </script>
 
-<Page>
-	<PageHeader title={t('mc.hist.title')} description={t('mc.hist.desc')} />
-
+<MappingSection>
 	{#if loadError}
 		<Callout tone="warning" live>
 			{t('mc.loadFailed')}
@@ -173,7 +180,7 @@
 			</DataTable>
 		</Card>
 	{/if}
-</Page>
+</MappingSection>
 
 <FormDialog
 	open={plan !== null}

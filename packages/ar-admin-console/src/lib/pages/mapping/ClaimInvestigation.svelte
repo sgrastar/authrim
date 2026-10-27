@@ -14,12 +14,11 @@
 	import Card from '$lib/ui/patterns/Card.svelte';
 	import DataTable from '$lib/ui/patterns/DataTable.svelte';
 	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
 	import Badge from '$lib/ui/primitives/Badge.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
 	import RadioGroup from '$lib/ui/primitives/RadioGroup.svelte';
 	import Select from '$lib/ui/primitives/Select.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import MappingSection from './MappingSection.svelte';
 	import ChainList from './ChainList.svelte';
 	import { label, tierLabel } from './labels';
 	import SourceLabel from './SourceLabel.svelte';
@@ -32,10 +31,11 @@
 	 * it. A set that cannot be used stops issuance (MAP-06), and the page says so first.
 	 */
 	interface Props {
+		onmapping?: () => void;
 		client: IdentityMappingClient;
 		tenantId: string;
 		/** Preselected app and user, and whether to investigate at once (links, stories). */
-		clientId?: string;
+		clientId: string;
 		userId?: string;
 		/** Where the claims go, and the test user's consent, to start with. */
 		surface?: ExplainSurface;
@@ -45,21 +45,19 @@
 
 	let {
 		client,
+		onmapping,
 		tenantId,
-		clientId = '',
-		userId = '',
-		surface: initialSurface = 'id_token',
-		consent: initialConsent = 'all',
+		clientId,
+		userId = $bindable(''),
+		surface = $bindable('id_token'),
+		consent = $bindable('all'),
 		autorun = false
 	}: Props = $props();
 
 	let apps = $state<AppSummary[] | null>(null);
 	let users = $state<TestUser[]>([]);
 	let loadError = $state(false);
-	let appId = $state(untrack(() => clientId));
-	let user = $state(untrack(() => userId));
-	let surface = $state<ExplainSurface>(untrack(() => initialSurface));
-	let consent = $state<ExplainConsent>(untrack(() => initialConsent));
+
 	let result = $state<ClaimExplanation | null>(null);
 	/** The app and user the result shown was asked for. */
 	let resultFor = $state({ app: '', user: '', surface: '', consent: '' });
@@ -82,7 +80,7 @@
 			]);
 			if (mine !== generation) return;
 			[apps, users] = [nextApps, nextUsers];
-			if (untrack(() => autorun) && appId && user) await investigate();
+			if (untrack(() => autorun) && clientId && userId) await investigate();
 		} catch {
 			if (mine === generation) loadError = true;
 		}
@@ -94,7 +92,7 @@
 
 	async function investigate() {
 		const mine = ++generation;
-		const asked = { app: appId, user, surface, consent };
+		const asked = { app: clientId, user: userId, surface, consent };
 		running = true;
 		runError = false;
 		try {
@@ -117,8 +115,8 @@
 	/** A result for another app or user than the ones chosen now is not shown as theirs. */
 	const stale = $derived(
 		result !== null &&
-			(resultFor.app !== appId ||
-				resultFor.user !== user ||
+			(resultFor.app !== clientId ||
+				resultFor.user !== userId ||
 				resultFor.surface !== surface ||
 				resultFor.consent !== consent)
 	);
@@ -153,9 +151,7 @@
 	}
 </script>
 
-<Page>
-	<PageHeader title={t('mc.ex.title')} description={t('mc.ex.desc')} />
-
+<MappingSection>
 	{#if loadError}
 		<Callout tone="warning" live>
 			{t('mc.loadFailed')}
@@ -168,17 +164,11 @@
 			<div class="form">
 				<div class="row">
 					<Select
-						label={t('mc.ex.app')}
-						placeholder={t('mc.ro.choose')}
-						options={apps.map((a) => ({ value: a.client_id, label: a.name }))}
-						bind:value={appId}
-					/>
-					<Select
 						label={t('mc.ex.user')}
 						placeholder={t('mc.ro.choose')}
 						hint={t('mc.ex.userHint')}
 						options={users.map((u) => ({ value: u.user_id, label: u.label }))}
-						bind:value={user}
+						bind:value={userId}
 					/>
 				</div>
 				<div class="row">
@@ -202,7 +192,7 @@
 					/>
 				</div>
 				<div>
-					<Button disabled={!appId || !user} loading={running} onclick={investigate}>
+					<Button disabled={!clientId || !userId} loading={running} onclick={investigate}>
 						{t('mc.ex.run')}
 					</Button>
 				</div>
@@ -217,6 +207,9 @@
 			<Callout tone="info">{t('mc.ex.stale')}</Callout>
 		{:else}
 			<p class="subject">{subjectText}</p>
+			{#if onmapping}
+				<Button variant="secondary" onclick={onmapping}>{t('mc.nav.mapping')}</Button>
+			{/if}
 			{#if stopped && result.selection.kind === 'bound' && (stopped.code === 'set_inactive' || stopped.code === 'set_missing')}
 				<Callout tone="warning" live>
 					{t('mc.ex.stopped', {
@@ -323,7 +316,7 @@
 			</Card>
 		{/if}
 	{/if}
-</Page>
+</MappingSection>
 
 <style>
 	.form {

@@ -12,13 +12,19 @@
 		operations = [],
 		loading = false,
 		title = '',
-		headingLevel = 2
+		headingLevel = 2,
+		error = '',
+		hasMore = false,
+		onmore
 	}: {
 		operations?: AccountOperation[];
 		/** First load: a skeleton instead of the (possibly empty) list. */
 		loading?: boolean;
 		title?: string;
 		headingLevel?: AccountWidgetHeadingLevel;
+		error?: string;
+		hasMore?: boolean;
+		onmore?: () => void;
 	} = $props();
 
 	/** The audit action names the account page describes; others are shown as recorded. */
@@ -60,8 +66,10 @@
 </script>
 
 <AccountWidgetPanel title={title || $LL.account_activityTitle()} {headingLevel} busy={loading}>
-	{#if loading}
+	{#if loading && operations.length === 0}
 		<AccountSectionSkeleton variant="activity" rows={3} />
+	{:else if error}
+		<p role="alert">{error}</p>
 	{:else if operations.length === 0}
 		<p class="empty-text">{$LL.account_empty()}</p>
 	{:else}
@@ -76,6 +84,11 @@
 			{/each}
 		</ul>
 	{/if}
+	{#if hasMore && onmore && !error}<button
+			class="btn btn-secondary"
+			disabled={loading}
+			onclick={onmore}>{$LL.account_activityLoadMore()}</button
+		>{/if}
 </AccountWidgetPanel>
 
 <style>

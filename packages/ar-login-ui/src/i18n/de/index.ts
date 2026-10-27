@@ -158,6 +158,9 @@ const de = createTranslation({
 	account_actionFailed: 'Der Vorgang ist fehlgeschlagen',
 	account_remainingLoginMethodRequired:
 		'Fügen Sie eine weitere Anmeldemethode hinzu, bevor Sie diese löschen.',
+	account_activityIncomplete:
+		'Die Aktivitäten konnten nicht vollständig geladen werden. Bitte versuchen Sie es später erneut.',
+	account_activityLoadMore: 'Ältere Aktivitäten laden',
 	account_activityTitle: 'Aktivität',
 	account_operationNameUpdated: 'Name geändert',
 	account_operationPasskeyCreated: 'Passkey hinzugefügt',

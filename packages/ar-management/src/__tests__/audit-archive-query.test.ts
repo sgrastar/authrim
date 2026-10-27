@@ -19,6 +19,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     ensureDatabaseAdapter: vi.fn(() => ({
       query: vi.fn(async (_sql: string, params: unknown[]) => {
+        if (_sql.includes('source_table')) return [];
         const requestedId = params.find(
           (value) => typeof value === 'string' && value.startsWith('evt-')
         );

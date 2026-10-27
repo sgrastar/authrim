@@ -30,7 +30,12 @@
 		error = '';
 
 		try {
-			entry = await adminAuditLogsAPI.get(entryId);
+			entry = await adminAuditLogsAPI.get(
+				entryId,
+				$page.url.searchParams.has('event_at')
+					? Number($page.url.searchParams.get('event_at'))
+					: undefined
+			);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_audit_logs_entry_load_failed();
 		} finally {

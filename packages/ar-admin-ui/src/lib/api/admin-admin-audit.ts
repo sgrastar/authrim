@@ -1,3 +1,4 @@
+import { logDetailQuery, type LogCursorPagination } from './log-pagination';
 import { adminFetch } from '$lib/api/admin-request';
 /**
  * Admin Audit Log API Client
@@ -64,7 +65,7 @@ export interface Pagination {
 /**
  * Admin audit log list response
  */
-export interface AdminAuditLogListResponse {
+interface NumberedAdminAuditLogListResponse {
 	items: AdminAuditLogEntry[];
 	total: number;
 	page: number;
@@ -72,10 +73,16 @@ export interface AdminAuditLogListResponse {
 	totalPages: number;
 }
 
+export type AdminAuditLogListResponse =
+	| NumberedAdminAuditLogListResponse
+	| { items: AdminAuditLogEntry[]; pagination: LogCursorPagination };
+
 /**
  * Admin audit log list parameters
  */
 export interface AdminAuditLogListParams {
+	cursor?: string;
+	resource_id?: string;
 	page?: number;
 	limit?: number;
 	admin_user_id?: string;
@@ -131,6 +138,8 @@ export const adminAdminAuditAPI = {
 	async list(params?: AdminAuditLogListParams): Promise<AdminAuditLogListResponse> {
 		const searchParams = new URLSearchParams();
 
+		if (params?.cursor) searchParams.set('cursor', params.cursor);
+		if (params?.resource_id) searchParams.set('resource_id', params.resource_id);
 		if (params?.page) searchParams.set('page', String(params.page));
 		if (params?.limit) searchParams.set('limit', String(params.limit));
 		if (params?.admin_user_id) searchParams.set('admin_user_id', params.admin_user_id);
@@ -160,9 +169,9 @@ export const adminAdminAuditAPI = {
 	 * Get admin audit log entry details
 	 * GET /api/admin/admin-audit-log/:id
 	 */
-	async get(id: string): Promise<AdminAuditLogEntryDetail> {
+	async get(id: string, eventAt?: number): Promise<AdminAuditLogEntryDetail> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/admin-audit-log/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/admin-audit-log/${encodeURIComponent(id)}${logDetailQuery(eventAt)}`,
 			{
 				credentials: 'include'
 			}

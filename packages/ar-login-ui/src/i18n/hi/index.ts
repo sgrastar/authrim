@@ -167,6 +167,8 @@ const translation = {
 	account_reauthTotpCodePlaceholder: '6 या 8 अंकों का कोड',
 	account_actionFailed: 'ऑपरेशन विफल रहा',
 	account_remainingLoginMethodRequired: 'इस विधि को हटाने से पहले एक और लॉगिन विधि जोड़ें।',
+	account_activityIncomplete: 'गतिविधि के परिणाम अधूरे हैं। कृपया बाद में फिर से कोशिश करें।',
+	account_activityLoadMore: 'पुरानी गतिविधि लोड करें',
 	account_activityTitle: 'गतिविधि',
 	account_operationNameUpdated: 'नाम बदल दिया गया',
 	account_operationPasskeyCreated: 'Passkey जोड़ा गया',

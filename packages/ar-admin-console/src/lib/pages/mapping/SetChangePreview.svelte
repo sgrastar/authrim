@@ -16,13 +16,12 @@
 	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
 	import MappingEditor from '$lib/ui/patterns/MappingEditor.svelte';
 	import type { Mapping, MappingField, MappingType } from '$lib/ui/patterns/mapping-model';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
 	import Select from '$lib/ui/primitives/Select.svelte';
 	import { Draft } from '$lib/ui/save/draft.svelte';
 	import { SaveStopped } from '$lib/ui/save/save-scope';
 	import SaveScope, { type SaveControls } from '$lib/ui/save/SaveScope.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import MappingSection from './MappingSection.svelte';
 	import { toast } from '$lib/ui/toast/toast.svelte';
 	import { changeText } from './labels';
 	import SourceLabel from './SourceLabel.svelte';
@@ -35,6 +34,8 @@
 	 * works without it, as decided for this screen.
 	 */
 	interface Props {
+		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
+		onchanged?: () => void;
 		client: IdentityMappingClient;
 		tenantId: string;
 		setId: string;
@@ -44,7 +45,7 @@
 		sampleUserId?: string;
 	}
 
-	let { client, tenantId, setId, edits, sampleUserId = '' }: Props = $props();
+	let { client, tenantId, setId, edits, onstate, onchanged, sampleUserId = '' }: Props = $props();
 
 	interface Edit {
 		mappings: Mapping[];
@@ -190,6 +191,7 @@
 		}
 		preview = null;
 		confirmCount = null;
+		onchanged?.();
 		toast.success(t('mc.ch.saved'));
 	}
 
@@ -204,30 +206,26 @@
 	);
 </script>
 
-<Page>
+<MappingSection>
 	{#if loadError}
-		<PageHeader title={t('mc.ch.title')} description={t('mc.ch.desc')} />
 		<Callout tone="warning" live>
 			{t('mc.loadFailed')}
 			<Button variant="secondary" size="sm" onclick={load}>{t('mc.retry')}</Button>
 		</Callout>
 	{:else if !content || !draft}
-		<PageHeader title={t('mc.ch.title')} description={t('mc.ch.desc')} />
 		<LoadingState label={t('mc.loading')} />
 	{:else}
-		<SaveScope {draft} onsave={save} bar={false}>
+		<SaveScope {draft} {onstate} onsave={save} bar={false}>
 			{#snippet children(controls)}
-				<PageHeader title={t('mc.ch.title')} description={t('mc.ch.desc')}>
-					{#snippet actions()}
-						<Button
-							disabled={!controls.dirty || checking}
-							loading={controls.saving}
-							onclick={() => (controls.invalid ? controls.save() : (confirming = true))}
-						>
-							{t('mc.ch.save')}
-						</Button>
-					{/snippet}
-				</PageHeader>
+				<div class="editor-actions">
+					<Button
+						disabled={!controls.dirty || checking}
+						loading={controls.saving}
+						onclick={() => (controls.invalid ? controls.save() : (confirming = true))}
+					>
+						{t('mc.ch.save')}
+					</Button>
+				</div>
 				<Card title={setName} description={t('mc.ch.usedBy', { count: usedByCount })}>
 					<MappingEditor
 						label={t('mc.ch.mapping')}
@@ -385,9 +383,13 @@
 			{/snippet}
 		</SaveScope>
 	{/if}
-</Page>
+</MappingSection>
 
 <style>
+	.editor-actions {
+		display: flex;
+		justify-content: flex-end;
+	}
 	.form {
 		display: flex;
 		flex-direction: column;

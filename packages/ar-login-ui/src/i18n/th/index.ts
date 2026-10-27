@@ -164,6 +164,8 @@ const th = createTranslation({
 	account_reauthTotpCodePlaceholder: 'รหัส 6 หรือ 8 หลัก',
 	account_actionFailed: 'ดำเนินการไม่สำเร็จ',
 	account_remainingLoginMethodRequired: 'เพิ่มวิธีเข้าสู่ระบบอื่นก่อนลบวิธีนี้',
+	account_activityIncomplete: 'ผลกิจกรรมยังไม่ครบถ้วน โปรดลองอีกครั้งในภายหลัง',
+	account_activityLoadMore: 'โหลดกิจกรรมก่อนหน้า',
 	account_activityTitle: 'กิจกรรม',
 	account_operationNameUpdated: 'เปลี่ยนชื่อแล้ว',
 	account_operationPasskeyCreated: 'เพิ่มพาสคีย์แล้ว',

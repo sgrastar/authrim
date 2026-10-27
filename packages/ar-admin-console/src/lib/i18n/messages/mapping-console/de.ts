@@ -1,6 +1,26 @@
 import type { jaMappingConsole } from './ja';
 
 export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
+	'mc.page.appTitle': 'An diese App gesendete Benutzerinformationen',
+	'mc.page.setTitle': 'Zuordnungsregeln für Benutzerinformationen bearbeiten',
+	'mc.page.setsDesc':
+		'Verwalten Sie Regeln, die Benutzerattribute den Feldern einer App zuordnen. Beispielsweise kann die Abteilung als Feld department übertragen werden. Mehrere Regeln bilden einen Zuordnungssatz.',
+	'mc.hist.appDesc':
+		'Prüfen Sie, wer die Zuordnung dieser App geändert hat, sowie die vorherigen und aktuellen Einstellungen. Prüfen Sie die Auswirkungen vor einer Wiederherstellung. Änderungen an Regeln innerhalb eines Satzes sind nicht enthalten.',
+	'mc.nav.back': 'Zurück',
+	'mc.nav.editSet': 'Set bearbeiten',
+	'mc.nav.tenants': 'Mandanten',
+	'mc.nav.sets': 'Mapping-Sets',
+	'mc.nav.mapping': 'Regeln auswählen',
+	'mc.nav.test': 'Gesendete Informationen testen',
+	'mc.nav.history': 'Änderungsverlauf',
+	'mc.nav.platform': 'Plattform',
+	'mc.nav.searchTenants': 'Mandanten suchen',
+	'mc.nav.searchSets': 'Sets suchen',
+	'mc.nav.changeDefault': 'Mapping-Standard ändern',
+	'mc.nav.tenantsDescription':
+		'Prüfen Sie die Standardregeln für Benutzerinformationen in den Apps jedes Mandanten. Wählen Sie Mandanten, um deren Standard gemeinsam zu ändern. App-spezifische Einstellungen bleiben bestehen.',
+
 	'mc.loading': 'Wird geladen',
 	'mc.loadFailed': 'Konnte nicht geladen werden. Bitte versuchen Sie es erneut.',
 	'mc.retry': 'Erneut laden',
@@ -111,8 +131,8 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 
 	'mc.ex.title': 'Claims untersuchen',
 	'mc.ex.desc':
-		'Welche Claims das ID-Token enthält, wenn sich ein Testbenutzer bei dieser App anmeldet, und warum die anderen fehlen, Schritt für Schritt. Werte werden nie angezeigt, nur ob es einen gibt.',
-	'mc.ex.form': 'Was untersucht werden soll',
+		'Prüfen Sie mit einem Testbenutzer, welche Felder diese App erhält und warum andere fehlen. Vergleichen Sie Ziele und Einwilligungen. Werte werden nicht angezeigt und Einstellungen nicht geändert.',
+	'mc.ex.form': 'Testbedingungen',
 	'mc.ex.app': 'App',
 	'mc.ex.user': 'Testbenutzer',
 	'mc.ex.userHint':
@@ -126,10 +146,11 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ex.stoppedOther': 'Diese App erhält kein Token. Grundcode: {code}',
 	'mc.ex.stoppedClaim': 'Claim, dessen Wert abgelehnt wurde: {claim}',
 	'mc.ex.implicit': 'Mappings, die früher implizit galten, gelten nicht mehr: {sets}',
-	'mc.ex.run': 'Untersuchen',
-	'mc.ex.stale': 'Die Auswahl wurde geändert. Wählen Sie erneut „Untersuchen“.',
+	'mc.ex.run': 'Gesendete Informationen prüfen',
+	'mc.ex.stale': 'Die Bedingungen wurden geändert. Prüfen Sie die gesendeten Informationen erneut.',
 	'mc.ex.resultFor': 'Ergebnis für {app} · {user}',
-	'mc.ex.prompt': 'Wählen Sie eine App und einen Testbenutzer und dann „Untersuchen“.',
+	'mc.ex.prompt':
+		'Wählen Sie einen Testbenutzer und Bedingungen, um die an die geöffnete App gesendeten Informationen zu prüfen.',
 	'mc.ex.stage.selection': '1. Verwendetes Mapping',
 	'mc.ex.stage.values': '2. Ob Werte vorhanden sind',
 	'mc.ex.stage.filter': '3. Eingegrenzt durch Scopes und Zustimmung',
@@ -184,7 +205,7 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 
 	'mc.ch.title': 'Mapping-Set bearbeiten',
 	'mc.ch.desc':
-		'Sehen Sie vor dem Speichern für jede App, die dieses Mapping-Set verwendet, wie sich die Claims ändern würden, die sie erhält.',
+		'Bearbeiten Sie, welche Benutzerattribute unter welchen Feldnamen an Apps gesendet werden, etwa Abteilung → department. Speichern wirkt sich auf alle Apps aus, die diesen Satz verwenden. Die Auswirkungen können vorher geprüft werden.',
 	'mc.ch.usedBy': 'Apps, die dieses Mapping-Set verwenden: {count}',
 	'mc.ch.mapping': 'Claim-Mapping',
 	'mc.ch.claim': 'Gesendeter Claim',
@@ -235,8 +256,9 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 	'mc.ch.saved': 'Gespeichert.',
 
 	'mc.app.title': 'Identity-Mapping von {app}',
-	'mc.app.desc': 'Wählen Sie das Mapping für ID-Token und UserInfo dieser App.',
-	'mc.app.current': 'Derzeit wirksam',
+	'mc.app.desc':
+		'Wählen Sie Regeln für Benutzerinformationen wie Zugehörigkeit und Abteilung, die diese App erhält: Mandantenstandard, eigener Satz für diese App oder keine zusätzliche Zuordnung.',
+	'mc.app.current': 'Regeln der gespeicherten Einstellungen',
 	'mc.app.choice': 'Auswahl dieser App',
 	'mc.app.follow': 'Dem Mandanten-Standard folgen',
 	'mc.app.follow.desc':
@@ -248,13 +270,13 @@ export const deMappingConsole: Record<keyof typeof jaMappingConsole, string> = {
 		'Es werden nur Standard-Claims gesendet, unabhängig von späteren Änderungen der Standards.',
 	'mc.app.set': 'Mapping-Set für diese App',
 	'mc.app.setRequired': 'Wählen Sie ein Mapping-Set.',
-	'mc.app.would': 'Wirksam mit dieser Auswahl',
+	'mc.app.would': 'Regeln für jede Auswahl',
 	'mc.app.save': 'Änderungen speichern',
 	'mc.app.saved': 'Gespeichert.',
 
-	'mc.hist.title': 'Verlauf der Mapping-Standards',
+	'mc.hist.title': 'Änderungsverlauf der Zuordnungseinstellungen',
 	'mc.hist.desc':
-		'Änderungen am Mandanten-Standard und an den Auswahlen der Apps. Wählen Sie eine aus, um den Zustand davor wiederherzustellen.',
+		'Prüfen Sie Änderungen am Mandantenstandard und an den Einstellungen seiner Apps. Vergleichen Sie Einstellungen und Auswirkungen, bevor Sie den Zustand vor einer Änderung wiederherstellen. Änderungen an Regeln innerhalb eines Satzes sind nicht enthalten.',
 	'mc.hist.col.when': 'Zeitpunkt',
 	'mc.hist.col.who': 'Geändert von',
 	'mc.hist.col.level': 'Geänderte Ebene',

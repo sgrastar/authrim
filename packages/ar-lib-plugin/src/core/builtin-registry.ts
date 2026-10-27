@@ -15,7 +15,11 @@
 
 import type { AuthrimPlugin, PluginSource, PluginTrustLevel } from './types';
 import { getPluginTrustLevel } from './types';
-import { zodToJSONSchema } from './schema';
+import {
+  logSchemaConversionWarning,
+  zodToJSONSchema,
+  type SchemaConversionWarning,
+} from './schema';
 
 // =============================================================================
 // Types
@@ -57,6 +61,12 @@ export interface RegisterBuiltinOptions {
   force?: boolean;
   /** Logger function for diagnostics */
   log?: (message: string, data?: Record<string, unknown>) => void;
+  /**
+   * Receives a warning when part of a plugin's JSON Schema could not be converted and was
+   * left unconstrained. Kept apart from `log` (progress diagnostics, a no-op by default)
+   * so the warning is never lost; defaults to a structured `warn` log entry.
+   */
+  onSchemaWarning?: SchemaConversionWarning;
 }
 
 // =============================================================================
@@ -139,7 +149,7 @@ export async function registerBuiltinPlugins(
   kv: KVNamespace,
   options: RegisterBuiltinOptions = {}
 ): Promise<{ registered: number; skipped: number; errors: string[] }> {
-  const { force = false, log = () => {} } = options;
+  const { force = false, log = () => {}, onSchemaWarning = logSchemaConversionWarning } = options;
   const errors: string[] = [];
   let registered = 0;
   let skipped = 0;
@@ -207,7 +217,10 @@ export async function registerBuiltinPlugins(
       // Store schema separately
       if (plugin.configSchema) {
         try {
-          const schema = zodToJSONSchema(plugin.configSchema);
+          const schema = zodToJSONSchema(plugin.configSchema, {
+            onWarning: (message, data) =>
+              onSchemaWarning(message, { ...data, pluginId: plugin.id }),
+          });
           await kv.put(`${PLUGINS_SCHEMA_PREFIX}${plugin.id}`, JSON.stringify(schema));
         } catch (schemaError) {
           log(`Failed to store schema for ${plugin.id}`, {

@@ -39,11 +39,22 @@
 		/** The current tab's id. */
 		value?: string;
 		onchange?: (id: string) => void;
+		/** Return false to keep the current tab, e.g. while confirming unsaved edits. */
+		onbeforechange?: (id: string) => boolean;
+		disabled?: boolean;
 		/** Content of the current tab (in-place tabs only). */
 		panel?: Snippet<[string]>;
 	}
 
-	let { label, items, value = $bindable(items[0]?.id ?? ''), onchange, panel }: Props = $props();
+	let {
+		label,
+		items,
+		value = $bindable(items[0]?.id ?? ''),
+		onchange,
+		onbeforechange,
+		disabled = false,
+		panel
+	}: Props = $props();
 
 	const uid = $props.id();
 	const busy = useBusy();
@@ -96,9 +107,10 @@
 	});
 
 	function select(id: string) {
-		if (id === value) return;
+		if (disabled || id === value || onbeforechange?.(id) === false) return false;
 		value = id;
 		onchange?.(id);
+		return true;
 	}
 
 	function onkeydown(event: KeyboardEvent) {
@@ -112,7 +124,7 @@
 		else if (event.key === 'End') next = shown.length - 1;
 		if (next < 0) return;
 		event.preventDefault();
-		select(shown[next].id);
+		if (!select(shown[next].id)) return;
 		row?.querySelector<HTMLElement>(`[data-tab="${CSS.escape(shown[next].id)}"]`)?.focus();
 	}
 </script>
@@ -176,12 +188,12 @@
 					<a
 						class="tabs__tab"
 						class:is-current={item.id === value}
-						class:is-busy={busy()}
+						class:is-busy={disabled || busy()}
 						data-tab={item.id}
-						href={busy() ? undefined : item.href}
+						href={disabled || busy() ? undefined : item.href}
 						aria-current={item.id === value ? 'page' : undefined}
-						aria-disabled={busy() || undefined}
-						role={busy() ? 'link' : undefined}>{@render content(item)}</a
+						aria-disabled={disabled || busy() || undefined}
+						role={disabled || busy() ? 'link' : undefined}>{@render content(item)}</a
 					>
 				{/each}
 				{@render indicatorBar()}
@@ -206,7 +218,7 @@
 						aria-selected={item.id === value}
 						aria-controls="{uid}-panel"
 						tabindex={item.id === value ? 0 : -1}
-						disabled={busy()}
+						disabled={disabled || busy()}
 						onclick={() => select(item.id)}>{@render content(item)}</button
 					>
 				{/each}

@@ -132,6 +132,18 @@ describe('Account Page operation history API', () => {
     expect(mockCoreAdapter.query).not.toHaveBeenCalled();
   });
 
+  it('rejects an invalid archived-history cursor before querying another user or returning an empty list', async () => {
+    const context = createMockContext({
+      cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+      query: { cursor: 'invalid' },
+    }) as Parameters<typeof listAccountOperationsHandler>[0];
+    context.env.DB_ADMIN = {} as D1Database;
+    const response = await listAccountOperationsHandler(context);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+    expect(mockCoreAdapter.query).not.toHaveBeenCalled();
+  });
+
   it.each([
     [undefined, 50],
     ['0', 50],

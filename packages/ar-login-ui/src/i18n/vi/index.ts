@@ -168,6 +168,8 @@ const vi = createTranslation({
 	account_actionFailed: 'Thao tác không thành công',
 	account_remainingLoginMethodRequired:
 		'Hãy thêm một phương thức đăng nhập khác trước khi xóa phương thức này.',
+	account_activityIncomplete: 'Kết quả hoạt động chưa đầy đủ. Vui lòng thử lại sau.',
+	account_activityLoadMore: 'Tải hoạt động cũ hơn',
 	account_activityTitle: 'Hoạt động',
 	account_operationNameUpdated: 'Đã đổi tên',
 	account_operationPasskeyCreated: 'Đã thêm khoá truy cập',

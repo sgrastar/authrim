@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
 const { mockAdapter, mockCreateAuthContextFromHono, mockGetOperationalLog, mockGrantRepo } =
@@ -23,7 +23,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     adminAuthMiddleware: vi.fn(
       (options?: { requirePermissions?: string[] }) =>
-        async (c: any, next: () => Promise<void>) => {
+        async (
+          c: Context<{ Bindings: Env; Variables: { adminAuth: unknown } }>,
+          next: () => Promise<void>
+        ) => {
           const permissions = (c.req.header('X-Admin-Permissions') || '')
             .split(',')
             .map((value: string) => value.trim())
@@ -68,7 +71,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { operationalLogsRouter } from '../routes/admin-management/operational-logs';
 
 const mockEnv = {
-  DB_ADMIN: {},
+  DB_ADMIN: {
+    query: async () => [],
+    queryOne: async () => null,
+    execute: async () => ({ success: true, rowsAffected: 0 }),
+    getType: () => 'sqlite',
+    transaction: async () => {
+      throw new Error('unused');
+    },
+    batch: async () => [],
+    isHealthy: async () => ({ healthy: true, latencyMs: 0, type: 'sqlite' }),
+    close: async () => {},
+  },
   PII_ENCRYPTION_KEY: 'test-key',
 } as unknown as Env;
 
@@ -174,8 +188,11 @@ describe('operational logs router', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { reason_detail: string };
     expect(body.reason_detail).toContain('immediate suspension');
+    const actualAdapter = mockGetOperationalLog.mock.calls[0]?.[0] as DatabaseAdapter;
+    expect(typeof actualAdapter.query).toBe('function');
+    expect(typeof actualAdapter.queryOne).toBe('function');
     expect(mockGetOperationalLog).toHaveBeenCalledWith(
-      mockAdapter,
+      actualAdapter,
       expect.objectContaining({ inlineEncryptionKey: 'test-key' }),
       'tenant-a',
       'op-1'
