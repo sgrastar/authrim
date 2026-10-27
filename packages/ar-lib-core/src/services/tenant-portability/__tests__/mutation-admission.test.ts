@@ -225,6 +225,23 @@ it('recovers an uncertain permit acquisition without adding another active write
   expect((await admission.hold('a', 'boundary', 104))?.state).toBe('held');
 });
 
+it('refuses an acquisition that arrives after its writer already completed the permit it gave up on', async () => {
+  // The writer lost the reply of its acquisition twice and closed the permit it could not see.
+  await admission.complete('a', 'abandoned-permit', 1);
+  await admission.completeEnvironment('abandoned-environment-permit', 1);
+  expect(await admission.acquire('a', 'abandoned-permit', 2)).toBe(false);
+  expect(await admission.acquireEnvironment('abandoned-environment-permit', 2)).toBe(false);
+  expect(
+    (
+      await adapter.queryOne<{ n: number }>(
+        'SELECT count(*) AS n FROM tenant_backup_mutation_permits WHERE completed_at IS NULL'
+      )
+    )?.n
+  ).toBe(0);
+  // A permit nobody closed is admitted as before.
+  expect(await admission.acquire('a', 'other-permit', 3)).toBe(true);
+});
+
 it('drains shared writes for every tenant in the environment without blocking other environments', async () => {
   const first = new TenantBackupMutationAdmission(adapter, 'env-a');
   const other = new TenantBackupMutationAdmission(adapter, 'env-b');

@@ -5,6 +5,7 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   getTenantIdFromContext,
   requireDedicatedAdminDatabaseAdapter,
   type AdminAuthContext,
@@ -110,6 +111,13 @@ replicationBackupGrantsRouter.onError((_error, c) =>
 );
 replicationBackupGrantsRouter.post('/grants', async (c) => {
   const auth = human(c);
+  // With the SAML DR extension on, the exports a grant allows carry the environment's platform
+  // settings and secrets, which belong to no tenant (see `mayExportSamlDrData`).
+  if (
+    c.env.ENABLE_SAML_DR_EXPORT === 'true' &&
+    !hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.BACKUPS_EXPORT)
+  )
+    return c.json({ error: 'backup_forbidden' }, 403);
   const body = await readBody(c);
   const now = Date.now();
   if (

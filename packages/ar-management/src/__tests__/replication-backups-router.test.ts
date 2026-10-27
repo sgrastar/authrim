@@ -239,6 +239,35 @@ describe('human replication export authorization', () => {
     ).toBe(403);
     expect(state.create).not.toHaveBeenCalled();
   });
+  it('issues a grant for a backup that carries environment-wide SAML DR data only to a global administrator', async () => {
+    const body = {
+      pairId: 'pair-a',
+      sourceDeploymentId: 'cf-main',
+      destinationDeploymentId: 'aws-secondary',
+      selection,
+      expiresAt: Date.now() + 60000,
+    };
+    const withExtension = { ...env, ENABLE_SAML_DR_EXPORT: 'true' };
+    const issue = (app: Hono) =>
+      app.request(
+        '/api/admin/replication-backups/grants',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'tenant-a' },
+          body: JSON.stringify(body),
+        },
+        withExtension
+      );
+    const app = new Hono();
+    app.route('/api/admin/replication-backups', replicationBackupGrantsRouter as never);
+    expect((await issue(app)).status).toBe(403);
+    expect(db.prepare('SELECT count(*) AS n FROM tenant_backup_replication_grants').get()).toEqual({
+      n: 0,
+    });
+    auth.tenantScope = ['*'];
+    auth.globalPermissions = [ADMIN_PERMISSIONS.BACKUPS_EXPORT];
+    expect((await issue(app)).status).toBe(201);
+  });
   it.each([
     'stale',
     'machine',

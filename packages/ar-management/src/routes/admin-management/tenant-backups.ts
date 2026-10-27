@@ -7,6 +7,7 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   getTenantIdFromContext,
   ensureDatabaseAdapter,
   requireDedicatedAdminDatabaseAdapter,
@@ -68,6 +69,18 @@ tenantBackupsRouter.use('*', async (c, next) => {
   c.header('Cache-Control', 'no-store');
   return next();
 });
+
+/**
+ * With the SAML DR extension on, a backup also carries the environment's platform settings and
+ * secrets, which belong to no tenant. Only a global administrator holding the export permission
+ * for every tenant may ask for one.
+ */
+function mayExportSamlDrData(env: Env, auth: AdminAuthContext): boolean {
+  return (
+    env.ENABLE_SAML_DR_EXPORT !== 'true' ||
+    hasGlobalAdminPermission(auth, ADMIN_PERMISSIONS.BACKUPS_EXPORT)
+  );
+}
 
 function tenantAuth(auth: AdminAuthContext | undefined) {
   if (!auth?.tenantId) throw new Error('backup_auth_context_missing');
@@ -882,6 +895,7 @@ tenantBackupsRouter.post('/exports', async (c) => {
   const auth = tenantAuth(c.get('adminAuth'));
   if (!hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.BACKUPS_EXPORT))
     return c.json({ error: 'backup_forbidden' }, 403);
+  if (!mayExportSamlDrData(c.env, auth)) return c.json({ error: 'backup_forbidden' }, 403);
   const body: unknown = await c.req.json().catch(() => null);
   if (!body || typeof body !== 'object' || Array.isArray(body))
     return c.json({ error: 'invalid_backup_request' }, 400);

@@ -15,6 +15,51 @@ describe('tenant backup covered effect', () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it('closes the permit it could not see when the reply of the acquisition is lost twice', async () => {
+    const acquire = vi.fn(async () => {
+      throw new Error('reply lost');
+    });
+    const complete = vi.fn(async () => {});
+    const run = vi.fn(async () => 'ok');
+    await expect(
+      runTenantBackupCoveredEffect(
+        {
+          TENANT_BACKUP_WRAPPING_KEY: 'enabled',
+          CONTROL: {
+            acquireTenantBackupMutationPermit: acquire,
+            completeTenantBackupMutationPermit: complete,
+          },
+        },
+        { tenantId: 'tenant-a' },
+        run
+      )
+    ).rejects.toBeInstanceOf(TenantBackupMutationUnavailableError);
+    // The write never ran. The permit the server may have recorded is closed under the same ID, so
+    // it cannot keep a later snapshot boundary waiting.
+    expect(run).not.toHaveBeenCalled();
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete.mock.calls[0]?.[0].permitId).toBe(acquire.mock.calls[0]?.[0].permitId);
+  });
+
+  it('does not close a permit the Control service refused', async () => {
+    const complete = vi.fn(async () => {});
+    await expect(
+      runTenantBackupCoveredEffect(
+        {
+          TENANT_BACKUP_WRAPPING_KEY: 'enabled',
+          CONTROL: {
+            acquireTenantBackupMutationPermit: vi.fn(async () => ({ admitted: false })),
+            completeTenantBackupMutationPermit: complete,
+          },
+        },
+        { tenantId: 'tenant-a' },
+        async () => 'ok'
+      )
+    ).rejects.toBeInstanceOf(TenantBackupMutationUnavailableError);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it('holds one tenant permit around an awaited effect', async () => {
     const order: string[] = [];
     const acquire = vi.fn(async () => {

@@ -94,6 +94,14 @@ export class TenantBackupMutationAdmission {
       `UPDATE tenant_backup_mutation_permits SET completed_at=? WHERE id=? AND tenant_id=? AND environment_id=? AND scope=? AND completed_at IS NULL AND created_at<=?`,
       [now, permitId, tenantId, this.environmentId, scope, now]
     );
+    // A writer that lost the reply of its acquisition closes the permit it could not see. When the
+    // acquisition is still on its way, this closed record makes it find the permit already
+    // completed, so it cannot open a permit no writer will ever close.
+    await this.database.execute(
+      `INSERT INTO tenant_backup_mutation_permits(id,tenant_id,created_at,completed_at,environment_id,scope)
+       VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
+      [permitId, tenantId, now, now, this.environmentId, scope]
+    );
   }
 
   async begin(input: {

@@ -858,6 +858,24 @@ it('creates an export with the canonical source and returns only waiting progres
     })
   );
 });
+it('keeps an export that carries environment-wide SAML DR data to a global administrator', async () => {
+  const env = {
+    TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32),
+    EXPORT_ARTIFACTS: {},
+    ENABLE_SAML_DR_EXPORT: 'true',
+  };
+  const body = JSON.stringify({ idempotencyKey: 'request', selection });
+  // The tenant's own export permission does not reach environment-wide settings and secrets.
+  expect((await request('exports', 'POST', body, env)).status).toBe(403);
+  expect(state.create).not.toHaveBeenCalled();
+  auth = {
+    ...auth,
+    tenantScope: ['*'],
+    globalPermissions: [ADMIN_PERMISSIONS.BACKUPS_EXPORT],
+  };
+  expect((await request('exports', 'POST', body, env)).status).toBe(201);
+  expect(state.create).toHaveBeenCalledTimes(1);
+});
 it('rejects source injection, missing export permission and sensitive detail without permission', async () => {
   const env = { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), EXPORT_ARTIFACTS: {} };
   expect(
