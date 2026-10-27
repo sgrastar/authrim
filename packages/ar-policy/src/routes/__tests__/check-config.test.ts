@@ -186,6 +186,25 @@ describe('Check API runtime configuration branches', () => {
     });
   });
 
+  it.each([
+    ['/', undefined],
+    ['/', 'false'],
+    ['/batch', undefined],
+    ['/batch', 'false'],
+  ])(
+    'does not enable %s or create an audit service when the Check API flag is %s',
+    async (route, flag) => {
+      const response = await app.request(
+        route,
+        { method: 'POST' },
+        env({ ENABLE_CHECK_API: flag })
+      );
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toBe('access_denied');
+      expect(audit.create).not.toHaveBeenCalled();
+    }
+  );
+
   it('creates the audit service with the platform Settings API values over env', async () => {
     await reachAuditConfiguration({
       ENABLE_CHECK_API_AUDIT: 'false',
@@ -205,6 +224,32 @@ describe('Check API runtime configuration branches', () => {
       { mode: 'sync', logDeny: 'always', logAllow: 'always', sampleRate: 0, retentionDays: 1 },
       undefined
     );
+  });
+
+  it.each([
+    ['without a settings binding', {}],
+    ['with no saved settings', { SETTINGS: createKv() }],
+  ])('enables auditing by default %s', async (_description, overrides) => {
+    await reachAuditConfiguration(overrides);
+    expect(audit.create).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        mode: 'waitUntil',
+        logDeny: 'always',
+        logAllow: 'sample',
+        sampleRate: 0.01,
+        retentionDays: 90,
+      },
+      undefined
+    );
+  });
+
+  it.each([
+    ['without a settings binding', {}],
+    ['with no saved settings', { SETTINGS: createKv() }],
+  ])('honors an explicit audit env opt-out %s', async (_description, overrides) => {
+    await reachAuditConfiguration({ ...overrides, ENABLE_CHECK_API_AUDIT: 'false' });
+    expect(audit.create).not.toHaveBeenCalled();
   });
 
   it('uses env, then the defaults, for the audit settings nothing saved', async () => {
@@ -293,8 +338,12 @@ describe('Check API runtime configuration branches', () => {
   it('no longer reads the older audit values from AUTHRIM_CONFIG', async () => {
     await reachAuditConfiguration({
       SETTINGS: createKv(),
-      AUTHRIM_CONFIG: createKv({ CHECK_API_AUDIT_ENABLED: 'true' }),
+      AUTHRIM_CONFIG: createKv({ CHECK_API_AUDIT_ENABLED: 'false' }),
     });
-    expect(audit.create).not.toHaveBeenCalled();
+    expect(audit.create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ logDeny: 'always', logAllow: 'sample', sampleRate: 0.01 }),
+      undefined
+    );
   });
 });
