@@ -699,12 +699,24 @@ export const TENANT_TOPNAV: readonly TopEntry[] = [
 ];
 
 /**
- * Header categories in platform scope. `inherited` categories hold the defaults every tenant
- * starts from; the rest exist only at platform level.
+ * Header categories in platform scope. The platform's own come first; the `inherited` ones after
+ * them hold the defaults every tenant starts from.
  */
 export const PLATFORM_TOPNAV: readonly TopEntry[] = [
 	{
 		id: 'plat-overview'
+	},
+	{
+		id: 'plat-tenants'
+	},
+	{
+		id: 'plat-admins'
+	},
+	{
+		id: 'plat-infra'
+	},
+	{
+		id: 'plat-approvals'
 	},
 	{
 		id: 'users',
@@ -733,17 +745,5 @@ export const PLATFORM_TOPNAV: readonly TopEntry[] = [
 		scope: 'tenant',
 		merges: ['monitoring', 'integrations', 'settings'],
 		inherited: true
-	},
-	{
-		id: 'plat-tenants'
-	},
-	{
-		id: 'plat-admins'
-	},
-	{
-		id: 'plat-infra'
-	},
-	{
-		id: 'plat-approvals'
 	}
 ];

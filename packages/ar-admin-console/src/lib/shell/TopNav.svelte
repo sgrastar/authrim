@@ -176,7 +176,7 @@
 		background: color-mix(in srgb, var(--accent-tenant) 26%, transparent);
 	}
 
-	.topnav__item.is-inherited + .topnav__item:not(.is-inherited) {
+	.topnav__item:not(.is-inherited) + .topnav__item.is-inherited {
 		margin-inline-start: 10px;
 		padding-inline-start: 16px;
 		box-shadow: inset calc(1px * var(--dir)) 0 0 var(--border);
