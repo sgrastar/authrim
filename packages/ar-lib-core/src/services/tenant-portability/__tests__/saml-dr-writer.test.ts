@@ -84,7 +84,9 @@ describe('opt-in SAML source writer guard', () => {
     const { env, control } = fixture();
     control.acquireEnvironmentBackupMutationPermit.mockResolvedValue({ admitted: false });
     const authority = vi.fn(async (_url: unknown, init: RequestInit) => {
-      const body = JSON.parse(String(init.body)) as { payload: Record<string, unknown> };
+      const body = JSON.parse(typeof init.body === 'string' ? init.body : '{}') as {
+        payload: Record<string, unknown>;
+      };
       return Response.json(body.payload);
     });
     vi.stubGlobal('fetch', authority);
