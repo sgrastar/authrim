@@ -3,6 +3,7 @@
 	import { useBusy } from '../busy/busy';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Icon from '../icons/Icon.svelte';
+	import InfoTip from './InfoTip.svelte';
 	import type { ChoiceOption } from './RadioGroup.svelte';
 
 	/**
@@ -16,6 +17,10 @@
 		/** Adds an empty first option prompting a choice. */
 		placeholder?: string | boolean;
 		hint?: string;
+		/** Longer explanation behind a "?" beside the label. */
+		info?: string;
+		/** ID of an explanation placed beside an external FieldRow label. */
+		describedBy?: string;
 		error?: string;
 		required?: boolean;
 		disabled?: boolean;
@@ -37,6 +42,8 @@
 		value = $bindable(''),
 		placeholder,
 		hint,
+		info,
+		describedBy,
 		error,
 		required = false,
 		disabled = false,
@@ -54,8 +61,15 @@
 	const busy = useBusy();
 
 	const uid = $props.id();
-	const describedBy = $derived(
-		[hint ? `${uid}-hint` : '', error ? `${uid}-error` : ''].filter(Boolean).join(' ') || undefined
+	const descriptionIds = $derived(
+		[
+			hint ? `${uid}-hint` : '',
+			error ? `${uid}-error` : '',
+			info ? `${uid}-info` : '',
+			describedBy ?? ''
+		]
+			.filter(Boolean)
+			.join(' ') || undefined
 	);
 </script>
 
@@ -66,10 +80,15 @@
 	class:select--inline={inline}
 	class:is-changed={isChanged}
 >
-	<label class="select__label" class:sr-only={hideLabel} for="{uid}-select">
-		{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}
-		{#if required}<span class="select__req" aria-hidden="true">*</span>{/if}
-	</label>
+	<div class="select__heading" class:sr-only={hideLabel && !info}>
+		<label class="select__label" class:sr-only={hideLabel} for="{uid}-select">
+			{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}
+			{#if required}<span class="select__req" aria-hidden="true">*</span>{/if}
+		</label>
+		{#if info}
+			<InfoTip label="{t('common.moreInfo')}: {label}" text={info} id="{uid}-info" />
+		{/if}
+	</div>
 	<div class="select__box">
 		<select
 			id="{uid}-select"
@@ -77,7 +96,7 @@
 			{required}
 			disabled={disabled || busy()}
 			aria-invalid={error ? 'true' : undefined}
-			aria-describedby={describedBy}
+			aria-describedby={descriptionIds}
 			onchange={() => onchange?.(value)}
 		>
 			{#if placeholder}
@@ -111,6 +130,12 @@
 		font-size: var(--fs-caption);
 		font-weight: var(--fw-medium);
 		white-space: nowrap;
+	}
+
+	.select__heading {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
 	}
 
 	.select__label {

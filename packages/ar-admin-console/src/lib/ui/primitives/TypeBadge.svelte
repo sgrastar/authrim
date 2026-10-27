@@ -40,7 +40,7 @@
 
 	.type-badge--sm {
 		padding: 0 4px;
-		font-size: var(--fs-overline);
+		font-size: var(--fs-small);
 	}
 
 	.type-badge.is-muted {

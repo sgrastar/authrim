@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { userEvent, within } from 'storybook/test';
+	import { expect, userEvent, within } from 'storybook/test';
 	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import MappingPageContent from './MappingPageContent.svelte';
@@ -59,6 +59,18 @@
 	name="Choose not to use a mapping"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		const follow = await canvas.findByRole('radio', { name: t('mc.app.follow') });
+		const help = canvas.getByRole('button', {
+			name: `${t('common.moreInfo')}: ${t('mc.app.follow')}`
+		});
+		const helpId = follow.getAttribute('aria-describedby');
+		await expect(helpId).toBeTruthy();
+		await expect(document.getElementById(helpId!)).toHaveTextContent(t('mc.app.follow.desc'));
+		await expect(help.closest('label')).toBeNull();
+		await expect(help).toHaveAttribute('aria-describedby', helpId);
+		const wasChecked = (follow as HTMLInputElement).checked;
+		await userEvent.click(help);
+		await expect((follow as HTMLInputElement).checked).toBe(wasChecked);
 		await userEvent.click(
 			await canvas.findByRole('radio', { name: new RegExp(`^${t('mc.app.none')}`) })
 		);

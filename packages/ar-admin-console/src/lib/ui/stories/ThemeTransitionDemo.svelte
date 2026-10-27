@@ -35,7 +35,9 @@
 		<Button variant="primary" icon={scheme === 'dark' ? 'sun' : 'moon'} onclick={flip}>
 			{scheme === 'dark' ? sample('toLight') : sample('toDark')}
 		</Button>
-		<span style="color:var(--text-muted);font-size:12.5px">{sample('transitionNote')}</span>
+		<span style="color:var(--text-muted);font-size:var(--fs-caption)"
+			>{sample('transitionNote')}</span
+		>
 	</div>
 	<PageHeader title={sample('authMethodsTitle')} description={sample('authMethodsDesc')} />
 	<Callout tone="warning" title={sample('requiredTitle')}>{sample('requiredBody')}</Callout>

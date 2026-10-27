@@ -87,7 +87,7 @@
 
 	.scope-note__body {
 		margin: 4px 0 0;
-		font-size: var(--fs-label);
+		font-size: var(--fs-body);
 		line-height: var(--lh-relaxed);
 		color: var(--text-secondary);
 	}
@@ -99,7 +99,7 @@
 		border-radius: var(--radius-badge);
 		color: var(--note-ink);
 		font-size: var(--fs-small);
-		font-weight: var(--fw-bold);
+		font-weight: var(--fw-semibold);
 		white-space: nowrap;
 	}
 </style>

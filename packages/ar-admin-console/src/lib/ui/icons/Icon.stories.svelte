@@ -26,9 +26,9 @@
 		>
 			{#each names as name (name)}
 				<li
-					style="display:grid;justify-items:center;gap:6px;padding:12px 6px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--bg-card);font-size:11px;color:var(--text-secondary)"
+					style="display:grid;justify-items:center;gap:6px;padding:12px 6px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--bg-card);font-size:var(--fs-small);color:var(--text-secondary);--icon-size:var(--icon-xl)"
 				>
-					<Icon {name} size={22} />
+					<Icon {name} />
 					<code>{name}</code>
 					{#if DIRECTIONAL_ICONS.has(name)}<span>mirrors</span>{/if}
 				</li>

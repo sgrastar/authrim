@@ -63,7 +63,7 @@ export const jaSettings = {
 		'テナントのすべてのアプリに FAPI 2.0 セキュリティプロファイルを適用します。',
 	'set.page.appDefaults': 'アプリの既定',
 	'set.page.appDefaults.desc':
-		'このテナントのすべてのアプリに適用する、認可リクエストとトークンの決まりです。セキュリティの要件は、アプリごとの設定で強めることはできても、緩めることはできません。',
+		'テナント内の全アプリに適用し、アプリ別設定でセキュリティ要件を緩めることはできません。',
 	'set.section.authRequests': '認可リクエスト',
 	'set.section.authRequests.desc': 'アプリがログインを求めるときのリクエストに求めることです。',
 	'set.section.authRequests.advanced': 'request object の署名と暗号化',

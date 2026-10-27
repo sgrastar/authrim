@@ -61,7 +61,7 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 		'Apply the FAPI 2.0 Security Profile to every app of the tenant.',
 	'set.page.appDefaults': 'App defaults',
 	'set.page.appDefaults.desc':
-		'Rules for authorization requests and tokens that apply to every app of the tenant. An app’s own settings can add a security requirement but not waive one.',
+		'These rules apply to every app in this tenant; app settings cannot relax security requirements.',
 	'set.section.authRequests': 'Authorization requests',
 	'set.section.authRequests.desc': 'What an app’s sign-in request must carry.',
 	'set.section.authRequests.advanced': 'Signed and encrypted request objects',
