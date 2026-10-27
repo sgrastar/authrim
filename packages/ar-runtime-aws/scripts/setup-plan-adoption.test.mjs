@@ -7,6 +7,7 @@ import { adoptExecutionPlan } from './setup-plan-adoption.mjs';
 import { executeAwsSetup } from './setup-executor.mjs';
 import { EXECUTION_STAGES } from './setup-execution-plan.mjs';
 import { canonicalSetupJson, setupDigest } from './setup-execution-state.mjs';
+import { normalizeSetupUi } from './setup-ui-config.mjs';
 
 const account = '123456789012';
 const region = 'ap-northeast-1';
@@ -17,7 +18,7 @@ const sha = (value) => setupDigest(canonicalSetupJson(value));
 const pairs = (values, key, value) =>
   Object.entries(values).map(([k, v]) => ({ [key]: k, [value]: v }));
 
-async function fixture(t) {
+async function fixture(t, { withUi = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'authrim-plan-adoption-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const previousStatePath = join(root, 'previous-state.json');
@@ -47,6 +48,11 @@ async function fixture(t) {
     fixture: { directory: fixtureDir, generate: true },
     databasePrefix: 'authrim_dr_browser',
   };
+  if (withUi) {
+    // A plan that selects the destination UI: the upload writes it into the cloud fixture too.
+    config.components = { loginUi: false, adminUi: false };
+    config.ui = { login: { mode: 'disabled' }, admin: { mode: 'disabled' } };
+  }
   config.stacks.bootstrap.parameters = {
     OperatorPrincipalArn: config.identities.bootstrap.principalArn,
     OperatorPrincipalMode: 'iam-user',
@@ -175,6 +181,9 @@ async function fixture(t) {
     ...descriptor,
     backup: { ...descriptor.backup, parts: [uploads.part0] },
     supplement: uploads.supplement,
+    ...(withUi
+      ? { destinationUi: normalizeSetupUi(config.components, config.ui, config.mode) }
+      : {}),
   };
   const cloudBytes = `${canonicalSetupJson(cloud)}\n`;
   await writeFile(`${previousStatePath}.assets/cloud-fixture.json`, cloudBytes, { mode: 0o600 });
@@ -452,6 +461,16 @@ test('explicit adoption preserves old evidence and resumes initialize without re
   assert.equal(after.stages.initialize.status, 'complete');
   assert.equal(f.calls.filter((c) => c.action === 'invoke').length, 1);
   assert.deepEqual(await readFile(f.options.previousStatePath), before);
+});
+
+test('adoption accepts the destination UI the upload wrote into the cloud fixture', async (t) => {
+  const f = await fixture(t, { withUi: true });
+  const result = await adoptExecutionPlan(f.options, f.dependencies);
+  assert.equal(result.status, 'adopted');
+  const cloud = JSON.parse(
+    await readFile(`${f.options.previousStatePath}.assets/cloud-fixture.json`, 'utf8')
+  );
+  assert.deepEqual(Object.keys(cloud.destinationUi ?? {}).sort(), ['components', 'ui']);
 });
 
 test('adoption rejects changed deployment inputs and unreviewed digests before AWS calls', async (t) => {

@@ -411,6 +411,119 @@ test('lost create response adopts the same change set; failed stacks never auto 
   assert.equal(executeCount, 1);
 });
 
+test('a refusal AWS gave before running the execution can be resent, an unknown outcome cannot', async () => {
+  const state = { operationId: uuid, stages: {} };
+  let change;
+  let stack;
+  let executeCount = 0;
+  let refusal;
+  const aws = async (_service, action, input) => {
+    if (action === 'describe-stacks') {
+      if (!stack) throw new AwsSetupError('aws_setup_not_found');
+      return { Stacks: [stack] };
+    }
+    if (action === 'describe-change-set') {
+      if (!change) throw new AwsSetupError('aws_setup_not_found');
+      return change;
+    }
+    if (action === 'create-change-set') {
+      stack = { StackId: 'stack-id', StackStatus: 'REVIEW_IN_PROGRESS' };
+      change = {
+        ...input,
+        StackId: 'stack-id',
+        ChangeSetId: 'change-id',
+        Status: 'CREATE_COMPLETE',
+        ExecutionStatus: 'AVAILABLE',
+        Changes: [addition],
+      };
+      return { StackId: 'stack-id', Id: 'change-id' };
+    }
+    if (action === 'get-template') return { TemplateBody: body };
+    if (action === 'validate-template') return {};
+    if (action === 'execute-change-set') {
+      executeCount += 1;
+      if (refusal) throw refusal;
+      change.ExecutionStatus = 'EXECUTE_IN_PROGRESS';
+      stack.StackStatus = 'CREATE_IN_PROGRESS';
+      return {};
+    }
+    throw new Error(`unexpected ${action}`);
+  };
+  const run = () =>
+    executeSetupStack({
+      aws,
+      state,
+      stage: 'workload',
+      save: async () => {},
+      spec: { name: 'example-workload', disposition: 'create' },
+      body,
+      parameters: {},
+    });
+  assert.equal((await run()).status, 'inProgress');
+  // The login expired, or the role was refused: AWS ran nothing, so the next resume sends it again.
+  refusal = new AwsSetupError('aws_setup_login_required');
+  await assert.rejects(run(), /login_required/u);
+  refusal = new AwsSetupError('aws_setup_access_denied');
+  await assert.rejects(run(), /access_denied/u);
+  assert.equal(executeCount, 2);
+  refusal = undefined;
+  assert.equal((await run()).status, 'inProgress');
+  assert.equal(executeCount, 3);
+  // Once an execution was sent with an unknown outcome, it is only inspected, never resent.
+  assert.equal((await run()).status, 'inProgress');
+  assert.equal(executeCount, 3);
+});
+
+test('an execution whose outcome is unknown is not resent after the request failed', async () => {
+  const state = { operationId: uuid, stages: {} };
+  let change;
+  let stack;
+  let executeCount = 0;
+  const aws = async (_service, action, input) => {
+    if (action === 'describe-stacks') {
+      if (!stack) throw new AwsSetupError('aws_setup_not_found');
+      return { Stacks: [stack] };
+    }
+    if (action === 'describe-change-set') {
+      if (!change) throw new AwsSetupError('aws_setup_not_found');
+      return change;
+    }
+    if (action === 'create-change-set') {
+      stack = { StackId: 'stack-id', StackStatus: 'REVIEW_IN_PROGRESS' };
+      change = {
+        ...input,
+        StackId: 'stack-id',
+        ChangeSetId: 'change-id',
+        Status: 'CREATE_COMPLETE',
+        ExecutionStatus: 'AVAILABLE',
+        Changes: [addition],
+      };
+      return { StackId: 'stack-id', Id: 'change-id' };
+    }
+    if (action === 'get-template') return { TemplateBody: body };
+    if (action === 'validate-template') return {};
+    if (action === 'execute-change-set') {
+      executeCount += 1;
+      throw new AwsSetupError('aws_setup_request_failed', { ambiguous: true });
+    }
+    throw new Error(`unexpected ${action}`);
+  };
+  const run = () =>
+    executeSetupStack({
+      aws,
+      state,
+      stage: 'workload',
+      save: async () => {},
+      spec: { name: 'example-workload', disposition: 'create' },
+      body,
+      parameters: {},
+    });
+  assert.equal((await run()).status, 'inProgress');
+  await assert.rejects(run(), /request_failed/u);
+  assert.equal((await run()).status, 'inProgress');
+  assert.equal(executeCount, 1);
+});
+
 test('stack resume uses the saved change-set ARN and never resends a stale AVAILABLE execution', async () => {
   const state = { operationId: uuid, stages: {} };
   const lookups = [];

@@ -4,6 +4,13 @@ import { canonicalSetupJson, setupDigest } from './setup-execution-state.mjs';
 const fail = (code) => {
   throw new AwsSetupError(`aws_setup_${code}`);
 };
+/** Failures that mean the request was refused before AWS ran it (see `failure` in the CLI). */
+const EXECUTION_REFUSED = new Set([
+  'aws_setup_login_required',
+  'aws_setup_access_denied',
+  'aws_setup_credential_cache_access_denied',
+  'aws_setup_cli_missing',
+]);
 const complete = (status) =>
   ['CREATE_COMPLETE', 'UPDATE_COMPLETE', 'IMPORT_COMPLETE'].includes(status);
 const pending = (status) => typeof status === 'string' && status.endsWith('_IN_PROGRESS');
@@ -208,14 +215,26 @@ export async function executeSetupStack({
       // An accepted execution can briefly still appear AVAILABLE. Never resend an
       // execution that may already have reached AWS, including after a lost response.
       if (record.status === 'executing') return { ...record, status: 'inProgress' };
+      const statusBeforeExecution = record.status;
       record.status = 'executing';
       await save();
-      await aws('cloudformation', 'execute-change-set', {
-        StackName: record.stackId,
-        ChangeSetName: record.changeSetId,
-        ClientRequestToken: record.requestId,
-        DisableRollback: true,
-      });
+      try {
+        await aws('cloudformation', 'execute-change-set', {
+          StackName: record.stackId,
+          ChangeSetName: record.changeSetId,
+          ClientRequestToken: record.requestId,
+          DisableRollback: true,
+        });
+      } catch (error) {
+        // A refusal AWS gave before it ran anything (an expired login, a denied role) did not
+        // start the execution, so a resume after the login or the role is fixed must send it
+        // again. Any other failure may have reached AWS and is only inspected from then on.
+        if (error instanceof AwsSetupError && EXECUTION_REFUSED.has(error.code)) {
+          record.status = statusBeforeExecution;
+          await save();
+        }
+        throw error;
+      }
       return { ...record, status: 'inProgress' };
     }
     if (!['EXECUTE_IN_PROGRESS', 'EXECUTE_COMPLETE'].includes(change.ExecutionStatus))

@@ -552,9 +552,12 @@ Resources:
                    logs:DescribeLogStreams, logs:TagResource, logs:UntagResource,
                    logs:ListTagsForResource]
                 Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/authrim/aws-saml/${WorkloadStackName}/*'
-              - Sid: DescribeLogGroups
+              - Sid: DescribeAndDeliverLogs
                 Effect: Allow
-                Action: logs:DescribeLogGroups
+                # prettier-ignore
+                Action:
+                  [logs:DescribeLogGroups, 'logs:*LogDelivery', logs:ListLogDeliveries,
+                   logs:DescribeResourcePolicies, logs:PutResourcePolicy]
                 Resource: '*'
               - Sid: CreateTaggedWorkloadSecurityGroup
                 Effect: Allow

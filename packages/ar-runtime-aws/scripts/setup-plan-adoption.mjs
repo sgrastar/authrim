@@ -4,8 +4,10 @@ import { link, lstat, mkdir, open, rmdir, unlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { AwsSetupError, createAwsSetupCli } from './setup-aws-cli.mjs';
 import { readExecutionFixture } from './setup-artifacts.mjs';
+import { executionAuthState } from './setup-auth-state.mjs';
 import { assertSetupIdentity } from './setup-cloudformation.mjs';
 import { EXECUTION_STAGES, verifyExecutionPlan } from './setup-execution-plan.mjs';
+import { normalizeSetupUi } from './setup-ui-config.mjs';
 import {
   canonicalSetupJson,
   lockSetupState,
@@ -254,6 +256,7 @@ async function reconcileArtifacts({ aws, plan, state, previousStatePath }) {
   )
     fail('object_invalid');
   const cloud = JSON.parse(cloudBytes.toString('utf8'));
+  const destinationUi = normalizeSetupUi(config.components, config.ui, config.mode);
   const expectedCloud = {
     ...fixture.descriptor,
     backup: {
@@ -265,6 +268,11 @@ async function reconcileArtifacts({ aws, plan, state, previousStatePath }) {
       }),
     },
     supplement: objectPin(state.uploads.supplement, config.assets.prefix),
+    // The upload adds these two from the plan, in the same way, so the file is checked with them.
+    ...(destinationUi ? { destinationUi } : {}),
+    ...(config.authState === undefined
+      ? {}
+      : { authState: executionAuthState(config, state, fixture.descriptor.restoreId) }),
   };
   if (
     expectedCloud.supplement.sha256 !== fixture.descriptor.supplement.sha256 ||
