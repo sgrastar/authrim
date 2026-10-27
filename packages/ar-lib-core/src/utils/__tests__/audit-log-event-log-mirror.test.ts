@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../types/env';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import { createAuditLog } from '../audit-log';
@@ -16,12 +16,20 @@ import {
   USER_EVENTS,
 } from '../../types/events/event-types';
 
+vi.mock('../../services/log-iceberg-emitter', () => ({
+  emitLogIcebergRow: vi.fn(
+    async (env: { __events: Map<string, unknown> }, input: { row: { id: string } }) => {
+      env.__events.set(input.row.id, input.row);
+    }
+  ),
+}));
+
 /**
  * The unified event_log mirror of audit_log, through the real core schema: a failed event must
  * be recorded as a failure with its error code, never as a success.
  */
 function mirrorEnv() {
-  const { db, adapter: base } = sqliteAdapter();
+  const { adapter: base } = sqliteAdapter();
   // The rest of the adapter surface, so the audit service uses it as an adapter rather than D1.
   const adapter = Object.assign(base, {
     transaction: () => Promise.reject(new Error('unused')),
@@ -29,22 +37,14 @@ function mirrorEnv() {
     getType: () => 'd1',
     close: async () => {},
   });
-  const env = { DB: adapter, DB_PII: adapter } as unknown as Env;
-  const row = (id: string) =>
-    db
-      .prepare(
-        `SELECT event_type, result, error_code, anonymized_user_id, details_json
-           FROM event_log WHERE id = ?`
-      )
-      .get(id) as
-      | {
-          event_type: string;
-          result: string;
-          error_code: string | null;
-          anonymized_user_id: string | null;
-          details_json: string | null;
-        }
-      | undefined;
+  const events = new Map<string, unknown>();
+  const env = {
+    DB: adapter,
+    DB_PII: adapter,
+    __events: events,
+    AUTHRIM_LOG_ARCHIVE_MODE: 'scheduled',
+  } as unknown as Env;
+  const row = (id: string) => events.get(id) as Record<string, string | null> | undefined;
   return { env, row };
 }
 

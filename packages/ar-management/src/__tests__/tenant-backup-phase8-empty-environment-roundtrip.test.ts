@@ -1,7 +1,8 @@
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createTenantBundleKeyEnvelope,
   unlockTenantBundleKeyEnvelope,
@@ -49,6 +50,11 @@ import {
 } from '../tenant-backup-restore-authority';
 import { TenantBackupRequestStore } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
 
+let logging: Awaited<ReturnType<typeof logProducerFixture>>;
+beforeAll(async () => {
+  logging = await logProducerFixture('scheduled');
+});
+afterAll(() => logging?.close());
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const sourcePiiKey = '11'.repeat(32);
 const targetPiiKey = '22'.repeat(32);
@@ -90,6 +96,28 @@ function freshDatabase(family: Family) {
 function schemaAdapter(database: SQLiteDatabase) {
   const values = (params: unknown[]) => params.map((value) => value as SQLInputValue);
   return {
+    getType: () => 'sqlite',
+    close: async () => {},
+    isHealthy: async () => ({ healthy: true, latencyMs: 0, type: 'sqlite' }),
+    transaction: async <T>(_work: unknown): Promise<T> => {
+      throw new Error('Use batch');
+    },
+    batch: async (statements: import('@authrim/ar-lib-core').PreparedStatement[]) => {
+      database.exec('BEGIN');
+      try {
+        const result = statements.map((statement) => ({
+          success: true,
+          rowsAffected: Number(
+            database.prepare(statement.sql).run(...values(statement.params ?? [])).changes
+          ),
+        }));
+        database.exec('COMMIT');
+        return result;
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    },
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
       return database.prepare(sql).all(...values(params)) as T[];
     },
@@ -547,6 +575,7 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       // The rows that grant more than a tenant: refused for a tenant-only requester, as decoded
       // from the bundle, before anything is written.
       const guard = createTenantBackupRestoreAuthorityGuard({
+        logEnv: logging.env,
         database: schemaAdapter(target.admin),
         loadBundleRoles: async () => restored.get('admin.admin_roles') ?? [],
       });

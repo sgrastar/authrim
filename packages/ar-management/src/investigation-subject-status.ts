@@ -332,7 +332,7 @@ export type RecentSignInAttempts =
        * API sign-in, IdP-initiated SAML, re-authentication pages) are not counted here.
        */
       coverage: 'flow_interactions';
-      /** Every recorded failure of the account still held in D1, so a burst cannot hide others. */
+      /** Every retained recorded failure of the account in the new log snapshot. */
       total: number;
       /** Whether `items` leaves out older attempts (`total` is larger). */
       truncated: boolean;
@@ -354,15 +354,15 @@ export type RecentSignInAttempts =
   | { available: false; reason: 'key_unavailable' };
 
 /**
- * The account's recent failed sign-in attempts, from the tenant's Core database holding Flow
- * interactions (`flowCore`). Records carry only the account's subject hash, so they are found by
+ * The account's recent failed sign-in attempts from its authorized Worker-local log view.
+ * Records carry only the account's subject hash, so they are found by
  * hashing the account with every key of the investigation keyring. Without a keyring nothing can
  * be found, which is reported as unavailable rather than as no attempts.
  */
 // The Flow node an attempt was at is not returned: node IDs are chosen by a Flow's author and may
 // carry private text.
 export async function readRecentSignInAttempts(
-  flowCore: DatabaseAdapter,
+  flowCore: Pick<DatabaseAdapter, 'query'>,
   keys: InvestigationSubjectHmacKeys | null,
   tenantId: string,
   userId: string
@@ -393,14 +393,15 @@ export async function readRecentSignInAttempts(
       first_at: number | null;
       last_at: number | null;
     }>(
-      `SELECT CASE WHEN method IN (${placeholders(SIGN_IN_ATTEMPT_METHODS)}) THEN method
+      `WITH attempts AS (SELECT created_at,
+              CASE WHEN method IN (${placeholders(SIGN_IN_ATTEMPT_METHODS)}) THEN method
                    ELSE 'other' END AS method,
               CASE WHEN reason_code IN (${placeholders(SIGN_IN_ATTEMPT_REASON_CODES)})
-                   THEN reason_code ELSE 'other' END AS reason_code,
-              COUNT(*) AS count, MIN(created_at) AS first_at, MAX(created_at) AS last_at
+                   THEN reason_code ELSE 'other' END AS reason_code
          FROM flow_audit_events
-        WHERE ${match}
-        GROUP BY 1, 2`,
+        WHERE ${match})
+        SELECT method,reason_code,COUNT(*) AS count,MIN(created_at) AS first_at,MAX(created_at) AS last_at
+        FROM attempts GROUP BY method,reason_code`,
       [...SIGN_IN_ATTEMPT_METHODS, ...SIGN_IN_ATTEMPT_REASON_CODES, ...params]
     ),
   ]);

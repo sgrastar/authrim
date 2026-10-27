@@ -1,4 +1,22 @@
 import type { AgentActorAssurance, AgentMode, JsonObject } from './types';
+import type { DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core/db/adapter';
+
+/** Prepared statements join the same Admin transaction as the guarded business effect. */
+export type AdminAgentAuditWriter = (
+  database: DatabaseAdapter,
+  audit: AdminAgentAuditWrite,
+  guard?: { from: string; where: string; params: readonly unknown[] }
+) => Promise<PreparedStatement[]>;
+
+export async function prepareAdminAgentAuditStatements(
+  writer: AdminAgentAuditWriter | undefined,
+  database: DatabaseAdapter,
+  audit: AdminAgentAuditWrite,
+  guard?: { from: string; where: string; params: readonly unknown[] }
+): Promise<PreparedStatement[]> {
+  if (!writer) throw new Error('admin_agent_audit_writer_required');
+  return writer(database, audit, guard);
+}
 
 export interface AgentAuditActor {
   actorSub: string;

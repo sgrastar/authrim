@@ -337,7 +337,7 @@ async function seedLocalControlPlane(input: {
     const artifactPath = join(artifactsDir, `${component}.toml`);
     await writeFile(
       artifactPath,
-      toToml(generateWranglerConfig(component, config, resourceIds), env)
+      toToml(generateWranglerConfig(component, config, resourceIds, undefined, { local: {} }), env)
     );
     artifactPaths.push(artifactPath);
   }

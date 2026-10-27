@@ -95,7 +95,7 @@ describe('audit DLQ consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
         TENANT_BACKUP_WRAPPING_KEY: 'enabled',
         CONTROL: {
@@ -177,7 +177,7 @@ describe('audit DLQ consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: createAdminDbAdapter(),
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
       } as unknown as Parameters<typeof processDLQQueue>[1]
     );
 

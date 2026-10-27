@@ -51,14 +51,6 @@ vi.mock('../admin-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../admin-shared')>()),
   writeAdminAuditLog: vi.fn(),
 }));
-const archive = vi.hoisted(() =>
-  vi.fn(async (_input: { records: Array<{ id: string }> }) => ({
-    targetResults: [] as Array<{ error?: string }>,
-  }))
-);
-vi.mock('@authrim/ar-lib-core/services/logging-runtime-emitter', () => ({
-  emitRuntimeLogRecords: archive,
-}));
 import { supportOpsRouter } from '../support-ops';
 import { keepSupportOpsLogoutPage } from '../support-ops-job-evidence';
 import {
@@ -80,8 +72,6 @@ afterEach(() => {
   for (const item of opened.splice(0)) item.close();
   runtime.current = undefined;
   vi.restoreAllMocks();
-  archive.mockReset();
-  archive.mockResolvedValue({ targetResults: [] });
 });
 function receipt(f: ExecuteFixture) {
   const value = f.receipts.get('user-1');
@@ -288,9 +278,7 @@ describe('resumable Support Ops coordinator on real Core/Admin SQLite and actual
       .all() as Array<{ config: string }>;
     const configs = jobs.map((row) => JSON.parse(row.config) as { sessions: unknown[] });
     expect(configs.map((config) => config.sessions.length)).toEqual([10, 10, 5]);
-    const audit = f.admin.db.prepare('SELECT metadata_json FROM admin_audit_log').all() as Array<{
-      metadata_json: string;
-    }>;
+    const audit = await f.auditRows();
     expect(audit).toHaveLength(1);
     expect(audit[0]?.metadata_json).not.toMatch(/session-|account-user|target_id|store_identity/);
   });
@@ -374,23 +362,23 @@ describe('resumable Support Ops coordinator on real Core/Admin SQLite and actual
         .all()
     ).toEqual(rows);
   });
-  it('retries archive fanout with one durable audit identity instead of duplicating the D1 row', async () => {
+  it('retries Pipeline dispatch with one durable receipt and no searchable DB log copy', async () => {
     const f = await fixture(0);
     f.env.AUTHRIM_CONFIG = {} as KVNamespace;
-    archive.mockResolvedValueOnce({ targetResults: [{ error: 'archive_unavailable' }] });
+    f.dispatch.mockRejectedValueOnce(new Error('pipeline_unavailable'));
     await f.step();
     expect(f.row().status).toBe('pending');
-    expect(f.admin.db.prepare('SELECT COUNT(*) n FROM admin_audit_log').get()).toMatchObject({
+    expect(f.admin.db.prepare('SELECT COUNT(*) n FROM admin_audit_receipts').get()).toMatchObject({
       n: 1,
     });
     await f.finish();
     expect(f.row().status).toBe('completed');
-    expect(f.admin.db.prepare('SELECT COUNT(*) n FROM admin_audit_log').get()).toMatchObject({
+    expect(f.admin.db.prepare('SELECT COUNT(*) n FROM admin_audit_receipts').get()).toMatchObject({
       n: 1,
     });
-    expect(archive).toHaveBeenCalledTimes(2);
-    expect(archive.mock.calls[0]?.[0].records[0]?.id).toBe(
-      archive.mock.calls[1]?.[0].records[0]?.id
+    expect(f.dispatch).toHaveBeenCalledTimes(2);
+    expect(f.dispatch.mock.calls[0]?.[0].references[0]?.id).toBe(
+      f.dispatch.mock.calls[1]?.[0].references[0]?.id
     );
   });
   it.each(['databaseId', 'bindingRouteGeneration', 'shardId', 'assignmentGeneration'] as const)(
@@ -451,7 +439,7 @@ describe('Support Ops execute HTTP boundary', () => {
     const response = await request(f);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ status: 'completed', succeeded_count: 10 });
-    expect(f.admin.db.prepare('SELECT COUNT(*) n FROM admin_audit_log').get()).toMatchObject({
+    expect(f.admin.db.prepare('SELECT COUNT(*) n FROM admin_audit_receipts').get()).toMatchObject({
       n: 1,
     });
   });

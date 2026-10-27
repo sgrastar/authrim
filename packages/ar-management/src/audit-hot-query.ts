@@ -1,10 +1,7 @@
 import { createLogReadAdapter } from './log-read-adapter';
 import type { Context } from 'hono';
 import type { Env, DatabaseAdapter, AuditProfile } from '@authrim/ar-lib-core';
-import {
-  createAuditPrimaryDatabaseAdapter,
-  resolveTenantRuntimeProfilesFromEnv,
-} from '@authrim/ar-lib-core';
+import { resolveTenantRuntimeProfilesFromEnv } from '@authrim/ar-lib-core';
 
 export type AuditHotQueryStatus = 'supported' | 'not_supported' | 'pending_runtime_support';
 export type AuditHotQueryMode = 'legacy' | 'unified';
@@ -36,142 +33,54 @@ export interface AuditHotQuerySupport {
 
 export function getAuditHotQuerySupportForProfile(
   env: Env,
-  auditProfile: AuditProfile
+  auditProfile: AuditProfile,
+  tenantId: string
 ): AuditHotQuerySupport {
-  if (!auditProfile.primary) {
-    return {
-      supported: false,
-      status: 'not_supported',
-      auditProfileId: auditProfile.id,
-      reason: 'archive-only audit profiles do not expose a hot query store',
-    };
-  }
-
-  if (auditProfile.primary.type === 'd1') {
-    const adapter = createAuditPrimaryDatabaseAdapter(
-      env as unknown as Record<string, unknown>,
-      auditProfile.primary,
-      'audit-hot-query'
-    );
-    if (!adapter) {
-      return {
-        supported: false,
-        status: 'pending_runtime_support',
-        auditProfileId: auditProfile.id,
-        reason: `d1 audit primary binding was not resolved: ${auditProfile.primary.bindingRef ?? 'DB'}`,
-      };
-    }
-
-    return {
-      supported: true,
-      status: 'supported',
-      auditProfileId: auditProfile.id,
-      context: {
-        adapter,
-        mode: 'unified',
-        dialect: 'sqlite',
-        createdAtUnit: 'milliseconds',
-        auditProfileId: auditProfile.id,
-      },
-    };
-  }
-
-  if (auditProfile.primary.type === 'postgres') {
-    const adapter = createAuditPrimaryDatabaseAdapter(
-      env as unknown as Record<string, unknown>,
-      auditProfile.primary,
-      'audit-hot-query'
-    );
-    if (!adapter) {
-      return {
-        supported: false,
-        status: 'pending_runtime_support',
-        auditProfileId: auditProfile.id,
-        reason: 'postgres audit primary is configured but no Hyperdrive binding was resolved',
-      };
-    }
-
-    return {
-      supported: true,
-      status: 'supported',
-      auditProfileId: auditProfile.id,
-      context: {
-        adapter,
-        mode: 'unified',
-        dialect: 'postgres',
-        createdAtUnit: 'milliseconds',
-        auditProfileId: auditProfile.id,
-      },
-    };
-  }
-
-  if (auditProfile.primary.type === 'mysql') {
-    const adapter = createAuditPrimaryDatabaseAdapter(
-      env as unknown as Record<string, unknown>,
-      auditProfile.primary,
-      'audit-hot-query'
-    );
-    if (!adapter) {
-      return {
-        supported: false,
-        status: 'pending_runtime_support',
-        auditProfileId: auditProfile.id,
-        reason: 'mysql audit primary is configured but no Hyperdrive binding was resolved',
-      };
-    }
-
-    return {
-      supported: true,
-      status: 'supported',
-      auditProfileId: auditProfile.id,
-      context: {
-        adapter,
-        mode: 'unified',
-        dialect: 'mysql',
-        createdAtUnit: 'milliseconds',
-        auditProfileId: auditProfile.id,
-      },
-    };
-  }
-
+  // Log query capabilities belong to the explicit Iceberg mode, not the former primary store.
+  const read = createLogReadAdapter({ env, tenantId, dataset: 'core.event_log' });
   return {
-    supported: false,
-    status: 'pending_runtime_support',
+    supported: true,
+    status: 'supported',
     auditProfileId: auditProfile.id,
-    reason: `audit primary type "${auditProfile.primary.type}" is not implemented yet`,
+    context: {
+      adapter: read.adapter,
+      mode: 'unified',
+      dialect: 'sqlite',
+      createdAtUnit: 'milliseconds',
+      auditProfileId: auditProfile.id,
+      archiveRead: read,
+    },
   };
 }
 
 export async function getAuditHotQuerySupport(
   env: Env,
   tenantId: string,
-  readOptions?: Pick<Parameters<typeof createLogReadAdapter>[0], 'window' | 'hotOnly' | 'page'> & {
-    /** Existing activity cursors use the primary store's timestamp unit. */
+  readOptions?: Pick<
+    Parameters<typeof createLogReadAdapter>[0],
+    'window' | 'page' | 'onCoverage'
+  > & {
     storedCursorTime?: number;
   }
 ): Promise<AuditHotQuerySupport> {
   const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
-  const support = getAuditHotQuerySupportForProfile(env, resolved.auditProfile);
+  const support = getAuditHotQuerySupportForProfile(env, resolved.auditProfile, tenantId);
   if (support.context) {
     const { storedCursorTime, ...options } = readOptions ?? {};
-    const archiveRead = createLogReadAdapter({
+    const read = createLogReadAdapter({
       env,
       tenantId,
-      adapter: support.context.adapter,
-      dataset: support.context.mode === 'legacy' ? 'core.audit_log' : 'core.event_log',
+      dataset: 'core.event_log',
       ...options,
       window:
         storedCursorTime === undefined
           ? options.window
           : {
               ...options.window,
-              toMs: Math.min(
-                options.window?.toMs ?? Number.MAX_SAFE_INTEGER,
-                storedCursorTime * (support.context.createdAtUnit === 'seconds' ? 1000 : 1)
-              ),
+              toMs: Math.min(options.window?.toMs ?? Number.MAX_SAFE_INTEGER, storedCursorTime),
             },
     });
-    support.context = { ...support.context, adapter: archiveRead.adapter, archiveRead };
+    support.context = { ...support.context, adapter: read.adapter, archiveRead: read };
   }
   return support;
 }

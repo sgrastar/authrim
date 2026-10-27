@@ -7,6 +7,7 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
   mockCoreAdapter,
+  mockPiiAdapter,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -20,6 +21,27 @@ const {
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
     mockCoreAdapter: coreAdapter,
+    mockPiiAdapter: { queryOne: vi.fn() },
+  };
+});
+
+// Handler SQL/ACL unit tests inject their query port. The real storage boundary is exercised in log-iceberg-read-adapter.test.ts.
+vi.mock('../log-read-adapter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../log-read-adapter')>();
+  return {
+    ...actual,
+    createLogReadAdapter: (input: {
+      adapter: unknown;
+      page?: { cursor?: string; scope: string };
+    }) => {
+      actual.decodeCursor(input.page?.cursor, input.page?.scope ?? '');
+      return {
+        adapter: input.adapter,
+        hasArchive: () => false,
+        pagination: () => undefined,
+        coverage: () => undefined,
+      };
+    },
   };
 });
 
@@ -30,6 +52,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createPIIContextFromHono: () => ({ defaultPiiAdapter: mockPiiAdapter }),
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     getLogger: () => ({
       module: () => ({
@@ -66,7 +89,7 @@ function createMockContext(options: { cookie?: string; query?: Record<string, st
           ...Object.fromEntries(headers.entries()),
         },
       }),
-  } as any;
+  } as unknown as Parameters<typeof listAccountOperationsHandler>[0];
 }
 
 describe('Account Page operation history API', () => {
@@ -82,14 +105,18 @@ describe('Account Page operation history API', () => {
       expiresAt: Date.now() + 60_000,
       data: {},
     });
+    mockPiiAdapter.queryOne.mockResolvedValue({ anonymized_user_id: 'anon-user-001' });
     mockCoreAdapter.query.mockResolvedValue([
       {
         id: 'audit-1',
         action: 'account.profile.name_updated',
-        resource_type: 'account_profile',
-        resource_id: 'user-001',
-        metadata_json: JSON.stringify({ fields: ['name'] }),
-        created_at: 1_777_200_000,
+        details_json: JSON.stringify({
+          source: 'legacy_audit_log',
+          resourceType: 'account_profile',
+          resourceId: 'user-001',
+          fields: ['name'],
+        }),
+        created_at: 1_777_200_000_000,
       },
     ]);
   });
@@ -110,8 +137,13 @@ describe('Account Page operation history API', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-      expect.stringContaining("action LIKE 'account.%'"),
-      ['default', 'user-001', 100]
+      expect.stringContaining("event_type LIKE 'account.%'"),
+      ['default', 'anon-user-001', 100]
+    );
+    expect(mockPiiAdapter.queryOne).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE tenant_id = ? AND user_id = ?'),
+      ['default', 'user-001'],
+      { consistencyClass: 'primary_required' }
     );
     expect(body.operations).toEqual([
       {
@@ -132,11 +164,40 @@ describe('Account Page operation history API', () => {
     expect(mockCoreAdapter.query).not.toHaveBeenCalled();
   });
 
+  it('refuses a session belonging to another tenant before reading identity or log rows', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+      tenantId: 'tenant-b',
+      userId: 'user-001',
+      expiresAt: Date.now() + 60000,
+    });
+    const response = await listAccountOperationsHandler(
+      createMockContext({ cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current' })
+    );
+    expect(response.status).toBe(401);
+    expect(mockPiiAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mockCoreAdapter.query).not.toHaveBeenCalled();
+  });
+
+  it('queries with a null subject after mapping erasure and never recreates it', async () => {
+    mockPiiAdapter.queryOne.mockResolvedValueOnce(null);
+    mockCoreAdapter.query.mockResolvedValueOnce([]);
+    const response = await listAccountOperationsHandler(
+      createMockContext({ cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current' })
+    );
+    expect(response.status).toBe(200);
+    expect(mockCoreAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('anonymized_user_id = ?'),
+      ['default', null, 50]
+    );
+    expect(await response.json()).toMatchObject({ operations: [] });
+    expect(mockPiiAdapter.queryOne).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects an invalid archived-history cursor before querying another user or returning an empty list', async () => {
     const context = createMockContext({
       cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
       query: { cursor: 'invalid' },
-    }) as Parameters<typeof listAccountOperationsHandler>[0];
+    });
     context.env.DB_ADMIN = {} as D1Database;
     const response = await listAccountOperationsHandler(context);
     expect(response.status).toBe(400);
@@ -161,7 +222,7 @@ describe('Account Page operation history API', () => {
     expect(response.status).toBe(200);
     expect(mockCoreAdapter.query).toHaveBeenCalledWith(expect.any(String), [
       'default',
-      'user-001',
+      'anon-user-001',
       expected,
     ]);
   });
@@ -175,7 +236,7 @@ describe('Account Page operation history API', () => {
           action: 'account.session.revoked',
           resource_type: null,
           resource_id: null,
-          metadata_json: metadataJson,
+          details_json: metadataJson,
           created_at: 1,
         },
       ]);

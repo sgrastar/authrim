@@ -84,6 +84,8 @@ export interface Phase5KeyManagerSnapshotPorts {
 
 export interface Phase5RecordSnapshotPort {
   resourceId: string;
+  /** Prepare bounded non-SQL resources before entering the short cross-store hold. */
+  prepareBoundary?(context: AdapterContext, snapshotId: string): Promise<void>;
   assertSource(context: AdapterContext): Promise<void>;
   start(
     context: AdapterContext,
@@ -92,7 +94,7 @@ export interface Phase5RecordSnapshotPort {
     boundaryUnixMs: number
   ): Promise<void>;
   readNext(
-    context: AdapterContext,
+    context: AdapterContext & { datasetId?: string },
     snapshotId: string,
     cursor: string | null,
     signal: AbortSignal
@@ -213,6 +215,20 @@ function selectedRecordSnapshots<T extends { dataset: TenantPortableDataset }>(
   });
 }
 
+/** Logical aliases may share capture only through the exact same trusted handler object. */
+function physicalRecordSnapshots<T extends { port: Phase5RecordSnapshotPort }>(
+  records: readonly T[]
+): T[] {
+  const physical = new Map<string, T>();
+  for (const record of records) {
+    const existing = physical.get(record.port.resourceId);
+    if (existing && existing.port !== record.port)
+      throw new Error('backup_phase5_record_snapshot_ports');
+    physical.set(record.port.resourceId, existing ?? record);
+  }
+  return [...physical.values()];
+}
+
 /** Complete Phase 5 adapter: SQL settings plus the tenant KeyManager DO snapshot. */
 export function createPhase5TenantBackupInstalledAdapter(input: {
   env: Env;
@@ -288,7 +304,6 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
   ];
   if (
     new Set(recordSnapshots.map(({ dataset }) => dataset.id)).size !== recordSnapshots.length ||
-    new Set(recordSnapshots.map(({ port }) => port.resourceId)).size !== recordSnapshots.length ||
     recordSnapshots.some(
       ({ dataset, port }) =>
         !/^[A-Za-z0-9_.:-]{1,128}$/.test(port.resourceId) ||
@@ -300,6 +315,7 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
     )
   )
     throw new Error('backup_phase5_record_snapshot_ports');
+  physicalRecordSnapshots(recordSnapshots);
   return {
     export: {
       ...sqlExport,
@@ -324,8 +340,8 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         await sqlExport.assertSources(context);
         if (keyManagerSelected(context)) await input.ports.keyManagerSnapshot.assertSource(context);
         await Promise.all(
-          selectedRecordSnapshots(recordSnapshots, context).map(({ port }) =>
-            port.assertSource(context)
+          physicalRecordSnapshots(selectedRecordSnapshots(recordSnapshots, context)).map(
+            ({ port }) => port.assertSource(context)
           )
         );
       },
@@ -333,8 +349,8 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         await sqlExport.assertBoundaryReady(context);
         if (keyManagerSelected(context)) await input.ports.keyManagerSnapshot.assertSource(context);
         await Promise.all(
-          selectedRecordSnapshots(recordSnapshots, context).map(({ port }) =>
-            port.assertSource(context)
+          physicalRecordSnapshots(selectedRecordSnapshots(recordSnapshots, context)).map(
+            ({ port }) => port.assertSource(context)
           )
         );
       },
@@ -353,11 +369,14 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
               input.ports.keyManagerSnapshot.start(context, keyManagerId, assertHeld),
           });
         }
-        for (const record of selectedRecordSnapshots(recordSnapshots, context)) {
+        for (const record of physicalRecordSnapshots(
+          selectedRecordSnapshots(recordSnapshots, context)
+        )) {
           const recordSnapshotId = await tenantBackupRecordSnapshotId(
             context,
             record.port.resourceId
           );
+          await record.port.prepareBoundary?.(context, recordSnapshotId);
           extra.push({
             resourceId: record.port.resourceId,
             snapshotId: recordSnapshotId,
@@ -386,13 +405,14 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
             (await tenantBackupRecordSnapshotId(context, TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID))
         )
           throw new Error('backup_phase5_key_manager_coverage');
-        for (const record of recordSnapshots) {
-          const selected = tenantDatasetSelectionRule(record.dataset.kind, context.selection);
+        const selectedPorts = new Set(
+          selectedRecordSnapshots(recordSnapshots, context).map((record) => record.port)
+        );
+        for (const record of physicalRecordSnapshots(recordSnapshots)) {
           const matches = context.participants.filter(
             ({ resourceId }) => resourceId === record.port.resourceId
           );
-          const required =
-            selected.action === 'selected' || selected.action === 'resolve_references';
+          const required = selectedPorts.has(record.port);
           if (
             matches.length !== (required ? 1 : 0) ||
             (matches[0] &&
@@ -428,7 +448,11 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
         };
       },
       ...(input.sqliteExtension?.prepareArtifactResources
-        ? { prepareArtifactResources: input.sqliteExtension.prepareArtifactResources }
+        ? {
+            prepareArtifactResources: input.sqliteExtension.prepareArtifactResources.bind(
+              input.sqliteExtension
+            ),
+          }
         : {}),
       async releaseAdditionalResources(context) {
         const result = await sqlExport.releaseAdditionalResources(context);
@@ -438,9 +462,9 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
             context,
             await tenantBackupRecordSnapshotId(context, TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID)
           );
-        for (const record of recordSnapshots) {
-          const rule = tenantDatasetSelectionRule(record.dataset.kind, context.selection);
-          if (rule.action !== 'selected' && rule.action !== 'resolve_references') continue;
+        for (const record of physicalRecordSnapshots(
+          selectedRecordSnapshots(recordSnapshots, context)
+        )) {
           const snapshotId = await tenantBackupRecordSnapshotId(context, record.port.resourceId);
           // Large staged snapshots release one page per transition; the dispatcher calls again.
           if (record.port.releasePage) {
@@ -456,13 +480,13 @@ export function createPhase5TenantBackupInstalledAdapter(input: {
             context,
             await tenantBackupRecordSnapshotId(context, TENANT_BACKUP_KEY_MANAGER_RESOURCE_ID)
           );
-        for (const record of recordSnapshots) {
-          const rule = tenantDatasetSelectionRule(record.dataset.kind, context.selection);
-          if (rule.action === 'selected' || rule.action === 'resolve_references')
-            await record.port.assertReleased(
-              context,
-              await tenantBackupRecordSnapshotId(context, record.port.resourceId)
-            );
+        for (const record of physicalRecordSnapshots(
+          selectedRecordSnapshots(recordSnapshots, context)
+        )) {
+          await record.port.assertReleased(
+            context,
+            await tenantBackupRecordSnapshotId(context, record.port.resourceId)
+          );
         }
       },
     },

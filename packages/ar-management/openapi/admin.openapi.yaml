@@ -1014,6 +1014,12 @@ paths:
         '200':
           description: Account status from Core.
           headers:
+            X-Authrim-Log-Consistency:
+              $ref: '#/components/headers/LogConsistency'
+            X-Authrim-Log-Pending-Deliveries:
+              $ref: '#/components/headers/LogPendingDeliveries'
+            X-Authrim-Log-Complete:
+              $ref: '#/components/headers/LogComplete'
             Cache-Control:
               schema: { type: string, enum: [no-store] }
           content:
@@ -1024,6 +1030,7 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/LogQueryIncomplete' }
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2112,13 +2119,20 @@ paths:
           required: false
           description:
             Cursor returned by a previous response for this tenant and these filters. Start with
-            page 1; archived lists use cursors instead of page numbers.
+            page 1; log lists use cursors instead of page numbers.
           schema:
             type: string
             maxLength: 4096
       responses:
         '200':
-          description: Audit events from the hot store and retained whole-row archives.
+          headers:
+            X-Authrim-Log-Consistency:
+              $ref: '#/components/headers/LogConsistency'
+            X-Authrim-Log-Pending-Deliveries:
+              $ref: '#/components/headers/LogPendingDeliveries'
+            X-Authrim-Log-Complete:
+              $ref: '#/components/headers/LogComplete'
+          description: Audit events from the current authorized Iceberg view and scheduled staging.
           content:
             application/json:
               schema:
@@ -2147,15 +2161,21 @@ paths:
           in: query
           required: false
           description:
-            Event time in Unix milliseconds from the list entry. Required to locate a whole-row
-            archived entry. Without this hint whole-row archives are not searched; existing indexed
-            archive-only lookups and detail permissions are preserved.
+            Optional event time in Unix milliseconds to narrow the lookup. Without this hint the
+            current Iceberg snapshot is also searched. Additional detail permissions still apply.
           schema:
             type: integer
             minimum: 0
             maximum: 9007199254740991
       responses:
         '200':
+          headers:
+            X-Authrim-Log-Consistency:
+              $ref: '#/components/headers/LogConsistency'
+            X-Authrim-Log-Pending-Deliveries:
+              $ref: '#/components/headers/LogPendingDeliveries'
+            X-Authrim-Log-Complete:
+              $ref: '#/components/headers/LogComplete'
           description: The audit entry, including its retained details and optional resolved user.
           content:
             application/json:
@@ -4196,7 +4216,7 @@ paths:
           required: false
           description:
             Cursor returned by a previous response for this tenant and these filters. Start with
-            page 1; archived lists use cursors instead of page numbers.
+            page 1; log lists use cursors instead of page numbers.
           schema:
             type: string
             maxLength: 4096
@@ -4234,9 +4254,8 @@ paths:
           in: query
           required: false
           description:
-            Event time in Unix milliseconds from the list entry. Required to locate a whole-row
-            archived entry; without this hint only the hot store is consulted. Existing detail
-            permissions still apply.
+            Optional event time in Unix milliseconds to narrow the lookup. Without this hint the
+            current Iceberg snapshot is also searched. Additional detail permissions still apply.
           schema:
             type: integer
             minimum: 0
@@ -8408,6 +8427,13 @@ paths:
               $ref: '#/components/schemas/ComplianceReportCreateRequest'
       responses:
         '201':
+          headers:
+            X-Authrim-Log-Consistency:
+              $ref: '#/components/headers/LogConsistency'
+            X-Authrim-Log-Pending-Deliveries:
+              $ref: '#/components/headers/LogPendingDeliveries'
+            X-Authrim-Log-Complete:
+              $ref: '#/components/headers/LogComplete'
           description: The generated report.
           content:
             application/json:
@@ -8473,6 +8499,13 @@ paths:
             type: string
       responses:
         '200':
+          headers:
+            X-Authrim-Log-Consistency:
+              $ref: '#/components/headers/LogConsistency'
+            X-Authrim-Log-Pending-Deliveries:
+              $ref: '#/components/headers/LogPendingDeliveries'
+            X-Authrim-Log-Complete:
+              $ref: '#/components/headers/LogComplete'
           description: The report.
           content:
             application/json:
@@ -8504,6 +8537,13 @@ paths:
             type: string
       responses:
         '200':
+          headers:
+            X-Authrim-Log-Consistency:
+              $ref: '#/components/headers/LogConsistency'
+            X-Authrim-Log-Pending-Deliveries:
+              $ref: '#/components/headers/LogPendingDeliveries'
+            X-Authrim-Log-Complete:
+              $ref: '#/components/headers/LogComplete'
           description: The report's file.
           content:
             text/csv:
@@ -11933,6 +11973,13 @@ paths:
       responses:
         '200':
           description: One page of committed level changes.
+          headers:
+            X-Authrim-Log-Consistency:
+              $ref: '#/components/headers/LogConsistency'
+            X-Authrim-Log-Pending-Deliveries:
+              $ref: '#/components/headers/LogPendingDeliveries'
+            X-Authrim-Log-Complete:
+              $ref: '#/components/headers/LogComplete'
           content:
             application/json:
               schema:
@@ -16227,7 +16274,7 @@ paths:
           required: false
           description:
             Cursor returned by a previous response for this tenant and these filters. Start with
-            page 1; archived lists use cursors instead of page numbers.
+            page 1; log lists use cursors instead of page numbers.
           schema:
             type: string
             maxLength: 4096
@@ -16283,9 +16330,8 @@ paths:
           in: query
           required: false
           description:
-            Event time in Unix milliseconds from the list entry. Required to locate a whole-row
-            archived entry; without this hint only the hot store is consulted. Existing detail
-            permissions still apply.
+            Optional event time in Unix milliseconds to narrow the lookup. Without this hint the
+            current Iceberg snapshot is also searched. Additional detail permissions still apply.
           schema:
             type: integer
             minimum: 0
@@ -26444,7 +26490,7 @@ paths:
       operationId: getApiAdminAdminAuditLog
       summary: List admin audit log entries
       description:
-        Lists admin audit log entries from DB_ADMIN with pagination and filters for actor,
+        Lists admin audit log entries from the authorized Iceberg view with pagination and filters for actor,
         action, resource type, result, severity, and date range. Retained whole-row archives are
         included in supported log queries. A bounded query that cannot read its required rows
         returns log_query_incomplete instead of partial statistics or an empty success.
@@ -26538,7 +26584,7 @@ paths:
           required: false
           description:
             Cursor returned by a previous response for this tenant and these filters. Start with
-            page 1; archived lists use cursors instead of page numbers.
+            page 1; log lists use cursors instead of page numbers.
           schema:
             type: string
             maxLength: 4096
@@ -26583,9 +26629,8 @@ paths:
           in: query
           required: false
           description:
-            Event time in Unix milliseconds from the list entry. Required to locate a whole-row
-            archived entry; without this hint only the hot store is consulted. Existing detail
-            permissions still apply.
+            Optional event time in Unix milliseconds to narrow the lookup. Without this hint the
+            current Iceberg snapshot is also searched. Additional detail permissions still apply.
           schema:
             type: integer
             minimum: 0
@@ -26717,7 +26762,7 @@ paths:
           required: false
           description:
             Cursor returned by a previous response for this tenant and these filters. Start with
-            page 1; archived lists use cursors instead of page numbers.
+            page 1; log lists use cursors instead of page numbers.
           schema:
             type: string
             maxLength: 4096
@@ -34761,6 +34806,21 @@ paths:
         },
     }
 components:
+  headers:
+    LogConsistency:
+      description: snapshot for the scheduled view; eventual when Pipeline visibility can lag ingestion.
+      schema:
+        type: string
+        enum: [snapshot, eventual]
+    LogPendingDeliveries:
+      description: Tenant deliveries not yet confirmed visible. Omitted for self-service subjects. Zero does not guarantee immediate Pipeline visibility.
+      schema:
+        type: integer
+        minimum: 0
+    LogComplete:
+      description: True only for a complete bounded snapshot query. Pipeline responses remain false; incomplete reads return 503.
+      schema:
+        type: boolean
   securitySchemes:
     adminBearer:
       type: http
@@ -35468,6 +35528,13 @@ components:
           example:
             delivery_id: delivery_123
     SettingsV2Patch:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       required: true
       content:
         application/json:
@@ -38654,6 +38721,13 @@ components:
             is_active: true
   responses:
     SettingsLegacyImportReport:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: What the import of the older settings stores did, or would do.
       content:
         application/json:
@@ -39442,6 +39516,13 @@ components:
           schema:
             $ref: '#/components/schemas/AdminStatsResponse'
     AdminDeleteResult:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Successful delete response.
       content:
         application/json:
@@ -39466,6 +39547,13 @@ components:
           schema:
             $ref: '#/components/schemas/AdminAvatarUploadResponse'
     AdminUserActivityLog:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: User activity log response.
       content:
         application/json:
@@ -39496,6 +39584,13 @@ components:
           schema:
             $ref: '#/components/schemas/WebhookReplayResponse'
     AdminAuditLogList:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Successful JSON response.
       content:
         application/json:
@@ -39523,6 +39618,13 @@ components:
             limit: 50
             totalPages: 1
     AdminAuditLogEntry:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Successful JSON response.
       content:
         application/json:
@@ -39548,6 +39650,13 @@ components:
             actor_id: admin_123
             actor_display_name: Admin User
     SettingsV2Get:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Settings v2 read response.
       content:
         application/json:
@@ -39560,6 +39669,13 @@ components:
           schema:
             $ref: '#/components/schemas/SettingsV2PatchResponse'
     AdminActionResult:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Successful admin action response.
       content:
         application/json:
@@ -39569,6 +39685,13 @@ components:
             success: true
             message: Operation completed
     AdminManagementRoleEffectivePermissions:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Effective permissions for an Admin role.
       content:
         application/json:
@@ -40101,12 +40224,26 @@ components:
           schema:
             $ref: '#/components/schemas/AdminJobOrgBulkMembersAccepted'
     OperationalLogList:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Operational log list response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/OperationalLogListResponse'
     OperationalLog:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Operational log detail response.
       content:
         application/json:
@@ -40318,24 +40455,52 @@ components:
           schema:
             $ref: '#/components/schemas/AdminManagementRoleListResponse'
     AdminManagementRole:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Admin role response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminManagementRole'
     AdminManagementRoleDetail:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Admin role detail response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminManagementRoleDetail'
     AdminManagementRoleAssignmentList:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Admin role assignment list response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminManagementRoleAssignmentListResponse'
     AdminManagementRoleAssignment:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Admin role assignment response.
       content:
         application/json:
@@ -40381,24 +40546,52 @@ components:
               total_policies: 6
               active_policies: 5
     AdminAccessTraceList:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Access trace list response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminAccessTraceListResponse'
     AdminAccessTraceEntry:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Access trace entry response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminAccessTraceEntryResponse'
     AdminAccessTraceStats:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Access trace statistics response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminAccessTraceStatsResponse'
     AdminAccessTraceTimeline:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Access trace timeline response.
       content:
         application/json:
@@ -42736,6 +42929,13 @@ components:
             newKeyId: kid_2026_06
             warning: Old key has been immediately revoked and removed from JWKS
     AdminStatsAuth:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Authentication and token audit statistics for the requested period.
       content:
         application/json:
@@ -42758,6 +42958,13 @@ components:
               from: 2026-06-01T00:00:00.000Z
               to: 2026-06-02T00:00:00.000Z
     AdminStatsClient:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: 'Per-client authentication, token, and usage statistics.'
       content:
         application/json:
@@ -42785,6 +42992,13 @@ components:
               from: 2026-06-01T00:00:00.000Z
               to: 2026-06-02T00:00:00.000Z
     AdminStatsGeography:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Geographic authentication statistics grouped by country and region.
       content:
         application/json:
@@ -42816,6 +43030,13 @@ components:
               total_requests: 800
               unique_users: 120
     AdminStatsTimeline:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Time-bucketed authentication statistics for the requested period.
       content:
         application/json:
@@ -42837,6 +43058,13 @@ components:
               from: 2026-06-01T00:00:00.000Z
               to: 2026-06-02T00:00:00.000Z
     AdminStatsTokens:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Token activity counters for the requested period and current active sessions.
       content:
         application/json:
@@ -43974,6 +44202,13 @@ components:
               - admin_attribute
             total: 2
     AdminAuditStats:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Successful JSON response.
       content:
         application/json:
@@ -46814,6 +47049,13 @@ components:
             _links:
               self: /api/admin/clients/client_123/profile
     AdminAuditLogStringList:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: String list response.
       content:
         application/json:
@@ -46925,6 +47167,21 @@ components:
                 type: boolean
                 const: false
   schemas:
+    LogReadCoverage:
+      type: object
+      additionalProperties: false
+      required: [consistency, pending_deliveries, complete]
+      properties:
+        consistency:
+          type: string
+          enum: [snapshot, eventual]
+        pending_deliveries:
+          type: [integer, 'null']
+          minimum: 0
+          description: Null for self-service subjects that cannot inspect tenant delivery counts.
+        complete:
+          type: boolean
+          description: Pipeline views remain false even when no pending deliveries are known.
     AdminCertificationProfile:
       type: object
       properties:
@@ -49793,6 +50050,8 @@ components:
             - limit
             - totalPages
           properties:
+            coverage:
+              $ref: '#/components/schemas/LogReadCoverage'
             items: &a1
               type: array
               items:
@@ -49811,6 +50070,8 @@ components:
             - items
             - pagination
           properties:
+            coverage:
+              $ref: '#/components/schemas/LogReadCoverage'
             items: *a1
             pagination:
               $ref: '#/components/schemas/LogCursorPagination'
@@ -51687,6 +51948,8 @@ components:
             - items
             - total
           properties:
+            coverage:
+              $ref: '#/components/schemas/LogReadCoverage'
             items: &a1
               type: array
               items:
@@ -51700,6 +51963,8 @@ components:
             - items
             - pagination
           properties:
+            coverage:
+              $ref: '#/components/schemas/LogReadCoverage'
             items: *a1
             pagination:
               $ref: '#/components/schemas/LogCursorPagination'
@@ -51718,6 +51983,8 @@ components:
         - created_at
         - expires_at
       properties:
+        coverage:
+          $ref: '#/components/schemas/LogReadCoverage'
         id:
           type: string
         tenant_id:
@@ -54665,6 +54932,9 @@ components:
           type: [string, 'null']
         parameters:
           type: [object, 'null']
+          properties:
+            log_coverage:
+              $ref: '#/components/schemas/LogReadCoverage'
         format:
           type: [string, 'null']
           enum: [csv, json, null]
@@ -57096,6 +57366,8 @@ components:
           $ref: '#/components/schemas/InvestigationNotRecordedInCore'
         recent_attempts:
           $ref: '#/components/schemas/InvestigationRecentSignInAttempts'
+        log_coverage:
+          $ref: '#/components/schemas/LogReadCoverage'
     InvestigationRecentSignInAttempts:
       description: >-
         The account's recent failed sign-in attempts, newest first (at most 20), with the count and
@@ -58887,6 +59159,8 @@ components:
       additionalProperties: false
       required: [entries, next_cursor]
       properties:
+        log_coverage:
+          $ref: '#/components/schemas/LogReadCoverage'
         entries:
           type: array
           maxItems: 100
@@ -75835,6 +76109,8 @@ components:
         - entries
         - pagination
       properties:
+        coverage:
+          $ref: '#/components/schemas/LogReadCoverage'
         entries:
           type: array
           items:

@@ -4,6 +4,10 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
+const canonicalAudit = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('../../utils/audit-log', () => ({ writeLegacyAuditLog: canonicalAudit }));
+import type { Env } from '../../types/env';
+
 vi.mock('../logging-runtime-emitter', () => ({
   emitRuntimeLogRecords: vi.fn(async () => ({ tenantKey: 'tk_test', targetResults: [] })),
 }));
@@ -104,8 +108,10 @@ describe('EventDispatcher', () => {
     mockFetch.mockReset();
     decryptSecret.mockClear();
     vi.mocked(emitRuntimeLogRecords).mockClear();
+    canonicalAudit.mockClear();
 
     dispatcher = createEventDispatcher({
+      env: {} as Env,
       adapter,
       kv,
       webhookRegistry,
@@ -651,6 +657,7 @@ describe('EventDispatcher', () => {
       ]);
 
       const runtimeDispatcher = createEventDispatcher({
+        env: {} as Env,
         adapter,
         kv,
         webhookRegistry,
@@ -722,16 +729,21 @@ describe('EventDispatcher', () => {
         data: { userId: 'user_123' },
       });
 
-      expect(adapter.execute).toHaveBeenCalled();
-      const calls = (adapter.execute as any).mock.calls;
-      const auditLogCall = calls.find((c: any) => c[0].includes('audit_log'));
-      expect(auditLogCall).toBeDefined();
+      expect(canonicalAudit).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ action: 'auth.login.succeeded', tenantId: 'tenant_default' })
+      );
+      expect(adapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit_log'),
+        expect.any(Array)
+      );
       expect(result.delivery.auditLog).toBe(true);
     });
 
     it('should use a custom auditLogWriter when provided', async () => {
       const auditLogWriter = vi.fn().mockResolvedValue(undefined);
       const customDispatcher = createEventDispatcher({
+        env: {} as Env,
         adapter,
         kv,
         webhookRegistry,
@@ -922,6 +934,7 @@ describe('EventDispatcher', () => {
 describe('createEventDispatcher', () => {
   it('should create dispatcher with all dependencies', () => {
     const dispatcher = createEventDispatcher({
+      env: {} as Env,
       adapter: createMockAdapter(),
       kv: createMockKV(),
       webhookRegistry: createMockWebhookRegistry(),
@@ -935,6 +948,7 @@ describe('createEventDispatcher', () => {
 
   it('should accept custom options', () => {
     const dispatcher = createEventDispatcher({
+      env: {} as Env,
       adapter: createMockAdapter(),
       kv: createMockKV(),
       webhookRegistry: createMockWebhookRegistry(),

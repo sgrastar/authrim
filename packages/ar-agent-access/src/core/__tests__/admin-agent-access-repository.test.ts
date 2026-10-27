@@ -1,3 +1,4 @@
+import { recordingAdminAgentAuditWriter } from './helpers/admin-audit-writer';
 import type {
   DatabaseAdapter,
   ExecuteResult,
@@ -64,7 +65,7 @@ class RecordingDatabaseAdapter implements DatabaseAdapter {
 describe('AdminAgentAccessRepository', () => {
   it('stores an active Grant with the explicit uniqueness key', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await repository.createGrant({
       grantId: 'grant-1',
       tenantId: 'tenant-1',
@@ -121,7 +122,7 @@ describe('AdminAgentAccessRepository', () => {
       delegation_mode: 'user_consent',
       expires_at: null,
     });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
 
     await expect(
       repository.findActiveGrantForDelegatorClient('tenant-1', 'admin-2', 'client-1')
@@ -142,7 +143,7 @@ describe('AdminAgentAccessRepository', () => {
   it('resolves only an active system-managed Task Set catalog version in the same tenant', async () => {
     const adapter = new RecordingDatabaseAdapter();
     adapter.queryOneResults.push({ catalog_version: 'admin-agent-access-v9' });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
 
     await expect(
       repository.getSystemManagedTaskSetCatalogVersion('tenant-1', 'task-set-1', 1)
@@ -157,7 +158,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('rejects an invalid Task Set version before storage access', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
 
     await expect(
       repository.getSystemManagedTaskSetCatalogVersion('tenant-1', 'task-set-1', 0)
@@ -172,7 +173,7 @@ describe('AdminAgentAccessRepository', () => {
       { permissions_json: '["admin:users:read"]' },
       { permissions_json: '["admin:clients:read","admin:users:read"]' },
     ]);
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
 
     await expect(
       repository.getActiveDelegatorPermissions('tenant-1', 'admin-2', 100)
@@ -222,7 +223,7 @@ describe('AdminAgentAccessRepository', () => {
         revoked_reason: null,
       },
     ]);
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.hasCurrentConsent('tenant-1', 'grant-1', 'admin-1', 'client-1', 2)
     ).resolves.toBe(true);
@@ -230,7 +231,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('records both consent types and their audit event in one repository transaction', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     const base = {
       tenantId: 'tenant-1',
       grantId: 'grant-1',
@@ -282,7 +283,7 @@ describe('AdminAgentAccessRepository', () => {
       execution_owner_id: 'worker-1',
       execution_lease_expires_at: 160,
     });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.claimElevationExecution('tenant-1', 'challenge-1', 'worker-1', 100, 160)
     ).resolves.toEqual({
@@ -299,7 +300,7 @@ describe('AdminAgentAccessRepository', () => {
   it('rejects stale elevation completion fences', async () => {
     const adapter = new RecordingDatabaseAdapter();
     adapter.executeResults.push({ rowsAffected: 0, success: true });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.completeElevationExecution({
         tenantId: 'tenant-1',
@@ -316,7 +317,7 @@ describe('AdminAgentAccessRepository', () => {
   it('reconciles stale elevation only for the observed attempt and fence', async () => {
     const adapter = new RecordingDatabaseAdapter();
     adapter.executeResults.push({ rowsAffected: 0, success: true });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.reconcileStaleElevation({
         tenantId: 'tenant-1',
@@ -362,7 +363,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('writes the machine recovery audit only when the stale transition CAS succeeds', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.reconcileStaleElevation({
         tenantId: 'tenant-1',
@@ -409,7 +410,7 @@ describe('AdminAgentAccessRepository', () => {
       execution_lease_expires_at: 260,
       retry_count: 1,
     });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.claimStaleElevationRetry({
         tenantId: 'tenant-1',
@@ -436,7 +437,7 @@ describe('AdminAgentAccessRepository', () => {
       result_envelope: '{"status":204}',
       result_digest: 'result-digest',
     });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
 
     await expect(
       repository.beginManagementExecution({
@@ -471,7 +472,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('commits human reconciliation evidence and audit through one guarded batch', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.reconcileIndeterminateElevation({
         tenantId: 'tenant-1',
@@ -506,7 +507,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('treats a missing Management execution fence as unknown, never not executed', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.lookupManagementExecution({
         tenantId: 'tenant-1',
@@ -519,7 +520,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('crypto-erases expired terminal payloads without deleting hashes or audit identity', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(repository.purgeExpiredElevationPayloads(500)).resolves.toBe(1);
     expect(adapter.calls[0].sql).toContain('args_envelope = NULL');
     expect(adapter.calls[0].sql).toContain('reconciliation_evidence_envelope = NULL');
@@ -530,7 +531,7 @@ describe('AdminAgentAccessRepository', () => {
   it('rejects completion from an obsolete Management execution fence', async () => {
     const adapter = new RecordingDatabaseAdapter();
     adapter.executeResults.push({ rowsAffected: 0, success: true });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.completeManagementExecution({
         tenantId: 'tenant-1',
@@ -547,7 +548,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('finalizes a token family only through the Grant and both consent fences', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.finalizeTokenFamily({
         familyId: 'family-1',
@@ -569,7 +570,7 @@ describe('AdminAgentAccessRepository', () => {
 
   it('consumes a Mode B delegation JWT identifier only through INSERT OR IGNORE', async () => {
     const adapter = new RecordingDatabaseAdapter();
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.consumeModeBDelegationJti({
         jti: 'adj-1',
@@ -598,7 +599,7 @@ describe('AdminAgentAccessRepository', () => {
   it('fails token-family finalization closed when a concurrent change wins', async () => {
     const adapter = new RecordingDatabaseAdapter();
     adapter.executeResults.push({ rowsAffected: 0, success: true });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.finalizeTokenFamily({
         familyId: 'family-1',
@@ -630,7 +631,7 @@ describe('AdminAgentAccessRepository', () => {
       processing_owner_id: 'worker-2',
       processing_lease_expires_at: 260,
     });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.claimTokenRevocationOutbox({
         outboxId: 'outbox-1',
@@ -666,7 +667,7 @@ describe('AdminAgentAccessRepository', () => {
       processing_owner_id: 'worker-1',
       processing_lease_expires_at: 260,
     });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.claimTokenRevocationOutbox({
         outboxId: 'outbox-1',
@@ -683,7 +684,7 @@ describe('AdminAgentAccessRepository', () => {
       { rowsAffected: 0, success: true },
       { rowsAffected: 0, success: true }
     );
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.completeTokenRevocationOutbox({
         outboxId: 'outbox-1',
@@ -704,7 +705,7 @@ describe('AdminAgentAccessRepository', () => {
   it('moves a fenced outbox failure to dead letter at the attempt ceiling', async () => {
     const adapter = new RecordingDatabaseAdapter();
     adapter.queryOneResults.push({ attempt_count: 8 });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.failTokenRevocationOutbox({
         outboxId: 'outbox-1',
@@ -746,7 +747,7 @@ describe('AdminAgentAccessRepository', () => {
       payload:
         '{"family_ids":["family-1","family-2"],"family_jtis":["jti-1","jti-2"],"reason":"grant_revoked"}',
     });
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.invalidateGrantAndQueueTokenRevocation({
         tenantId: 'tenant-1',
@@ -799,7 +800,7 @@ describe('AdminAgentAccessRepository', () => {
       { rowsAffected: 0, success: true },
       { rowsAffected: 0, success: true }
     );
-    const repository = new AdminAgentAccessRepository(adapter);
+    const repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
     await expect(
       repository.invalidateGrantAndQueueTokenRevocation({
         tenantId: 'tenant-1',

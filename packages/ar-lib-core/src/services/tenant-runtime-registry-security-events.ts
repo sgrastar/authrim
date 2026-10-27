@@ -1,4 +1,5 @@
 import type { DatabaseAdapter } from '../db/adapter';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
 import { AdminAuditLogRepository } from '../repositories/admin/admin-audit-log';
 import { InternalNotificationEventRepository } from '../repositories/admin/internal-notification-event';
 
@@ -88,6 +89,7 @@ export async function recordTenantRuntimeRegistrySnapshotSecurityEvent(
     adminAuditAdapter?: DatabaseAdapter | null;
     internalNotificationAdapter?: DatabaseAdapter | null;
     securityAlertAdapter?: DatabaseAdapter | null;
+    logEnv?: LogIcebergRuntimeEnv;
   }
 ): Promise<TenantRuntimeRegistrySnapshotSecurityEventResult> {
   const payload = createPayload(input);
@@ -100,7 +102,7 @@ export async function recordTenantRuntimeRegistrySnapshotSecurityEvent(
 
   if (options.adminAuditAdapter) {
     try {
-      const auditRepo = new AdminAuditLogRepository(options.adminAuditAdapter);
+      const auditRepo = new AdminAuditLogRepository(options.adminAuditAdapter, options.logEnv);
       await auditRepo.createAuditLog({
         tenant_id: input.tenantId,
         action: 'tenant_runtime_registry_snapshot.verification_failed',

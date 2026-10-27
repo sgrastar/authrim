@@ -1,9 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createDiagnosticLogR2Adapter } from '../diagnostic-log-r2-adapter';
 import { createDiagnosticLogger, DiagnosticLogger } from '../diagnostic-logger';
 import type { DiagnosticLoggingSettings } from '../../../types/settings/diagnostic-logging';
 import type { Env } from '../../../types/env';
 import type { DiagnosticLogEntry } from '../types';
+
+vi.mock('../../log-iceberg-emitter', () => ({
+  emitLogIcebergRow: vi.fn(
+    async (
+      env: { LOG_ARCHIVE: { store: Map<string, string> } },
+      input: { row: { id: string; entry_json: string } }
+    ) => {
+      env.LOG_ARCHIVE.store.set(input.row.id, input.row.entry_json);
+    }
+  ),
+}));
+vi.mock('../../log-iceberg-read', () => ({
+  readLogIcebergDataset: vi.fn(async (env: { LOG_ARCHIVE: { store: Map<string, string> } }) => ({
+    rows: [...env.LOG_ARCHIVE.store].map(([id, entry_json]) => ({ id, entry_json })),
+    consistency: 'eventual',
+  })),
+}));
 
 class MockR2ObjectBody {
   constructor(private readonly value: string) {}
@@ -47,13 +64,7 @@ function createSettings(
     'diagnostic-logging.http_response_enabled': true,
     'diagnostic-logging.token_validation_enabled': true,
     'diagnostic-logging.auth_decision_enabled': true,
-    'diagnostic-logging.r2_output_enabled': true,
-    'diagnostic-logging.r2_bucket_binding': 'DIAGNOSTIC_LOGS',
-    'diagnostic-logging.r2_path_prefix': 'diagnostic-logs',
     'diagnostic-logging.output_format': 'jsonl',
-    'diagnostic-logging.buffer_strategy': 'realtime',
-    'diagnostic-logging.batch_size': 100,
-    'diagnostic-logging.batch_interval_ms': 1000,
     'diagnostic-logging.filter_pii': true,
     'diagnostic-logging.token_hash_prefix_length': 12,
     'diagnostic-logging.http_safe_headers':
@@ -72,7 +83,8 @@ function createEnv(bucket: MockR2Bucket): Env {
   return {
     ISSUER_URL: 'https://issuer.example.com',
     OTP_HMAC_SECRET: 'test-secret',
-    DIAGNOSTIC_LOGS: bucket as unknown as R2Bucket,
+    LOG_ARCHIVE: bucket as unknown as R2Bucket,
+    AUTHRIM_LOG_ARCHIVE_MODE: 'scheduled',
   } as Env;
 }
 
@@ -163,7 +175,7 @@ describe('DiagnosticLogger', () => {
     expect(entry.remoteAddress).toBe('203.0.113.0/24');
   });
 
-  it('writes immutable diagnostic chunk objects instead of appending to an hourly object', async () => {
+  it('submits two separate immutable records to the selected archive mode', async () => {
     const bucket = new MockR2Bucket();
     const logger = new DiagnosticLogger({
       env: createEnv(bucket),
@@ -186,31 +198,17 @@ describe('DiagnosticLogger', () => {
     });
 
     expect(bucket.store.size).toBe(2);
-    const keys = Array.from(bucket.store.keys());
-    const diagnosticKeyPattern = new RegExp(
-      [
-        String.raw`^diagnostic-logs/v1/t_[A-Za-z0-9_-]{32}/diagnostic_detail/diagnostic/`,
-        String.raw`auth-decision/rp-client/\d{4}/\d{2}/\d{2}/\d{2}/`,
-        String.raw`chk_[A-Za-z0-9_-]+\.jsonl$`,
-      ].join(''),
-      'u'
-    );
-    expect(keys).toEqual(expect.arrayContaining([expect.stringMatching(diagnosticKeyPattern)]));
-    expect(keys.every((key) => !key.includes('/tenant-1/'))).toBe(true);
-
     const entries = getStoredEntries(bucket);
     expect(entries).toHaveLength(2);
   });
 
   it('queries client-scoped immutable chunks without requiring a category filter', async () => {
     const bucket = new MockR2Bucket();
-    const adapter = createDiagnosticLogR2Adapter(bucket as unknown as R2Bucket, {
-      pathPrefix: 'diagnostic-logs',
+    const adapter = createDiagnosticLogR2Adapter(createEnv(bucket), {
       tenantId: 'tenant-1',
       clientId: 'client-a',
     });
-    const otherClientAdapter = createDiagnosticLogR2Adapter(bucket as unknown as R2Bucket, {
-      pathPrefix: 'diagnostic-logs',
+    const otherClientAdapter = createDiagnosticLogR2Adapter(createEnv(bucket), {
       tenantId: 'tenant-1',
       clientId: 'client-b',
     });

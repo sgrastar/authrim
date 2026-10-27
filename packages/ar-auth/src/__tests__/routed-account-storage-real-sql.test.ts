@@ -1,3 +1,4 @@
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 /**
  * Where the passkey and TOTP endpoints (`/api/auth/passkeys/*`, `/api/auth/totp/*`) read and write
  * an account, for both allocation scopes, on real SQLite databases built from the migrations: the
@@ -19,7 +20,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Hono } from 'hono';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CanonicalRuntimeUserStore,
   encryptValue,
@@ -30,6 +31,8 @@ import {
 } from '@authrim/ar-lib-core';
 import { renderPortableMigrationSql } from '../../../ar-lib-core/dist/migrations/sql-portability';
 
+const logCleanups: (() => void)[] = [];
+afterEach(() => logCleanups.splice(0).forEach((close) => close()));
 const TENANT = 'default';
 const ORIGIN = 'https://login.example.com';
 const USER = 'user_routed';
@@ -711,7 +714,10 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       expect(count(databases.metadata.raw, 'SELECT COUNT(*) AS n FROM identity_accounts')).toBe(0);
     });
 
-    it('records a failed TOTP attempt with its interaction in the metadata database', async () => {
+    it('records a failed TOTP attempt against the metadata interaction in the new log store', async () => {
+      const logs = await logProducerFixture('scheduled', { tenantId: TENANT, separateAdmin: true });
+      logCleanups.push(logs.close);
+      const logEnv = { ...env(), ...logs.env } as unknown as Env;
       // The Flow interaction lives in the tenant metadata database; the account and its
       // credential live in the account databases.
       const now = Math.floor(Date.now() / 1000);
@@ -754,7 +760,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
           },
           body: JSON.stringify({ identifier: EMAIL }),
         },
-        env(),
+        logEnv,
         executionCtx
       );
       expect(start.status).toBe(200);
@@ -779,7 +785,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
           headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
           body: JSON.stringify({ challenge_id: challengeId, code: await invalidTotpCode() }),
         },
-        env(),
+        logEnv,
         executionCtx
       );
       await Promise.all(world.afterResponse);
@@ -787,7 +793,16 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       expect(verify.status).toBe(400);
       const attempts = `SELECT interaction_id, method, reason_code, subject_hash
                           FROM flow_audit_events WHERE reason_code IS NOT NULL`;
-      expect(databases.metadata.raw.prepare(attempts).all()).toEqual([
+      expect(
+        (await logs.rows('core.flow_audit_events')).map(
+          ({ interaction_id, method, reason_code, subject_hash }) => ({
+            interaction_id,
+            method,
+            reason_code,
+            subject_hash,
+          })
+        )
+      ).toEqual([
         {
           interaction_id: 'interaction_1',
           method: 'totp',
@@ -795,6 +810,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
           subject_hash: expect.any(String),
         },
       ]);
+      expect(databases.metadata.raw.prepare(attempts).all()).toEqual([]);
       expect(databases.accountCore.raw.prepare(attempts).all()).toEqual([]);
     });
   }

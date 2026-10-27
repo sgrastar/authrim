@@ -64,7 +64,7 @@ function createAdapter(c: Context<{ Bindings: Env }>, tenantId: string): Databas
 // =============================================================================
 
 async function auditLogStats(env: Env, auditProfile: AuditProfile, tenantId: string) {
-  const hotQuery = getAuditHotQuerySupportForProfile(env, auditProfile);
+  const hotQuery = getAuditHotQuerySupportForProfile(env, auditProfile, tenantId);
   if (!hotQuery.supported || !hotQuery.context) {
     return { hotQueryStatus: hotQuery.status, total: null, last30Days: null };
   }

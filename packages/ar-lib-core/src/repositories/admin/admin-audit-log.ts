@@ -6,6 +6,9 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import type { LogIcebergRuntimeEnv } from '../../services/log-iceberg-runtime';
+import { emitLogIcebergRow } from '../../services/log-iceberg-emitter';
+import { logIcebergDetailReference } from '../../services/log-iceberg-row-codec';
 import { requireTenantId } from '../tenant';
 import {
   BaseRepository,
@@ -74,7 +77,10 @@ export interface AdminAuditLogFilterOptions {
  * Admin Audit Log Repository
  */
 export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity> {
-  constructor(adapter: DatabaseAdapter) {
+  constructor(
+    adapter: DatabaseAdapter,
+    private readonly logEnv?: LogIcebergRuntimeEnv
+  ) {
     super(adapter, {
       tableName: 'admin_audit_log',
       primaryKey: 'id',
@@ -110,7 +116,10 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
    */
   async createAuditLog(input: AdminAuditLogCreateInput): Promise<AdminAuditLogEntry> {
     const id = input.id ?? generateId();
-    const now = getCurrentTimestamp();
+    const now = input.created_at ?? getCurrentTimestamp();
+    if (!this.logEnv) throw new Error('log_iceberg_admin_writer_configuration_required');
+    if (input.detail_object_catalog_id)
+      throw new Error('log_iceberg_external_detail_not_supported');
 
     const entry: AdminAuditLogEntity = {
       id,
@@ -136,37 +145,31 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       updated_at: now,
     };
 
-    const sql = `
-      INSERT INTO admin_audit_log (
-        id, tenant_id, admin_user_id, admin_email, action,
-        resource_type, resource_id, result, error_code, error_message,
-        severity, ip_address, user_agent, request_id, session_id,
-        before_json, after_json, metadata_json, detail_object_catalog_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    await this.adapter.execute(sql, [
-      entry.id,
-      entry.tenant_id,
-      entry.admin_user_id,
-      entry.admin_email,
-      entry.action,
-      entry.resource_type,
-      entry.resource_id,
-      entry.result,
-      entry.error_code,
-      entry.error_message,
-      entry.severity,
-      entry.ip_address,
-      entry.user_agent,
-      entry.request_id,
-      entry.session_id,
-      entry.before_json,
-      entry.after_json,
-      entry.metadata_json,
-      entry.detail_object_catalog_id,
-      entry.created_at,
-    ]);
+    const { updated_at: _updated, ...row } = entry;
+    const written = await emitLogIcebergRow(this.logEnv, {
+      tenantId: entry.tenant_id,
+      sourceDataset: 'admin.admin_audit_log',
+      logType: 'admin_audit',
+      row,
+      eventAt: now,
+      expiresAt: null,
+      adminInlineMetadata: input.inline_metadata,
+      overview: {
+        action: entry.action,
+        result: entry.result,
+        severity: entry.severity,
+        reason_code: entry.error_code,
+        request_id: entry.request_id,
+        subject_id: entry.admin_user_id,
+        resource_id: entry.resource_id,
+      },
+    });
+    if (entry.before_json !== null || entry.after_json !== null || entry.metadata_json !== null)
+      entry.detail_object_catalog_id = await logIcebergDetailReference({
+        tenantKey: written.tenant_key,
+        sourceDataset: written.source_dataset,
+        eventId: written.event_id,
+      });
 
     return this.entityToAuditLog(entry);
   }
@@ -189,13 +192,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
     id: string
   ): Promise<AdminAuditLogEntryWithDetailReference | null> {
     const row = await this.adapter.queryOne<Record<string, unknown>>(
-      `SELECT aal.*, oc.public_artifact_id AS detail_artifact_id
-       FROM admin_audit_log aal
-       LEFT JOIN object_catalog oc
-         ON oc.id = aal.detail_object_catalog_id
-        AND oc.tenant_id = aal.tenant_id
-        AND oc.deleted_at IS NULL
-       WHERE aal.id = ?`,
+      `SELECT * FROM admin_audit_log WHERE id = ?`,
       [id]
     );
     if (!row) {
@@ -205,7 +202,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       entry: this.rowToAuditLog(row),
       detailObjectCatalogId:
         typeof row.detail_object_catalog_id === 'string' ? row.detail_object_catalog_id : null,
-      detailArtifactId: typeof row.detail_artifact_id === 'string' ? row.detail_artifact_id : null,
+      detailArtifactId: null,
     };
   }
 
@@ -286,12 +283,7 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       : '';
 
     const dataSql = `
-      SELECT aal.*, oc.public_artifact_id AS detail_artifact_id
-      FROM admin_audit_log aal
-      LEFT JOIN object_catalog oc
-        ON oc.id = aal.detail_object_catalog_id
-       AND oc.tenant_id = aal.tenant_id
-       AND oc.deleted_at IS NULL
+      SELECT aal.* FROM admin_audit_log aal
       ${qualifiedWhereClause}
       ORDER BY aal.created_at DESC
       LIMIT ? OFFSET ?
@@ -421,27 +413,6 @@ export class AdminAuditLogRepository extends BaseRepository<AdminAuditLogEntity>
       counts.set(row.action, row.count);
     }
     return counts;
-  }
-
-  /**
-   * Delete old audit logs (for retention policy)
-   * Note: This should be called by a scheduled job, not directly from API
-   *
-   * @param beforeTimestamp - Delete logs before this timestamp
-   * @returns Number of deleted logs
-   */
-  async deleteOldLogs(beforeTimestamp: number): Promise<number> {
-    // Mapping history follows this same explicit Admin-audit cutoff, never the unrelated
-    // Unified Audit profile. Keep intents and evidence still needed to acknowledge Core receipts.
-    const [result] = await this.adapter.batch([
-      { sql: 'DELETE FROM admin_audit_log WHERE created_at < ?', params: [beforeTimestamp] },
-      {
-        sql: `DELETE FROM identity_mapping_level_history WHERE status='committed' AND created_at < ?
-          AND (tier='tenant_default' OR receipt_acknowledged_at IS NOT NULL)`,
-        params: [beforeTimestamp],
-      },
-    ]);
-    return result.rowsAffected;
   }
 
   /**

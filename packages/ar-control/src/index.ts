@@ -1,3 +1,9 @@
+import {
+  assertLogIcebergReadinessAttempt,
+  logIcebergReadinessAttemptDigest,
+} from '@authrim/ar-lib-core/services/log-iceberg-readiness';
+import { readRequestJsonWithLimit } from '@authrim/ar-lib-core/utils/body-limits';
+import { advanceLogArchiveReadiness } from './log-archive-readiness';
 import { controlTenantBackupBoundary } from './tenant-backup-boundary';
 import { controlTenantMutationPermit } from './tenant-backup-mutation-permits';
 import { WorkerEntrypoint } from 'cloudflare:workers';
@@ -212,6 +218,16 @@ function authorizedCaller(props: ControlRpcProps): ControlRpcProps & { caller: '
     throw new Error('control_rpc_caller_unauthorized');
   }
   return props as ControlRpcProps & { caller: 'ar-management' };
+}
+
+/** The log writer needs tenant admission, not Control's administrative RPCs. */
+function authorizedTenantMutationCaller(props: ControlRpcProps): ControlRpcProps {
+  if (
+    (props?.caller !== 'ar-management' && props?.caller !== 'ar-lib-core') ||
+    !validRpcProps(props)
+  )
+    throw new Error('control_rpc_caller_unauthorized');
+  return props;
 }
 
 function authorizedMetricReporter(
@@ -1141,9 +1157,15 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
           headers: { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer' },
         });
       }
+      const action = request.headers.get('X-Authrim-Bootstrap-Action');
+      if (action !== null && action !== 'log_archive_readiness')
+        return new Response(null, { status: 400 });
       const admission = await admitInitialBootstrapAcceleration({
         env: this.env,
         proof: match[1],
+        ...(action === 'log_archive_readiness'
+          ? { purpose: 'log_archive_readiness' as const }
+          : {}),
       }).catch(() => null);
       if (!admission) {
         return new Response(null, {
@@ -1158,6 +1180,17 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         try {
           // Keep the authenticated request open until this bounded batch finishes. Returning first
           // made overlapping polls contend on the accelerator lease and hid execution failures.
+          if (admission.claims.purpose === 'log_archive_readiness') {
+            const attempt: unknown = await readRequestJsonWithLimit(request, 4096);
+            assertLogIcebergReadinessAttempt(attempt);
+            if ((await logIcebergReadinessAttemptDigest(attempt)) !== admission.claims.probeDigest)
+              throw new Error('runtime_smoke_log_archive_scope_denied');
+            const proof = await advanceLogArchiveReadiness(this.env, attempt);
+            return Response.json(proof, {
+              status: proof.state === 'ready' ? 200 : 202,
+              headers: { 'Cache-Control': 'no-store' },
+            });
+          }
           await advanceInitialBootstrap({ env: this.env });
         } catch (error) {
           return new Response(null, {
@@ -1575,7 +1608,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
 
   acquireTenantBackupMutationPermit(input: unknown) {
     return rpcResult(async () => {
-      const caller = authorizedCaller(this.ctx.props);
+      const caller = authorizedTenantMutationCaller(this.ctx.props);
       const result = await controlTenantMutationPermit({
         database: this.env.CONTROL_DB,
         environmentId: caller.environmentId,
@@ -1591,7 +1624,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
 
   completeTenantBackupMutationPermit(input: unknown) {
     return rpcResult(async () => {
-      const caller = authorizedCaller(this.ctx.props);
+      const caller = authorizedTenantMutationCaller(this.ctx.props);
       await controlTenantMutationPermit({
         database: this.env.CONTROL_DB,
         environmentId: caller.environmentId,

@@ -1,8 +1,16 @@
 import { mkdtemp, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDefaultConfig } from '../core/config.js';
-import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
+import {
+  createArchiveTestConfig as createDefaultConfig,
+  archiveLockFixture,
+} from './fixtures/log-archive.js';
+import {
+  generateAllSecrets,
+  saveKeysToDirectory,
+  ensureLogArchiveContentHmacKey,
+} from '../core/keys.js';
+import { ensureLogArchiveRootKeyring } from '../core/log-archive-root-keyring.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
 import { KV_NAMESPACES, WORKER_COMPONENTS, getKVNamespaceName } from '../core/naming.js';
@@ -64,7 +72,7 @@ async function writeGeneratedEnvironment(
 ) {
   const env = 'portable';
   const config = createDefaultConfig(env);
-  config.cloudflare.accountId = 'account-id';
+  config.cloudflare.accountId = 'a'.repeat(32);
   config.keys.storageType = options?.externalKeys ? 'external' : 'internal';
   config.keys.secretsPath = './keys/';
   config.features.queue = { enabled: options?.queueEnabled === true };
@@ -168,12 +176,19 @@ async function writeGeneratedEnvironment(
       { binding: 'CONSENT_CACHE', name: `${env.toUpperCase()}-CONSENT_CACHE`, id: 'kv-consent' },
     ],
     queues,
+    logArchive: archiveLockFixture(config),
     r2: [
+      {
+        binding: 'LOG_ARCHIVE',
+        name: `${env}-log-archive`,
+        creationDate: '2026-10-27T00:00:00.000Z',
+        ownershipId: '11111111-1111-4111-8111-111111111111',
+        ownershipMarkerKey:
+          '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+      },
       { binding: 'MIGRATION_RELEASES', name: `${env}-migration-releases` },
       { binding: 'PLUGIN_BUNDLES', name: `${env}-plugin-bundles` },
       { binding: 'PUBLIC_ASSETS', name: `${env}-public-assets` },
-      { binding: 'DIAGNOSTIC_LOGS', name: `${env}-diagnostic-logs` },
-      { binding: 'AUDIT_ARCHIVE', name: `${env}-audit-archive` },
       { binding: 'IMPORT_ARTIFACTS', name: `${env}-import-artifacts` },
       { binding: 'EXPORT_ARTIFACTS', name: `${env}-export-artifacts` },
       { binding: 'SENSITIVE_DETAILS', name: `${env}-sensitive-details` },
@@ -184,6 +199,13 @@ async function writeGeneratedEnvironment(
     baseDir: root,
     env,
     keysBaseDir: options?.externalKeys ? root : undefined,
+  });
+  const keysDir = options?.externalKeys
+    ? join(root, '.authrim-keys', env)
+    : join(root, '.authrim', env, 'keys');
+  await ensureLogArchiveContentHmacKey(keysDir);
+  await ensureLogArchiveRootKeyring(keysDir, {
+    keyVersion: config.logging!.archive!.objectEncryptionKeyVersion,
   });
   await writeFile(envPaths.config, JSON.stringify(config, null, 2), 'utf-8');
   await writeFile(envPaths.lock, JSON.stringify(lock, null, 2), 'utf-8');
@@ -389,8 +411,14 @@ describe('validateGeneratedEnvironment', () => {
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
 
-    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
-    expect(result.ok).toBe(true);
+    expect(
+      result.checks.filter((check) => check.status === 'fail'),
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toEqual([]);
+    expect(
+      result.ok,
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toBe(true);
     expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
     expect(queryD1RowsMock).not.toHaveBeenCalled();
   });
@@ -474,7 +502,7 @@ describe('validateGeneratedEnvironment', () => {
     expect(JSON.stringify(check)).not.toContain(secret);
   });
 
-  it('warns explicitly when R2 and queues are disabled without hiding valid output', async () => {
+  it('rejects an archive configuration with R2 disabled', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
     const configPath = join(root, '.authrim', env, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
@@ -483,11 +511,33 @@ describe('validateGeneratedEnvironment', () => {
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
 
-    expect(result.ok).toBe(true);
-    expect(result.checks.find((check) => check.id === 'logging-r2-bindings')?.status).toBe('warn');
-    expect(result.checks.find((check) => check.id === 'logging-queue-bindings')?.status).toBe(
-      'warn'
+    expect(result.ok).toBe(false);
+  });
+  it('detects an individual retained master leaked without the rest of its private keyring', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const keys = join(root, '.authrim', env, 'keys');
+    const current = (await readFile(join(keys, 'object_encryption_root_key.txt'), 'utf8')).trim();
+    const retained = 'ab'.repeat(32);
+    await writeFile(
+      join(keys, 'log_archive_root_keyring.json'),
+      JSON.stringify({
+        schema_version: 1,
+        current_version: 2,
+        roots: { 1: retained, 2: current },
+      }),
+      { mode: 0o600 }
     );
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf8'));
+    lock.leaked = retained;
+    await writeFile(lockPath, JSON.stringify(lock));
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const check = result.checks.find((entry) => entry.id === 'generated-artifacts-secret-free');
+    expect(check?.status).toBe('fail');
+    expect(check?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('log_archive_root_keyring.json:version_1')])
+    );
+    expect(JSON.stringify(check)).not.toContain(retained);
   });
 
   it('rejects unresolved default profiles and missing required D1/KV bindings', async () => {
@@ -629,7 +679,10 @@ describe('validateGeneratedEnvironment', () => {
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
     const portability = result.checks.find((check) => check.id === 'seeded-profile-portability');
 
-    expect(result.ok).toBe(true);
+    expect(
+      result.ok,
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toBe(true);
     expect(portability?.status).toBe('warn');
     expect(portability?.details).toEqual(
       expect.arrayContaining([
@@ -648,7 +701,10 @@ describe('validateGeneratedEnvironment', () => {
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
     const queueCheck = result.checks.find((check) => check.id === 'logging-queue-bindings');
 
-    expect(result.ok).toBe(true);
+    expect(
+      result.ok,
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toBe(true);
     expect(queueCheck?.status).toBe('pass');
     expect(queueCheck?.details).toEqual(
       expect.arrayContaining([
@@ -727,7 +783,10 @@ describe('validateGeneratedEnvironment', () => {
     const result = await validateGeneratedEnvironment({ baseDir: root, env, keysBaseDir: root });
     const secretCheck = result.checks.find((check) => check.id === 'logging-secret-material');
 
-    expect(result.ok).toBe(true);
+    expect(
+      result.ok,
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toBe(true);
     expect(secretCheck?.status).toBe('pass');
     expect(secretCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('LOGGING_CURSOR_HMAC_SECRET')])
@@ -738,7 +797,7 @@ describe('validateGeneratedEnvironment', () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
     const lockPath = join(root, '.authrim', env, 'lock.json');
     const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
-    delete lock.r2.DIAGNOSTIC_LOGS;
+    delete lock.r2.LOG_ARCHIVE;
     await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`, 'utf-8');
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
@@ -747,7 +806,7 @@ describe('validateGeneratedEnvironment', () => {
     expect(result.ok).toBe(false);
     expect(r2Check?.status).toBe('fail');
     expect(r2Check?.details).toEqual(
-      expect.arrayContaining([expect.stringContaining('DIAGNOSTIC_LOGS is missing')])
+      expect.arrayContaining([expect.stringContaining('LOG_ARCHIVE bucket ownership is missing')])
     );
   });
 
@@ -755,7 +814,7 @@ describe('validateGeneratedEnvironment', () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
     const configPath = join(root, '.authrim', env, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
-    config.features.r2 = { enabled: false };
+    config.features.r2 = { enabled: true };
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
     const lockPath = join(root, '.authrim', env, 'lock.json');
     const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
@@ -777,7 +836,10 @@ describe('validateGeneratedEnvironment', () => {
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
 
-    expect(result.ok).toBe(true);
+    expect(
+      result.ok,
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toBe(true);
     expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
   });
 
@@ -815,12 +877,19 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },
+      { name: `${env}-log-archive` },
     ]);
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
 
-    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
-    expect(result.ok).toBe(true);
+    expect(
+      result.checks.filter((check) => check.status === 'fail'),
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toEqual([]);
+    expect(
+      result.ok,
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toBe(true);
     expect(result.checks.find((check) => check.id === 'live-cloudflare-d1')?.status).toBe('pass');
     expect(result.checks.find((check) => check.id === 'live-cloudflare-kv')?.status).toBe('pass');
     expect(result.checks.find((check) => check.id === 'live-cloudflare-r2')?.status).toBe('pass');
@@ -872,6 +941,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },
+      { name: `${env}-log-archive` },
     ]);
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
@@ -910,6 +980,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },
+      { name: `${env}-log-archive` },
     ]);
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
@@ -945,6 +1016,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },
+      { name: `${env}-log-archive` },
     ]);
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
@@ -980,6 +1052,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-import-artifacts` },
       { name: `${env}-export-artifacts` },
       { name: `${env}-sensitive-details` },
+      { name: `${env}-log-archive` },
     ]);
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
@@ -987,8 +1060,14 @@ describe('validateGeneratedEnvironment', () => {
       (check) => check.id === 'live-control-plane-bootstrap'
     );
 
-    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
-    expect(result.ok).toBe(true);
+    expect(
+      result.checks.filter((check) => check.status === 'fail'),
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toEqual([]);
+    expect(
+      result.ok,
+      JSON.stringify(result.checks.filter((check) => check.status === 'fail'))
+    ).toBe(true);
     expect(bootstrapCheck?.status).toBe('pass');
     expect(bootstrapCheck?.details).toEqual(
       expect.arrayContaining([expect.stringContaining('bootstrap handoff state: accepted')])

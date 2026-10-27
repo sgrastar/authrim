@@ -4,6 +4,11 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
+
 const calls = vi.hoisted(() => [] as string[]);
 const kvWrites = vi.hoisted(() => new Map<string, string>());
 

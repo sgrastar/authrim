@@ -19,6 +19,7 @@ import { validateAccountRegistrationStates } from './account-webhook-fields';
  */
 
 import type { KVNamespace } from '@cloudflare/workers-types';
+import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
 import type {
   EventDispatcher as IEventDispatcher,
@@ -52,6 +53,8 @@ const log = createLogger().module('EVENT-DISPATCHER');
  * Configuration for EventDispatcher.
  */
 export interface EventDispatcherConfig {
+  /** Bindings for the single canonical audit writer. */
+  env: Env;
   /** Database adapter for audit logging */
   adapter: DatabaseAdapter;
   /** KV namespace for deduplication */
@@ -202,7 +205,7 @@ function classifyWebhookRuntimeLogError(result: {
  * ```
  */
 export class EventDispatcherImpl implements IEventDispatcher {
-  private readonly adapter: DatabaseAdapter;
+  private readonly env: Env;
   private readonly kv: KVNamespace;
   private readonly webhookRegistry: WebhookRegistryImpl;
   private readonly handlerRegistry: EventHandlerRegistryImpl;
@@ -216,7 +219,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
   private readonly options: Required<EventDispatcherOptions>;
 
   constructor(config: EventDispatcherConfig) {
-    this.adapter = config.adapter;
+    this.env = config.env;
     this.kv = config.kv;
     this.webhookRegistry = config.webhookRegistry;
     this.handlerRegistry = config.handlerRegistry;
@@ -695,14 +698,11 @@ export class EventDispatcherImpl implements IEventDispatcher {
 
     try {
       await emitRuntimeLogRecords({
-        env: {
-          ...this.runtimeLogging.env,
-          DB_ADMIN: this.runtimeLogging.env.DB_ADMIN ?? this.adapter,
-          LOGGING_INDEX_DB: this.adapter,
-        },
+        env: this.runtimeLogging.env,
         tenantId: webhook.tenantId || event.tenantId,
         logType: 'webhook',
         surface: 'webhook_delivery',
+        sourceDataset: 'runtime.webhook_delivery_events',
         planes: ['archive', 'external_sink'],
         tenantKeyResolver: this.runtimeLogging.tenantKeyResolver,
         records: [
@@ -806,9 +806,9 @@ export class EventDispatcherImpl implements IEventDispatcher {
     const resourceType = this.extractResourceType(event.type);
     const resourceId = (eventData?.clientId as string) ?? (eventData?.userId as string) ?? null;
     const auditId = `audit_${crypto.randomUUID().replace(/-/g, '')}`;
-    const createdAt = Math.floor(new Date(event.timestamp).getTime() / 1000);
+    const createdAt = new Date(event.timestamp).getTime();
 
-    await writeLegacyAuditLog(this.adapter, {
+    await writeLegacyAuditLog(this.env, {
       id: auditId,
       tenantId: event.tenantId,
       userId: event.metadata?.actor?.id ?? null,

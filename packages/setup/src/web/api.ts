@@ -1,3 +1,14 @@
+import {
+  waitForLogArchiveReadiness,
+  prepareLogArchiveReadinessAttempt,
+} from '../core/log-archive-readiness.js';
+import {
+  assertLogArchiveImplemented,
+  createLogArchiveConfig,
+  implementedLogArchiveModes,
+} from '../core/log-archive-config.js';
+import { planLogArchive, hasCompleteLogArchiveState } from '../core/log-archive.js';
+import { publishLogArchiveSecrets, stageLogArchiveSecrets } from '../core/log-archive-secrets.js';
 /**
  * API Routes for Authrim Setup Web UI
  *
@@ -809,7 +820,11 @@ export function buildWebProvisioningResourceSpec(config: AuthrimConfig): Provisi
         queues: config.features.queue?.enabled === true ? getRequiredQueues(environment) : [],
         r2: getRequiredR2Buckets(environment, {
           includeFeatureBuckets: config.features.r2?.enabled === true,
+          logArchiveBucketName: config.logging?.archive.bucketName,
         }),
+        ...(config.logging?.archive
+          ? { logArchive: planLogArchive(environment, config.logging.archive) }
+          : {}),
         workers: Array.from(getEnabledComponents(config.components)).map((component) => ({
           binding: component,
           name: getWorkerName(environment, component),
@@ -832,6 +847,7 @@ async function assertLockedCloudflareResourcesForWebMutation(input: {
       ...Object.values(input.lock.r2 ?? {}).map((bucket) => bucket.name),
       ...getRequiredR2Buckets(input.environment, {
         includeFeatureBuckets: input.config.features.r2?.enabled === true,
+        logArchiveBucketName: input.config.logging?.archive.bucketName,
       }).map((bucket) => bucket.name),
     ]),
   ];
@@ -943,6 +959,15 @@ async function hasCompleteProvisioningArtifacts(input: {
   lock: AuthrimLock;
   intent?: ProvisioningIntent;
 }): Promise<boolean> {
+  if (
+    !hasCompleteLogArchiveState({
+      environment: input.environment,
+      archive: input.config.logging?.archive,
+      resource: input.lock.logArchive,
+      checkpoints: input.intent?.resources,
+    })
+  )
+    return false;
   const paths = getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment });
   if (
     !existsSync(paths.config) ||
@@ -974,6 +999,7 @@ async function hasCompleteProvisioningArtifacts(input: {
       : []),
     ...getRequiredR2Buckets(input.environment, {
       includeFeatureBuckets: input.config.features.r2?.enabled === true,
+      logArchiveBucketName: input.config.logging?.archive.bucketName,
     }).map((resource) => ({
       kind: 'r2' as const,
       ...resource,
@@ -1260,7 +1286,10 @@ async function loadSupplementalSecretsForWorkers(options: {
     });
   }
   await ensureSupplementalKeysForWebDeploy(keysDir);
-  const secrets = await loadDeploySecretsFromKeys(keysDir, workers);
+  const secrets = await loadDeploySecretsFromKeys(keysDir, workers, {
+    rootDir: options.baseDir,
+    env,
+  });
   addProgress(
     `Prepared ${Object.keys(secrets).length} secret value(s) for ${env} Worker deployment.`
   );
@@ -2321,6 +2350,111 @@ export function createApiRoutes(): Hono {
   });
 
   // Validate config (POST - accepts config in body)
+  // This uses the existing features step. Credentials never enter config/status JSON.
+  api.post('/log-archive/plan', async (c) => {
+    const request = AuthrimConfigSchema.safeParse(await c.req.json());
+    if (!request.success)
+      return c.json({ success: false, error: 'log_archive_configuration_invalid' }, 400);
+    const config = request.data;
+    return c.json({
+      success: true,
+      dryRun: true,
+      logArchiveImplemented: Boolean(
+        config.logging?.archive &&
+        implementedLogArchiveModes().includes(config.logging.archive.mode)
+      ),
+      plan: buildWebProvisioningResourceSpec(config),
+    });
+  });
+
+  api.post('/log-archive/configure', async (c) =>
+    withLock(async () => {
+      let operation:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      try {
+        const request = z
+          .object({
+            environment: EnvNameSchema,
+            mode: z.enum(['pipeline', 'scheduled']),
+            dbRetentionDays: z.number().int().min(1).max(3650).optional(),
+            readToken: z.string().min(1).max(16384),
+            writeToken: z.string().min(1).max(16384),
+            sinkToken: z.string().min(1).max(16384).optional(),
+          })
+          .strict()
+          .parse(await c.req.json());
+        if (!implementedLogArchiveModes().includes(request.mode))
+          return c.json({ success: false, error: 'log_archive_mode_not_implemented' }, 409);
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        operation = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: request.environment,
+          operation: 'web-log-archive-configure',
+        });
+        const intent = await loadProvisioningIntent({ baseDir, environment: request.environment });
+        if (operation.lock || intent)
+          return c.json(
+            { success: false, error: 'log_archive_generation_change_requires_explicit_transition' },
+            409
+          );
+        const envPaths = getEnvironmentPaths({ baseDir, env: request.environment });
+        const persisted = existsSync(envPaths.config)
+          ? parseEnvironmentConfigForEnv(
+              JSON.parse(await readFile(envPaths.config, 'utf8')),
+              request.environment
+            )
+          : undefined;
+        const source =
+          persisted ??
+          (state.config?.environment?.prefix === request.environment
+            ? AuthrimConfigSchema.parse(state.config)
+            : undefined);
+        if (!source)
+          return c.json({ success: false, error: 'log_archive_environment_config_required' }, 409);
+        const current = source.logging?.archive;
+        if (
+          current &&
+          (current.mode !== request.mode ||
+            (current.mode === 'scheduled' &&
+              request.dbRetentionDays !== undefined &&
+              current.dbRetentionDays !== request.dbRetentionDays))
+        )
+          return c.json(
+            { success: false, error: 'log_archive_generation_change_requires_explicit_transition' },
+            409
+          );
+        const archive =
+          current ??
+          createLogArchiveConfig(request.environment, request.mode, {
+            dbRetentionDays: request.dbRetentionDays,
+          });
+        assertLogArchiveImplemented(archive);
+        const committed = AuthrimConfigSchema.parse({
+          ...source,
+          logging: { archive },
+          features: {
+            ...source.features,
+            r2: { enabled: true },
+            queue: { enabled: archive.mode === 'pipeline' || source.features.queue.enabled },
+          },
+        });
+        await stageLogArchiveSecrets(baseDir, request.environment, {
+          readToken: request.readToken,
+          writeToken: request.writeToken,
+          sinkToken: request.sinkToken,
+        });
+        await saveEnvironmentConfig(envPaths, committed);
+        state.config = committed;
+        return c.json({ success: true, archive });
+      } catch {
+        return c.json({ success: false, error: 'log_archive_configuration_invalid' }, 400);
+      } finally {
+        await operation?.release();
+      }
+    })
+  );
+
   api.post('/config/validate', async (c) => {
     try {
       const body = await c.req.json();
@@ -2456,6 +2590,7 @@ export function createApiRoutes(): Hono {
           zoneId,
           customDomainBinding,
           profiles,
+          logging,
         } = body;
 
         const config = createDefaultConfig(env);
@@ -2500,6 +2635,20 @@ export function createApiRoutes(): Hono {
           ).profiles;
         }
 
+        if (logging) {
+          const restored = AuthrimConfigSchema.parse({
+            ...config,
+            logging,
+            features: {
+              ...config.features,
+              queue: {
+                enabled: logging.archive?.mode === 'pipeline' || config.features.queue.enabled,
+              },
+            },
+          });
+          config.logging = restored.logging;
+          config.features = restored.features;
+        }
         const parsedConfig = AuthrimConfigSchema.parse(config, { reportInput: true });
         state.config = parsedConfig;
 
@@ -3701,6 +3850,7 @@ export function createApiRoutes(): Hono {
             },
           });
         }
+        assertLogArchiveImplemented(config.logging?.archive);
         const accountId = await getAccountId();
         if (!accountId) throw new Error('cloudflare_account_id_required_for_provisioning');
         if (config.cloudflare?.accountId && config.cloudflare.accountId !== accountId) {
@@ -3879,6 +4029,18 @@ export function createApiRoutes(): Hono {
           createKV: true,
           createQueues: config.features?.queue?.enabled === true,
           createR2: config.features?.r2?.enabled === true,
+          logArchive: config.logging?.archive,
+          ...(config.logging?.archive
+            ? {
+                logArchiveCatalogSecrets: await publishLogArchiveSecrets(
+                  rootDir,
+                  env,
+                  provisioningKeysDir,
+                  config.logging.archive.mode,
+                  config.logging.archive.objectEncryptionKeyVersion
+                ),
+              }
+            : {}),
           provisioningIntentResources: provisioningAttempt.intent.resources,
           onProgress: addProgress,
           databaseConfig: config.database,
@@ -4312,6 +4474,7 @@ export function createApiRoutes(): Hono {
                 })),
                 ...getRequiredR2Buckets(env, {
                   includeFeatureBuckets: releaseConfig.features.r2?.enabled === true,
+                  logArchiveBucketName: releaseConfig.logging?.archive.bucketName,
                 }),
               ].map((bucket) => [bucket.name, bucket] as const)
             ).values(),
@@ -4791,7 +4954,8 @@ export function createApiRoutes(): Hono {
           }
           deploymentSecrets = await loadDeploySecretsFromKeys(
             existsSync(keysDir) ? keysDir : undefined,
-            enabledComponents
+            enabledComponents,
+            { rootDir: resolvedRootDir, env }
           );
           const missingControlSecrets = getMissingRequiredDeploySecrets(
             deploymentSecrets,
@@ -6097,6 +6261,56 @@ export function createApiRoutes(): Hono {
           adminUiBffMachineAccessSuccess &&
           defaultCanonicalCatalogSeedSuccess &&
           runtimeProfileSeedSuccess;
+
+        if (!dryRun && deploymentSucceeded) {
+          const archiveConfig = cfg ? AuthrimConfigSchema.parse(cfg).logging?.archive : undefined;
+          const { lock: archiveLock, path: archiveLockPath } = await loadLockFileAuto(rootDir, env);
+          let owned = archiveLock?.logArchive;
+          const signing = archiveLock?.controlKeyState?.smokeRpc;
+          if (!archiveConfig || !archiveLock || !owned || !signing)
+            throw new Error('log_archive_readiness_identity_required');
+          const attempt = prepareLogArchiveReadinessAttempt(
+            archiveConfig,
+            owned,
+            archiveLock.workers
+          );
+          owned = {
+            ...owned,
+            activation: {
+              ...owned.activation,
+              pendingRuntimeProbe: attempt,
+              runtimeProof: undefined,
+            },
+          };
+          await saveLockFile({ ...archiveLock, logArchive: owned }, archiveLockPath);
+          addProgress(
+            'Verifying the Worker log write/read path through the owned Iceberg table...'
+          );
+          const runtimeProof = await waitForLogArchiveReadiness({
+            apiBaseUrl,
+            environmentId: env,
+            keysDir,
+            activeSlot: signing.activeSlot,
+            activeKeyId: signing.activeKeyId,
+            archive: archiveConfig,
+            owned,
+            attempt,
+            onProgress: addProgress,
+          });
+          await saveLockFile(
+            {
+              ...archiveLock,
+              logArchive: {
+                ...owned,
+                activation: { ...owned.activation, runtimeProof, pendingRuntimeProbe: undefined },
+              },
+            },
+            archiveLockPath
+          );
+          addProgress(
+            '✓ Log Parquet/Iceberg write, snapshot visibility and authenticated read verified.'
+          );
+        }
 
         if (deploymentSucceeded) {
           if (!dryRun) {
@@ -7688,7 +7902,9 @@ export function createApiRoutes(): Hono {
         throwOnError: true,
         requireIdentity: true,
       });
-      const status = buildR2BucketProvisioningStatus(env, lock?.r2, cloudflareBuckets);
+      const status = buildR2BucketProvisioningStatus(env, lock?.r2, cloudflareBuckets, {
+        logArchiveBucketName: lock?.logArchive?.bucketName,
+      });
       const legacyOwnershipBuckets = status.buckets.filter(
         (bucket) => bucket.recorded && !bucket.exactOwnership
       );
@@ -7785,7 +8001,9 @@ export function createApiRoutes(): Hono {
         if (config.environment.prefix !== env) {
           throw new Error('r2_provision_config_environment_mismatch');
         }
-        const legacyBuckets = getRequiredR2Buckets(env).filter((bucket) => {
+        const legacyBuckets = getRequiredR2Buckets(env, {
+          logArchiveBucketName: config.logging?.archive.bucketName,
+        }).filter((bucket) => {
           const recorded = lock.r2?.[bucket.binding];
           return recorded !== undefined && !hasExactR2BucketOwnership(recorded);
         });
@@ -7795,7 +8013,9 @@ export function createApiRoutes(): Hono {
             requireIdentity: true,
           });
           const cloudflareBucketNames = new Set(cloudflareBuckets.map((bucket) => bucket.name));
-          const legacyOwnershipAdoptionAvailable = getRequiredR2Buckets(env).every((bucket) => {
+          const legacyOwnershipAdoptionAvailable = getRequiredR2Buckets(env, {
+            logArchiveBucketName: config.logging?.archive.bucketName,
+          }).every((bucket) => {
             const recorded = lock.r2?.[bucket.binding];
             return recorded !== undefined && cloudflareBucketNames.has(recorded.name);
           });
@@ -8088,6 +8308,7 @@ export function createApiRoutes(): Hono {
           knownD1Resources: deletionLock ? Object.values(deletionLock.d1) : [],
           knownKVResources: deletionLock ? Object.values(deletionLock.kv) : [],
           knownQueueResources: deletionLock?.queues ? Object.values(deletionLock.queues) : [],
+          knownLogArchiveResource: deletionLock?.logArchive,
           knownR2Resources: deletionLock?.r2
             ? Object.entries(deletionLock.r2).map(([binding, resource]) => ({
                 ...resource,

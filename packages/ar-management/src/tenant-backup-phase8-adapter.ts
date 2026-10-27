@@ -4,6 +4,12 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
+import {
+  ICEBERG_LOG_RECORDS_DATASETS,
+  createIcebergLogRecordDatasetPolicy,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-iceberg-log';
+import { createTenantBackupIcebergLogRestorePorts } from './tenant-backup-iceberg-log-restore-port';
+import type { createTenantBackupIcebergLogSnapshotPorts } from './tenant-backup-iceberg-log-snapshot-port';
 import { TenantBackupAdminMappingStore } from '@authrim/ar-lib-core/services/tenant-portability/admin-mapping-store';
 import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
@@ -66,6 +72,11 @@ export interface Phase8InstalledAdapterPorts extends Omit<
   Phase5InstalledAdapterPorts,
   'recordSnapshots' | 'rowTransform' | 'otherStores' | 'import'
 > {
+  icebergLogs: ReturnType<typeof createTenantBackupIcebergLogSnapshotPorts>;
+  resolveCoreRestoreDatabase(
+    context: TenantBackupStepContext,
+    planDigest: string
+  ): Promise<DatabaseAdapter>;
   /** Admit rows only from the physical database role that owns this logical dataset. */
   allowSqliteSource?(
     context: Parameters<NonNullable<TenantBackupInstalledSqliteExportPorts['filterRow']>>[0]
@@ -93,6 +104,9 @@ export interface Phase8InstalledAdapterPorts extends Omit<
     | 'verifyAdminEnvelope'
     | 'importR2Chunk'
     | 'verifyR2Chunk'
+    | 'isDatasetSelected'
+    | 'importIcebergLog'
+    | 'verifyIcebergLog'
   > & {
     phase4: Omit<Phase8OtherStorePorts['phase4'], 'load' | 'loadKeyManager' | 'loadRecord'>;
   };
@@ -280,6 +294,7 @@ export function createPhase8TenantBackupInstalledAdapter(
   };
   const restoreAuthority = createTenantBackupRestoreAuthorityGuard({
     database,
+    logEnv: input.env,
     now,
     // The bundle's own role definitions, from the validated input under the sealed restore plan.
     loadBundleRoles: async (context) => {
@@ -379,10 +394,20 @@ export function createPhase8TenantBackupInstalledAdapter(
     });
     return { ...source, target };
   };
+  const icebergRestores = createTenantBackupIcebergLogRestorePorts({
+    env: input.env,
+    tenantKey: input.ports.tenantKey,
+    assertUnpublished: (context, planDigest) =>
+      validatedInput.assertValidatedUnpublishedPlan(context, planDigest),
+    resolveCore: (context, planDigest) =>
+      input.ports.resolveCoreRestoreDatabase(context, planDigest),
+  });
   const otherStores: Phase8OtherStorePorts = {
     ...input.ports.otherStores,
     phase4: {
       ...input.ports.otherStores.phase4,
+      isDatasetSelected: (context, planDigest, datasetId) =>
+        validatedInput.isDatasetSelected(context, planDigest, datasetId),
       load: loadValidatedSqlite,
       loadKeyManager: (context, planDigest) =>
         loadValidatedRecord(context, planDigest, 'credentials.key_manager_tenant_state'),
@@ -395,7 +420,10 @@ export function createPhase8TenantBackupInstalledAdapter(
     loadPhase8Sqlite: loadValidatedSqlite,
     loadPhase8Record: (context, planDigest, _purpose, datasetId) =>
       loadValidatedRecord(context, planDigest, datasetId),
+    isDatasetSelected: (context, planDigest, datasetId) =>
+      validatedInput.isDatasetSelected(context, planDigest, datasetId),
     ...r2Objects,
+    ...icebergRestores,
     restoreAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.restoreAdminEnvelope>) =>
       adminEnvelopes.restoreAdminEnvelope(...args),
     verifyAdminEnvelope: (...args: Parameters<typeof adminEnvelopes.verifyAdminEnvelope>) =>
@@ -411,6 +439,16 @@ export function createPhase8TenantBackupInstalledAdapter(
       ...input.ports,
       rowTransform,
       otherStores,
+      cleanup: {
+        ...input.ports.cleanup,
+        async cleanupAdditionalPage(context) {
+          if (context.operation.kind === 'import') {
+            const result = await icebergRestores.cleanupRestoredLogHolds(context);
+            if (!result.complete) return { done: false };
+          }
+          return input.ports.cleanup.cleanupAdditionalPage(context);
+        },
+      },
       recordSnapshots: {
         ...input.ports.recordSnapshots,
         validateAdminEnvelope: (datasetId, rowValue) =>
@@ -420,6 +458,26 @@ export function createPhase8TenantBackupInstalledAdapter(
         ...input.ports.import,
         ...validatedInput,
         restoreTargets,
+        prepareActivation: async (context, planDigest) => {
+          // Users-only DR may carry an approved pending purge without selecting any
+          // PII log bodies. Rebuild its discovery scope before publishing the target.
+          const datasets = await validatedInput.loadValidatedSqliteDatasets(context);
+          if (datasets.some(({ policy }) => policy.dataset.id === 'pii.pii_log_purge_operations')) {
+            const head = await new DatabaseTenantBackupRestorePlanInventory(
+              database,
+              context.lease,
+              now
+            ).headForLease(context.lease);
+            if (head.state !== 'sealed' || head.chain_digest !== planDigest)
+              throw new Error('backup_iceberg_restore_fenced');
+            await icebergRestores.registerRestoredPiiPurgeScope(context, head.chain_digest);
+          }
+          await input.ports.import.prepareActivation(context, planDigest);
+        },
+        async verifyActivation(context, planDigest) {
+          await input.ports.import.verifyActivation(context, planDigest);
+          await icebergRestores.activateRestoredLogHolds(context, planDigest);
+        },
         assertRestoreApproval: (context) =>
           adminMappings.assertApproved(context.lease.tenantId, context.lease.operationId),
       },
@@ -448,6 +506,34 @@ export function createPhase8TenantBackupInstalledAdapter(
       transformRow: transformPortableRow,
       // R2 body plans are listed from the T0 SQL snapshot after the write hold.
       prepareArtifactResources: async (context) => {
+        let stage: 'r2' | 'iceberg' = 'r2';
+        let cursor: string | null = null;
+        if (context.cursor !== null) {
+          const parsed: unknown = JSON.parse(context.cursor);
+          if (
+            !parsed ||
+            typeof parsed !== 'object' ||
+            !('version' in parsed) ||
+            parsed.version !== 1 ||
+            !('stage' in parsed) ||
+            (parsed.stage !== 'r2' && parsed.stage !== 'iceberg') ||
+            !('cursor' in parsed) ||
+            (parsed.cursor !== null && typeof parsed.cursor !== 'string') ||
+            Object.keys(parsed).length !== 3
+          )
+            throw new Error('backup_phase8_artifact_cursor_invalid');
+          stage = parsed.stage;
+          cursor = parsed.cursor;
+        }
+        if (stage === 'iceberg') {
+          const result = await input.ports.icebergLogs.prepareArtifactResources({
+            ...context,
+            cursor,
+          });
+          return result.done
+            ? { cursor: null, done: true }
+            : { cursor: JSON.stringify({ version: 1, stage, cursor: result.cursor }), done: false };
+        }
         const targets: TenantBackupR2PlanTarget[] = [];
         for (const { dataset, port } of r2PlanTargets) {
           const rule = tenantDatasetSelectionRule(dataset.kind, context.selection);
@@ -458,17 +544,30 @@ export function createPhase8TenantBackupInstalledAdapter(
             snapshotId: await tenantBackupRecordSnapshotId(context, port.resourceId),
           });
         }
-        return prepareTenantBackupR2Plans({
+        const result = await prepareTenantBackupR2Plans({
           context,
           planned: await loadInstalledPlan(context.context),
           targets,
           tenantKey: input.ports.tenantKey,
           boundaryUnixMs: context.boundaryUnixMs,
-          cursor: context.cursor,
+          cursor,
         });
+        return {
+          cursor: JSON.stringify({
+            version: 1,
+            stage: result.done ? 'iceberg' : 'r2',
+            cursor: result.cursor,
+          }),
+          done: false,
+        };
       },
       otherStores: createPhase8OtherStoreHandlers(input.env, otherStores),
       recordSnapshots: [
+        ...ICEBERG_LOG_RECORDS_DATASETS.map((dataset) => ({
+          dataset,
+          policy: createIcebergLogRecordDatasetPolicy(dataset.id),
+          port: input.ports.icebergLogs.records,
+        })),
         {
           dataset: USER_AVATARS_DATASET,
           policy: createUserAvatarDatasetPolicy(),

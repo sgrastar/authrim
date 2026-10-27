@@ -57,6 +57,10 @@ const mocks = vi.hoisted(() => ({
   publishAuthDirectoryRoute: vi.fn(),
 }));
 
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core/services/log-iceberg-emitter')>()),
+  emitLogIcebergRow: vi.fn(async () => ({})),
+}));
 vi.mock('@simplewebauthn/server', () => ({
   generateRegistrationOptions: mocks.generateRegistrationOptions,
   verifyRegistrationResponse: mocks.verifyRegistrationResponse,
@@ -1415,6 +1419,7 @@ describe('directory password login handler', () => {
       amr: ['pwd', 'directory', 'otp'],
     });
     expect(mocks.completeDirectoryAuthEmailCodeFallback).toHaveBeenCalledWith(
+      expect.anything(),
       mocks.coreAdapter,
       expect.objectContaining({
         tenantId: 'tenant-a',
@@ -1499,6 +1504,7 @@ describe('directory password login handler', () => {
       amr: ['directory', 'otp'],
     });
     expect(mocks.completeDirectoryAuthEmailCodeFallback).toHaveBeenCalledWith(
+      expect.anything(),
       mocks.coreAdapter,
       expect.objectContaining({
         tenantId: 'tenant-a',
@@ -3278,7 +3284,7 @@ describe('directory password failures recorded with their Flow interaction', () 
     });
     await vi.waitFor(() => expect(mocks.recordAttemptFailure).toHaveBeenCalledTimes(1));
     // The account is not known from a username: no subject is recorded, and nothing typed in.
-    expect(mocks.recordAttemptFailure.mock.calls[0]?.[2]).toEqual({
+    expect(mocks.recordAttemptFailure.mock.calls[0]?.[3]).toEqual({
       tenantId: 'tenant-a',
       interactionId: 'int-1',
       method: 'directory_password',
@@ -3296,7 +3302,7 @@ describe('directory password failures recorded with their Flow interaction', () 
     );
     expect(response.status).toBe(429);
     await vi.waitFor(() => expect(mocks.recordAttemptFailure).toHaveBeenCalledTimes(1));
-    expect(mocks.recordAttemptFailure.mock.calls[0]?.[2]).toMatchObject({
+    expect(mocks.recordAttemptFailure.mock.calls[0]?.[3]).toMatchObject({
       reasonCode: 'rate_limited',
     });
   });

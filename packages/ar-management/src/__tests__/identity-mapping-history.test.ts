@@ -12,9 +12,27 @@ import {
 
 const mocks = vi.hoisted(() => ({
   audit: vi.fn(async () => undefined),
+  admin: null as import('@authrim/ar-lib-core').DatabaseAdapter | null,
   bindingReads: vi.fn((_input: { setId: string; clientId?: string }) => undefined),
   afterReference: undefined as (() => void) | undefined,
   bindingFailure: undefined as Error | undefined,
+}));
+// These tests cover business history/restore races. Storage/crypto atomicity has dedicated real mode tests.
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core/services/log-iceberg-emitter')>()),
+  prepareLogIcebergRowWrite: async () => ({ statements: [], dispatch: async () => {} }),
+}));
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-read', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core/services/log-iceberg-read')>()),
+  readLogIcebergDataset: async (_env: unknown, request: { tenantId: string }) => ({
+    rows: await mocks.admin!.query(
+      "SELECT * FROM identity_mapping_level_history WHERE status='committed' AND tenant_id=?",
+      [request.tenantId]
+    ),
+    hasArchive: false,
+    consistency: 'snapshot',
+    pendingDeliveries: 0,
+  }),
 }));
 vi.mock('@authrim/ar-lib-core', async (original) => {
   const actual = await original<typeof import('@authrim/ar-lib-core')>();
@@ -183,6 +201,7 @@ function setup() {
       },
     }
   );
+  mocks.admin = fixture.adapter;
   const root = resolve(__dirname, '../../../..');
   for (const file of [
     '028_tenant_settings_documents.sql',

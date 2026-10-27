@@ -41,8 +41,8 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       'tenant-a'
     );
     expect(retention).toEqual({
-      event: { days: 30, source: 'pii_config', variesByRoute: false, archived: false },
-      pii: { days: 700, source: 'pii_config', variesByRoute: false, archived: false },
+      event: { days: 30, source: 'pii_config', variesByRoute: false, archived: true },
+      pii: { days: 700, source: 'pii_config', variesByRoute: false, archived: true },
     });
   });
 
@@ -52,8 +52,8 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       'tenant-a'
     );
     expect(retention).toEqual({
-      event: { days: 90, source: 'pii_config', variesByRoute: false, archived: false },
-      pii: { days: 365, source: 'pii_config', variesByRoute: false, archived: false },
+      event: { days: 90, source: 'pii_config', variesByRoute: false, archived: true },
+      pii: { days: 365, source: 'pii_config', variesByRoute: false, archived: true },
     });
   });
 
@@ -91,7 +91,9 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
     await expect(
       resolveTenantAuditRetentionFromEnv(
         env(async (key) =>
-          key === 'logging-policy-snapshots/v1/current/tenant/tenant-a.json' ? '{not json' : null
+          key === '__authrim_log_archive_private__/policy-snapshots/v1/current/tenant/tenant-a.json'
+            ? '{not json'
+            : null
         ),
         'tenant-a'
       )
@@ -134,7 +136,6 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       priority: 1,
       enabled: true,
       conditions,
-      targets: { archiveStores: ['r2-archive'] },
       retention: { eventLogRetentionDays: days },
     });
     const rules = [
@@ -150,14 +151,14 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       days: 400,
       source: 'delivery_plan',
       variesByRoute: true,
-      archived: false,
+      archived: true,
     });
     // No rule sets PII retention.
     expect(retention.pii).toEqual({
       days: 365,
       source: 'pii_config',
       variesByRoute: false,
-      archived: false,
+      archived: true,
     });
 
     const otherTenant = await resolveTenantAuditRetentionFromEnv(
@@ -168,7 +169,7 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       days: 90,
       source: 'pii_config',
       variesByRoute: false,
-      archived: false,
+      archived: true,
     });
 
     // A rule for all the tenant's writes is the value, not a variation.
@@ -180,7 +181,7 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       days: 400,
       source: 'delivery_plan',
       variesByRoute: false,
-      archived: false,
+      archived: true,
     });
 
     // A rule for any region applies to writes (they carry none); one for a region never does.
@@ -199,11 +200,11 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       days: 90,
       source: 'pii_config',
       variesByRoute: true,
-      archived: false,
+      archived: true,
     });
   });
 
-  it('says whether the logs are also copied to an archive, which Authrim does not delete', async () => {
+  it('reports the canonical archive independently of retired profile destinations', async () => {
     mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
       auditProfile: {
         id: 'builtin:audit:standard',
@@ -221,7 +222,7 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
     expect(retention.pii.archived).toBe(true);
   });
 
-  it('counts the copy the cleanup makes before deleting as archived, with a published policy', async () => {
+  it('does not let retired archiveBeforeDelete disable canonical archival', async () => {
     // A published logging policy that sends audit logs to an external sink only.
     const values = new Map<string, string>();
     const kv = {
@@ -286,12 +287,13 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       },
     });
     await publishRuntimeLoggingPolicySnapshot({
+      prefix: '__authrim_log_archive_private__/policy-snapshots/v1',
       snapshot,
       kv,
       objectStore: bucket,
       now: 1_700_000_000_000,
     });
-    const snapshotEnv = { AUTHRIM_CONFIG: kv, DIAGNOSTIC_LOGS: bucket } as unknown as Env;
+    const snapshotEnv = { AUTHRIM_CONFIG: kv, LOG_ARCHIVE: bucket } as unknown as Env;
     const profile = (archiveBeforeDelete: boolean) => ({
       auditProfile: {
         id: 'builtin:audit:standard',
@@ -309,7 +311,7 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
     );
     mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValueOnce(profile(false));
     expect((await resolveTenantAuditRetentionFromEnv(snapshotEnv, 'tenant-a')).event.archived).toBe(
-      false
+      true
     );
   });
 });

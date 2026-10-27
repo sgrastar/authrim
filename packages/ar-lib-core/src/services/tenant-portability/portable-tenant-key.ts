@@ -9,6 +9,7 @@ export const PORTABLE_TENANT_KEY = 'authrim-portable-tenant-v1';
 
 /** Installed SQL datasets that carry the environment-local tenant key in their row payload. */
 export const PORTABLE_TENANT_KEY_SQLITE_DATASETS = [
+  'admin.log_iceberg_subject_erasures',
   'admin.log_chunk_manifests',
   'admin.log_chunk_record_index',
   'admin.log_object_catalog',

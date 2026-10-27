@@ -1,3 +1,6 @@
+import { writeDeploymentArchiveFixture } from './fixtures/log-archive.js';
+import { acquireDeployConfigLock } from '../core/lock.js';
+import { getSecretNamesForWorker } from '../core/secrets.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -122,25 +125,39 @@ function installExecaMock(
   }) as never);
 }
 
-function deployAll(
+async function deployAll(
   rootDir: string,
   overrides: Partial<DeployOptions> = {},
   components: Parameters<typeof deployAllCore>[1] = ['ar-lib-core', 'ar-token']
 ) {
-  return deployAllCore(
-    {
-      env: 'test',
-      rootDir,
-      deploymentStrategy: 'staged',
-      existingComponents: ['ar-lib-core', 'ar-token'],
-      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
-      workerScriptOwnership: ownership,
-      maxRetries: 1,
-      retryDelayMs: 1,
-      ...overrides,
-    },
-    components
-  );
+  await writeDeploymentArchiveFixture(rootDir, 'test');
+  const ownershipLock = await acquireDeployConfigLock({
+    baseDir: rootDir,
+    env: 'test',
+    operation: 'test-archive-deploy',
+  });
+  try {
+    return await deployAllCore(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'staged',
+        existingComponents: ['ar-control', 'ar-lib-core', 'ar-token'],
+        lookupHmacSlots: ['A'],
+        listWorkerSecretNames: async (component) =>
+          new Set(getSecretNamesForWorker(component, { logArchive: true })),
+        deployConfigLockProof: ownershipLock.proof,
+        readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+        workerScriptOwnership: ownership,
+        maxRetries: 1,
+        retryDelayMs: 1,
+        ...overrides,
+      },
+      components
+    );
+  } finally {
+    await ownershipLock.release();
+  }
 }
 
 beforeEach(() => {

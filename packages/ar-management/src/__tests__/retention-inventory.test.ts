@@ -171,7 +171,7 @@ describe('retention inventory', () => {
     expect(c.check_api_audit).toMatchObject({
       retention: { value: 60, unit: 'days' },
       source: { kind: 'setting', level: 'platform', key: 'audit.check_api_retention_days' },
-      deletion: { task: 'check_api_audit_retention', tenant_last_run: null },
+      deletion: { task: 'audit_retention', tenant_last_run: { outcome: 'cleaned' } },
     });
     // Counted as the retention task finds them: any report whose file is still kept.
     const reportSql = String(
@@ -243,9 +243,7 @@ describe('retention inventory', () => {
       'tenant-a',
       { auditProfile: { id: 'custom' } }
     );
-    expect(mocks.getAuditHotQuerySupportForProfile).toHaveBeenCalledWith(expect.anything(), {
-      id: 'custom',
-    });
+    expect(mocks.getAuditHotQuerySupportForProfile).not.toHaveBeenCalled();
     expect(mocks.resolvePlatformSettingsWithSources).toHaveBeenCalledWith(
       expect.anything(),
       'check-api-audit',
@@ -310,20 +308,22 @@ describe('retention inventory', () => {
 
   it('counts records for the tenant only, past retention by their own cutoff', async () => {
     const c = byId(await build());
-    expect(c.audit_events!.counts).toEqual({ total: 100, expired: 7 });
-    expect(c.check_api_audit!.counts).toEqual({ total: 20, expired: 4 });
+    expect(c.audit_events.counts).toBeNull();
+    expect(c.audit_events.counts_unavailable_reason).toBe(
+      'iceberg_physical_expired_counts_unavailable'
+    );
+    expect(c.check_api_audit.counts).toBeNull();
+    expect(c.check_api_audit.counts_unavailable_reason).toBe(
+      'iceberg_physical_expired_counts_unavailable'
+    );
     // Summed over every PII store.
-    expect(c.user_tombstones!.counts).toEqual({ total: 10, expired: 4 });
-    expect(c.sessions!.counts).toBeNull();
+    expect(c.user_tombstones.counts).toEqual({ total: 10, expired: 4 });
+    expect(c.sessions.counts).toBeNull();
 
-    expect(eventLog.queryOne).toHaveBeenCalledWith(expect.stringContaining('FROM event_log'), [
-      NOW,
-      'tenant-a',
-    ]);
-    const checkCall = core.queryOne.mock.calls.find(([sql]) =>
-      String(sql).includes('permission_check_audit')
-    )!;
-    expect(checkCall[1]).toEqual([Math.floor(NOW / 1000) - 60 * 86400, 'tenant-a']);
+    expect(eventLog.queryOne).not.toHaveBeenCalled();
+    expect(
+      core.queryOne.mock.calls.some(([sql]) => String(sql).includes('permission_check_audit'))
+    ).toBe(false);
     expect(pii.queryOne).toHaveBeenCalledWith(expect.stringContaining('users_pii_tombstone'), [
       NOW,
       'tenant-a',
@@ -335,7 +335,7 @@ describe('retention inventory', () => {
       supported: false,
       status: 'not_supported',
     });
-    expect(byId(await build()).audit_events!.counts).toBeNull();
+    expect(byId(await build()).audit_events.counts).toBeNull();
 
     pii.queryOne.mockClear();
     const categories = await build(false);
@@ -401,7 +401,7 @@ describe('retention inventory', () => {
               'oauth.access_token_expiry': 3600,
             }
       );
-      expect(byId(await build(false)).diagnostic_logs!.retention.value).toBe(shown);
+      expect(byId(await build(false)).diagnostic_logs.retention.value).toBe(shown);
     }
   });
 

@@ -16,6 +16,7 @@
  * challenge and session stores, WebAuthn's cryptographic verification.
  */
 
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -255,6 +256,7 @@ function env(options: { directoryEnabled?: boolean; keyring?: string | null } = 
     resetRpc: async () => true,
   };
   return {
+    ...logEnvironment,
     ALLOWED_ORIGINS: ORIGIN,
     ISSUER_URL: 'https://auth.example.com',
     PII_ENCRYPTION_KEY,
@@ -279,9 +281,13 @@ function env(options: { directoryEnabled?: boolean; keyring?: string | null } = 
   } as unknown as Env;
 }
 
+let logEnvironment: Partial<Env> = {};
+let retainedAttempts: Array<Record<string, unknown>> = [];
+let readAttempts: (() => Promise<Array<Record<string, unknown>>>) | undefined;
 const background: Promise<unknown>[] = [];
 const flushBackground = async () => {
   while (background.length) await Promise.all(background.splice(0));
+  if (readAttempts) retainedAttempts = await readAttempts();
 };
 const executionCtx = {
   waitUntil: (task: Promise<unknown>) => {
@@ -347,7 +353,7 @@ async function migrationTransaction(databases: Databases): Promise<{ id: string;
   const tokenHash = `sha256:${Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, '0')
   ).join('')}`;
-  const transaction = await createDirectoryAuthMigrationTransaction(databases.metadata, {
+  const transaction = await createDirectoryAuthMigrationTransaction(env(), databases.metadata, {
     tenantId: TENANT,
     campaignId: null,
     userId: USER,
@@ -366,6 +372,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
   'directory password and Direct Auth passkey account stores of a %s tenant (real SQL)',
   (allocationScope) => {
     let databases: Databases;
+    let logs: Awaited<ReturnType<typeof logProducerFixture>>;
 
     beforeEach(async () => {
       databases = {
@@ -373,6 +380,13 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
         accountCore: adapterOver(migrate('core')),
         accountPii: adapterOver(migrate('pii')),
       };
+      logs = await logProducerFixture('scheduled', { tenantId: TENANT, separateAdmin: true });
+      logEnvironment = logs.env as unknown as Partial<Env>;
+      retainedAttempts = [];
+      readAttempts = async () =>
+        (await logs.rows('core.flow_audit_events')).filter(
+          (row) => row.event_type === 'flow.sign_in_attempt.failed'
+        );
       world.accountCore = databases.accountCore;
       world.accountPii = databases.accountPii;
       world.identifierRoutes.clear();
@@ -387,6 +401,9 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
 
     afterEach(async () => {
       await flushBackground();
+      readAttempts = undefined;
+      logEnvironment = {};
+      logs.close();
       for (const database of Object.values(databases)) {
         (database.raw as unknown as { close(): void }).close();
       }
@@ -404,6 +421,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
     }
 
     function attemptRows(database = databases.metadata): Array<Record<string, unknown>> {
+      if (database === databases.metadata) return retainedAttempts;
       return database.raw
         .prepare("SELECT * FROM flow_audit_events WHERE event_type='flow.sign_in_attempt.failed'")
         .all() as Array<Record<string, unknown>>;
@@ -591,8 +609,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
 
     it('keeps the existing terminal response and cleanup when best-effort recording SQL fails', async () => {
       seedAttemptInteraction();
-      databases.metadata.raw
-        .exec(`CREATE TRIGGER reject_attempt_fixture BEFORE INSERT ON flow_audit_events
+      logs.adminDb.exec(`CREATE TRIGGER reject_attempt_fixture BEFORE INSERT ON log_iceberg_records
         BEGIN SELECT RAISE(ABORT,'private-recording-fixture'); END`);
       world.failDirectoryRoutePublication = 'directory_identifier_reservation_conflict';
 

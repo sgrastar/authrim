@@ -1,14 +1,21 @@
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  generateAllSecrets,
+  saveKeysToDirectory,
+  ensureLogArchiveContentHmacKey,
+} from '../core/keys.js';
+import { archiveResourceIds } from './fixtures/log-archive.js';
+import { ensureLogArchiveRootKeyring } from '../core/log-archive-root-keyring.js';
 import { CORE_WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
-import { SECRET_UPLOAD_PLAN } from '../core/secrets.js';
+import { getSecretNamesForWorker } from '../core/secrets.js';
 import {
   LOCAL_LOG_NOTIFIER_ENV,
   buildResourceIdsFromLock,
   generateEnvVars,
   generateWranglerConfig,
+  parseGeneratedLogArchiveVars,
   toToml,
 } from '../core/wrangler.js';
 import {
@@ -23,6 +30,11 @@ import {
   formatDevVarsValue,
   loadLocalSecretsForComponent,
 } from '../core/local/wrangler-files.js';
+
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
 
 describe('dev vars formatting', () => {
   it('single-quotes single-line values so dotenv leaves them untouched', () => {
@@ -63,6 +75,8 @@ describe('generated local files', () => {
   beforeAll(async () => {
     mkdirSync(root, { recursive: true });
     await saveKeysToDirectory(generateAllSecrets('local-key'), { targetDir: keysDir });
+    await ensureLogArchiveRootKeyring(keysDir, { keyVersion: 1 });
+    await ensureLogArchiveContentHmacKey(keysDir);
     files = await buildLocalWorkerFiles({
       config,
       lock,
@@ -76,6 +90,27 @@ describe('generated local files', () => {
 
   const toml = (component: WorkerComponent): string =>
     files.find((file) => file.component === component)!.toml;
+
+  it('sets scheduled hot-only local limits without inventing remote activation evidence or credentials', async () => {
+    const core = toml('ar-lib-core');
+    expect(core).toContain('AUTHRIM_LOG_ARCHIVE_LOCAL_STAGING_ONLY = "true"');
+    expect(core).toContain('AUTHRIM_LOG_ARCHIVE_MODE = "scheduled"');
+    expect(core).toContain('binding = "DB_ADMIN"');
+    expect(core).toContain('binding = "LOG_ARCHIVE"');
+    expect(core).not.toContain('AUTHRIM_LOG_ARCHIVE_TABLE_UUID');
+    expect(core).not.toContain('AUTHRIM_LOG_ARCHIVE_PHYSICAL_FINGERPRINT');
+    expect(core).not.toContain('AUTHRIM_LOG_ARCHIVE_CATALOG_URI');
+    for (const file of files) {
+      expect(file.devVars).not.toContain('LOG_ARCHIVE_CATALOG_READ_TOKEN');
+      expect(file.devVars).not.toContain('LOG_ARCHIVE_CATALOG_WRITE_TOKEN');
+    }
+    expect(() => parseGeneratedLogArchiveVars(core, 'local')).toThrow(
+      'local_log_archive_cannot_be_deployed'
+    );
+    expect(() =>
+      generateWranglerConfig('ar-lib-core', config, buildResourceIdsFromLock(lock, config))
+    ).toThrow('log_archive_resource_configuration_mismatch');
+  });
 
   it('produces a config and secrets file for every Worker', () => {
     expect(files.map((file) => file.component).sort()).toEqual([...CORE_WORKER_COMPONENTS].sort());
@@ -112,7 +147,7 @@ describe('generated local files', () => {
     expect(services).toContain('local-ar-auth');
     expect(services).toContain('local-ar-token');
     expect(services).not.toContain('local-ar-saml');
-    expect(services).not.toContain('local-ar-control');
+    expect(services).toContain('local-ar-control');
   });
 
   it('treats the API and both UIs on localhost ports as one site, with Lax cookies', () => {
@@ -146,7 +181,7 @@ describe('generated local files', () => {
   });
 
   it('never emits the local-only variables for a Cloudflare deployment', () => {
-    const resourceIds = buildResourceIdsFromLock(lock, config);
+    const resourceIds = archiveResourceIds(config, buildResourceIdsFromLock(lock, config));
     for (const component of CORE_WORKER_COMPONENTS) {
       const cloud = generateWranglerConfig(component, config, resourceIds);
       expect(cloud.vars[LOCAL_LOG_NOTIFIER_ENV], component).toBeUndefined();
@@ -158,7 +193,7 @@ describe('generated local files', () => {
 
   it('does not turn localhost ports into one site for a Cloudflare-shaped config', () => {
     // The same-site shortcut for localhost is opt-in and only the local shape asks for it.
-    const resourceIds = buildResourceIdsFromLock(lock, config);
+    const resourceIds = archiveResourceIds(config, buildResourceIdsFromLock(lock, config));
     const cloud = generateWranglerConfig('ar-auth', config, resourceIds);
     expect(cloud.vars['ADMIN_UI_API_MODE']).not.toBe('same-site-cross-origin');
     expect(cloud.vars['COOKIE_SAME_SITE']).not.toBe('Lax');
@@ -175,7 +210,9 @@ describe('generated local files', () => {
   it('gives each Worker exactly the secrets its upload plan lists', async () => {
     const auth = await loadLocalSecretsForComponent(keysDir, 'ar-auth');
     expect(Object.keys(auth).sort()).toEqual(
-      [...SECRET_UPLOAD_PLAN['ar-auth']].filter((name) => name in auth).sort()
+      [...getSecretNamesForWorker('ar-auth', { logArchive: true })]
+        .filter((name) => name in auth)
+        .sort()
     );
     expect(auth['PRIVATE_KEY_PEM']).toContain('BEGIN');
     expect(auth['TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS']).toContain('Ed25519');
@@ -203,7 +240,7 @@ describe('generated local files', () => {
 describe('local generation follows the shared Worker contracts', () => {
   const config = buildLocalConfig({ env: 'local' });
   const lock = buildLocalLock('local');
-  const resourceIds = buildResourceIdsFromLock(lock, config);
+  const resourceIds = archiveResourceIds(config, buildResourceIdsFromLock(lock, config));
   const local = { local: { excludedComponents: [] } };
 
   it('gives ar-async the Lookup database, the session store and the user-code rate limiter', () => {

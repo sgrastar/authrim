@@ -1,3 +1,4 @@
+import { logCoverageHeaders } from './log-read-adapter';
 import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin Statistics API Endpoints
@@ -241,7 +242,9 @@ export async function adminStatsTokensHandler(c: Context<{ Bindings: Env }>) {
   void _toTs;
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -306,7 +309,7 @@ export async function adminStatsTokensHandler(c: Context<{ Bindings: Env }>) {
       },
     };
 
-    return c.json(stats);
+    return c.json({ ...stats, coverage: hotQuery.context.archiveRead?.coverage() });
   } catch (error) {
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;
@@ -335,7 +338,9 @@ export async function adminStatsAuthHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(new Date(to).getTime() / 1000);
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -439,7 +444,7 @@ export async function adminStatsAuthHandler(c: Context<{ Bindings: Env }>) {
       },
     };
 
-    return c.json(stats);
+    return c.json({ ...stats, coverage: hotQuery.context.archiveRead?.coverage() });
   } catch (error) {
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;
@@ -468,7 +473,9 @@ export async function adminStatsTimelineHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(new Date(to).getTime() / 1000);
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -555,7 +562,7 @@ export async function adminStatsTimelineHandler(c: Context<{ Bindings: Env }>) {
       },
     };
 
-    return c.json(stats);
+    return c.json({ ...stats, coverage: hotQuery.context.archiveRead?.coverage() });
   } catch (error) {
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;
@@ -629,7 +636,9 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(new Date(to).getTime() / 1000);
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -775,7 +784,7 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
       },
     };
 
-    return c.json(stats);
+    return c.json({ ...stats, coverage: hotQuery.context.archiveRead?.coverage() });
   } catch (error) {
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;
@@ -909,7 +918,9 @@ export async function adminStatsGeographyHandler(c: Context<{ Bindings: Env }>) 
   const toTs = Math.floor(new Date(to).getTime() / 1000);
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -1044,7 +1055,7 @@ export async function adminStatsGeographyHandler(c: Context<{ Bindings: Env }>) 
       },
     };
 
-    return c.json(stats);
+    return c.json({ ...stats, coverage: hotQuery.context.archiveRead?.coverage() });
   } catch (error) {
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;

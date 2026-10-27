@@ -8,6 +8,7 @@
  */
 
 import { AuthrimConfigSchema, type AuthrimConfig } from '../config.js';
+import { createLogArchiveConfig } from '../log-archive-config.js';
 import { AuthrimLockSchema, type AuthrimLock } from '../lock.js';
 import {
   CORE_WORKER_COMPONENTS,
@@ -69,11 +70,12 @@ export function buildLocalConfig(options: LocalEnvironmentOptions): AuthrimConfi
     tenant: { name: options.tenantName ?? 'default' },
     components: { adminUiVariant: options.adminUiVariant ?? 'legacy' },
     features: {
-      r2: { enabled: false },
+      r2: { enabled: true },
       queue: { enabled: false },
       email: { provider: 'none' },
     },
-    // Local mode has no Control Worker to provision capacity or refresh credentials.
+    logging: { archive: createLogArchiveConfig(options.env, 'scheduled') },
+    // Local Control does not call the Cloudflare provisioning APIs.
     controlPlane: { automaticProvisioning: false },
     keys: { storageType: 'external' },
   });
@@ -120,7 +122,11 @@ export function buildLocalLock(env: string, now: Date = new Date()): AuthrimLock
 export const LOCAL_SELECTABLE_COMPONENTS: readonly WorkerComponent[] = CORE_WORKER_COMPONENTS;
 
 /** Components that must run for any other Worker to function. */
-const LOCAL_REQUIRED_COMPONENTS: readonly WorkerComponent[] = ['ar-lib-core', 'ar-router'];
+const LOCAL_REQUIRED_COMPONENTS: readonly WorkerComponent[] = [
+  'ar-lib-core',
+  'ar-router',
+  'ar-control',
+];
 
 export interface LocalComponentSelection {
   /** Workers started by `wrangler dev`, router first (it is the primary Worker). */

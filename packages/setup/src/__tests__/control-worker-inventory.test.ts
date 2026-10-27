@@ -29,6 +29,12 @@ describe('control worker desired inventory registration', () => {
         'utf8'
       )
     );
+    database.exec(
+      readFileSync(
+        resolve(ROOT_DIR, 'migrations/control/d1/014_log_archive_pipeline_bindings.sql'),
+        'utf8'
+      )
+    );
   });
 
   afterEach(() => database.close());

@@ -38,21 +38,21 @@ describe('tenant backup dataset registry coverage', () => {
     }
   });
 
-  it('selects mapping level history as audit evidence with users and settings disabled', () => {
+  it('preserves the mapping version ledger with settings even when historical logs are disabled', () => {
     const policy = TENANT_DATASET_POLICIES.find(
       ({ family, table }) => family === 'admin' && table === 'identity_mapping_level_history'
     );
-    expect(policy?.kind).toBe('audit');
+    expect(policy?.kind).toBe('settings');
     const selection = parseTenantBackupSelection({
-      settings: false,
+      settings: true,
       users: false,
       admin: false,
       artifacts: false,
-      logs: { audit: true, other: false, sensitive: false, period: 7 },
+      logs: { audit: false, other: false, sensitive: false, period: 7 },
     });
-    expect(tenantDatasetSelectionRule('audit', selection)).toEqual({
+    expect(tenantDatasetSelectionRule('settings', selection)).toEqual({
       action: 'selected',
-      timeFilter: 'log_window',
+      timeFilter: 'none',
     });
   });
   it('retains published mapping dependencies in settings-only backups with logs and Admin users off', () => {

@@ -1,4 +1,4 @@
-import { logDetailWindow, logPageRequest } from './log-read-adapter';
+import { logCoverageHeaders, logDetailWindow, logPageRequest } from './log-read-adapter';
 import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin API Endpoints
@@ -86,13 +86,7 @@ import {
   getAuditTimeRange,
   type AuditHotQueryContext,
 } from './audit-hot-query';
-import {
-  getArchiveAuditEventById,
-  getAuditArchiveQuerySupport,
-  listArchiveAuditEvents,
-} from './audit-archive-query';
 import { getAuditJsonTextExpr } from './audit-sql-dialect';
-import { createLoggingTenantKeyResolver } from './logging-tenant-key';
 import {
   attemptImmediateAccountDirectoryRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
@@ -107,15 +101,6 @@ import { isInactiveAccountRouteError } from './account-route-errors';
 import { CrossShardAccountExactSearchService } from './cross-shard-account-list';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
-
-function isAuditLogStoreNotInitializedError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return (
-    /no such table:\s*(event_log|audit_log)/i.test(message) ||
-    /relation\s+"?(event_log|audit_log)"?\s+does not exist/i.test(message) ||
-    /table\s+'?(event_log|audit_log)'?\s+doesn't exist/i.test(message)
-  );
-}
 
 function emptyAuditLogListResponse(page: number, limit: number) {
   return {
@@ -160,20 +145,6 @@ async function findCanonicalRuntimeUser(
     piiAdapter: piiCtx.defaultPiiAdapter,
     tenantId,
   }).findById(userId, options);
-}
-
-async function auditHotTableExists(
-  context: AuditHotQueryContext,
-  tableName: 'audit_log' | 'event_log'
-): Promise<boolean> {
-  if (context.dialect !== 'sqlite') {
-    return true;
-  }
-  const table = await context.adapter.queryOne<{ name: string }>(
-    'SELECT name FROM sqlite_master WHERE type = ? AND name = ?',
-    ['table', tableName]
-  );
-  return Boolean(table?.name);
 }
 
 export {
@@ -226,90 +197,6 @@ function getCoreAdapter(
   return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
-function formatArchiveAuditEntry(
-  entry: {
-    id: string;
-    anonymizedUserId?: string;
-    eventType: string;
-    eventCategory: string;
-    result: string;
-    severity: string;
-    errorCode?: string;
-    errorMessage?: string;
-    clientId?: string;
-    sessionId?: string;
-    requestId?: string;
-    detailsJson?: string;
-    createdAt: number;
-  },
-  userIdMap: Map<string, string>
-) {
-  let metadata: unknown = null;
-  let metadataObject: Record<string, unknown> | null = null;
-
-  if (entry.detailsJson) {
-    try {
-      metadata = JSON.parse(entry.detailsJson) as unknown;
-      if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
-        metadataObject = metadata as Record<string, unknown>;
-      }
-    } catch {
-      metadata = null;
-      metadataObject = null;
-    }
-  }
-
-  return {
-    id: entry.id,
-    userId: entry.anonymizedUserId ? (userIdMap.get(entry.anonymizedUserId) ?? null) : null,
-    action: entry.eventType,
-    resourceType:
-      typeof metadataObject?.resourceType === 'string'
-        ? metadataObject.resourceType
-        : typeof metadataObject?.resource_type === 'string'
-          ? metadataObject.resource_type
-          : entry.eventCategory,
-    resourceId:
-      typeof metadataObject?.resourceId === 'string'
-        ? metadataObject.resourceId
-        : typeof metadataObject?.resource_id === 'string'
-          ? metadataObject.resource_id
-          : (entry.clientId ?? null),
-    ipAddress:
-      typeof metadataObject?.ipAddress === 'string'
-        ? metadataObject.ipAddress
-        : typeof metadataObject?.ip_address === 'string'
-          ? metadataObject.ip_address
-          : null,
-    userAgent:
-      typeof metadataObject?.userAgent === 'string'
-        ? metadataObject.userAgent
-        : typeof metadataObject?.user_agent === 'string'
-          ? metadataObject.user_agent
-          : null,
-    clientId: entry.clientId ?? null,
-    sessionId: entry.sessionId ?? null,
-    requestId: entry.requestId ?? null,
-    result: entry.result,
-    severity: entry.severity,
-    errorCode: entry.errorCode ?? null,
-    errorMessage: entry.errorMessage ?? null,
-    metadata: metadata && typeof metadata === 'object' ? metadata : null,
-    createdAt: new Date(entry.createdAt).toISOString(),
-  };
-}
-
-async function buildArchiveAuditUserIdMap(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string,
-  entries: Array<{ anonymizedUserId?: string }>
-) {
-  const anonymizedIds = [
-    ...new Set(entries.map((entry) => entry.anonymizedUserId).filter(Boolean)),
-  ] as string[];
-  return resolveAuditUserIdMap(c, tenantId, anonymizedIds);
-}
-
 async function resolveAuditUserAnonymizedId(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -319,7 +206,8 @@ async function resolveAuditUserAnonymizedId(
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const row = await piiCtx.defaultPiiAdapter.queryOne<{ anonymized_user_id: string }>(
     'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
-    [tenantId, userId]
+    [tenantId, userId],
+    { consistencyClass: 'primary_required' }
   );
   return row?.anonymized_user_id ?? null;
 }
@@ -375,7 +263,8 @@ async function resolveAuditUserIdMap(
           `SELECT anonymized_user_id, user_id
              FROM user_anonymization_map
             WHERE tenant_id = ? AND anonymized_user_id IN (${chunk.map(() => '?').join(', ')})`,
-          [tenantId, ...chunk]
+          [tenantId, ...chunk],
+          { consistencyClass: 'primary_required' }
         )
       )
     )
@@ -534,7 +423,6 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    const adapter = getCoreAdapter(c, tenantId);
     const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
     if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
@@ -608,7 +496,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
-    if (body.reason_detail && c.env.PII_ENCRYPTION_KEY) {
+    if (body.reason_detail) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
@@ -618,35 +506,16 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(
-          adapter,
-          {
-            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
-            objectStorage:
-              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
-                ? {
-                    bucket: c.env.SENSITIVE_DETAILS,
-                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-                    keyVersion:
-                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-                  }
-                : undefined,
-            runtimeLogging: {
-              env: c.env,
-              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
-            },
-          },
-          {
-            tenantId,
-            subjectType: 'user',
-            subjectId: userId,
-            actorId,
-            action: 'user.suspend',
-            reasonDetail: body.reason_detail,
-            requestId,
-            retentionDays,
-          }
-        );
+        await storeOperationalLog(c.env, {
+          tenantId,
+          subjectType: 'user',
+          subjectId: userId,
+          actorId,
+          action: 'user.suspend',
+          reasonDetail: body.reason_detail,
+          requestId,
+          retentionDays,
+        });
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for suspend', { userId }, opLogError as Error);
@@ -746,7 +615,6 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
       unlockAtTs = Math.floor(unlockDate.getTime() / 1000);
     }
 
-    const adapter = getCoreAdapter(c, tenantId);
     const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
     if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
@@ -817,7 +685,7 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
-    if (body.reason_detail && c.env.PII_ENCRYPTION_KEY) {
+    if (body.reason_detail) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
@@ -827,35 +695,16 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(
-          adapter,
-          {
-            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
-            objectStorage:
-              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
-                ? {
-                    bucket: c.env.SENSITIVE_DETAILS,
-                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-                    keyVersion:
-                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-                  }
-                : undefined,
-            runtimeLogging: {
-              env: c.env,
-              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
-            },
-          },
-          {
-            tenantId,
-            subjectType: 'user',
-            subjectId: userId,
-            actorId,
-            action: 'user.lock',
-            reasonDetail: body.reason_detail,
-            requestId,
-            retentionDays,
-          }
-        );
+        await storeOperationalLog(c.env, {
+          tenantId,
+          subjectType: 'user',
+          subjectId: userId,
+          actorId,
+          action: 'user.lock',
+          reasonDetail: body.reason_detail,
+          requestId,
+          retentionDays,
+        });
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for lock', { userId }, opLogError as Error);
@@ -956,7 +805,6 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const adapter = getCoreAdapter(c, tenantId);
     const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
     if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
@@ -1045,7 +893,7 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
-    if (body.reason_detail && c.env.PII_ENCRYPTION_KEY) {
+    if (body.reason_detail) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
@@ -1055,35 +903,16 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(
-          adapter,
-          {
-            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
-            objectStorage:
-              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
-                ? {
-                    bucket: c.env.SENSITIVE_DETAILS,
-                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-                    keyVersion:
-                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-                  }
-                : undefined,
-            runtimeLogging: {
-              env: c.env,
-              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
-            },
-          },
-          {
-            tenantId,
-            subjectType: 'user',
-            subjectId: userId,
-            actorId,
-            action: 'user.activate',
-            reasonDetail: body.reason_detail,
-            requestId,
-            retentionDays,
-          }
-        );
+        await storeOperationalLog(c.env, {
+          tenantId,
+          subjectType: 'user',
+          subjectId: userId,
+          actorId,
+          action: 'user.activate',
+          reasonDetail: body.reason_detail,
+          requestId,
+          retentionDays,
+        });
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for activate', { userId }, opLogError as Error);
@@ -1481,7 +1310,8 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 100);
     const offset = (page - 1) * limit;
     const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
-      page: c.env.DB_ADMIN ? logPageRequest(c, tenantId, limit) : undefined,
+      onCoverage: logCoverageHeaders(c),
+      page: logPageRequest(c, tenantId, limit),
     });
 
     // Filters
@@ -1493,52 +1323,11 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     const endDate = c.req.query('end_date'); // ISO 8601 format
 
     if (!hotQuery.supported || !hotQuery.context) {
-      const archiveQuery = await getAuditArchiveQuerySupport(c.env, tenantId);
-      if (!archiveQuery.supported || !archiveQuery.context) {
-        return createAuditHotQueryUnsupportedResponse(c, hotQuery);
-      }
-
-      const startTimestamp = buildAuditTimestamp(startDate);
-      const endTimestamp = buildAuditTimestamp(endDate);
-      const anonymizedUserId = userId
-        ? await resolveAuditUserAnonymizedId(c, tenantId, userId)
-        : null;
-
-      if (userId && !anonymizedUserId) {
-        return c.json(emptyAuditLogListResponse(page, limit));
-      }
-
-      const archiveResult = await listArchiveAuditEvents(archiveQuery.context, {
-        tenantId,
-        page,
-        limit,
-        startTime: startTimestamp == null ? undefined : startTimestamp * 1000,
-        endTime: endTimestamp == null ? undefined : endTimestamp * 1000,
-        eventType: action ?? undefined,
-        anonymizedUserId: anonymizedUserId ?? undefined,
-        resourceType: resourceType ?? undefined,
-        resourceId: resourceId ?? undefined,
-        cursorPage: logPageRequest(c, tenantId, limit),
-      });
-
-      const userIdMap = await buildArchiveAuditUserIdMap(c, tenantId, archiveResult.entries);
-
-      return c.json({
-        entries: archiveResult.entries.map((entry) => formatArchiveAuditEntry(entry, userIdMap)),
-        pagination: archiveResult.pagination ?? {
-          page,
-          limit,
-          total: archiveResult.total,
-          totalPages: archiveResult.totalPages,
-        },
-      });
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
 
     const context = hotQuery.context;
     const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
-    if (!(await auditHotTableExists(context, tableName))) {
-      return c.json(emptyAuditLogListResponse(page, limit));
-    }
 
     // Build WHERE clause - tenant_id is always first for index usage
     const conditions: string[] = ['tenant_id = ?'];
@@ -1745,7 +1534,12 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const archivePage = context.archiveRead?.pagination();
-    if (archivePage) return c.json({ entries, pagination: archivePage });
+    if (archivePage)
+      return c.json({
+        entries,
+        pagination: archivePage,
+        coverage: context.archiveRead?.coverage(),
+      });
     return c.json({
       entries,
       pagination: {
@@ -1758,11 +1552,6 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
   } catch (error) {
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;
-    if (isAuditLogStoreNotInitializedError(error)) {
-      const page = parseInt(c.req.query('page') || '1', 10);
-      const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 100);
-      return c.json(emptyAuditLogListResponse(page, limit));
-    }
     logSanitizedError('Admin audit log list error', error);
     return c.json(
       {
@@ -1782,7 +1571,10 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const id = c.req.param('id')!;
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, logDetailWindow(c));
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      ...logDetailWindow(c),
+      onCoverage: logCoverageHeaders(c),
+    });
 
     if (!id) {
       return c.json(
@@ -1795,50 +1587,7 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     if (!hotQuery.supported || !hotQuery.context) {
-      const archiveQuery = await getAuditArchiveQuerySupport(c.env, tenantId);
-      if (!archiveQuery.supported || !archiveQuery.context) {
-        return createAuditHotQueryUnsupportedResponse(c, hotQuery);
-      }
-
-      const hint = logDetailWindow(c);
-      const entry = await getArchiveAuditEventById(
-        archiveQuery.context,
-        tenantId,
-        id,
-        hint.window.fromMs
-      );
-      if (!entry) {
-        return c.json(
-          {
-            error: 'not_found',
-            error_description: 'Audit log entry not found',
-          },
-          404
-        );
-      }
-
-      const userIdMap = await buildArchiveAuditUserIdMap(c, tenantId, [entry]);
-      const resolvedUserId = entry.anonymizedUserId
-        ? (userIdMap.get(entry.anonymizedUserId) ?? null)
-        : null;
-      let user = null;
-
-      if (resolvedUserId) {
-        const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, resolvedUserId);
-        if (runtimeUser) {
-          user = {
-            id: runtimeUser.id,
-            email: runtimeUser.email,
-            name: runtimeUser.name,
-            picture: runtimeUser.picture,
-          };
-        }
-      }
-
-      return c.json({
-        ...formatArchiveAuditEntry(entry, userIdMap),
-        user,
-      });
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
 
     const context = hotQuery.context;
@@ -2919,7 +2668,9 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(to.getTime() / 1000);
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -3073,6 +2824,7 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     }
     // The existing activity cursor stays in the SQL predicate; request one extra row for it.
     const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
       page: { limit: limit + 1, scope: JSON.stringify([tenantId, c.req.path, userId]) },
       storedCursorTime: activityCursor?.created_at,
     });
@@ -3113,7 +2865,7 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     // Build query
     let query = `
       SELECT id, ${actionColumn} as action, ${detailsColumn} as details, created_at
-      ${context.mode === 'legacy' ? ', ip_address, user_agent' : ', result, severity, error_code, error_message, client_id, session_id, request_id'}
+      ${context.mode === 'legacy' ? ', ip_address, user_agent' : ', ip_address, user_agent, result, severity, error_code, error_message, client_id, session_id, request_id'}
       FROM ${tableName}
       WHERE tenant_id = ?
         ${subjectFilterClause}

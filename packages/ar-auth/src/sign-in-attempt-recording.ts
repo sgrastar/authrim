@@ -79,6 +79,7 @@ export function scheduleSignInAttemptFailure(
   if (!interactionId) return;
   const recording = (async () => {
     await recordSignInAttemptFailure(
+      c.env,
       createAuthContextFromHono(c, input.tenantId).coreAdapter,
       investigationKeys(c),
       {

@@ -1,11 +1,19 @@
+import { fixtureLogIcebergReader } from './helpers/fixture-log-iceberg-reader';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from './test-sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-read', () => ({
+  readLogIcebergDataset: (...args: Parameters<typeof fixtureLogIcebergReader>) =>
+    mocks.logRead(...args),
+  loadLogIcebergProtectedDetail: vi.fn(async () => null),
+}));
+
 const mocks = vi.hoisted(() => ({
   core: null as unknown,
+  logRead: vi.fn<typeof fixtureLogIcebergReader>(),
   admin: { tag: 'admin' },
   audit: vi.fn(),
   materialize: vi.fn(),
@@ -110,7 +118,9 @@ function context(
     env?: Record<string, unknown>;
   } = {}
 ) {
+  const headers = new Headers();
   return {
+    header: (name: string, value: string) => headers.set(name, value),
     get: vi.fn((key: string) => (key === 'adminAuth' ? { userId: 'admin-1' } : undefined)),
     req: {
       param: vi.fn((name: string) => options.params?.[name]),
@@ -122,7 +132,7 @@ function context(
       EXPORT_ARTIFACTS: {},
       OBJECT_ENCRYPTION_ROOT_KEY: 'a'.repeat(64),
     },
-    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
+    json: vi.fn((value: unknown, status = 200) => Response.json(value, { status, headers })),
   } as never;
 }
 
@@ -158,6 +168,7 @@ describe('compliance reports', () => {
     vi.clearAllMocks();
     core = sqliteStore();
     mocks.core = core;
+    mocks.logRead.mockImplementation(fixtureLogIcebergReader);
     mocks.audit.mockResolvedValue(undefined);
     mocks.materialize.mockImplementation(async () => ({
       catalogId: 'catalog-1',
@@ -338,6 +349,28 @@ describe('compliance reports', () => {
     expect(lines.slice(1).map((line) => line.split(',')[0])).toEqual(['e-1', 'e-2']);
     // The event's user is not reported as who acted.
     expect(lines[1]!.split(',').slice(6, 8)).toEqual(['', 'anon-1']);
+    const report: unknown = await response.json();
+    expect(report).toMatchObject({
+      parameters: {
+        log_coverage: { consistency: 'snapshot', pending_deliveries: 0, complete: true },
+      },
+    });
+    expect(response.headers.get('X-Authrim-Log-Complete')).toBe('true');
+    if (
+      !report ||
+      typeof report !== 'object' ||
+      !('report_id' in report) ||
+      typeof report.report_id !== 'string'
+    )
+      throw new Error('report identity');
+    const detail = await getComplianceReport(context({ params: { id: report.report_id } }));
+    expect(detail.headers.get('X-Authrim-Log-Consistency')).toBe('snapshot');
+    await stored(lines.join('\n'));
+    const downloaded = await downloadComplianceReport(
+      context({ params: { id: report.report_id } })
+    );
+    expect(downloaded.headers.get('X-Authrim-Log-Complete')).toBe('true');
+    expect(await downloaded.text()).toBe(lines.join('\n'));
 
     mocks.hotSupport.mockReturnValue({ supported: false, status: 'not_supported' });
     expect(
@@ -352,6 +385,70 @@ describe('compliance reports', () => {
         )
       ).status
     ).toBe(409);
+  });
+
+  it('persists and restores an eventual empty audit view without claiming complete zero', async () => {
+    mocks.hotSupport.mockReturnValue({
+      supported: true,
+      context: { adapter: core, mode: 'unified', dialect: 'sqlite', createdAtUnit: 'milliseconds' },
+    });
+    mocks.logRead.mockResolvedValue({
+      rows: [],
+      hasArchive: false,
+      consistency: 'eventual',
+      pendingDeliveries: 5,
+    });
+    const response = await createComplianceReport(
+      context({
+        body: {
+          type: 'audit_log',
+          parameters: { from: '2026-09-01T00:00:00Z', to: '2026-09-03T00:00:00Z' },
+        },
+      })
+    );
+    expect(response.status).toBe(201);
+    expect(response.headers.get('X-Authrim-Log-Complete')).toBe('false');
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({
+      row_count: 0,
+      parameters: {
+        log_coverage: { consistency: 'eventual', pending_deliveries: 5, complete: false },
+      },
+    });
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      !('report_id' in body) ||
+      typeof body.report_id !== 'string'
+    )
+      throw new Error('report identity');
+    const detail = await getComplianceReport(context({ params: { id: body.report_id } }));
+    expect(detail.headers.get('X-Authrim-Log-Complete')).toBe('false');
+    const call: unknown[] = mocks.materialize.mock.calls[0];
+    const options: unknown = call[2];
+    if (
+      !options ||
+      typeof options !== 'object' ||
+      !('content' in options) ||
+      typeof options.content !== 'string'
+    )
+      throw new Error('report content');
+    await stored(options.content);
+    const download = await downloadComplianceReport(context({ params: { id: body.report_id } }));
+    expect(download.headers.get('X-Authrim-Log-Pending-Deliveries')).toBe('5');
+    expect(download.headers.get('X-Authrim-Log-Complete')).toBe('false');
+    expect(await download.text()).toBe(
+      'id,occurred_at,action,event_category,result,severity,actor,subject_user,client_id,error_code'
+    );
+    core.db.prepare('UPDATE compliance_reports SET parameters=? WHERE id=?').run(
+      JSON.stringify({
+        log_coverage: { consistency: 'eventual', pending_deliveries: 5, complete: true },
+      }),
+      body.report_id
+    );
+    expect((await getComplianceReport(context({ params: { id: body.report_id } }))).status).toBe(
+      503
+    );
   });
 
   it("lists who has MFA by identifier, from the tenant's stores once each", async () => {

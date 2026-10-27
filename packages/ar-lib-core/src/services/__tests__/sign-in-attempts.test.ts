@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { readdirSync, readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
+import { logProducerFixture } from './log-iceberg-producer-fixture';
 import { renderPortableMigrationSql } from '../../migrations/sql-portability';
 import {
   SIGN_IN_ATTEMPT_FAILED_EVENT,
@@ -81,16 +82,6 @@ function addInteraction(
   );
 }
 
-function attempts(db: SqliteDatabase) {
-  return db
-    .prepare(
-      `SELECT tenant_id, interaction_id, user_id, client_id, node_id, event_type, result, error_code,
-              method, reason_code, subject_hash, inquiry_number, created_at
-         FROM flow_audit_events WHERE event_type = ? ORDER BY rowid`
-    )
-    .all(SIGN_IN_ATTEMPT_FAILED_EVENT) as Array<Record<string, unknown>>;
-}
-
 describe('investigation keyring and subject hash', () => {
   it('is absent when the secret is not set, and refuses a malformed one', () => {
     expect(loadInvestigationSubjectHmacKeysFromEnv({})).toBeNull();
@@ -135,10 +126,20 @@ describe('investigation keyring and subject hash', () => {
     expect(await investigationSubjectHashes(keys, 'tenant-a', 'user-1')).toEqual([hash, older]);
   });
 
-  it('makes inquiry numbers of 10 unambiguous characters', () => {
-    const numbers = new Set(Array.from({ length: 200 }, generateInquiryNumber));
-    for (const value of numbers) expect(value).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/u);
+  it('makes tenant-scoped deterministic 128-bit inquiry numbers', async () => {
+    const numbers = new Set(
+      await Promise.all(
+        Array.from({ length: 200 }, (_, i) => generateInquiryNumber('tenant-a', `event-${i}`))
+      )
+    );
+    for (const value of numbers) expect(value).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/u);
     expect(numbers.size).toBe(200);
+    expect(await generateInquiryNumber('tenant-a', 'event')).toBe(
+      await generateInquiryNumber('tenant-a', 'event')
+    );
+    expect(await generateInquiryNumber('tenant-b', 'event')).not.toBe(
+      await generateInquiryNumber('tenant-a', 'event')
+    );
   });
 });
 
@@ -153,6 +154,8 @@ describe('resolveSignInAttemptInteraction', () => {
     addInteraction(db, { id: 'int-done', state: 'completed' });
     addInteraction(db, { id: 'int-other-tenant', tenantId: 'tenant-b' });
   });
+
+  afterEach(() => db.close());
 
   const resolve = (interactionId: string | null, clientId?: string) =>
     resolveSignInAttemptInteraction(core, {
@@ -195,325 +198,200 @@ describe('resolveSignInAttemptInteraction', () => {
   });
 });
 
-describe('recordSignInAttemptFailure', () => {
-  let db: SqliteDatabase;
-  let core: DatabaseAdapter;
+describe.each(['scheduled', 'pipeline'] as const)('new sign-in failure storage (%s)', (mode) => {
+  let f: Awaited<ReturnType<typeof logProducerFixture>>;
   const keys = () =>
     loadInvestigationSubjectHmacKeysFromEnv({ INVESTIGATION_SUBJECT_HMAC_KEYRING: KEYRING });
-
-  beforeEach(() => {
-    ({ db, adapter: core } = coreStore());
-    addInteraction(db, { id: 'int-1' });
-    addInteraction(db, { id: 'int-b', tenantId: 'tenant-b' });
+  const input = () => ({
+    tenantId: 'tenant-a',
+    interactionId: 'int-1',
+    method: 'external_idp' as const,
+    reasonCode: 'verification_failed' as const,
+    userId: 'known-account',
+    dedupeKey: 'verified-state-a',
   });
-
-  afterEach(() => vi.restoreAllMocks());
-
-  it('records the failure with the account as its subject hash, never the user ID', async () => {
-    const inquiry = await recordSignInAttemptFailure(
-      core,
-      keys(),
-      {
-        tenantId: 'tenant-a',
-        interactionId: 'int-1',
-        method: 'totp',
-        reasonCode: 'invalid_code',
-        userId: 'user-1',
-      },
-      NOW
-    );
-    const expectedHash = await computeInvestigationSubjectHash(
-      keys()!.writeKey,
-      'tenant-a',
-      'user-1'
-    );
-    expect(attempts(db)).toEqual([
-      {
-        tenant_id: 'tenant-a',
-        interaction_id: 'int-1',
-        user_id: null,
-        client_id: 'login-ui',
-        node_id: 'authentication',
-        event_type: SIGN_IN_ATTEMPT_FAILED_EVENT,
-        result: 'failure',
-        error_code: null,
-        method: 'totp',
-        reason_code: 'invalid_code',
-        subject_hash: expectedHash,
-        inquiry_number: inquiry,
-        created_at: NOW,
-      },
-    ]);
-    expect(JSON.stringify(attempts(db))).not.toContain('user-1');
+  beforeEach(async () => {
+    f = await logProducerFixture(mode);
+    addInteraction(f.db, { id: 'int-1' });
+    addInteraction(f.db, { id: 'int-b', tenantId: 'tenant-b' });
   });
-
-  it('leaves the subject hash out before the account is known, or without a keyring', async () => {
-    await recordSignInAttemptFailure(core, keys(), {
-      tenantId: 'tenant-a',
-      interactionId: 'int-1',
-      method: 'passkey',
-      reasonCode: 'credential_not_found',
-    });
-    await recordSignInAttemptFailure(core, null, {
-      tenantId: 'tenant-a',
-      interactionId: 'int-1',
-      method: 'passkey',
-      reasonCode: 'verification_failed',
-      userId: 'user-1',
-    });
-    expect(attempts(db).map((row) => [row.reason_code, row.subject_hash])).toEqual([
-      ['credential_not_found', null],
-      ['verification_failed', null],
-    ]);
+  afterEach(() => {
+    f.db.close();
+    vi.restoreAllMocks();
   });
+  const rows = () => f.rows('core.flow_audit_events');
 
-  it('records nothing for an interaction the tenant does not have', async () => {
-    expect(
-      await recordSignInAttemptFailure(core, keys(), {
-        tenantId: 'tenant-a',
-        interactionId: 'int-b',
-        method: 'passkey',
-        reasonCode: 'credential_not_found',
-      })
-    ).toBeNull();
-    expect(attempts(db)).toEqual([]);
-  });
-
-  it('refuses a method or reason outside the vocabulary', async () => {
-    await expect(
-      recordSignInAttemptFailure(core, keys(), {
-        tenantId: 'tenant-a',
-        interactionId: 'int-1',
-        method: 'passkey',
-        reasonCode: 'boom: taro@corp.example' as never,
-      })
-    ).rejects.toThrow('sign_in_attempt_failure_invalid');
-    await expect(
-      recordSignInAttemptFailure(core, keys(), {
-        tenantId: 'tenant-a',
-        interactionId: 'int-1',
-        method: 'password' as never,
-        reasonCode: 'invalid_code',
-      })
-    ).rejects.toThrow('sign_in_attempt_failure_invalid');
-    expect(attempts(db)).toEqual([]);
-  });
-
-  it('deduplicates concurrent verified-state failures and returns the persisted inquiry number', async () => {
-    const input = {
-      tenantId: 'tenant-a',
-      interactionId: 'int-1',
-      method: 'external_idp',
-      reasonCode: 'provisioning_failed',
-      userId: 'known-account',
-      dedupeKey: 'verified-auth-state-a',
-    } as const;
-    const results = await Promise.all(
-      Array.from({ length: 8 }, () => recordSignInAttemptFailure(core, keys(), input, NOW))
-    );
-    expect(new Set(results).size).toBe(1);
-    expect(results[0]).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/);
-    expect(attempts(db)).toHaveLength(1);
-    expect(attempts(db)[0].subject_hash).toBe(
-      await computeInvestigationSubjectHash(keys()!.writeKey, 'tenant-a', 'known-account')
-    );
-    const row = db
-      .prepare('SELECT id,user_id,metadata_json FROM flow_audit_events WHERE event_type=?')
-      .get(SIGN_IN_ATTEMPT_FAILED_EVENT) as Record<string, unknown>;
-    expect(row).toMatchObject({
+  it('stores only an encrypted new log and never inserts a searchable Core audit row', async () => {
+    const inquiry = await recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW);
+    const result = await rows();
+    expect(inquiry).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/u);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      tenant_id: 'tenant-a',
+      interaction_id: 'int-1',
       user_id: null,
-      metadata_json: null,
+      event_type: SIGN_IN_ATTEMPT_FAILED_EVENT,
+      result: 'failure',
+      method: 'external_idp',
+      reason_code: 'verification_failed',
+      inquiry_number: inquiry,
+      created_at: NOW,
+      subject_hash: await computeInvestigationSubjectHash(
+        keys()!.writeKey,
+        'tenant-a',
+        'known-account'
+      ),
     });
-    expect(row.id).toMatch(/^sia:v1:[a-f0-9]{64}$/u);
-    expect(JSON.stringify(row)).not.toContain(input.dedupeKey);
-    expect(JSON.stringify(attempts(db))).not.toContain(input.userId);
+    expect(JSON.stringify(result)).not.toContain('known-account');
+    expect(JSON.stringify(result)).not.toContain('verified-state-a');
+    expect(f.db.prepare('SELECT COUNT(*) AS n FROM flow_audit_events').get()?.n).toBe(0);
+    expect(f.queueMessages.length).toBe(mode === 'pipeline' ? 1 : 0);
+    expect(f.db.prepare('SELECT COUNT(*) AS n FROM log_iceberg_records').get()?.n).toBe(
+      mode === 'scheduled' ? 1 : 0
+    );
   });
 
-  it('separates dedupe by tenant, interaction and method and still rejects a foreign interaction', async () => {
-    addInteraction(db, { id: 'int-2' });
-    const input = { reasonCode: 'verification_failed', dedupeKey: 'same-verified-state' } as const;
+  it('preserves the first failed timestamp and inquiry number on concurrent and delayed retries', async () => {
+    await recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW);
+    const result = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW + i)
+      )
+    );
+    expect(new Set(result).size).toBe(1);
+    await recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW + 100);
+    const resultRows = await rows();
+    expect(resultRows).toHaveLength(1);
+    expect(resultRows[0].created_at).toBe(NOW);
+    expect(
+      f.db.prepare('SELECT state,failed_at,payload_hmac FROM log_sign_in_attempt_receipts').get()
+    ).toMatchObject({
+      state: 'committed',
+      failed_at: NOW,
+      payload_hmac: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+  });
+
+  it('keeps the first reservation winner stable when first requests race', async () => {
+    await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW + i)
+      )
+    );
+    const reservation = f.db.prepare('SELECT failed_at FROM log_sign_in_attempt_receipts').get();
+    expect(Number(reservation?.failed_at)).toBeGreaterThanOrEqual(NOW);
+    expect(Number(reservation?.failed_at)).toBeLessThan(NOW + 8);
+    await recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW + 100);
+    expect((await rows())[0].created_at).toBe(reservation?.failed_at);
+  });
+
+  it('does not publish a body or retention scope after its reservation disappears', async () => {
+    const batch = f.adapter.batch.bind(f.adapter);
+    vi.spyOn(f.adapter, 'batch').mockImplementation(async (statements) => {
+      if (
+        statements.some((statement) =>
+          statement.sql.includes('UPDATE log_sign_in_attempt_receipts SET state=')
+        )
+      ) {
+        f.db.exec('DELETE FROM log_sign_in_attempt_receipts');
+      }
+      return batch(statements);
+    });
+    await expect(
+      recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW)
+    ).rejects.toThrow('log_sign_in_attempt_reservation_changed');
+    expect(await rows()).toHaveLength(0);
+    expect(f.db.prepare('SELECT count(*) n FROM log_iceberg_retention_jobs').get()?.n).toBe(0);
+    expect(f.queueMessages).toHaveLength(0);
+  });
+
+  it('refuses changed subject or reason for an already reserved opaque identity', async () => {
+    await recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW);
+    for (const changed of [{ userId: 'other-account' }, { reasonCode: 'signup_disabled' as const }])
+      await expect(
+        recordSignInAttemptFailure(f.env, f.adapter, keys(), { ...input(), ...changed }, NOW + 10)
+      ).rejects.toThrow();
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('rolls back completion together with log promotion when the business batch fails', async () => {
+    f.db.exec(
+      mode === 'scheduled'
+        ? "CREATE TRIGGER reject_log BEFORE INSERT ON log_iceberg_event_receipts BEGIN SELECT RAISE(ABORT,'fixture_commit_failed'); END"
+        : "CREATE TRIGGER reject_log BEFORE UPDATE OF state ON log_iceberg_outbox WHEN NEW.state='pending' BEGIN SELECT RAISE(ABORT,'fixture_commit_failed'); END"
+    );
+    await expect(
+      recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW)
+    ).rejects.toThrow('fixture_commit_failed');
+    expect(
+      f.db.prepare('SELECT state,payload_hmac FROM log_sign_in_attempt_receipts').get()
+    ).toMatchObject({ state: 'reserved', payload_hmac: null });
+    expect(await rows()).toEqual([]);
+    expect(f.queueMessages).toEqual([]);
+    f.db.exec('DROP TRIGGER reject_log');
+    await recordSignInAttemptFailure(f.env, f.adapter, keys(), input(), NOW + 20);
+    expect((await rows())[0].created_at).toBe(NOW);
+  });
+
+  it('does not reserve or emit a foreign interaction, and enforces the closed vocabulary', async () => {
     expect(
       await recordSignInAttemptFailure(
-        core,
+        f.env,
+        f.adapter,
         keys(),
-        {
-          ...input,
-          tenantId: 'tenant-a',
-          interactionId: 'int-b',
-          method: 'external_idp',
-        },
+        { ...input(), interactionId: 'int-b' },
         NOW
       )
     ).toBeNull();
-    for (const [tenantId, interactionId, method] of [
-      ['tenant-a', 'int-1', 'external_idp'],
-      ['tenant-b', 'int-b', 'external_idp'],
-      ['tenant-a', 'int-2', 'external_idp'],
-      ['tenant-a', 'int-1', 'saml'],
-    ] as const) {
-      await recordSignInAttemptFailure(
-        core,
-        keys(),
-        { ...input, tenantId, interactionId, method },
-        NOW
-      );
-    }
-    const rows = db
-      .prepare('SELECT id FROM flow_audit_events WHERE event_type=?')
-      .all(SIGN_IN_ATTEMPT_FAILED_EVENT);
-    expect(rows).toHaveLength(4);
-    expect(new Set(rows.map((row) => row.id)).size).toBe(4);
-  });
-
-  it('does not suppress another SQL constraint failure when dedupe is enabled', async () => {
-    db.exec(`CREATE TRIGGER reject_attempt_fixture BEFORE INSERT ON flow_audit_events
-      WHEN NEW.reason_code='service_unavailable'
-      BEGIN SELECT RAISE(ABORT,'attempt_fixture_constraint'); END`);
     await expect(
       recordSignInAttemptFailure(
-        core,
+        f.env,
+        f.adapter,
         keys(),
-        {
-          tenantId: 'tenant-a',
-          interactionId: 'int-1',
-          method: 'external_idp',
-          reasonCode: 'service_unavailable',
-          dedupeKey: 'verified-auth-state-a',
-        },
+        { ...input(), reasonCode: 'email@example.invalid' as never },
         NOW
       )
-    ).rejects.toThrow('attempt_fixture_constraint');
-    expect(attempts(db)).toEqual([]);
+    ).rejects.toThrow('sign_in_attempt_failure_invalid');
+    expect(await rows()).toEqual([]);
   });
 
-  it('keeps UUID events for callers that do not supply a dedupe key', async () => {
-    const input = {
-      tenantId: 'tenant-a',
-      interactionId: 'int-1',
-      method: 'passkey',
-      reasonCode: 'verification_failed',
-    } as const;
-    await recordSignInAttemptFailure(core, keys(), input, NOW);
-    await recordSignInAttemptFailure(core, keys(), input, NOW);
-    const rows = db
-      .prepare('SELECT id FROM flow_audit_events WHERE event_type=?')
-      .all(SIGN_IN_ATTEMPT_FAILED_EVENT);
-    expect(rows).toHaveLength(2);
-    for (const row of rows) expect(row.id).toMatch(/^[a-f0-9-]{36}$/);
+  it('keeps independent opaque events without a dedupe key and omits unavailable account hashes', async () => {
+    const attempt = { ...input(), dedupeKey: undefined };
+    const first = await recordSignInAttemptFailure(f.env, f.adapter, null, attempt, NOW);
+    const second = await recordSignInAttemptFailure(f.env, f.adapter, null, attempt, NOW);
+    expect(first).not.toBe(second);
+    expect((await rows()).map((row) => row.subject_hash)).toEqual([null, null]);
+    expect(f.db.prepare('SELECT COUNT(*) AS n FROM log_sign_in_attempt_receipts').get()?.n).toBe(0);
   });
 
-  it('draws another inquiry number when one is taken in the tenant, and only there', async () => {
-    const same = new Uint8Array(10).fill(1);
-    const other = new Uint8Array(10).fill(2);
-    const draws = [same, same, same, other];
-    vi.spyOn(crypto, 'getRandomValues').mockImplementation(((array: Uint8Array) => {
-      array.set(draws.shift() ?? other);
-      return array;
-    }) as typeof crypto.getRandomValues);
-    const input = {
-      interactionId: 'int-1',
-      method: 'email_code',
-      reasonCode: 'invalid_code',
-    } as const;
-    const first = await recordSignInAttemptFailure(core, keys(), {
-      ...input,
-      tenantId: 'tenant-a',
-    });
-    // The same number in another tenant does not collide.
-    const elsewhere = await recordSignInAttemptFailure(core, keys(), {
-      ...input,
-      tenantId: 'tenant-b',
-      interactionId: 'int-b',
-    });
-    // Taken in tenant-a: the next draw is used.
-    const second = await recordSignInAttemptFailure(core, keys(), {
-      ...input,
-      tenantId: 'tenant-a',
-    });
-    expect(first).toBe('1111111111');
-    expect(elsewhere).toBe('1111111111');
-    expect(second).toBe('2222222222');
-    expect(attempts(db)).toHaveLength(3);
-  });
-});
-
-describe('scheduleSignInAttemptFailureRecord', () => {
-  let db: SqliteDatabase;
-  let core: DatabaseAdapter;
-
-  beforeEach(() => {
-    ({ db, adapter: core } = coreStore());
-    addInteraction(db, { id: 'int-1' });
-  });
-
-  /** Schedules a failure and waits for the work it handed to waitUntil. */
-  const schedule = async (
-    input: Partial<Parameters<typeof scheduleSignInAttemptFailureRecord>[1]>,
-    options: { keyring?: string; core?: () => DatabaseAdapter } = {}
-  ) => {
-    const pending: Array<Promise<unknown>> = [];
-    const onError = vi.fn();
-    const coreFor = vi.fn(options.core ?? (() => core));
+  it('schedules using the new writer without failing the response or exposing unknown account IDs', async () => {
+    const pending: Promise<unknown>[] = [],
+      onError = vi.fn();
     scheduleSignInAttemptFailureRecord(
       {
-        waitUntil: (promise) => void pending.push(promise),
-        core: coreFor,
-        env: { INVESTIGATION_SUBJECT_HMAC_KEYRING: options.keyring ?? KEYRING },
+        env: { ...f.env, INVESTIGATION_SUBJECT_HMAC_KEYRING: KEYRING },
+        core: () => f.adapter,
+        waitUntil: (promise) => {
+          pending.push(promise);
+        },
         onError,
       },
-      {
-        tenantId: 'tenant-a',
-        interactionId: 'int-1',
-        method: 'saml',
-        reasonCode: 'signup_disabled',
-        ...input,
-      }
+      { ...input(), userId: 'unknown' }
     );
     await Promise.all(pending);
-    return { pending, onError, coreFor };
-  };
-
-  it('records after the response, with the hash of a known account', async () => {
-    const { pending } = await schedule({ userId: 'user-1' });
-    expect(pending).toHaveLength(1);
-    expect(attempts(db)).toMatchObject([
+    expect(onError).not.toHaveBeenCalled();
+    expect((await rows())[0].subject_hash).toBeNull();
+    scheduleSignInAttemptFailureRecord(
       {
-        method: 'saml',
-        reason_code: 'signup_disabled',
+        env: f.env,
+        core: () => f.adapter,
+        waitUntil: (promise) => {
+          pending.push(promise);
+        },
+        onError,
       },
-    ]);
-    expect(attempts(db)[0].subject_hash).toMatch(/^isub:/u);
-  });
-
-  it('does nothing at all for a missing or malformed interaction', async () => {
-    for (const interactionId of [null, undefined, '', 'a b']) {
-      const { pending, coreFor } = await schedule({ interactionId });
-      expect(pending).toHaveLength(0);
-      expect(coreFor).not.toHaveBeenCalled();
-    }
-    expect(attempts(db)).toEqual([]);
-  });
-
-  it('treats an unknown account as none', async () => {
-    await schedule({ userId: 'unknown' });
-    expect(attempts(db)[0]?.subject_hash).toBeNull();
-  });
-
-  it('still records without the hash when the keyring is malformed, and reports it', async () => {
-    const { onError } = await schedule({ userId: 'user-1' }, { keyring: '{"current":9}' });
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(attempts(db)).toMatchObject([{ subject_hash: null }]);
-  });
-
-  it('reports a failed write instead of throwing', async () => {
-    const failing = {
-      ...core,
-      execute: async () => {
-        throw new Error('D1_ERROR: taro@corp.example');
-      },
-    } as unknown as DatabaseAdapter;
-    const { onError } = await schedule({}, { core: () => failing });
-    expect(onError).toHaveBeenCalledWith(expect.any(Error));
-    expect(attempts(db)).toEqual([]);
+      { ...input(), interactionId: null }
+    );
+    expect(pending).toHaveLength(1);
   });
 });

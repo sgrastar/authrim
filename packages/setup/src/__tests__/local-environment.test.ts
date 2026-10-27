@@ -16,7 +16,7 @@ import { AuthrimConfigSchema } from '../core/config.js';
 import { CORE_WORKER_COMPONENTS, D1_DATABASES, KV_NAMESPACES } from '../core/naming.js';
 
 describe('local configuration', () => {
-  it('serves the API and each UI from its own http://localhost port without Cloudflare features', () => {
+  it('serves local URLs with scheduled encrypted staging and no provider resources', () => {
     const config = buildLocalConfig({ env: 'local' });
 
     expect(config.urls?.api?.auto).toBe('http://localhost:8787');
@@ -24,7 +24,8 @@ describe('local configuration', () => {
     // root-relative paths, so they cannot share the router's origin.
     expect(config.urls?.loginUi).toEqual({ auto: 'http://localhost:5173', sameAsApi: false });
     expect(config.urls?.adminUi).toEqual({ auto: 'http://localhost:5174', sameAsApi: false });
-    expect(config.features.r2.enabled).toBe(false);
+    expect(config.features.r2.enabled).toBe(true);
+    expect(config.logging?.archive.mode).toBe('scheduled');
     expect(config.features.queue.enabled).toBe(false);
     expect(config.controlPlane.automaticProvisioning).toBe(false);
   });
@@ -103,13 +104,19 @@ describe('component selection', () => {
 
   it('keeps the Durable Object host and the router when narrowed', () => {
     const selection = selectLocalComponents(['auth', 'ar-token']);
-    expect(selection.running).toEqual(['ar-router', 'ar-lib-core', 'ar-auth', 'ar-token']);
+    expect(selection.running).toEqual([
+      'ar-router',
+      'ar-lib-core',
+      'ar-auth',
+      'ar-token',
+      'ar-control',
+    ]);
     expect(selection.excluded).toContain('ar-saml');
   });
 
-  it('adds ar-control whenever management runs, because admin writes ask it first', () => {
+  it('keeps Control for every narrowed session because log writes require admission', () => {
     expect(selectLocalComponents(['management']).running).toContain('ar-control');
-    expect(selectLocalComponents(['token']).running).not.toContain('ar-control');
+    expect(selectLocalComponents(['token']).running).toContain('ar-control');
   });
 
   it('rejects unknown components', () => {

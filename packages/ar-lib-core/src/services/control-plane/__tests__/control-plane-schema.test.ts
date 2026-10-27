@@ -242,7 +242,7 @@ describe('Control D1 schema', () => {
     db.close();
   });
 
-  it('accepts Worker Loader desired bindings and preserves the export view', () => {
+  it('preserves desired bindings when adding the typed Pipelines kind', () => {
     const db = controlDatabase();
     db.exec(
       `INSERT INTO control_desired_worker_inventory (
@@ -275,6 +275,28 @@ describe('Control D1 schema', () => {
         )
         .get()
     ).toEqual({ binding_name: 'PLUGIN_LOADER', binding_kind: 'worker_loader' });
+    db.exec(migration('migrations/control/d1/014_log_archive_pipeline_bindings.sql'));
+    db.exec(`INSERT INTO control_worker_desired_bindings
+      (environment_id,worker_script_name,binding_name,binding_kind,desired_spec_json,updated_at)
+      VALUES ('env-1','test-ar-plugin-runner','LOG_ARCHIVE_STREAM','pipelines',
+        '{"stream":"stream-immutable-id"}',2)`);
+    expect(
+      db
+        .prepare(
+          `SELECT binding_name,binding_kind,desired_spec_json
+      FROM control_desired_worker_binding_export WHERE worker_script_name='test-ar-plugin-runner'
+      ORDER BY binding_name`
+        )
+        .all()
+    ).toEqual([
+      {
+        binding_name: 'LOG_ARCHIVE_STREAM',
+        binding_kind: 'pipelines',
+        desired_spec_json: '{"stream":"stream-immutable-id"}',
+      },
+      { binding_name: 'PLUGIN_LOADER', binding_kind: 'worker_loader', desired_spec_json: '{}' },
+    ]);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     expect(() =>
       db.exec(
         `INSERT INTO control_worker_desired_bindings (

@@ -1,6 +1,8 @@
 import type { DatabaseAdapter } from '../../db';
 import { BUILTIN_GROUP_FIELDS, type EvaluationInput, type Field, type GroupPlan } from './model';
 import type { GroupInputReader, InputVersion } from './store';
+import type { LogIcebergRuntimeEnv } from '../log-iceberg-runtime';
+import { emitLogIcebergRow } from '../log-iceberg-emitter';
 const primary = { consistencyClass: 'primary_required' as const };
 interface SchemaRow {
   id: string;
@@ -72,7 +74,8 @@ export class SavedGroupInputReader implements GroupInputReader {
     readonly pii: DatabaseAdapter,
     readonly tenantId: string,
     readonly userId: string,
-    readonly route?: { stamp: string; verify: () => Promise<void> }
+    readonly route?: { stamp: string; verify: () => Promise<void> },
+    readonly logEnv?: LogIcebergRuntimeEnv
   ) {}
   async unsettledWrites(): Promise<
     Array<{ id: string; operation: string; status: string; created_at: number }>
@@ -95,16 +98,26 @@ export class SavedGroupInputReader implements GroupInputReader {
     const rows = await this.unsettledWrites();
     if (ids.some((id) => !rows.some((row) => row.id === id && row.status === 'failed')))
       throw new Error('group_recovery_conflict');
-    await this.metadata.execute(
-      `INSERT INTO service_group_audit(id, tenant_id, user_id, rule_version, generation, event_type, detail_json, created_at) VALUES (?, ?, ?, 0, 0, 'input_recovery', ?, ?)`,
-      [
-        crypto.randomUUID(),
-        this.tenantId,
-        this.userId,
-        JSON.stringify({ actorId, acceptedBoundaryIds: ids }),
-        Date.now(),
-      ]
-    );
+    if (!this.logEnv) throw new Error('group_audit_publication_context_required');
+    const at = Date.now();
+    await emitLogIcebergRow(this.logEnv, {
+      tenantId: this.tenantId,
+      sourceDataset: 'core.service_group_audit',
+      logType: 'audit',
+      eventAt: at,
+      expiresAt: null,
+      overview: { action: 'input_recovery', subject_id: this.userId },
+      row: {
+        id: crypto.randomUUID(),
+        tenant_id: this.tenantId,
+        user_id: this.userId,
+        rule_version: 0,
+        generation: 0,
+        event_type: 'input_recovery',
+        detail_json: JSON.stringify({ actorId, acceptedBoundaryIds: ids }),
+        created_at: at,
+      },
+    });
     for (const db of [this.core, this.pii])
       await db.batch(
         ids.map((id) => ({

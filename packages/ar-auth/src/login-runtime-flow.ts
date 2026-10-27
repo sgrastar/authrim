@@ -1,3 +1,4 @@
+import { emitLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 import type { Context } from 'hono';
 import {
   consentPresentationKey,
@@ -3139,36 +3140,48 @@ interface RuntimeAuditEventInput {
 }
 
 async function insertAuditEvent(
-  db: DatabaseAdapter,
+  env: Env,
   tenantId: string,
   interaction: FlowInteractionRow,
   input: RuntimeAuditEventInput
 ) {
-  await db.execute(
-    `INSERT INTO flow_audit_events (
-      id, tenant_id, interaction_id, flow_id, flow_version_id, user_id, client_id, saml_sp_id,
-      node_id, branch_handle_id, event_type, result, error_code, contract_hash, metadata_json,
-      created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.id ?? generateId(),
-      tenantId,
-      interaction.id,
-      interaction.flow_id,
-      interaction.flow_version_id,
-      input.userId ?? interaction.user_id ?? null,
-      interaction.client_id,
-      interaction.saml_sp_id,
-      input.nodeId ?? null,
-      input.branchHandleId ?? null,
-      input.eventType,
-      input.result,
-      input.errorCode ?? null,
-      interaction.contract_hash,
-      input.metadata ? JSON.stringify(input.metadata) : null,
-      nowSeconds(),
-    ]
-  );
+  const createdAt = nowSeconds();
+  await emitLogIcebergRow(env, {
+    tenantId,
+    sourceDataset: 'core.flow_audit_events',
+    logType: 'normal',
+    eventAt: createdAt * 1000,
+    expiresAt: null,
+    overview: {
+      action: input.eventType,
+      result: input.result,
+      reason_code: input.errorCode ?? null,
+      client_id: interaction.client_id,
+      subject_id: input.userId ?? interaction.user_id ?? null,
+    },
+    row: {
+      id: input.id ?? generateId(),
+      tenant_id: tenantId,
+      interaction_id: interaction.id,
+      flow_id: interaction.flow_id,
+      flow_version_id: interaction.flow_version_id,
+      user_id: input.userId ?? interaction.user_id ?? null,
+      client_id: interaction.client_id,
+      saml_sp_id: interaction.saml_sp_id,
+      node_id: input.nodeId ?? null,
+      branch_handle_id: input.branchHandleId ?? null,
+      event_type: input.eventType,
+      result: input.result,
+      error_code: input.errorCode ?? null,
+      contract_hash: interaction.contract_hash,
+      metadata_json: input.metadata ? JSON.stringify(input.metadata) : null,
+      method: null,
+      reason_code: null,
+      subject_hash: null,
+      inquiry_number: null,
+      created_at: createdAt,
+    },
+  });
 }
 
 function asRuntimeFlowError(error: unknown): Error {
@@ -3177,7 +3190,6 @@ function asRuntimeFlowError(error: unknown): Error {
 
 function scheduleRuntimeAuditEvents(
   c: AuthContext,
-  db: DatabaseAdapter,
   tenantId: string,
   interaction: FlowInteractionRow,
   events: RuntimeAuditEventInput[],
@@ -3187,7 +3199,7 @@ function scheduleRuntimeAuditEvents(
 
   const auditPromise = (async () => {
     for (const event of events) {
-      await insertAuditEvent(db, tenantId, interaction, event);
+      await insertAuditEvent(c.env, tenantId, interaction, event);
     }
   })().catch((error: unknown) => {
     getLogger(c).module('LOGIN-RUNTIME-FLOW').error(
@@ -5080,7 +5092,6 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   };
   const startAuditFallback = scheduleRuntimeAuditEvents(
     c,
-    db,
     tenantId,
     startedInteraction,
     [
@@ -5121,7 +5132,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     return authorizationRequestUnavailable(c, interactionId);
   }
   if (initialDisplayResolution.terminalError) {
-    await insertAuditEvent(db, tenantId, startedInteraction, {
+    await insertAuditEvent(c.env, tenantId, startedInteraction, {
       eventType: 'flow.interaction.failed',
       result: 'terminal_error',
       errorCode: initialDisplayResolution.terminalError.error,
@@ -5145,7 +5156,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     );
   }
   if (initialDisplayResolution.errorCode) {
-    await insertAuditEvent(db, tenantId, startedInteraction, {
+    await insertAuditEvent(c.env, tenantId, startedInteraction, {
       eventType: 'flow.interaction.failed',
       result: 'configuration_error',
       errorCode: initialDisplayResolution.errorCode,
@@ -5198,7 +5209,6 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
     );
     const autoAdvanceAuditFallback = scheduleRuntimeAuditEvents(
       c,
-      db,
       tenantId,
       startedInteraction,
       createInitialAutoAdvanceAuditEvents({
@@ -5600,7 +5610,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
        WHERE tenant_id = ? AND id = ? AND state IN ('created', 'active')`,
       [now, tenantId, interactionId]
     );
-    await insertAuditEvent(db, tenantId, interaction, {
+    await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
       result: 'expired',
       errorCode: 'AR_FLOW_EXPIRED',
@@ -5641,7 +5651,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     secret,
   });
   if (!signatureValid) {
-    await insertAuditEvent(db, tenantId, interaction, {
+    await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
       result: 'security_error',
       errorCode: 'AR_FLOW_SIGNATURE_MISMATCH',
@@ -5663,7 +5673,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     submittedStepId !== interaction.current_step_id ||
     (submittedNodeId && submittedNodeId !== interaction.current_node_id)
   ) {
-    await insertAuditEvent(db, tenantId, interaction, {
+    await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
       result: 'security_error',
       errorCode: 'AR_FLOW_STEP_MISMATCH',
@@ -5796,7 +5806,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     return authorizationRequestUnavailable(c, interactionId);
   }
   if (branchResolution.terminalError) {
-    await insertAuditEvent(db, tenantId, interaction, {
+    await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
       result: 'terminal_error',
       errorCode: branchResolution.terminalError.error,
@@ -5815,7 +5825,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   }
 
   if (branchResolution.errorCode) {
-    await insertAuditEvent(db, tenantId, interaction, {
+    await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
       result: 'configuration_error',
       errorCode: branchResolution.errorCode,
@@ -5842,7 +5852,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       interaction.id
     );
     if (!verifiedUserId) {
-      await insertAuditEvent(db, tenantId, interaction, {
+      await insertAuditEvent(c.env, tenantId, interaction, {
         eventType: 'flow.interaction.failed',
         result: 'security_error',
         errorCode: 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
@@ -5867,7 +5877,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       ? { step: null as FlowRuntimeStep | null }
       : resolveNextStep(runtime, current.index, editor, effectiveSelectedHandle, requestContext);
   if (nextResolution.errorCode) {
-    await insertAuditEvent(db, tenantId, interaction, {
+    await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
       result: 'security_error',
       errorCode: nextResolution.errorCode,
@@ -5998,7 +6008,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     return authorizationRequestUnavailable(c, interactionId);
   }
   if (visibleStepResolution.terminalError) {
-    await insertAuditEvent(db, tenantId, interaction, {
+    await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
       result: 'terminal_error',
       errorCode: visibleStepResolution.terminalError.error,
@@ -6018,7 +6028,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
   if (visibleStepResolution.errorCode) {
-    await insertAuditEvent(db, tenantId, interaction, {
+    await insertAuditEvent(c.env, tenantId, interaction, {
       eventType: 'flow.interaction.failed',
       result: 'configuration_error',
       errorCode: visibleStepResolution.errorCode,
@@ -6183,14 +6193,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
       userId: resolvedUserId,
     });
   }
-  await scheduleRuntimeAuditEvents(
-    c,
-    db,
-    tenantId,
-    interaction,
-    completionAudit,
-    'submit_completion'
-  );
+  await scheduleRuntimeAuditEvents(c, tenantId, interaction, completionAudit, 'submit_completion');
 
   getLogger(c)
     .module('LOGIN-RUNTIME-FLOW')

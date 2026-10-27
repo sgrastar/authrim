@@ -7,7 +7,12 @@ import { mkdir, readFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../config.js';
 import { writePrivateFileAtomically } from '../atomic-file.js';
-import { generateAllSecrets, saveKeysToDirectory } from '../keys.js';
+import {
+  generateAllSecrets,
+  saveKeysToDirectory,
+  ensureLogArchiveContentHmacKey,
+} from '../keys.js';
+import { ensureLogArchiveRootKeyring } from '../log-archive-root-keyring.js';
 import type { WorkerComponent } from '../naming.js';
 import {
   buildLocalConfig,
@@ -115,8 +120,17 @@ async function initLocalEnvironmentUnlocked(options: LocalInitOptions): Promise<
     config.keys.keyId = secrets.keyPair.keyId;
     await mkdir(dirname(paths.keys), { recursive: true, mode: 0o700 });
     await saveKeysToDirectory(secrets, { targetDir: paths.keys });
+    const archive = config.logging?.archive;
+    if (!archive) throw new Error('local_log_archive_requires_scheduled');
+    await ensureLogArchiveRootKeyring(paths.keys, {
+      keyVersion: archive.objectEncryptionKeyVersion,
+    });
+    await ensureLogArchiveContentHmacKey(paths.keys);
     await writePrivateFileAtomically(paths.config, `${JSON.stringify(config, null, 2)}\n`);
 
+    onProgress?.(
+      'Local logs use encrypted scheduled DB staging; cold archive is not connected and source rows are retained.'
+    );
     onProgress?.('Writing Wrangler configs and .dev.vars...');
     await writeLocalWranglerFiles({ paths, config, selection });
 

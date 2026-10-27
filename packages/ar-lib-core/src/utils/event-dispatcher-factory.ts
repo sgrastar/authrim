@@ -215,6 +215,7 @@ export async function createEventDispatcherFromContext(
 
   // Build config
   const config: EventDispatcherConfig = {
+    env: c.env,
     adapter,
     kv: settingsKv,
     webhookRegistry,
@@ -223,10 +224,7 @@ export async function createEventDispatcherFromContext(
     decryptSecret,
     auditLogWriter: buildRuntimeAuditLogWriter(c.env, getWaitUntilFromContext(c)),
     runtimeLogging: {
-      env: {
-        ...c.env,
-        DB_ADMIN: c.env.DB_ADMIN ?? adapter,
-      },
+      env: c.env,
       tenantKeyResolver: createTenantRegistryKeyResolver(adapter),
     },
     options: {
@@ -292,6 +290,7 @@ export async function createEventDispatcherFromEnv(
 
   // Build config
   const config: EventDispatcherConfig = {
+    env,
     adapter,
     kv: settingsKv,
     webhookRegistry,
@@ -300,10 +299,7 @@ export async function createEventDispatcherFromEnv(
     decryptSecret,
     auditLogWriter: buildRuntimeAuditLogWriter(env),
     runtimeLogging: {
-      env: {
-        ...env,
-        DB_ADMIN: env.DB_ADMIN ?? adapter,
-      },
+      env,
       tenantKeyResolver: createTenantRegistryKeyResolver(adapter),
     },
     options: {

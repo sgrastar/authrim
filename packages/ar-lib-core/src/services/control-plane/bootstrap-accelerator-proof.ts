@@ -13,7 +13,16 @@ export const BOOTSTRAP_ACCELERATOR_CLOCK_SKEW_SECONDS = 5;
 
 const MAX_JWS_BYTES = 8 * 1024;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
-const CLAIM_KEYS = new Set(['iss', 'aud', 'iat', 'exp', 'jti', 'purpose', 'environmentId']);
+const CLAIM_KEYS = new Set([
+  'iss',
+  'aud',
+  'iat',
+  'exp',
+  'jti',
+  'purpose',
+  'environmentId',
+  'probeDigest',
+]);
 const PROTECTED_HEADER_KEYS = new Set(['alg', 'typ', 'kid']);
 
 export interface BootstrapAcceleratorClaims {
@@ -22,7 +31,8 @@ export interface BootstrapAcceleratorClaims {
   iat: number;
   exp: number;
   jti: string;
-  purpose: 'initial_bootstrap_advance';
+  purpose: 'initial_bootstrap_advance' | 'log_archive_readiness';
+  probeDigest?: string;
   environmentId: string;
 }
 
@@ -84,10 +94,17 @@ function decodeClaims(payload: Uint8Array): Record<string, unknown> {
 export async function signBootstrapAcceleratorProof(input: {
   environmentId: string;
   jti: string;
+  purpose?: BootstrapAcceleratorClaims['purpose'];
+  probeDigest?: string;
   privateJwk: JWK;
   keyId: string;
   now?: number;
 }): Promise<string> {
+  if (
+    input.purpose !== undefined &&
+    !['initial_bootstrap_advance', 'log_archive_readiness'].includes(input.purpose)
+  )
+    throw new Error('bootstrap_accelerator_purpose_invalid');
   const environmentId = requiredId(
     input.environmentId,
     'bootstrap_accelerator_environment_invalid'
@@ -99,6 +116,8 @@ export async function signBootstrapAcceleratorProof(input: {
   }
   const privateJwk = { ...input.privateJwk, kid: keyId, alg: 'EdDSA', use: 'sig' };
   assertEd25519Jwk(privateJwk, true);
+  if (input.purpose === 'log_archive_readiness' && !/^[a-f0-9]{64}$/.test(input.probeDigest ?? ''))
+    throw new Error('bootstrap_accelerator_probe_digest_invalid');
   const issuedAt = input.now ?? Math.floor(Date.now() / 1000);
   const claims: BootstrapAcceleratorClaims = {
     iss: issuer(environmentId),
@@ -106,7 +125,8 @@ export async function signBootstrapAcceleratorProof(input: {
     iat: requiredEpoch(issuedAt, 'bootstrap_accelerator_iat_invalid'),
     exp: issuedAt + BOOTSTRAP_ACCELERATOR_TTL_SECONDS,
     jti,
-    purpose: 'initial_bootstrap_advance',
+    purpose: input.purpose ?? 'initial_bootstrap_advance',
+    ...(input.purpose === 'log_archive_readiness' ? { probeDigest: input.probeDigest } : {}),
     environmentId,
   };
   let key: CryptoKey;
@@ -124,6 +144,7 @@ export async function verifyBootstrapAcceleratorProof(
   token: unknown,
   input: {
     environmentId: string;
+    purpose?: BootstrapAcceleratorClaims['purpose'];
     publicJwk: JWK;
     now?: number;
   }
@@ -168,7 +189,8 @@ export async function verifyBootstrapAcceleratorProof(
   }
   const claims = decodeClaims(payload);
   if (
-    Object.keys(claims).length !== CLAIM_KEYS.size ||
+    Object.keys(claims).length !==
+      (input.purpose === 'log_archive_readiness' ? CLAIM_KEYS.size : CLAIM_KEYS.size - 1) ||
     Object.keys(claims).some((key) => !CLAIM_KEYS.has(key))
   ) {
     throw new Error('bootstrap_accelerator_claims_invalid');
@@ -181,10 +203,16 @@ export async function verifyBootstrapAcceleratorProof(
     claims.environmentId !== environmentId ||
     claims.iss !== issuer(environmentId) ||
     claims.aud !== audience(environmentId) ||
-    claims.purpose !== 'initial_bootstrap_advance'
+    claims.purpose !== (input.purpose ?? 'initial_bootstrap_advance')
   ) {
     throw new Error('bootstrap_accelerator_boundary_mismatch');
   }
+  if (
+    claims.purpose === 'log_archive_readiness'
+      ? typeof claims.probeDigest !== 'string' || !/^[a-f0-9]{64}$/.test(claims.probeDigest)
+      : claims.probeDigest !== undefined
+  )
+    throw new Error('bootstrap_accelerator_probe_digest_invalid');
   const iat = requiredEpoch(claims.iat, 'bootstrap_accelerator_iat_invalid');
   const exp = requiredEpoch(claims.exp, 'bootstrap_accelerator_exp_invalid');
   if (exp - iat !== BOOTSTRAP_ACCELERATOR_TTL_SECONDS) {
@@ -204,7 +232,10 @@ export async function verifyBootstrapAcceleratorProof(
     iat,
     exp,
     jti: requiredId(claims.jti, 'bootstrap_accelerator_jti_invalid'),
-    purpose: 'initial_bootstrap_advance',
+    purpose: input.purpose ?? 'initial_bootstrap_advance',
+    ...(claims.purpose === 'log_archive_readiness'
+      ? { probeDigest: claims.probeDigest as string }
+      : {}),
     environmentId,
   };
 }

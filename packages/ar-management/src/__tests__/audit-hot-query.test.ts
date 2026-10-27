@@ -90,7 +90,7 @@ describe('getAuditHotQuerySupport', () => {
     );
   });
 
-  it('supports postgres-backed audit profiles when a Hyperdrive binding is available', async () => {
+  it('uses local SQLite syntax even for a postgres-labelled profile', async () => {
     const support = await getAuditHotQuerySupport(
       {
         DEFAULT_AUDIT_PROFILE_ID: 'custom:audit:postgres-primary',
@@ -108,36 +108,36 @@ describe('getAuditHotQuerySupport', () => {
         auditProfileId: 'custom:audit:postgres-primary',
         context: expect.objectContaining({
           mode: 'unified',
-          dialect: 'postgres',
+          dialect: 'sqlite',
           createdAtUnit: 'milliseconds',
         }),
       })
     );
   });
 
-  it('marks external-primary profiles as pending runtime support when no binding is resolved', async () => {
+  it('uses the Iceberg query engine without an external-primary binding', async () => {
     const support = await getAuditHotQuerySupport(
       { DEFAULT_AUDIT_PROFILE_ID: 'custom:audit:postgres-primary' } as Env,
       'default'
     );
 
-    expect(support.supported).toBe(false);
-    expect(support.status).toBe('pending_runtime_support');
+    expect(support.supported).toBe(true);
+    expect(support.status).toBe('supported');
     expect(support.auditProfileId).toBe('custom:audit:postgres-primary');
   });
 
-  it('marks archive-only profiles as not supported', async () => {
+  it('uses the Iceberg query engine for an archive-only profile', async () => {
     const support = await getAuditHotQuerySupport(
       { DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:archive-only-logpush' } as Env,
       'default'
     );
 
-    expect(support.supported).toBe(false);
-    expect(support.status).toBe('not_supported');
+    expect(support.supported).toBe(true);
+    expect(support.status).toBe('supported');
     expect(support.auditProfileId).toBe('builtin:audit:archive-only-logpush');
   });
 
-  it('supports mysql-backed audit profiles when a Hyperdrive binding is available', async () => {
+  it('uses local SQLite syntax even for a mysql-labelled profile', async () => {
     const support = await getAuditHotQuerySupport(
       {
         DEFAULT_AUDIT_PROFILE_ID: 'custom:audit:mysql-primary',
@@ -160,7 +160,7 @@ describe('getAuditHotQuerySupport', () => {
         auditProfileId: 'custom:audit:mysql-primary',
         context: expect.objectContaining({
           mode: 'unified',
-          dialect: 'mysql',
+          dialect: 'sqlite',
           createdAtUnit: 'milliseconds',
         }),
       })

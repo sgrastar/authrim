@@ -1,3 +1,4 @@
+import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -286,7 +287,9 @@ describe('setup as the release migration executor of a Control without one', () 
     for (const file of readdirSync(directory)
       .filter((name) => name.endsWith('.sql'))
       .sort()) {
-      control.exec(readFileSync(resolve(directory, file), 'utf8'));
+      control.exec(
+        renderPortableMigrationSql(readFileSync(resolve(directory, file), 'utf8'), 'sqlite')
+      );
     }
     seed(control);
     targets = {

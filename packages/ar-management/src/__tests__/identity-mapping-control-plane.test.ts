@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type {
   DatabaseAdapter,
@@ -18,8 +18,62 @@ import {
   adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingReviewTasksListHandler,
   adminIdentityMappingSchemaReadinessHandler,
-  IdentityMappingControlPlaneRepository,
+  IdentityMappingControlPlaneRepository as BaseRepository,
 } from '../identity-mapping-control-plane';
+
+const logCalls = vi.hoisted(() => ({ emit: vi.fn(), prepare: vi.fn(), publication: vi.fn() }));
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', () => ({
+  emitLogIcebergRow: logCalls.emit,
+  prepareLogIcebergRowWrite: async (...args: unknown[]) => {
+    logCalls.prepare(...args);
+    return { statements: [], dispatch: async () => {} };
+  },
+}));
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-core-publication', async (original) => ({
+  ...(await original<
+    typeof import('@authrim/ar-lib-core/services/log-iceberg-core-publication')
+  >()),
+  prepareCoreLogPublication: async (...args: unknown[]) => {
+    logCalls.publication(...args);
+    return {
+      publicationId: 'unit-publication',
+      state: 'prepared',
+      wrapBusinessBatch: (statements: PreparedStatement[]) => statements,
+      dispatch: async () => {},
+    };
+  },
+}));
+class IdentityMappingControlPlaneRepository extends BaseRepository {
+  constructor(...args: ConstructorParameters<typeof BaseRepository>) {
+    super(
+      args[0],
+      args[1],
+      args[2] ?? args[0],
+      args[3],
+      args[4] ?? ({} as Env),
+      args[5] ?? {
+        environmentId: 'test',
+        tenantId: 'tenant_a',
+        bindingRef: 'DB',
+        databaseId: 'source-db',
+        provider: 'd1',
+        generation: 1,
+        bindingRouteGeneration: 1,
+        dataRole: 'tenant_core/default',
+        residencyPartition: 'default',
+        shardId: 'default',
+        shardGroup: 'default',
+        shardIndex: 0,
+      }
+    );
+  }
+}
+
+beforeEach(() => {
+  logCalls.emit.mockClear();
+  logCalls.prepare.mockClear();
+  logCalls.publication.mockClear();
+});
 
 interface RecordedExecute {
   sql: string;
@@ -58,7 +112,8 @@ function createAdapter(options: {
       }
       return queryRows as T[];
     },
-    async queryOne<T>(): Promise<T | null> {
+    async queryOne<T>(sql: string): Promise<T | null> {
+      if (sql.includes('FROM log_iceberg_core_publications')) return { state: 'committed' } as T;
       return (queryOneRows.shift() ?? null) as T | null;
     },
     async execute(sql: string, params: unknown[] = []): Promise<ExecuteResult> {
@@ -3154,10 +3209,13 @@ describe('IdentityMappingControlPlaneRepository identity registry operations', (
 
     expect(authority.priority).toBe(10);
     expect(event.reasonCodes).toEqual(['identity.hard_match']);
+    expect(logCalls.emit.mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'admin.mapping_events',
+      row: { event_type: 'identity.binding.matched', outcome: 'matched' },
+    });
     expect(outbox.status).toBe('pending');
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO source_authority_contracts'),
-      expect.stringContaining('INSERT INTO mapping_events'),
       expect.stringContaining('INSERT INTO projection_outbox'),
     ]);
   });
@@ -3307,7 +3365,6 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO review_tasks'),
       expect.stringContaining('UPDATE review_tasks'),
-      expect.stringContaining('INSERT INTO mapping_events'),
     ]);
   });
 
@@ -3699,6 +3756,11 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       }
     );
 
+    expect(logCalls.publication).toHaveBeenCalledWith(
+      expect.anything(),
+      adapter,
+      expect.objectContaining({ sourceDataset: 'core.provisioning_assignment_events' })
+    );
     expect(evaluation).toMatchObject({
       matched: true,
       outcome: 'assigned',
@@ -3708,7 +3770,6 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO group_memberships'),
       expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
-      expect.stringContaining('INSERT INTO provisioning_assignment_events'),
     ]);
   });
 
@@ -3739,9 +3800,11 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       outcome: 'assigned',
       dryRun: true,
     });
-    expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO provisioning_assignment_events'),
-    ]);
+    expect(logCalls.emit.mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'core.provisioning_assignment_events',
+      row: { trace_ref: 'dry-run:assignment-rule-1' },
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([]);
   });
 
   it('does not grant assignments when a persisted rule has malformed condition JSON', async () => {
@@ -3917,13 +3980,16 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       });
 
       expect(result.decision).toBe('review');
+      expect(logCalls.publication.mock.calls.at(-1)?.[2]).toMatchObject({
+        sourceDataset: 'core.provisioning_revocation_events',
+        row: { decision: 'review' },
+      });
       expect(adapter.executes.map((item) => item.sql).join('\n')).not.toContain(
         'SET lifecycle_state = ?'
       );
       expect(adapter.executes.map((item) => item.sql)).toEqual([
         expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
         expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
-        expect.stringContaining('INSERT INTO provisioning_revocation_events'),
         expect.stringContaining('UPDATE external_lifecycle_signal_events'),
       ]);
     }
@@ -3958,7 +4024,6 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
       expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
       expect.stringContaining('UPDATE entitlements'),
-      expect.stringContaining('INSERT INTO provisioning_revocation_events'),
       expect.stringContaining('UPDATE external_lifecycle_signal_events'),
     ]);
   });
@@ -4024,11 +4089,14 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       keyPurpose: 'blind_index',
       status: 'active',
     });
+    expect(logCalls.prepare.mock.calls.at(-1)?.[2]).toMatchObject({
+      sourceDataset: 'admin.key_access_events',
+      row: { access_type: 'registry.create' },
+    });
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO key_registries'),
       expect.stringContaining('INSERT INTO key_versions'),
       expect.stringContaining('INSERT INTO key_material_refs'),
-      expect.stringContaining('INSERT INTO key_access_events'),
     ]);
     expect(adapter.executes[2].params[4]).toBe('wrangler-secret:CONTACT_BLIND_INDEX_KEY_V1');
   });
@@ -4109,7 +4177,6 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       expect.stringContaining('UPDATE key_registries'),
       expect.stringContaining('INSERT INTO rewrap_jobs'),
       expect.stringContaining('INSERT INTO blind_index_rotation_jobs'),
-      expect.stringContaining('INSERT INTO key_access_events'),
     ]);
     expect(String(adapter.executes[5].params[6])).toContain('dual_read');
   });
@@ -4761,9 +4828,7 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
         actorId: 'admin-1',
       })
     ).resolves.toEqual({ keyRegistryId: 'key-registry-1', recorded: true });
-    expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO key_access_events'),
-    ]);
+    expect(adapter.executes.map((item) => item.sql)).toEqual([]);
   });
 
   it('rejects unsupported key access event values before writing audit rows', async () => {

@@ -2,7 +2,11 @@
   "schemaVersion": 1,
   "packageName": "@authrim/ar-plugin-runner",
   "worker": "ar-plugin-runner",
-  "requiredDataRoles": ["plugin_runner", "tenant_core/default", "tenant_core/users"],
+  "requiredDataRoles": [
+    "plugin_runner",
+    "tenant_core/default",
+    "tenant_core/users"
+  ],
   "bindings": [
     {
       "name": "PLATFORM_NOTIFICATION_DB",
@@ -52,6 +56,12 @@
       "kind": "version_metadata",
       "required": true,
       "capability": "control_smoke.respond"
+    },
+    {
+      "name": "LOG_ARCHIVE_WRITER",
+      "kind": "service",
+      "required": false,
+      "capability": "logging.archive.write"
     }
   ],
   "dynamicBindings": [
@@ -104,6 +114,21 @@
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
       "capability": "control_smoke.verify",
       "required": true
+    },
+    {
+      "name": "OBJECT_ENCRYPTION_ROOT_KEY",
+      "required": false,
+      "capability": "logging.archive.encrypt"
+    },
+    {
+      "name": "LOG_ARCHIVE_CONTENT_HMAC_KEY",
+      "required": false,
+      "capability": "logging.archive.encrypt"
+    },
+    {
+      "name": "LOG_ARCHIVE_ROOT_KEYRING",
+      "required": false,
+      "capability": "logging.archive.encrypt"
     }
   ]
 }

@@ -148,6 +148,9 @@ describe('tenant restore discard plan on the installed schema', () => {
       const tables = (family: Family) => plans.get(family)!.tables.map(({ table }) => table);
       expect(tables('core')).not.toContain('tenants');
       expect(tables('core')).not.toContain('audit_log');
+      expect(tables('core')).not.toContain('log_iceberg_core_publications');
+      expect(tables('core')).toContain('provisioning_revocation_receipts');
+      expect(tables('pii')).toContain('pii_log_purge_operations');
       expect(tables('core')).not.toContain('consent_history');
       expect(tables('core')).not.toContain('object_catalog');
       expect(tables('core')).toContain('users_core');

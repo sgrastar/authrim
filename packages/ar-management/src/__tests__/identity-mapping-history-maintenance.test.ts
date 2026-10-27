@@ -8,6 +8,10 @@ import {
 import { prepareIdentityMappingLevelHistory } from '@authrim/ar-lib-core/services/identity-mapping-level-history';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', () => ({
+  prepareLogIcebergRowWrite: async () => ({ statements: [], dispatch: async () => {} }),
+}));
+
 const stores = vi.hoisted(() => ({
   admin: null as DatabaseAdapter | null,
   core: null as DatabaseAdapter | null,

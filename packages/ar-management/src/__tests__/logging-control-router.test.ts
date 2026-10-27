@@ -2,6 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
+// Routing and business SQL are under test; the canonical audit writer is observed at its port.
+const auditWrite = vi.hoisted(() =>
+  vi.fn(async (_context: unknown, _input: { action: string }) => crypto.randomUUID())
+);
+vi.mock('../admin-shared', async (original) => ({
+  ...(await original<typeof import('../admin-shared')>()),
+  writeAdminAuditLog: auditWrite,
+}));
+
 const mockAdapter = vi.hoisted(() => {
   const adapter = {
     query: vi.fn(),
@@ -17,6 +26,16 @@ const mockAdapter = vi.hoisted(() => {
   adapter.batch.mockResolvedValue([]);
   return adapter;
 });
+
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-read', () => ({
+  readLogIcebergDataset: vi.fn(async () => ({
+    rows: [],
+    hasArchive: false,
+    consistency: 'snapshot',
+    pendingDeliveries: 0,
+  })),
+  loadLogIcebergProtectedDetail: vi.fn(async () => null),
+}));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -59,6 +78,11 @@ import {
 import { deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging/contract';
 import { encodeLogRecordBlocks, writeLogChunkToR2 } from '@authrim/ar-lib-logging/chunks';
 import { decodeLoggingCursor } from '@authrim/ar-lib-logging/delivery';
+import {
+  createRuntimeLoggingPolicySnapshot,
+  buildRuntimeLoggingPolicySnapshotObjectKey,
+} from '@authrim/ar-lib-logging/policies';
+import { LOG_ICEBERG_POLICY_PREFIX } from '@authrim/ar-lib-core/services/log-iceberg-policy-artifacts';
 
 const LOGGING_EXPORT_CREATE_PERMISSION = 'admin:logging:exports:create';
 const LOGGING_SENSITIVE_DETAIL_EXPORT_PERMISSION = 'admin:logging:sensitive_detail:export';
@@ -148,8 +172,9 @@ async function deriveTestArchiveChunkEncryptionKey(input: {
   return new Uint8Array(bits);
 }
 
-const env = {
+const envFixture = {
   DB_ADMIN: {},
+  LOG_ARCHIVE: { put: vi.fn().mockResolvedValue(undefined), get: vi.fn().mockResolvedValue(null) },
   OBJECT_ENCRYPTION_ROOT_KEY,
   LOGGING_CURSOR_HMAC_SECRET: 'test-logging-cursor-secret',
   AUDIT_QUEUE: {
@@ -181,7 +206,8 @@ const env = {
     put: vi.fn().mockResolvedValue(undefined),
     get: vi.fn().mockResolvedValue(null),
   },
-} as unknown as Env;
+};
+const env = envFixture as unknown as Env;
 
 function createApp(
   permissions: string[] = [],
@@ -315,29 +341,33 @@ describe('logging control routers', () => {
     mockAdapter.query.mockResolvedValue([]);
     mockAdapter.queryOne.mockResolvedValue({ total: 0, failures: 0, critical: 0 });
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
-    vi.mocked(env.AUDIT_ARCHIVE!.put)
+    vi.mocked(envFixture.AUDIT_ARCHIVE.put)
       .mockReset()
       .mockResolvedValue({} as R2Object);
-    vi.mocked(env.AUDIT_ARCHIVE!.get).mockReset().mockResolvedValue(null);
-    vi.mocked(env.AUDIT_ARCHIVE!.delete).mockReset().mockResolvedValue(undefined);
-    vi.mocked(env.DIAGNOSTIC_LOGS!.get).mockReset().mockResolvedValue(null);
-    vi.mocked(env.DIAGNOSTIC_LOGS!.put)
+    vi.mocked(envFixture.AUDIT_ARCHIVE.get).mockReset().mockResolvedValue(null);
+    vi.mocked(envFixture.AUDIT_ARCHIVE.delete).mockReset().mockResolvedValue(undefined);
+    vi.mocked(envFixture.LOG_ARCHIVE.get).mockReset().mockResolvedValue(null);
+    vi.mocked(envFixture.LOG_ARCHIVE.put)
       .mockReset()
       .mockResolvedValue({} as R2Object);
-    vi.mocked(env.DIAGNOSTIC_LOGS!.delete).mockReset().mockResolvedValue(undefined);
-    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockReset().mockResolvedValue(null);
-    vi.mocked(env.EXPORT_ARTIFACTS!.put)
+    vi.mocked(envFixture.DIAGNOSTIC_LOGS.get).mockReset().mockResolvedValue(null);
+    vi.mocked(envFixture.DIAGNOSTIC_LOGS.put)
       .mockReset()
       .mockResolvedValue({} as R2Object);
-    vi.mocked(env.EXPORT_ARTIFACTS!.delete).mockReset().mockResolvedValue(undefined);
-    vi.mocked(env.SENSITIVE_DETAILS!.get).mockReset().mockResolvedValue(null);
-    vi.mocked(env.SENSITIVE_DETAILS!.put)
+    vi.mocked(envFixture.DIAGNOSTIC_LOGS.delete).mockReset().mockResolvedValue(undefined);
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.get).mockReset().mockResolvedValue(null);
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.put)
       .mockReset()
       .mockResolvedValue({} as R2Object);
-    vi.mocked(env.AUTHRIM_CONFIG!.get as unknown as (key: string) => Promise<string | null>)
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.delete).mockReset().mockResolvedValue(undefined);
+    vi.mocked(envFixture.SENSITIVE_DETAILS.get).mockReset().mockResolvedValue(null);
+    vi.mocked(envFixture.SENSITIVE_DETAILS.put)
+      .mockReset()
+      .mockResolvedValue({} as R2Object);
+    vi.mocked(envFixture.AUTHRIM_CONFIG.get as unknown as (key: string) => Promise<string | null>)
       .mockReset()
       .mockResolvedValue(null);
-    vi.mocked(env.AUTHRIM_CONFIG!.put).mockReset().mockResolvedValue(undefined);
+    vi.mocked(envFixture.AUTHRIM_CONFIG.put).mockReset().mockResolvedValue(undefined);
   });
 
   it('requires storage destination list permission for destination summary', async () => {
@@ -561,9 +591,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO admin_destination_capabilities'),
       expect.arrayContaining(['archive_write'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['storage_destination.create'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'storage_destination.create' })
     );
   });
 
@@ -752,9 +782,9 @@ describe('logging control routers', () => {
         JSON.stringify({ bindingRef: 'AUDIT_ARCHIVE', prefix: 'audit' }),
       ])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['storage_destination.update'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'storage_destination.update' })
     );
   });
 
@@ -882,9 +912,9 @@ describe('logging control routers', () => {
       expect.stringContaining("SET lifecycle_status = 'deleted'"),
       expect.arrayContaining(['admin-1', 'dest_1'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['storage_destination.delete'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'storage_destination.delete' })
     );
   });
 
@@ -979,9 +1009,9 @@ describe('logging control routers', () => {
       expect.stringContaining("SET lifecycle_status = 'disabled'"),
       expect.arrayContaining(['admin-1', 'dest_critical'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['storage_destination.force_disable'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'storage_destination.force_disable' })
     );
 
     mockAdapter.queryOne.mockResolvedValueOnce(
@@ -1155,9 +1185,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO credential_secret_bodies'),
       expect.arrayContaining(['dest_1', 1])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['storage_destination.credentials.prepare'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'storage_destination.credentials.prepare' })
     );
     const executedText = JSON.stringify(mockAdapter.execute.mock.calls);
     expect(executedText).not.toContain('super-secret-token');
@@ -1261,9 +1291,9 @@ describe('logging control routers', () => {
       expect.stringContaining("SET status = 'retired'"),
       expect.arrayContaining(['d1secret://admin/credential_secrets/dest_1/v1#v1'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['storage_destination.credentials.retire_previous'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'storage_destination.credentials.retire_previous' })
     );
   });
 
@@ -1318,9 +1348,9 @@ describe('logging control routers', () => {
       expect.stringContaining('UPDATE admin_destinations'),
       expect.arrayContaining(['healthy', 'dest_1'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['storage_destination.health_check'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'storage_destination.health_check' })
     );
   });
 
@@ -1461,9 +1491,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO logging_destination_overrides'),
       expect.arrayContaining(['tenant-a', 'webhook', 'external_sink', 'dest_tenant'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_destination_override.create'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_destination_override.create' })
     );
 
     const rejected = await createApp([ADMIN_PERMISSIONS.LOGGING_TENANT_OVERRIDES_UPDATE]).request(
@@ -1547,15 +1577,15 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO logging_destination_overrides'),
       expect.anything()
     );
-    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_destination_override.create'])
+    expect(auditWrite).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_destination_override.create' })
     );
   });
 
   it('rejects tenant assignment to destinations outside tenant residency', async () => {
     vi.mocked(
-      env.AUTHRIM_CONFIG!.get as unknown as (key: string) => Promise<string | null>
+      envFixture.AUTHRIM_CONFIG.get as unknown as (key: string) => Promise<string | null>
     ).mockImplementation(async (key: string) => {
       if (key === 'settings:tenant:tenant-a:tenant') {
         return JSON.stringify({ 'tenant.residency_profile_id': 'builtin:residency:eu' });
@@ -1793,9 +1823,9 @@ describe('logging control routers', () => {
       expect.stringContaining('UPDATE logging_destination_overrides'),
       expect.arrayContaining(['tenant-a', 'webhook', 'external_sink', 'dest_new'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_destination_override.update'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_destination_override.update' })
     );
   });
 
@@ -1833,9 +1863,9 @@ describe('logging control routers', () => {
       expect.stringContaining('UPDATE logging_destination_overrides'),
       expect.anything()
     );
-    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_destination_override.update'])
+    expect(auditWrite).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_destination_override.update' })
     );
   });
 
@@ -1993,9 +2023,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO logging_fallback_policies'),
       expect.arrayContaining(['platform', 'global', 'audit', 'archive', 'dest_fallback'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_fallback_policy.create'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_fallback_policy.create' })
     );
   });
 
@@ -2044,9 +2074,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO logging_fallback_policies'),
       expect.anything()
     );
-    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_fallback_policy.create'])
+    expect(auditWrite).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_fallback_policy.create' })
     );
   });
 
@@ -2316,9 +2346,9 @@ describe('logging control routers', () => {
       expect.stringContaining("SET status = 'suppressed'"),
       expect.arrayContaining(['notif_1'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_notification.resolve'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_notification.resolve' })
     );
   });
 
@@ -2429,9 +2459,9 @@ describe('logging control routers', () => {
       expect.stringContaining("SET status = 'suppressed'"),
       expect.arrayContaining(['notif_1'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['internal_notification.resolve'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'internal_notification.resolve' })
     );
   });
 
@@ -2544,10 +2574,10 @@ describe('logging control routers', () => {
     expect(snapshotResponse.status).toBe(200);
     expect(snapshotBody.item.status).toBe('published');
     expect(snapshotBody.item.object_ref).toMatch(
-      /^logging-policy-snapshots\/v1\/snapshots\/platform\/global\/v1-snap_/
+      /^__authrim_log_archive_private__\/policy-snapshots\/v1\/snapshots\/platform\/global\/v1-snap_/
     );
-    expect(env.AUTHRIM_CONFIG?.put).toHaveBeenCalledWith(
-      'logging-policy-snapshots/v1/current/platform/global.json',
+    expect(envFixture.AUTHRIM_CONFIG?.put).toHaveBeenCalledWith(
+      '__authrim_log_archive_private__/policy-snapshots/v1/current/platform/global.json',
       expect.stringContaining('"schemaVersion":1'),
       undefined
     );
@@ -2575,7 +2605,7 @@ describe('logging control routers', () => {
       now: 1779148800000,
       encryption: {
         keyBytes: await deriveTestArchiveChunkEncryptionKey({
-          rootKeyHex: String(env.OBJECT_ENCRYPTION_ROOT_KEY),
+          rootKeyHex: String(envFixture.OBJECT_ENCRYPTION_ROOT_KEY),
           tenantKey,
           logType: 'audit',
           plane: 'archive',
@@ -2596,7 +2626,7 @@ describe('logging control routers', () => {
         markObjectOrphanCandidate: vi.fn(),
       },
     });
-    const recordIndex = indexRows[0]!;
+    const recordIndex = indexRows[0];
 
     expect(objectRows).toHaveLength(1);
     expect(recordIndex.recordId).toBe('evt_manual_smoke');
@@ -2627,7 +2657,7 @@ describe('logging control routers', () => {
         created_at: 1779148800000,
       },
     ]);
-    vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.AUDIT_ARCHIVE.get).mockResolvedValueOnce({
       arrayBuffer: vi.fn().mockResolvedValue(storedChunkBody!.slice().buffer),
     } as unknown as R2ObjectBody);
 
@@ -2661,11 +2691,11 @@ describe('logging control routers', () => {
       message_job_id: expect.stringMatching(/^lmj_/),
     });
     await expect(
-      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+      readEncryptedMessagePayloadPut(envFixture.AUDIT_ARCHIVE.put, 'message-jobs/export_build/')
     ).resolves.toMatchObject({ payload_type: 'export_build' });
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_export.create'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_export.create' })
     );
   });
 
@@ -2706,33 +2736,24 @@ describe('logging control routers', () => {
       env
     );
     const body = (await response.json()) as {
-      item: {
-        id: string;
-        status: string;
-        message_job_id: string;
-        queued: boolean;
-      };
+      result: { id: string; status: string; message_job_id: string; queued: boolean };
     };
 
     expect(response.status).toBe(202);
-    const result = (
-      body as unknown as {
-        result: { id: string; status: string; message_job_id: string };
-      }
-    ).result;
+    const result = body.result;
     expect(result.id).toMatch(/^lexp_/);
     expect(result.status).toBe('queued');
     expect(result.message_job_id).toMatch(/^lmj_/);
     await expect(
-      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+      readEncryptedMessagePayloadPut(envFixture.AUDIT_ARCHIVE.put, 'message-jobs/export_build/')
     ).resolves.toMatchObject({ payload_type: 'export_build' });
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO logging_export_jobs'),
       expect.arrayContaining([result.id, tenantKey, 'audit', 'archive', 'jsonl', 'queued'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_export.create'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_export.create' })
     );
   });
 
@@ -2835,7 +2856,7 @@ describe('logging control routers', () => {
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
     await expect(
-      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+      readEncryptedMessagePayloadPut(envFixture.AUDIT_ARCHIVE.put, 'message-jobs/export_build/')
     ).resolves.toMatchObject({ filters: expect.objectContaining({ source: 'record_index' }) });
   });
 
@@ -2886,7 +2907,7 @@ describe('logging control routers', () => {
         created_at: 1000,
       },
     ]);
-    vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.AUDIT_ARCHIVE.get).mockResolvedValueOnce({
       arrayBuffer: vi.fn().mockResolvedValue(encoded.body.buffer),
     } as unknown as R2ObjectBody);
 
@@ -2915,7 +2936,7 @@ describe('logging control routers', () => {
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
     await expect(
-      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+      readEncryptedMessagePayloadPut(envFixture.AUDIT_ARCHIVE.put, 'message-jobs/export_build/')
     ).resolves.toMatchObject({ filters: expect.objectContaining({ include_payload: true }) });
   });
 
@@ -2945,7 +2966,7 @@ describe('logging control routers', () => {
       now: 1000,
       encryption: {
         keyBytes: await deriveTestArchiveChunkEncryptionKey({
-          rootKeyHex: String(env.OBJECT_ENCRYPTION_ROOT_KEY),
+          rootKeyHex: String(envFixture.OBJECT_ENCRYPTION_ROOT_KEY),
           tenantKey,
           logType: 'audit',
           plane: 'archive',
@@ -2966,7 +2987,7 @@ describe('logging control routers', () => {
         markObjectOrphanCandidate: vi.fn(),
       },
     });
-    const recordIndex = indexRows[0]!;
+    const recordIndex = indexRows[0];
 
     mockAdapter.query.mockResolvedValueOnce([
       {
@@ -2994,7 +3015,7 @@ describe('logging control routers', () => {
         created_at: 1000,
       },
     ]);
-    vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.AUDIT_ARCHIVE.get).mockResolvedValueOnce({
       arrayBuffer: vi.fn().mockResolvedValue(storedBody!.slice().buffer),
     } as unknown as R2ObjectBody);
 
@@ -3024,7 +3045,7 @@ describe('logging control routers', () => {
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
     await expect(
-      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+      readEncryptedMessagePayloadPut(envFixture.AUDIT_ARCHIVE.put, 'message-jobs/export_build/')
     ).resolves.toMatchObject({ filters: expect.objectContaining({ include_payload: true }) });
   });
 
@@ -3038,7 +3059,7 @@ describe('logging control routers', () => {
       },
     };
     const envelope = await encryptObjectArtifact(JSON.stringify(payload), {
-      rootKeyHex: String(env.OBJECT_ENCRYPTION_ROOT_KEY),
+      rootKeyHex: String(envFixture.OBJECT_ENCRYPTION_ROOT_KEY),
       plane: 'SENSITIVE_DETAILS',
       keyVersion: 1,
       contentType: 'application/json',
@@ -3078,7 +3099,7 @@ describe('logging control routers', () => {
       created_at: 1000,
       deleted_at: null,
     });
-    vi.mocked(env.SENSITIVE_DETAILS!.get).mockResolvedValueOnce(
+    vi.mocked(envFixture.SENSITIVE_DETAILS.get).mockResolvedValueOnce(
       createTextR2Object(`${JSON.stringify(envelope)}\n`)
     );
 
@@ -3110,7 +3131,7 @@ describe('logging control routers', () => {
     expect(body.result.message_job_id).toMatch(/^lmj_/);
     await expect(
       readEncryptedMessagePayloadPut(
-        env.AUDIT_ARCHIVE!.put,
+        envFixture.AUDIT_ARCHIVE.put,
         'message-jobs/export_build/criticality=critical/'
       )
     ).resolves.toMatchObject({ filters: expect.objectContaining({ plane: 'sensitive_detail' }) });
@@ -3171,7 +3192,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.get).mockResolvedValueOnce({
       text: vi.fn().mockResolvedValue(`id,tenant_key\nchk_1,${tenantKey}\n`),
     } as unknown as R2ObjectBody);
 
@@ -3182,7 +3203,9 @@ describe('logging control routers', () => {
     expect(artifactResponse.status).toBe(200);
     expect(artifactResponse.headers.get('content-type')).toContain('text/csv');
     expect(await artifactResponse.text()).toBe(`id,tenant_key\nchk_1,${tenantKey}\n`);
-    expect(env.EXPORT_ARTIFACTS?.get).toHaveBeenCalledWith('logging-exports/v1/lexp_1/records.csv');
+    expect(envFixture.EXPORT_ARTIFACTS?.get).toHaveBeenCalledWith(
+      'logging-exports/v1/lexp_1/records.csv'
+    );
 
     mockAdapter.queryOne.mockResolvedValueOnce({
       id: 'lexp_2',
@@ -3204,7 +3227,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.EXPORT_ARTIFACTS!.get)
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.get)
       .mockResolvedValueOnce({
         text: vi.fn().mockResolvedValue(
           JSON.stringify({
@@ -3270,7 +3293,7 @@ describe('logging control routers', () => {
       },
     });
 
-    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockClear();
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.get).mockClear();
     mockAdapter.queryOne.mockResolvedValueOnce(sensitiveExport);
     const artifactResponse = await createApp([
       ADMIN_PERMISSIONS.LOGGING_DELIVERY_EVENTS_READ,
@@ -3285,7 +3308,7 @@ describe('logging control routers', () => {
         },
       },
     });
-    expect(env.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
+    expect(envFixture.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
   });
 
   it('rejects unsafe or oversized logging export artifact downloads before reading R2 objects', async () => {
@@ -3316,7 +3339,7 @@ describe('logging control routers', () => {
     ]).request('/api/admin/logging-policies/exports/lexp_large/artifact', {}, env);
 
     expect(oversizedResponse.status).toBe(400);
-    expect(env.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
+    expect(envFixture.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
 
     mockAdapter.queryOne.mockResolvedValueOnce({
       id: 'lexp_unsafe',
@@ -3344,7 +3367,7 @@ describe('logging control routers', () => {
     ]).request('/api/admin/logging-policies/exports/lexp_unsafe/artifact', {}, env);
 
     expect(unsafeResponse.status).toBe(400);
-    expect(env.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
+    expect(envFixture.EXPORT_ARTIFACTS?.get).not.toHaveBeenCalled();
 
     const oversizedText = vi.fn().mockResolvedValue('should not be read');
     mockAdapter.queryOne.mockResolvedValueOnce({
@@ -3367,7 +3390,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.get).mockResolvedValueOnce({
       size: 65 * 1024 * 1024,
       text: oversizedText,
     } as unknown as R2ObjectBody);
@@ -3401,7 +3424,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.get).mockResolvedValueOnce({
       body: new ReadableStream<Uint8Array>({
         pull(controller) {
           const chunk = streamChunks.shift();
@@ -3443,7 +3466,7 @@ describe('logging control routers', () => {
       completed_at: 1000,
       expires_at: 2000,
     });
-    vi.mocked(env.EXPORT_ARTIFACTS!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.EXPORT_ARTIFACTS.get).mockResolvedValueOnce({
       size: 2 * 1024 * 1024,
       text: oversizedManifestText,
     } as unknown as R2ObjectBody);
@@ -3608,40 +3631,42 @@ describe('logging control routers', () => {
   });
 
   it('verifies runtime snapshot pointer, object, and database metadata', async () => {
-    const objectRef = 'logging-policy-snapshots/v1/snapshots/tenant/tenant-a/v1-snap_runtime.json';
-    vi.mocked(
-      env.AUTHRIM_CONFIG!.get as unknown as (key: string) => Promise<string | null>
-    ).mockResolvedValueOnce(
-      JSON.stringify({
-        schemaVersion: 1,
-        scopeType: 'tenant',
-        scopeId: 'tenant-a',
-        version: 1,
-        policyHash: 'hash_1',
-        snapshotId: 'snap_runtime',
-        objectRef,
-        publishedAt: 1000,
-        expiresAt: null,
-      })
-    );
-    vi.mocked(env.DIAGNOSTIC_LOGS!.get).mockResolvedValueOnce(
-      createTextR2Object(
-        JSON.stringify({
-          snapshotId: 'snap_runtime',
-          scopeType: 'tenant',
-          scopeId: 'tenant-a',
-          version: 1,
-          policyHash: 'hash_1',
-          synchronizedAt: 1000,
-          sourceUpdatedAt: 900,
-          policies: [],
-        })
-      )
-    );
-    mockAdapter.queryOne.mockResolvedValueOnce({
-      id: 'snap_runtime',
+    const snapshot = await createRuntimeLoggingPolicySnapshot({
+      snapshotId: 'snap_runtime',
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
       version: 1,
-      policy_hash: 'hash_1',
+      synchronizedAt: 1000,
+      sourceUpdatedAt: 900,
+      policies: [],
+      expiresAt: null,
+    });
+    const objectRef = buildRuntimeLoggingPolicySnapshotObjectKey({
+      snapshot,
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
+    });
+    const pointer = JSON.stringify({
+      schemaVersion: 1,
+      scopeType: 'tenant',
+      scopeId: 'tenant-a',
+      version: 1,
+      policyHash: snapshot.policyHash,
+      snapshotId: snapshot.snapshotId,
+      objectRef,
+      publishedAt: 1000,
+      expiresAt: null,
+    });
+    vi.mocked(envFixture.AUTHRIM_CONFIG.get as unknown as (key: string) => Promise<string | null>)
+      .mockResolvedValueOnce(pointer)
+      .mockResolvedValueOnce(pointer);
+    vi.mocked(envFixture.LOG_ARCHIVE.get).mockResolvedValueOnce({
+      ...createTextR2Object(JSON.stringify(snapshot)),
+      text: async () => JSON.stringify(snapshot),
+    } as R2ObjectBody);
+    mockAdapter.queryOne.mockResolvedValueOnce({
+      id: snapshot.snapshotId,
+      version: snapshot.version,
+      policy_hash: snapshot.policyHash,
       object_ref: objectRef,
       published_at: 1000,
     });
@@ -3729,7 +3754,7 @@ describe('logging control routers', () => {
       updated_at: 1000,
     });
     mockAdapter.queryOne.mockResolvedValueOnce(null);
-    vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.AUDIT_ARCHIVE.get).mockResolvedValueOnce({
       size: 52,
       httpMetadata: { contentType: 'application/json' },
       text: vi.fn().mockResolvedValue('{"body":{"type":"event_log","entries":[{"id":"evt_1"}]}}'),
@@ -3774,7 +3799,7 @@ describe('logging control routers', () => {
         ]),
       },
     });
-    expect(env.AUDIT_ARCHIVE?.get).toHaveBeenCalledWith(payloadObjectRef);
+    expect(envFixture.AUDIT_ARCHIVE?.get).toHaveBeenCalledWith(payloadObjectRef);
   });
 
   it('rejects oversized DLQ payload previews before reading object text', async () => {
@@ -3795,7 +3820,7 @@ describe('logging control routers', () => {
       created_at: 1000,
       updated_at: 1000,
     });
-    vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.AUDIT_ARCHIVE.get).mockResolvedValueOnce({
       size: 1024 * 1024 + 1,
       httpMetadata: { contentType: 'application/json' },
       text,
@@ -3832,7 +3857,7 @@ describe('logging control routers', () => {
       created_at: 1000,
       updated_at: 1000,
     });
-    vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.AUDIT_ARCHIVE.get).mockResolvedValueOnce({
       size: 512,
       httpMetadata: { contentType: 'application/json' },
       text: vi.fn().mockResolvedValue(
@@ -4011,9 +4036,9 @@ describe('logging control routers', () => {
         replay_payload: expect.objectContaining({ payload_type: 'delivery_fanout' }),
       })
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging.delivery.retry'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging.delivery.retry' })
     );
   });
 
@@ -4035,7 +4060,7 @@ describe('logging control routers', () => {
       created_at: 1000,
       updated_at: 1000,
     });
-    vi.mocked(env.AUDIT_ARCHIVE!.get).mockResolvedValueOnce({
+    vi.mocked(envFixture.AUDIT_ARCHIVE.get).mockResolvedValueOnce({
       size: 1024 * 1024 + 1,
       text,
     } as unknown as R2ObjectBody);
@@ -4164,10 +4189,10 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.queued).toBe(false);
     expect(body.result.queue_binding).toBeNull();
-    expect(env.AUDIT_QUEUE?.send).not.toHaveBeenCalled();
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging.delivery.retry'])
+    expect(envFixture.AUDIT_QUEUE?.send).not.toHaveBeenCalled();
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging.delivery.retry' })
     );
   });
 
@@ -4237,9 +4262,9 @@ describe('logging control routers', () => {
       expect.stringContaining("SET status = 'purged'"),
       expect.arrayContaining(['dlq_1'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging.dlq.purge'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging.dlq.purge' })
     );
   });
 
@@ -4453,9 +4478,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO admin_audit_coverage_status'),
       expect.arrayContaining(['admin_logging.coverage.check'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['admin_logging.coverage.check'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'admin_logging.coverage.check' })
     );
   });
 
@@ -5041,9 +5066,9 @@ describe('logging control routers', () => {
       expect.stringContaining('SET status = ?, completed_at = ?'),
       expect.arrayContaining(['cancelled', expect.any(Number), expect.any(Number), 'lmj_cancel'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging.message_job.cancel'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging.message_job.cancel' })
     );
   });
 
@@ -5277,9 +5302,9 @@ describe('logging control routers', () => {
       expect.stringContaining("SET status = 'skipped'"),
       expect.arrayContaining(['lrw_running', 'running'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['admin_logging.rewrap_jobs.cancel'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'admin_logging.rewrap_jobs.cancel' })
     );
   });
 
@@ -5344,9 +5369,9 @@ describe('logging control routers', () => {
       expect.stringContaining("SET status = 'orphan_candidate'"),
       ['obj_pending']
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['admin_logging.catalog_repair.apply_safe'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'admin_logging.catalog_repair.apply_safe' })
     );
   });
 
@@ -5572,9 +5597,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO logging_delivery_events'),
       expect.arrayContaining([tenantKey, 'audit', 'archive', object.id])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['admin_logging.catalog_repair.apply_dangerous'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'admin_logging.catalog_repair.apply_dangerous' })
     );
   });
 
@@ -5650,9 +5675,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO admin_logging_critical_policies'),
       expect.arrayContaining(['destination:dest_critical'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['admin_logging.critical_policy.update'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'admin_logging.critical_policy.update' })
     );
   });
 
@@ -5734,9 +5759,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO admin_logging_sensitive_detail_policies'),
       expect.arrayContaining(['webhook', 'dest_sensitive'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['admin_logging.sensitive_detail_policy.update'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'admin_logging.sensitive_detail_policy.update' })
     );
   });
 
@@ -5784,9 +5809,9 @@ describe('logging control routers', () => {
     });
     expect(body.audit_id).toEqual(expect.any(String));
     expect(JSON.stringify(body)).not.toContain('sensitive payload');
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['admin_logging.sensitive_detail.probe'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'admin_logging.sensitive_detail.probe' })
     );
   });
 
@@ -5846,27 +5871,29 @@ describe('logging control routers', () => {
     expect(body.item.status).toBe('published');
     expect(body.item.policy_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(body.item.object_ref).toMatch(
-      /^logging-policy-snapshots\/v1\/snapshots\/platform\/global\/v3-snap_/
+      /^__authrim_log_archive_private__\/policy-snapshots\/v1\/snapshots\/platform\/global\/v3-snap_/
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO logging_policy_snapshots'),
       expect.arrayContaining(['platform', 'global', 3, 'published'])
     );
-    expect(env.DIAGNOSTIC_LOGS?.put).toHaveBeenCalledWith(
-      expect.stringMatching(/^logging-policy-snapshots\/v1\/snapshots\/platform\/global\/v3-snap_/),
+    expect(envFixture.LOG_ARCHIVE?.put).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^__authrim_log_archive_private__\/policy-snapshots\/v1\/snapshots\/platform\/global\/v3-snap_/
+      ),
       expect.stringContaining('"scopeType":"platform"'),
       expect.objectContaining({
         httpMetadata: { contentType: 'application/json' },
       })
     );
-    expect(env.AUTHRIM_CONFIG?.put).toHaveBeenCalledWith(
-      'logging-policy-snapshots/v1/current/platform/global.json',
+    expect(envFixture.AUTHRIM_CONFIG?.put).toHaveBeenCalledWith(
+      '__authrim_log_archive_private__/policy-snapshots/v1/current/platform/global.json',
       expect.stringContaining('"schemaVersion":1'),
       undefined
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_policy_snapshot.publish'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_policy_snapshot.publish' })
     );
   });
 
@@ -5927,9 +5954,9 @@ describe('logging control routers', () => {
       expect.stringContaining('INSERT INTO logging_policy_snapshots'),
       expect.arrayContaining(['platform', 'global', 4, 'draft'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_policy_snapshot.draft_create'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_policy_snapshot.draft_create' })
     );
   });
 
@@ -5979,15 +6006,15 @@ describe('logging control routers', () => {
     expect(response.status).toBe(200);
     expect(body.item).toMatchObject({ id: 'snap_draft', status: 'published', version: 5 });
     expect(body.item.object_ref).toMatch(
-      /^logging-policy-snapshots\/v1\/snapshots\/platform\/global\/v5-snap_draft/
+      /^__authrim_log_archive_private__\/policy-snapshots\/v1\/snapshots\/platform\/global\/v5-snap_draft/
     );
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining("SET status = 'published'"),
       expect.arrayContaining(['snap_draft'])
     );
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['logging_policy_snapshot.publish'])
+    expect(auditWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'logging_policy_snapshot.publish' })
     );
   });
 

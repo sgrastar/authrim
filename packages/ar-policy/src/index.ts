@@ -522,9 +522,8 @@ function getReBACService(c: Context<{ Bindings: Env }>): ReBACService | null {
  * Phase 8.3: Used to publish permission change events
  */
 function getPermissionChangeNotifier(c: Context<{ Bindings: Env }>): PermissionChangeNotifier {
-  const coreAdapter = getPolicyCoreAdapter(c);
   return createPermissionChangeNotifier({
-    db: coreAdapter,
+    env: c.env,
     // Cast to satisfy type compatibility between policy-core KVNamespace and Cloudflare Workers KVNamespace
     cache: c.env.REBAC_CACHE_KV as unknown as globalThis.KVNamespace | undefined,
     permissionChangeHub: c.env.PERMISSION_CHANGE_HUB,

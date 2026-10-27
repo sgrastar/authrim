@@ -1,3 +1,11 @@
+import {
+  assertLogArchiveImplemented,
+  assertLogArchiveLockMatches,
+  logArchiveRuntimeVars,
+  implementedLogArchiveModes,
+  LOG_ARCHIVE_PRODUCER_COMPONENTS,
+  type LogArchiveMode,
+} from './log-archive-config.js';
 /**
  * Authrim Deployment Module
  *
@@ -38,12 +46,23 @@ import {
   generateUiWorkersWranglerConfig,
   parseWranglerMigrationTags,
   parseWranglerToml,
+  parseGeneratedLogArchiveMode,
+  parseGeneratedLogArchiveVars,
 } from './wrangler.js';
+import { parseConfig } from './config.js';
+import { ensureLogArchiveRootKeyring } from './log-archive-root-keyring.js';
+import {
+  createLogIcebergKeyResolver,
+  parseLogIcebergRootKeyring,
+} from '@authrim/ar-lib-core/services/log-iceberg-keys';
+import { getEnvironmentPaths } from './paths.js';
+import { LOG_ARCHIVE_SCHEMA_DIGEST } from './log-archive.js';
 import { getPackageVersion } from './version.js';
 import {
   EPHEMERAL_ENV_SECRET_NAMES,
   getMissingRequiredDeploySecrets,
   getSecretNamesForWorker,
+  getLogArchiveSecretNamesForWorker,
   getSecretTargetWorkers,
   SECRET_KEY_FILES,
   type SecretName,
@@ -73,6 +92,7 @@ import {
   type ReadAvailableDiskBytes,
 } from './local-deployment-capacity.js';
 import {
+  hasExactR2BucketOwnership,
   listWorkerCronTriggers,
   readWorkerMigrationState,
   type WorkerMigrationState,
@@ -274,6 +294,10 @@ function formatNodeEngineMismatchError(
 // =============================================================================
 
 export interface DeployOptions {
+  /** Internal immutable dependency snapshot derived from generated configuration. */
+  workerDeploymentDependencies?: Record<WorkerComponent, readonly WorkerComponent[]>;
+  /** Internal per-worker secret validation context. */
+  logArchiveComponents?: readonly WorkerComponent[];
   env: string;
   rootDir: string;
   configFile?: string;
@@ -540,7 +564,8 @@ export const REQUIRED_WORKER_SECRET_KINDS: Readonly<
  */
 export function requiredWorkerSecretNames(
   component: WorkerComponent,
-  lookupHmacSlots: readonly LookupHmacSlot[] | undefined
+  lookupHmacSlots: readonly LookupHmacSlot[] | undefined,
+  logArchive = false
 ): { all: SecretName[]; anyOf: SecretName[][] } {
   const all: SecretName[] = [];
   const anyOf: SecretName[][] = [];
@@ -553,7 +578,8 @@ export function requiredWorkerSecretNames(
       }
     }
   }
-  return { all, anyOf };
+  if (logArchive) all.push(...getLogArchiveSecretNamesForWorker(component));
+  return { all: [...new Set(all)], anyOf };
 }
 
 export interface LookupHmacKeyStateSummary {
@@ -634,7 +660,10 @@ export async function listDeployedWorkerSecretNames(
  * to the deployed Worker. A Worker that does not exist yet can only receive them now.
  */
 export async function findMissingRequiredWorkerSecrets(
-  options: Pick<DeployOptions, 'secrets' | 'existingComponents' | 'lookupHmacSlots'>,
+  options: Pick<
+    DeployOptions,
+    'secrets' | 'existingComponents' | 'lookupHmacSlots' | 'logArchiveComponents'
+  >,
   components: readonly WorkerComponent[],
   listSecretNames: (component: WorkerComponent) => Promise<Set<string>>
 ): Promise<MissingRequiredWorkerSecret[]> {
@@ -642,7 +671,11 @@ export async function findMissingRequiredWorkerSecrets(
   const distributed = (name: string) => Boolean(options.secrets?.[name]?.trim());
   const missing: MissingRequiredWorkerSecret[] = [];
   for (const component of components) {
-    const required = requiredWorkerSecretNames(component, options.lookupHmacSlots);
+    const required = requiredWorkerSecretNames(
+      component,
+      options.lookupHmacSlots,
+      options.logArchiveComponents?.includes(component)
+    );
     if (required.anyOf.length > 0 && existing.has(component)) {
       // An existing environment has Control's key state: deploying without it would accept a
       // slot the runtime does not use. Only an initial deployment may go by "either slot".
@@ -671,15 +704,51 @@ export async function findMissingRequiredWorkerSecrets(
  * whose fingerprint differs from the one Control published for that slot.
  */
 export function assertDistributedSecretValues(
-  options: Pick<DeployOptions, 'secrets' | 'lookupHmacFingerprints'>,
+  options: Pick<DeployOptions, 'secrets' | 'lookupHmacFingerprints'> &
+    Partial<Pick<DeployOptions, 'rootDir' | 'env' | 'configFile'>>,
   components: readonly WorkerComponent[]
 ): void {
-  const names = new Set(components.flatMap((component) => getSecretNamesForWorker(component)));
+  const names = new Set(
+    components.flatMap((component) =>
+      getSecretNamesForWorker(component, {
+        logArchive: Boolean(generatedWorkerLogArchiveMode(component, options)),
+      })
+    )
+  );
   for (const name of names) {
     const value = options.secrets?.[name];
     if (value === undefined) continue;
     if (!value.trim()) {
       throw new Error(`deploy_secret_value_blank:${name}`);
+    }
+    if (name === 'LOG_ARCHIVE_ROOT_KEYRING') {
+      const ring = parseLogIcebergRootKeyring(value);
+      if (options.rootDir && options.env) {
+        for (const component of components) {
+          if (!LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component)) continue;
+          const path = resolve(
+            options.rootDir,
+            'packages',
+            component,
+            options.configFile ?? 'wrangler.toml'
+          );
+          if (!existsSync(path)) continue;
+          const vars = parseGeneratedLogArchiveVars(readFileSync(path, 'utf8'), options.env);
+          if (vars.OBJECT_ENCRYPTION_KEY_VERSION !== String(ring.current_version))
+            throw new Error('log_archive_generated_key_version_mismatch');
+        }
+      }
+      const root = options.secrets?.OBJECT_ENCRYPTION_ROOT_KEY;
+      const hmac = options.secrets?.LOG_ARCHIVE_CONTENT_HMAC_KEY;
+      if (root !== undefined && ring.roots[String(ring.current_version)] !== root.toLowerCase())
+        throw new Error('log_iceberg_current_root_key_mismatch');
+      if (root !== undefined && hmac !== undefined)
+        createLogIcebergKeyResolver({
+          LOG_ARCHIVE_ROOT_KEYRING: value,
+          OBJECT_ENCRYPTION_ROOT_KEY: root,
+          OBJECT_ENCRYPTION_KEY_VERSION: String(ring.current_version),
+          LOG_ARCHIVE_CONTENT_HMAC_KEY: hmac,
+        });
     }
     const slot = /^LOOKUP_HMAC_KEY_SLOT_([AB])$/u.exec(name)?.[1] as LookupHmacSlot | undefined;
     const expected = slot ? options.lookupHmacFingerprints?.[slot] : undefined;
@@ -698,15 +767,76 @@ export function assertDistributedSecretValues(
   }
 }
 
+async function assertLogArchiveDeploymentState(
+  options: DeployOptions,
+  components: readonly WorkerComponent[]
+): Promise<void> {
+  // Missing package configs are rejected by deployment-context validation before any deploy.
+  const producers = components.filter(
+    (component) =>
+      LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component) &&
+      existsSync(
+        resolve(options.rootDir, 'packages', component, options.configFile ?? 'wrangler.toml')
+      )
+  );
+  if (producers.length === 0) return;
+  // Validate the generated mode before reading local evidence, including single-worker deploys.
+  for (const component of producers) generatedWorkerLogArchiveMode(component, options);
+  const config = parseConfig(
+    JSON.parse(
+      await readFile(
+        getEnvironmentPaths({ baseDir: options.rootDir, env: options.env }).config,
+        'utf8'
+      )
+    )
+  );
+  if (config.environment.prefix !== options.env)
+    throw new Error('deployment_config_environment_mismatch');
+  const archive = config.logging?.archive;
+  assertLogArchiveImplemented(archive);
+  const { lock } = await loadLockFileAuto(options.rootDir, options.env);
+  const locked = lock?.logArchive;
+  assertLogArchiveLockMatches(archive!, locked, config.cloudflare.accountId);
+  const bucket = lock?.r2?.LOG_ARCHIVE;
+  if (!bucket || bucket.name !== locked.bucketName || !hasExactR2BucketOwnership(bucket))
+    throw new Error('log_archive_bucket_ownership_incomplete');
+  if (locked.schemaDigest !== LOG_ARCHIVE_SCHEMA_DIGEST)
+    throw new Error('log_archive_schema_digest_mismatch');
+  const expected = logArchiveRuntimeVars(archive!, locked);
+  for (const component of producers) {
+    const content = await readFile(
+      resolve(options.rootDir, 'packages', component, options.configFile ?? 'wrangler.toml'),
+      'utf8'
+    );
+    const vars = parseGeneratedLogArchiveVars(content, options.env);
+    if (Object.entries(expected).some(([name, value]) => vars[name] !== value))
+      throw new Error('log_archive_generated_identity_mismatch');
+  }
+}
+
 export async function assertRequiredWorkerSecrets(
   options: DeployOptions,
   components: readonly WorkerComponent[]
 ): Promise<void> {
+  await assertLogArchiveDeploymentState(options, components);
   assertDistributedSecretValues(options, components);
   const list =
     options.listWorkerSecretNames ??
     ((component: WorkerComponent) => listDeployedWorkerSecretNames(options, component));
-  const missing = await findMissingRequiredWorkerSecrets(options, components, list);
+  const logArchiveComponents = components.filter((component) =>
+    Boolean(generatedWorkerLogArchiveMode(component, options))
+  );
+  if (
+    logArchiveComponents.length > 0 &&
+    options.existingComponents === undefined &&
+    !options.dryRun
+  )
+    throw new Error('log_archive_verified_worker_inventory_required');
+  const missing = await findMissingRequiredWorkerSecrets(
+    { ...options, logArchiveComponents },
+    components,
+    list
+  );
   if (missing.length === 0) return;
   for (const { component, secret } of missing) {
     options.onProgress?.(
@@ -1455,15 +1585,51 @@ function getVarArgs(component: WorkerComponent, options: DeployOptions): string[
   return Object.entries(vars).flatMap(([name, value]) => ['--var', `${name}:${value}`]);
 }
 
+function generatedWorkerLogArchiveMode(
+  component: WorkerComponent,
+  options: Partial<Pick<DeployOptions, 'rootDir' | 'env' | 'configFile'>>
+): LogArchiveMode | undefined {
+  if (!options.rootDir || !options.env) return undefined;
+  const path = resolve(
+    options.rootDir,
+    'packages',
+    component,
+    options.configFile ?? 'wrangler.toml'
+  );
+  if (!existsSync(path)) return undefined;
+  const mode = parseGeneratedLogArchiveMode(readFileSync(path, 'utf8'), options.env);
+  if (!mode && (LOG_ARCHIVE_PRODUCER_COMPONENTS as readonly WorkerComponent[]).includes(component))
+    throw new Error('log_archive_mode_required');
+  if (mode && !implementedLogArchiveModes().includes(mode))
+    throw new Error(`log_archive_mode_not_implemented:${mode}`);
+  return mode;
+}
+
+function effectiveWorkerDependencies(
+  options: Pick<DeployOptions, 'rootDir' | 'env'>
+): Record<WorkerComponent, readonly WorkerComponent[]> {
+  const graph: Record<WorkerComponent, readonly WorkerComponent[]> = {
+    ...WORKER_DEPLOYMENT_DEPENDENCIES,
+  };
+  if (generatedWorkerLogArchiveMode('ar-lib-core', options)) {
+    graph['ar-lib-core'] = ['ar-control'];
+    graph['ar-plugin-runner'] = ['ar-lib-core'];
+  }
+  return graph;
+}
+
 function getSecretsForWorker(
   component: WorkerComponent,
-  secrets: Readonly<Record<string, string>> | undefined
+  secrets: Readonly<Record<string, string>> | undefined,
+  options: Pick<DeployOptions, 'rootDir' | 'env' | 'configFile'>
 ): Record<string, string> {
   if (!secrets) {
     return {};
   }
   return Object.fromEntries(
-    getSecretNamesForWorker(component)
+    getSecretNamesForWorker(component, {
+      logArchive: Boolean(generatedWorkerLogArchiveMode(component, options)),
+    })
       // A blank value is never sent: it would replace a working secret with nothing.
       .filter((name) => secrets[name] !== undefined && secrets[name].trim() !== '')
       .map((name) => [name, secrets[name]])
@@ -1726,7 +1892,7 @@ async function deployWorkerDirect(
   try {
     await options.workerScriptOwnership?.assertBeforeMutation(context.workerName);
     secretFile = await createTemporarySecretFile(
-      getSecretsForWorker(context.component, options.secrets)
+      getSecretsForWorker(context.component, options.secrets, options)
     );
     outputDirectory = await mkdtemp(join(tmpdir(), 'authrim-wrangler-output-'));
     const commandResult = await runWithAdaptiveRetry(
@@ -1941,7 +2107,7 @@ async function uploadWorkerVersion(
   try {
     await options.workerScriptOwnership?.assertBeforeMutation(context.workerName);
     secretFile = await createTemporarySecretFile(
-      getSecretsForWorker(context.component, options.secrets)
+      getSecretsForWorker(context.component, options.secrets, options)
     );
     outputDirectory = await mkdtemp(join(tmpdir(), 'authrim-wrangler-output-'));
     const commandResult = await runWithAdaptiveRetry(
@@ -2246,7 +2412,8 @@ async function promoteWorkerVersion(
 
 function resolvePlannedComponents(
   enabledComponents: WorkerComponent[] | undefined,
-  existingComponents: readonly WorkerComponent[] | undefined
+  existingComponents: readonly WorkerComponent[] | undefined,
+  dependencies: Record<WorkerComponent, readonly WorkerComponent[]> = WORKER_DEPLOYMENT_DEPENDENCIES
 ): WorkerComponent[] {
   const requested = new Set(enabledComponents ?? CORE_WORKER_COMPONENTS);
   if (!existingComponents) {
@@ -2260,7 +2427,7 @@ function resolvePlannedComponents(
       return;
     }
     visited.add(component);
-    for (const dependency of WORKER_DEPLOYMENT_DEPENDENCIES[component]) {
+    for (const dependency of dependencies[component]) {
       if (!existing.has(dependency) && !requested.has(dependency)) {
         requested.add(dependency);
       }
@@ -2503,7 +2670,8 @@ async function runDependencyScheduler(
     }
 
     for (const component of [...pending]) {
-      const failedDependency = WORKER_DEPLOYMENT_DEPENDENCIES[component]
+      const failedDependency = (options.workerDeploymentDependencies ??
+        WORKER_DEPLOYMENT_DEPENDENCIES)[component]
         .filter((dependency) => selected.has(dependency))
         .find((dependency) => results.get(dependency)?.success === false);
       if (failedDependency) {
@@ -2520,7 +2688,7 @@ async function runDependencyScheduler(
 
     while (active.size < throttle.currentConcurrency) {
       const ready = [...pending].find((component) =>
-        WORKER_DEPLOYMENT_DEPENDENCIES[component]
+        (options.workerDeploymentDependencies ?? WORKER_DEPLOYMENT_DEPENDENCIES)[component]
           .filter((dependency) => selected.has(dependency))
           .every((dependency) => results.get(dependency)?.success === true)
       );
@@ -2680,6 +2848,12 @@ export async function deployWorker(
   // Input validation is read-only and should remain observable even when no ownership lock exists.
   if (!isValidEnv(options.env)) {
     return deployWorkerWithoutLease(component, options);
+  }
+  if (isValidComponent(component)) {
+    const context = await getWorkerDeploymentContext(component, options);
+    if (isDeployResult(context)) return context;
+    await assertDeployConfigLockProof(options);
+    await assertRequiredWorkerSecrets(options, [component]);
   }
   return runSingleWorkerWithDeploymentLease(
     component,
@@ -3283,6 +3457,12 @@ export async function deployWorkerGradually(
   options: DeployOptions,
   gradual: GradualDeployOptions
 ): Promise<DeployResult> {
+  if (isValidComponent(component) && isValidEnv(options.env)) {
+    const context = await getWorkerDeploymentContext(component, options);
+    if (isDeployResult(context)) return context;
+    await assertDeployConfigLockProof(options);
+    await assertRequiredWorkerSecrets(options, [component]);
+  }
   return runSingleWorkerWithDeploymentLease(
     component,
     options,
@@ -3306,7 +3486,19 @@ export async function deployAll(
 ): Promise<DeploymentSummary> {
   const startedAt = new Date().toISOString();
   const startTime = Date.now();
-  const components = resolvePlannedComponents(enabledComponents, options.existingComponents);
+  const dependencies = effectiveWorkerDependencies(options);
+  if (
+    dependencies['ar-lib-core'].includes('ar-control') &&
+    options.existingComponents === undefined &&
+    !options.dryRun
+  )
+    throw new Error('log_archive_verified_worker_inventory_required');
+  options = { ...options, workerDeploymentDependencies: dependencies };
+  const components = resolvePlannedComponents(
+    enabledComponents,
+    options.existingComponents,
+    dependencies
+  );
   const existingComponents = new Set(options.existingComponents ?? []);
   if (!options.dryRun && components.length > 0) {
     options.onProgress?.('Checking local disk space before Worker deployment...');
@@ -3331,8 +3523,9 @@ export async function deployAll(
       throw new Error(`control_plane_baseline_secrets_missing:${missingControlSecrets.join(',')}`);
     }
   }
-  if (!options.dryRun && components.length > 0) {
-    await assertRequiredWorkerSecrets(options, components);
+  if (components.length > 0) {
+    if (options.dryRun) await assertLogArchiveDeploymentState(options, components);
+    else await assertRequiredWorkerSecrets(options, components);
   }
   const strategy = resolveDeploymentStrategy(options, components);
   const controlBootstrapConfig = initialControlBootstrapConfig(options, components, strategy);
@@ -4054,11 +4247,15 @@ export function updateLockWithDeployments(lock: AuthrimLock, results: DeployResu
 /** Load only the local secret files needed by the selected Workers. */
 export async function loadDeploySecretsFromKeys(
   keysDir: string | undefined,
-  workers?: WorkerComponent[]
+  workers?: WorkerComponent[],
+  context?: Pick<DeployOptions, 'rootDir' | 'env'>
 ): Promise<Record<string, string>> {
+  const dependencies = context
+    ? effectiveWorkerDependencies(context)
+    : WORKER_DEPLOYMENT_DEPENDENCIES;
   const targetSet = new Set(workers ?? CORE_WORKER_COMPONENTS);
   const visitDependencies = (component: WorkerComponent): void => {
-    for (const dependency of WORKER_DEPLOYMENT_DEPENDENCIES[component]) {
+    for (const dependency of dependencies[component]) {
       if (!targetSet.has(dependency)) {
         targetSet.add(dependency);
         visitDependencies(dependency);
@@ -4069,8 +4266,30 @@ export async function loadDeploySecretsFromKeys(
     visitDependencies(component);
   }
   const targetWorkers = [...targetSet];
-  const secretNames = new Set(targetWorkers.flatMap((worker) => getSecretNamesForWorker(worker)));
+  const secretNames = new Set(
+    targetWorkers.flatMap((worker) =>
+      getSecretNamesForWorker(worker, {
+        logArchive: Boolean(context && generatedWorkerLogArchiveMode(worker, context)),
+      })
+    )
+  );
   const secrets: Record<string, string> = {};
+
+  if (keysDir && context && secretNames.has('LOG_ARCHIVE_ROOT_KEYRING')) {
+    const config = parseConfig(
+      JSON.parse(
+        await readFile(
+          getEnvironmentPaths({ baseDir: context.rootDir, env: context.env }).config,
+          'utf8'
+        )
+      )
+    );
+    if (!config.logging?.archive) throw new Error('log_archive_configuration_required');
+    await ensureLogArchiveRootKeyring(keysDir, {
+      keyVersion: config.logging.archive.objectEncryptionKeyVersion,
+      requireExisting: true,
+    });
+  }
 
   for (const secretName of secretNames) {
     if (EPHEMERAL_ENV_SECRET_NAMES.includes(secretName)) {
@@ -4118,7 +4337,7 @@ async function uploadSecretsWithoutLease(
   await runBoundedPool(targetWorkers, throttle, async (component) => {
     const workerName = getWorkerName(env, component);
     const packageDir = join(rootDir, 'packages', component);
-    const workerSecrets = getSecretsForWorker(component, secrets);
+    const workerSecrets = getSecretsForWorker(component, secrets, options);
     if (!existsSync(packageDir) || Object.keys(workerSecrets).length === 0) {
       return;
     }
@@ -4183,6 +4402,7 @@ export async function uploadSecrets(
 ): Promise<{ success: boolean; errors: string[] }> {
   await assertDeployConfigLockProof(options);
   const components = getSecretTargetWorkers(workers);
+  await assertLogArchiveDeploymentState(options, components);
   if (options.deploymentLeaseSession || options.dryRun || !options.deploymentLease) {
     return uploadSecretsWithoutLease(secrets, options, workers);
   }

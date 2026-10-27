@@ -67,8 +67,6 @@ import type { AuditQueueFanoutPlan, AuditQueueMessage, EventLogEntry, PIILogEntr
 import { sanitizeErrorMessage } from './utils';
 import { createLogger, type Logger } from '../../utils/logger';
 import { readR2ObjectTextWithLimit } from '../../utils/body-limits';
-import { createAuditPrimaryStorageAdapter } from './external-primary';
-import { resolveTenantRuntimeProfilesFromEnv } from '../runtime-profile-resolver';
 import { PLATFORM_DEFAULT_R2_ARCHIVE_DESTINATION_ID } from '../logging-runtime-policy';
 import {
   buildCanonicalAuditArchiveRecordFromEntry,
@@ -77,13 +75,18 @@ import {
 } from './canonical-format';
 import { safeFetch } from '../../utils/url-security';
 import { SqlLogChunkCatalogStore } from './logging-catalog-store';
-import { decryptObjectArtifact, encryptObjectArtifact } from '../object-artifact-crypto';
+import {
+  decryptObjectArtifact,
+  encryptObjectArtifact,
+  type EncryptedObjectArtifactEnvelope,
+} from '../object-artifact-crypto';
 import {
   InternalNotificationEventRepository,
   resolveLoggingNotificationRoutingPolicy,
 } from '../../repositories/admin/internal-notification-event';
 import type { ControlServiceBinding } from '../control-plane/control-plane-contracts';
 import { runTenantBackupCoveredEffect } from '../tenant-portability/covered-mutation';
+import { consumeLogIcebergMessage, type LogIcebergRuntimeEnv } from '../log-iceberg-runtime';
 import {
   hasCapturingTenantBackupSnapshot,
   persistRewrappedLogObjectGeneration,
@@ -162,7 +165,7 @@ async function createPayloadStableLoggingId(
 }
 
 function getDefaultLoggingDeliveryPayloadBucket(env: AuditQueueConsumerEnv): R2Bucket | null {
-  return env.AUDIT_ARCHIVE ?? null;
+  return env.SENSITIVE_DETAILS ?? null;
 }
 
 const LOGGING_DELIVERY_PAYLOAD_MAX_BYTES = 5 * 1024 * 1024;
@@ -193,7 +196,9 @@ async function readLoggingDeliveryPayloadObjectText(
   } catch {
     throw new Error(`${errorPrefix}_too_large`);
   }
-  text = await decryptObjectArtifact(JSON.parse(text), {
+  const envelope = JSON.parse(text) as EncryptedObjectArtifactEnvelope;
+  if (envelope?.plane !== 'SENSITIVE_DETAILS') throw new Error(`${errorPrefix}_plane_invalid`);
+  text = await decryptObjectArtifact(envelope, {
     rootKeyHex: options.env.OBJECT_ENCRYPTION_ROOT_KEY,
     context: {
       tenantId: tenantContext,
@@ -205,7 +210,7 @@ async function readLoggingDeliveryPayloadObjectText(
   return { text, byteCount };
 }
 
-async function putEncryptedAuditArchivePayload(input: {
+async function putEncryptedLoggingDeliveryPayload(input: {
   env: AuditQueueConsumerEnv;
   bucket: R2Bucket;
   objectKey: string;
@@ -221,7 +226,7 @@ async function putEncryptedAuditArchivePayload(input: {
     Number.isSafeInteger(parsedKeyVersion) && parsedKeyVersion > 0 ? parsedKeyVersion : 1;
   const envelope = await encryptObjectArtifact(JSON.stringify(input.payload), {
     rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
-    plane: 'AUDIT_ARCHIVE',
+    plane: 'SENSITIVE_DETAILS',
     keyVersion,
     contentType: 'application/json',
     context: {
@@ -582,7 +587,7 @@ function serializeQueueBody(body: unknown): string {
   }
 }
 
-export interface AuditQueueConsumerEnv {
+export interface AuditQueueConsumerEnv extends LogIcebergRuntimeEnv {
   /** Core database (non-PII) for event_log */
   DB: DatabaseSource;
 
@@ -773,78 +778,7 @@ async function processMessage(
     return;
   }
 
-  if (type === 'event_log') {
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(
-      env as unknown as Parameters<typeof resolveTenantRuntimeProfilesFromEnv>[0],
-      tenantId
-    );
-    if (!resolved.auditProfile.primary) {
-      logger.warn('audit_queue_primary_missing_for_legacy_message', {
-        tenantId,
-        auditProfileId: resolved.auditProfile.id,
-        type,
-      });
-      return;
-    }
-
-    const adapter = createAuditPrimaryStorageAdapter(
-      env as unknown as Record<string, unknown>,
-      resolved.auditProfile.primary,
-      'event',
-      { id: `queue-event:${resolved.auditProfile.id}` }
-    );
-    if (!adapter) {
-      throw new Error(`audit_queue_primary_unresolved:${resolved.auditProfile.id}:event`);
-    }
-
-    try {
-      const result = await adapter.writeEventLogBatch(entries as EventLogEntry[]);
-      if (!result.success) {
-        throw new Error(result.errorMessage ?? 'audit_queue_event_write_failed');
-      }
-    } finally {
-      await adapter.close();
-    }
-    return;
-  }
-  if (type === 'pii_log') {
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(
-      env as unknown as Parameters<typeof resolveTenantRuntimeProfilesFromEnv>[0],
-      tenantId
-    );
-    if (!resolved.auditProfile.primary) {
-      logger.warn('audit_queue_primary_missing_for_legacy_message', {
-        tenantId,
-        auditProfileId: resolved.auditProfile.id,
-        type,
-      });
-      return;
-    }
-
-    const adapter = createAuditPrimaryStorageAdapter(
-      env as unknown as Record<string, unknown>,
-      resolved.auditProfile.primary,
-      'pii',
-      { id: `queue-pii:${resolved.auditProfile.id}` }
-    );
-    if (!adapter) {
-      throw new Error(`audit_queue_primary_unresolved:${resolved.auditProfile.id}:pii`);
-    }
-
-    try {
-      const result = await adapter.writePIILogBatch(entries as PIILogEntry[]);
-      if (!result.success) {
-        throw new Error(result.errorMessage ?? 'audit_queue_pii_write_failed');
-      }
-    } finally {
-      await adapter.close();
-    }
-    return;
-  }
-
-  {
-    throw new Error(`Unknown audit message type: ${type}`);
-  }
+  throw new Error('audit_queue_legacy_primary_message_not_supported');
 }
 
 function getR2BucketBinding(env: AuditQueueConsumerEnv, bucketRef: string): R2Bucket | null {
@@ -1031,7 +965,7 @@ async function enqueueHttpSinkBatchForDelivery(input: {
     `${cleanR2ObjectKeySegment(payloadId)}.json`,
   ].join('/');
   const canonicalBatch = JSON.stringify(buildCanonicalAuditBatch(input.target, input.body, 'http'));
-  await putEncryptedAuditArchivePayload({
+  await putEncryptedLoggingDeliveryPayload({
     env: input.env,
     bucket,
     objectKey,
@@ -1540,6 +1474,8 @@ async function processFanoutMessage(
   const body = message.body;
   const attemptCount = message.attempts;
   const fanout = body.fanout as AuditQueueFanoutPlan;
+  if (fanout?.archives.length || fanout?.sinks.some((target) => target.type !== 'http'))
+    throw new Error('audit_queue_legacy_archive_target_not_supported');
   const archives = fanout.archives;
   const tenantKey = await resolveTenantKeyForAuditFanout(body.tenantId, env);
   const logType = logTypeForAuditMessage(body);
@@ -2060,9 +1996,9 @@ export async function processDLQQueue(
           `/dd=${partition.day}/${dlqItemId}.json`;
 
         // Save to R2 for recovery
-        const archiveBucket = env.AUDIT_ARCHIVE ?? null;
+        const archiveBucket = env.SENSITIVE_DETAILS ?? null;
         if (archiveBucket) {
-          await putEncryptedAuditArchivePayload({
+          await putEncryptedLoggingDeliveryPayload({
             env,
             bucket: archiveBucket,
             objectKey: payloadObjectRef,
@@ -2162,7 +2098,7 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
   logger: Logger;
 }): Promise<void> {
   const { message, parseResult, env, logger } = input;
-  const archiveBucket = env.AUDIT_ARCHIVE ?? null;
+  const archiveBucket = env.SENSITIVE_DETAILS ?? null;
   const now = queueMessageTimestamp(message);
   const tenantKey = parseResult.tenantKey ?? 'unknown_tenant_key';
   const lane = parseResult.lane ?? 'default';
@@ -2184,7 +2120,7 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
     throw new Error('logging_delivery_unsupported_payload_dlq_bucket_unavailable');
   }
 
-  await putEncryptedAuditArchivePayload({
+  await putEncryptedLoggingDeliveryPayload({
     env,
     bucket: archiveBucket,
     objectKey: payloadObjectRef,
@@ -3932,6 +3868,20 @@ export async function processLoggingDeliveryQueue(
 
   for (const message of batch.messages) {
     try {
+      if (
+        message.body &&
+        typeof message.body === 'object' &&
+        'payload_type' in message.body &&
+        message.body.payload_type === 'iceberg_ingest'
+      ) {
+        await runTenantBackupCoveredEffect(
+          { ...env, TENANT_BACKUP_WRAPPING_KEY: 'required' },
+          { environment: true },
+          () => consumeLogIcebergMessage(message.body, env)
+        );
+        message.ack();
+        continue;
+      }
       const parseResult = parseLoggingDeliveryQueuePayload(message.body);
       if (!parseResult.ok && shouldDlqUnsupportedQueuePayload(parseResult)) {
         await runTenantBackupCoveredEffect(env, { environment: true }, () =>
@@ -3963,6 +3913,14 @@ export async function processLoggingDeliveryQueue(
           sensitiveDetailChunkWrites.push({ payload: parseResult.payload, message, record });
         }
         continue;
+      }
+
+      if (
+        parseResult.payload.payload_type === 'chunk_write' ||
+        parseResult.payload.payload_type === 'rewrap_chunk' ||
+        parseResult.payload.payload_type === 'log_chunk_delivery'
+      ) {
+        throw new Error('logging_delivery_legacy_log_chunk_not_supported');
       }
 
       parsedMessages.push({ message, payload: parseResult.payload });

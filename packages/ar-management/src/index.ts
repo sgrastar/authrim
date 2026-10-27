@@ -74,11 +74,7 @@ import {
   processScheduledAdminJobQueues,
 } from './scheduled-admin-jobs';
 import { processPendingSessionEndLogoutJobs } from './admin-job-executor';
-import {
-  createLogRowArchiver,
-  LOG_ROW_ARCHIVE_BUDGET_MS,
-  LOG_ROW_ARCHIVE_CRON,
-} from './log-row-archive';
+import { runLogIcebergScheduledMaintenance } from './log-iceberg-maintenance';
 import {
   isTenantRuntimeRegistryRefreshCron,
   refreshTenantRuntimeRegistrySnapshots,
@@ -112,6 +108,7 @@ import {
   processR2StorageMaintenance,
   R2_STORAGE_MAINTENANCE_CRON,
   runTrackedLoggingStorageMaintenance,
+  runTrackedMaintenanceTask,
   runTrackedObjectArtifactCleanup,
 } from './r2-storage-maintenance';
 import type { AccountDirectoryRpcProps } from './account-directory-entrypoint';
@@ -1265,6 +1262,9 @@ app.use('*', async (c, next) => {
       'X-Diagnostic-Session-Id',
     ],
     exposeHeaders: [
+      'X-Authrim-Log-Consistency',
+      'X-Authrim-Log-Pending-Deliveries',
+      'X-Authrim-Log-Complete',
       'X-RateLimit-Limit',
       'X-RateLimit-Remaining',
       'X-RateLimit-Reset',
@@ -4225,6 +4225,19 @@ const TENANT_BACKUP_SCHEDULED_BUDGET_MS = 15_000;
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const log = createLogger().module('SCHEDULED');
   try {
+    if (event.cron === '* * * * *')
+      await runTrackedMaintenanceTask(
+        env,
+        'audit_retention',
+        async () => ({ ...(await runLogIcebergScheduledMaintenance(event, env)) }),
+        log
+      );
+  } catch (error) {
+    log.warn('Log storage maintenance deferred', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  try {
     const backup = await processTenantBackupMaintenance(env);
     if (backup.keysRemoved > 0) log.info('Expired backup operation keys removed', backup);
   } catch {
@@ -4423,25 +4436,6 @@ async function handleCoveredScheduled(
     await processInteractiveAdminJobQueues(env, log);
     return;
   }
-  if (event.cron === LOG_ROW_ARCHIVE_CRON) {
-    try {
-      const page = await listMaintenanceTenantIds(env, log, 'jobs:log-row-archive:tenant-cursor');
-      const result = await createLogRowArchiver({ env, log: log.module('LOG-ROW-ARCHIVE') }).run(
-        page.targets,
-        LOG_ROW_ARCHIVE_BUDGET_MS
-      );
-      // Each run moves on to the next page of tenants, so a busy tenant cannot starve the others;
-      // what a run left behind is picked up when its page comes round again.
-      if (result.enabled && result.leased)
-        await env.AUTHRIM_CONFIG!.put(page.cursorKey, page.nextCursor);
-      log.debug('Log row archive run', result);
-    } catch (error) {
-      log.warn('Log row archive deferred', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
-      });
-    }
-    return;
-  }
   if (event.cron !== R2_STORAGE_MAINTENANCE_CRON) {
     return;
   }
@@ -4500,11 +4494,6 @@ async function handleCoveredScheduled(
       tenantCount: maintenanceTenantIds.length,
     });
 
-    // 2. Legacy audit_log cleanup is disabled. Unified audit retention is handled below
-    // by runRetentionMaintenance(), which resolves the effective audit profile per tenant
-    // and applies retention to D1/Postgres primaries or skips archive-only installs.
-    const auditLogsDeleted = 0;
-
     // 3. Cleanup expired Native SSO device_secrets (if enabled)
     // This cleans up device secrets that have passed their expiration date
     let deviceSecretsDeleted = 0;
@@ -4525,26 +4514,6 @@ async function handleCoveredScheduled(
     } catch (deviceSecretError) {
       // Log but don't fail the entire cleanup job
       log.error('Device secret cleanup failed', {}, deviceSecretError as Error);
-    }
-
-    // 5. Cleanup expired operational logs (reason_detail storage)
-    // Retention period is tenant-configurable, defaults to 90 days
-    let operationalLogsDeleted = 0;
-    try {
-      operationalLogsDeleted = await deleteExpiredTenantRows(
-        maintenanceTargets,
-        'DELETE FROM operational_logs WHERE tenant_id = ? AND expires_at < ?',
-        (tenantId) => [tenantId, now]
-      );
-      log.debug('Deleted expired operational logs', {
-        count: operationalLogsDeleted,
-        tenantCount: maintenanceTenantIds.length,
-      });
-    } catch (operationalLogError) {
-      // Log but don't fail - table might not exist yet
-      log.warn('Operational logs cleanup failed (table may not exist)', {
-        error: (operationalLogError as Error).message,
-      });
     }
 
     // 6. Cleanup expired idempotency keys (24 hour TTL). An expired in-progress reservation is
@@ -4614,9 +4583,7 @@ async function handleCoveredScheduled(
 
     log.info('Scheduled maintenance cleanup completed', {
       passwordTokensDeleted,
-      auditLogsDeleted,
       deviceSecretsDeleted,
-      operationalLogsDeleted,
       idempotencyKeysDeleted,
       flowInteractionsExpired,
       flowInteractionStepsDeleted,

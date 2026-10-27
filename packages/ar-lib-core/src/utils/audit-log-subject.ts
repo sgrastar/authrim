@@ -5,10 +5,8 @@
 
 import type { Env } from '../types/env';
 import type { AuditLogEntry } from '../types/admin';
-import { ensureDatabaseAdapter } from '../db';
 import { AnonymizationService } from '../services/audit/anonymization';
 import { cacheAnonymizedUserId } from '../services/audit/anonymized-user-id-cache';
-import { resolveAuditPersistenceSourcesFromEnv } from '../services/audit/runtime-sources';
 import { resolveAccountPiiSourceForAudit } from '../services/runtime-data-context';
 
 /** Actor values that name a component, not a user. */
@@ -111,7 +109,7 @@ const NO_ACCOUNT_ROUTE_ERRORS: ReadonlySet<string> = new Set([
 /**
  * Read or create the user's anonymized ID in the user's PII store (resolved through the account
  * route, as other per-user PII reads are, inactive accounts included) and cache it. Null when the ID names no account, or
- * the account was deleted or anonymized before it had a mapping. For after-response use only.
+ * the account was deleted or anonymized before it had a mapping. The caller finalizes this ID before emitting the immutable event.
  */
 export async function resolveAnonymizedUserIdFromEnv(
   env: Env,
@@ -131,25 +129,4 @@ export async function resolveAnonymizedUserIdFromEnv(
   );
   if (anonymizedUserId) cacheAnonymizedUserId(tenantId, userId, anonymizedUserId);
   return anonymizedUserId;
-}
-
-/**
- * Record the anonymized ID on an event_log row already written without one (the Core D1 copy;
- * a row held by another primary is not updated here).
- */
-export async function backfillEventLogAnonymizedUserId(
-  env: Env,
-  tenantId: string,
-  eventId: string,
-  anonymizedUserId: string
-): Promise<void> {
-  const core = ensureDatabaseAdapter(
-    resolveAuditPersistenceSourcesFromEnv(env).coreSource,
-    'audit-event-anonymized-user'
-  );
-  await core.execute(
-    `UPDATE event_log SET anonymized_user_id = ?
-      WHERE tenant_id = ? AND id = ? AND anonymized_user_id IS NULL`,
-    [anonymizedUserId, tenantId, eventId]
-  );
 }

@@ -625,6 +625,32 @@ describe('Control Worker boundary', () => {
     }
   });
 
+  it('grants the internal log writer only tenant mutation admission', async () => {
+    for (const action of [
+      'acquireTenantBackupMutationPermit',
+      'completeTenantBackupMutationPermit',
+    ] as const) {
+      await expect(worker({ caller: 'ar-lib-core' })[action]({})).rejects.toThrow(
+        'invalid_backup_mutation_permit'
+      );
+      await expect(
+        worker({ caller: 'ar-lib-core', environmentId: '../invalid' })[action]({})
+      ).rejects.toThrow('control_rpc_caller_unauthorized');
+    }
+    for (const action of [
+      'tenantBackupSnapshotBoundary',
+      'acquireEnvironmentBackupMutationPermit',
+      'completeEnvironmentBackupMutationPermit',
+      'retryProvisioningOperationStep',
+    ] as const)
+      await expect(worker({ caller: 'ar-lib-core' })[action]({})).rejects.toThrow(
+        'control_rpc_caller_unauthorized'
+      );
+    await expect(
+      worker({ caller: 'ar-lib-core' }).getOperationStatus('operation-id')
+    ).rejects.toThrow('control_rpc_caller_unauthorized');
+  });
+
   it('rejects malformed provisioning operation identifiers before reading storage', async () => {
     await expect(worker().getProvisioningOperation('../operation')).rejects.toThrow(
       'invalid_operation_id'

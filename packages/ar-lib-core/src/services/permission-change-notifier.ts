@@ -11,7 +11,7 @@
  * Usage:
  * ```typescript
  * const notifier = createPermissionChangeNotifier({
- *   db: env.DB,
+ *   env,
  *   cache: env.REBAC_CACHE,
  *   permissionChangeHub: env.PERMISSION_CHANGE_HUB,
  * });
@@ -28,8 +28,8 @@
  */
 
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
-import type { DatabaseSource } from '../db';
-import { ensureDatabaseAdapter } from '../db';
+import { emitLogIcebergRow } from './log-iceberg-emitter';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
 import type { PermissionChangeEvent } from '../types/check-api';
 import { createLogger } from '../utils/logger';
 
@@ -43,8 +43,8 @@ const log = createLogger().module('PERMISSION-CHANGE-NOTIFIER');
  * Permission Change Notifier configuration
  */
 export interface PermissionChangeNotifierConfig {
-  /** Database source for audit log */
-  db?: DatabaseSource;
+  /** Explicit new log storage configuration. */
+  env: LogIcebergRuntimeEnv;
   /** KV Namespace for cache invalidation */
   cache?: KVNamespace;
   /** PermissionChangeHub Durable Object namespace */
@@ -117,7 +117,7 @@ function requireTenantId(tenantId: string | undefined, context: string): string 
 export function createPermissionChangeNotifier(
   config: PermissionChangeNotifierConfig
 ): PermissionChangeNotifier {
-  const { db, cache, permissionChangeHub, debug = false } = config;
+  const { env, cache, permissionChangeHub, debug = false } = config;
 
   const debugLog = debug
     ? (message: string, context?: Record<string, unknown>) => log.debug(message, context)
@@ -195,44 +195,35 @@ export function createPermissionChangeNotifier(
    * Record audit log entry
    */
   async function recordAuditLog(event: PermissionChangeEvent): Promise<boolean> {
-    if (!db) {
-      debugLog('No database configured, skipping audit log');
-      return false;
-    }
-
-    // Check if audit logging is enabled for this type of event
-    // Permission change events are always logged (separate from check audits)
     try {
-      const eventTenantId = requireTenantId(event.tenant_id, 'Permission change event');
-      const id = crypto.randomUUID();
+      const tenantId = requireTenantId(event.tenant_id, 'Permission change event');
       const now = Math.floor(Date.now() / 1000);
-
-      await ensureDatabaseAdapter(db, 'permission-change-notifier').execute(
-        `INSERT INTO permission_change_audit (
-          id, tenant_id, event_type, subject_id, resource, relation, permission, timestamp, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          eventTenantId,
-          event.event,
-          event.subject_id,
-          event.resource ?? null,
-          event.relation ?? null,
-          event.permission ?? null,
-          event.timestamp,
-          now,
-        ]
-      );
-
+      await emitLogIcebergRow(env, {
+        tenantId,
+        sourceDataset: 'core.permission_change_audit',
+        logType: 'audit',
+        eventAt: event.timestamp,
+        expiresAt: null,
+        overview: {
+          action: event.event,
+          subject_id: event.subject_id,
+          resource_id: event.resource ?? null,
+        },
+        row: {
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          event_type: event.event,
+          subject_id: event.subject_id,
+          resource: event.resource ?? null,
+          relation: event.relation ?? null,
+          permission: event.permission ?? null,
+          timestamp: event.timestamp,
+          created_at: now,
+        },
+      });
       debugLog('Audit log recorded', { event: event.event, subjectId: event.subject_id });
       return true;
     } catch (error) {
-      // If table doesn't exist, log warning but don't fail
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      if (errorMsg.includes('no such table')) {
-        debugLog('Audit log table not found, skipping (run migration to enable)');
-        return false;
-      }
       log.error('Audit log error', {}, error as Error);
       return false;
     }

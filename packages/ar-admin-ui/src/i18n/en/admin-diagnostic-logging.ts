@@ -33,9 +33,9 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_disabled: 'Logging is disabled.',
 	admin_diagnostic_logging_loading: 'Loading...',
 	admin_diagnostic_logging_saving: 'Saving...',
-	admin_diagnostic_logging_r2_output: 'R2 Output',
+	admin_diagnostic_logging_r2_output: 'Log storage',
 	admin_diagnostic_logging_r2_output_desc:
-		'When enabled, logs are persisted to R2 for export. When disabled, logs are only emitted to console and exports return empty results.',
+		'When diagnostic logging is enabled, logs use the storage mode selected during Setup. Pipeline sends logs directly to Iceberg and may take a few minutes to appear. Scheduled stores logs in the database until export to Iceberg is confirmed.',
 	admin_diagnostic_logging_r2_toggle_label: 'Persist logs to R2',
 	admin_diagnostic_logging_r2_enabled: 'R2 output is enabled.',
 	admin_diagnostic_logging_r2_disabled: 'R2 output is disabled.',
@@ -118,9 +118,9 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_inherit_default: 'Inherit default',
 	admin_diagnostic_logging_clear_overrides: 'Clear Overrides',
 	admin_diagnostic_logging_save_storage_modes: 'Save Storage Modes',
-	admin_diagnostic_logging_storage_connection: 'Storage Connection',
+	admin_diagnostic_logging_storage_connection: 'Log storage connection',
 	admin_diagnostic_logging_storage_connection_desc:
-		'Verify R2 connectivity before exporting large volumes.',
+		'Check the configured Iceberg log reader before exporting. The storage mode and credentials are managed by Setup.',
 	admin_diagnostic_logging_storage_destination: 'Storage destination',
 	admin_diagnostic_logging_use_runtime_binding: 'Use runtime binding fields below',
 	admin_diagnostic_logging_r2_binding: 'R2 binding',

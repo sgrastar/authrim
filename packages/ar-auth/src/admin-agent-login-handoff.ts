@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
@@ -29,7 +30,8 @@ type HandoffContext = Context<{ Bindings: Env }>;
 
 function repository(c: Context<{ Bindings: Env }>): AdminAgentAccessRepository {
   return new AdminAgentAccessRepository(
-    requireAdminDatabaseAdapter(c.env, 'admin-agent-login-handoff')
+    requireAdminDatabaseAdapter(c.env, 'admin-agent-login-handoff'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
 }
 

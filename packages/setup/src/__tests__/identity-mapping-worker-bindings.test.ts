@@ -1,11 +1,10 @@
+import { createArchiveTestConfig, generateArchiveTestWrangler } from './fixtures/log-archive.js';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { createDefaultConfig } from '../core/config.js';
 import { D1_DATABASES, KV_NAMESPACES, getBuiltinD1BindingsForComponent } from '../core/naming.js';
 import { loadWorkerCapabilityManifests } from '../core/worker-capabilities.js';
-import { generateWranglerConfig } from '../core/wrangler.js';
 import type { WorkerComponent } from '../core/naming.js';
 
 /**
@@ -152,10 +151,10 @@ describe('Workers that resolve the identity mapping', () => {
   it.each(RESOLVING_WORKERS)(
     '%s receives DB_ADMIN and SETTINGS in its generated Wrangler configuration',
     (component) => {
-      const config = createDefaultConfig('test');
+      const config = createArchiveTestConfig('test');
       config.components.adminUi = false;
 
-      const generated = generateWranglerConfig(component, config, resourceIds());
+      const generated = generateArchiveTestWrangler(component, config, resourceIds());
 
       expect(generated.d1_databases).toContainEqual(
         expect.objectContaining({ binding: 'DB_ADMIN', database_id: 'id-db_admin' })

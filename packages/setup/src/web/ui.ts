@@ -1,3 +1,4 @@
+import { implementedLogArchiveModes } from '../core/log-archive-config.js';
 /**
  * HTML Template for Authrim Setup Web UI
  *
@@ -5744,6 +5745,27 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         </div>
       </section>
 
+      ${
+        implementedLogArchiveModes().length > 0
+          ? `<section class="row" id="log-archive-options">
+        <div class="rowlabel"><h2>${locale === 'ja' ? 'ログの保存方式' : 'Log storage'}</h2></div>
+        <div class="rowbody">
+          <p>${locale === 'ja' ? 'Cloudflare Pipelinesを使用しますか？Pipeline利用時はログ本体をDBに保存せず、検索反映には数分かかる場合があります。Workers Paidが必要です。非利用時はDBから定期的にIcebergへ出力します。両方式でR2・Catalogの契約が必要です。' : 'Use Cloudflare Pipelines? Pipeline mode stores no log-body DB copy and search can lag by minutes. Workers Paid is required. Otherwise logs are exported from the DB to Iceberg on schedule. Both modes require R2 and Catalog subscriptions.'}</p>
+          <select id="log-archive-mode"><option value="">${locale === 'ja' ? '選択してください' : 'Choose a mode'}</option>${implementedLogArchiveModes()
+            .map(
+              (mode) =>
+                `<option value="${mode}">${mode === 'pipeline' ? (locale === 'ja' ? '使用する' : 'Use Pipelines') : locale === 'ja' ? '使用しない（定期出力）' : 'Scheduled export'}</option>`
+            )
+            .join('')}</select>
+          <label id="log-archive-retention-label" class="hidden">${locale === 'ja' ? 'DB保持日数' : 'DB retention days'}<input id="log-archive-retention" type="number" min="1" max="3650" value="7"></label>
+          <label>${locale === 'ja' ? 'Catalog・Basin SQLの読取り専用API token' : 'Read-only Catalog / Basin SQL API token'}<input id="log-archive-read-token" type="password" autocomplete="off"></label>
+          <label>${locale === 'ja' ? 'Catalog書込み用の別API token' : 'Separate Catalog write API token'}<input id="log-archive-write-token" type="password" autocomplete="off"></label>
+          <label id="log-archive-sink-token-label" class="hidden">${locale === 'ja' ? 'Pipeline Sink専用の別Catalog API token（Workerへ配布しません）' : 'Separate Pipeline Sink Catalog API token (never uploaded to Workers)'}<input id="log-archive-sink-token" type="password" autocomplete="off"></label>
+        </div>
+      </section>`
+          : ''
+      }
+
       <section class="row">
         <div class="rowlabel">
           <h2 data-i18n="web.email.title">Email Provider</h2>
@@ -8456,6 +8478,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function resetDatabaseAndEmailForm() {
       setAutomaticProvisioningEnabled(true);
       document.getElementById('feature-queue-enabled').checked = false;
+      if (document.getElementById('log-archive-mode')) { document.getElementById('log-archive-mode').value = ''; document.getElementById('log-archive-mode').disabled = false; document.getElementById('log-archive-retention').disabled = false; for (const role of ['read', 'write', 'sink']) document.getElementById('log-archive-' + role + '-token').value = ''; }
 
       document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
         input.checked = input.value === 'auto';
@@ -9386,6 +9409,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       // Build internal config
       config = {
         env,
+        logging: loadedConfig.logging,
         apiDomain: stripProtocol(apiDomain) || null,
         loginUiDomain: stripProtocol(loginUiDomain) || null,
         adminUiDomain: stripProtocol(adminUiDomain) || null,
@@ -9419,6 +9443,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       setAdminUiVariant(config.components.adminUiVariant);
       document.getElementById('feature-queue-enabled').checked =
         config.features?.queue?.enabled === true;
+      const archiveSelect = document.getElementById('log-archive-mode');
+      if (archiveSelect && config.logging?.archive) { archiveSelect.value = config.logging.archive.mode; archiveSelect.disabled = true; const retention = document.getElementById('log-archive-retention'); retention.value = config.logging.archive.dbRetentionDays ?? 7; retention.disabled = true; document.getElementById('log-archive-retention-label').classList.toggle('hidden', config.logging.archive.mode !== 'scheduled'); }
       updateComponentOptionUi();
 
       // Restore domain check UI if custom domain is set
@@ -10499,6 +10525,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       config = {
         env,
+        logging: config.env === env ? config.logging : undefined,
         apiDomain: baseDomain || null,
         loginUiDomain: loginDomain || null,
         adminUiDomain: adminDomain || null,
@@ -10536,6 +10563,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           : false,
       };
 
+      if (config.logging?.archive.mode === 'pipeline') config.features.queue.enabled = true;
+
       // Create default config with component settings
       const customDomainBinding = document.getElementById('custom-domain-binding')?.checked ?? false;
       await api('/config/default', {
@@ -10550,6 +10579,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           zoneId: domainZoneId || null,
           customDomainBinding: config.apiDomain ? customDomainBinding : false,
           profiles: config.profiles,
+          logging: config.logging,
         },
       });
 
@@ -10641,6 +10671,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         resendForm.classList.add('hidden');
       }
     }
+
+    document.getElementById('log-archive-mode')?.addEventListener('change', (event) => {
+      const pipeline = event.target.value === 'pipeline';
+      document.getElementById('log-archive-sink-token-label').classList.toggle('hidden', !pipeline);
+      document.getElementById('log-archive-retention-label').classList.toggle('hidden', event.target.value !== 'scheduled');
+
+    });
 
     document.getElementById('feature-queue-enabled').addEventListener('change', syncFeatureQueueUi);
 
@@ -10750,6 +10787,20 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           provider: 'none',
         };
       }
+
+      const archiveMode = document.getElementById('log-archive-mode')?.value;
+      if (document.getElementById('log-archive-mode') && !config.logging?.archive) {
+        if (!archiveMode) { alert('Choose a log storage mode'); return; }
+        const result = await api('/log-archive/configure', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, ...(archiveMode === 'scheduled' ? { dbRetentionDays: Number(document.getElementById('log-archive-retention').value) } : {}), readToken: document.getElementById('log-archive-read-token').value, writeToken: document.getElementById('log-archive-write-token').value, ...(archiveMode === 'pipeline' ? { sinkToken: document.getElementById('log-archive-sink-token').value } : {}) }) });
+        if (!result.success) { alert(result.error || 'Log storage configuration failed'); return; }
+        config.logging = { archive: result.archive };
+        document.getElementById('log-archive-read-token').value = '';
+        document.getElementById('log-archive-write-token').value = '';
+        document.getElementById('log-archive-sink-token').value = '';
+      }
+      if (config.logging?.archive.mode === 'pipeline') { document.getElementById('feature-queue-enabled').checked = true; config.features.queue.enabled = true; }
+      const archiveSelect = document.getElementById('log-archive-mode');
+      if (archiveSelect && config.logging?.archive) { archiveSelect.value = config.logging.archive.mode; archiveSelect.disabled = true; document.getElementById('log-archive-retention').disabled = true; }
 
       // Show save config modal before proceeding
       const modal = document.getElementById('save-config-modal');
@@ -11921,6 +11972,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           pii: { location: 'auto', jurisdiction: 'none' },
         },
         profiles: config.profiles || buildProfilesConfig(),
+        ...(config.logging ? { logging: config.logging } : {}),
         features: {
           queue: {
             enabled: config.features?.queue?.enabled === true,

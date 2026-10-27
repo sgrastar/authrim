@@ -1,7 +1,7 @@
+import { createArchiveTestConfig, generateArchiveTestWrangler } from './fixtures/log-archive.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { createDefaultConfig } from '../core/config.js';
 import {
   CORE_WORKER_COMPONENTS,
   D1_DATABASES,
@@ -15,7 +15,6 @@ import {
   parseWorkerCapabilityManifest,
   validateGeneratedWorkerCapabilities,
 } from '../core/worker-capabilities.js';
-import { generateWranglerConfig } from '../core/wrangler.js';
 
 const ROOT_DIR = fileURLToPath(new URL('../../../../', import.meta.url));
 
@@ -86,7 +85,7 @@ function maximalResourceIds() {
 }
 
 function deploymentConfig(prefix: string) {
-  const config = createDefaultConfig(prefix);
+  const config = createArchiveTestConfig(prefix);
   config.urls = {
     api: {
       custom: null,
@@ -311,7 +310,11 @@ describe('worker capability manifests', () => {
         required: true,
       });
       if (compiled.component === 'ar-lib-core') continue;
-      const generated = generateWranglerConfig(compiled.component, config, maximalResourceIds());
+      const generated = generateArchiveTestWrangler(
+        compiled.component,
+        config,
+        maximalResourceIds()
+      );
       expect(generated.durable_objects?.bindings, compiled.component).toContainEqual({
         name: 'SESSION_CLIENT_STORE',
         class_name: 'SessionClientStore',
@@ -460,7 +463,7 @@ describe('worker capability manifests', () => {
     for (const component of CORE_WORKER_COMPONENTS) {
       const compiled = byComponent.get(component);
       if (!compiled) throw new Error(`missing_test_manifest:${component}`);
-      const generated = generateWranglerConfig(component, config, maximalResourceIds());
+      const generated = generateArchiveTestWrangler(component, config, maximalResourceIds());
       expect(() =>
         validateGeneratedWorkerCapabilities({ compiled, config: generated })
       ).not.toThrow();
@@ -472,7 +475,7 @@ describe('worker capability manifests', () => {
       baseDir: ROOT_DIR,
       components: ['ar-control'],
     });
-    const config = generateWranglerConfig('ar-control', deploymentConfig('strict'), {
+    const config = generateArchiveTestWrangler('ar-control', deploymentConfig('strict'), {
       d1: { CONTROL_DB: { id: 'control-id', name: 'strict-control' } },
       kv: {
         TENANT_RUNTIME_REGISTRY: { id: 'registry-id', name: 'strict-runtime-registry' },
@@ -493,7 +496,7 @@ describe('worker capability manifests', () => {
         ),
       },
     };
-    const validConfig = generateWranglerConfig('ar-control', deploymentConfig('strict'), {
+    const validConfig = generateArchiveTestWrangler('ar-control', deploymentConfig('strict'), {
       d1: { CONTROL_DB: { id: 'control-id', name: 'strict-control' } },
       kv: {
         TENANT_RUNTIME_REGISTRY: { id: 'registry-id', name: 'strict-runtime-registry' },
@@ -513,7 +516,7 @@ describe('worker capability manifests', () => {
       'worker_capability_undeclared_tenant_data_role:ar-control:TEST_TDB_USERS_JP_0001_CORE:tenant_core/users'
     );
 
-    const lookupConfig = generateWranglerConfig('ar-control', deploymentConfig('strict'), {
+    const lookupConfig = generateArchiveTestWrangler('ar-control', deploymentConfig('strict'), {
       d1: {
         CONTROL_DB: { id: 'control-id', name: 'strict-control' },
         TEST_TDB_LOOKUP_EXTRA_LOOKUP: { id: 'lookup-extra-id', name: 'strict-lookup-extra' },
@@ -538,7 +541,7 @@ describe('worker capability manifests', () => {
       baseDir: ROOT_DIR,
       components: ['ar-plugin-runner'],
     });
-    const config = generateWranglerConfig('ar-plugin-runner', deploymentConfig('strict'), {
+    const config = generateArchiveTestWrangler('ar-plugin-runner', deploymentConfig('strict'), {
       ...maximalResourceIds(),
       pluginRunnerResources: [
         {

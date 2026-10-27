@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
 const { adapter, enrollments, webauthn } = vi.hoisted(() => ({
@@ -66,15 +67,31 @@ async function seedEnrollment(token: string, state: object): Promise<void> {
   });
 }
 
+let logging: Awaited<ReturnType<typeof logProducerFixture>>;
+afterEach(() => logging?.db.close());
 function createEnv() {
   return {
+    ...logging.env,
     DB_ADMIN: {},
     ADMIN_UI_URL: 'https://admin.example.com',
   } as unknown as Env;
 }
 
 describe('Admin invitation enrollment', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    logging = await logProducerFixture('scheduled');
+    logging.db
+      .prepare(
+        'INSERT INTO tenants(id,tenant_code,tenant_key,name,created_at,updated_at)VALUES(?,?,?,?,?,?)'
+      )
+      .run(
+        invitation.tenant_id,
+        invitation.tenant_id,
+        'key-invitation',
+        'Test tenant',
+        logging.now,
+        logging.now
+      );
     vi.clearAllMocks();
     enrollments.clear();
     adapter.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) => {
@@ -512,7 +529,7 @@ describe('Admin invitation enrollment', () => {
     expect(response.status).toBe(200);
     expect(adapter.batch).toHaveBeenCalledOnce();
     const statements = adapter.batch.mock.calls[0][0];
-    expect(statements).toHaveLength(7);
+    expect(statements).toHaveLength(9);
     for (const statement of statements) {
       expect(statement.sql.match(/\?/gu) ?? []).toHaveLength(statement.params?.length ?? 0);
     }
@@ -522,7 +539,9 @@ describe('Admin invitation enrollment', () => {
       expect.stringContaining('INSERT INTO admin_role_assignments'),
       expect.stringContaining('INSERT INTO admin_sessions'),
       expect.stringContaining('UPDATE admin_invitations'),
-      expect.stringContaining('INSERT INTO admin_audit_log'),
+      expect.stringContaining('INSERT INTO log_iceberg_event_receipts'),
+      expect.stringContaining('INSERT INTO log_iceberg_records'),
+      expect.stringContaining('INSERT INTO log_iceberg_record_parts'),
       expect.stringContaining('DELETE FROM admin_invitation_enrollments'),
     ]);
     expect(statements[0].sql).toContain('EXISTS');

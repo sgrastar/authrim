@@ -1,3 +1,4 @@
+import { readPrivateFileSecurely, writePrivateFileAtomically } from './atomic-file.js';
 /**
  * Authrim Key Generation Module
  *
@@ -78,6 +79,8 @@ export interface KeyMetadata {
     objectEncryptionRootKey?: string;
     otpHmacSecret?: string;
     loggingCursorHmacSecret?: string;
+    logArchiveContentHmacKey?: string;
+    logArchiveRootKeyring?: string;
     lookupHmacKeySlotA?: string;
     tombstoneHmacKeyring?: string;
     investigationSubjectHmacKeyring?: string;
@@ -844,6 +847,8 @@ function getKeyBundlePaths(directory: string) {
     objectEncryptionRootKey: join(directory, 'object_encryption_root_key.txt'),
     otpHmacSecret: join(directory, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(directory, 'logging_cursor_hmac_secret.txt'),
+    logArchiveContentHmacKey: join(directory, 'log_archive_content_hmac_key.txt'),
+    logArchiveRootKeyring: join(directory, 'log_archive_root_keyring.json'),
     lookupHmacKeySlotA: join(directory, 'lookup_hmac_key_slot_a.txt'),
     flowRuntimeHmacSecret: join(directory, 'flow_runtime_hmac_secret.txt'),
     vcTransactionCodeHmacSecret: join(directory, 'vc_transaction_code_hmac_secret.txt'),
@@ -1111,6 +1116,12 @@ function buildKeyMetadata(keyId: string, createdAt: string, paths: KeyBundlePath
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       otpHmacSecret: paths.otpHmacSecret,
       loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
+      ...(existsSync(paths.logArchiveContentHmacKey)
+        ? { logArchiveContentHmacKey: paths.logArchiveContentHmacKey }
+        : {}),
+      ...(existsSync(paths.logArchiveRootKeyring)
+        ? { logArchiveRootKeyring: paths.logArchiveRootKeyring }
+        : {}),
       lookupHmacKeySlotA: paths.lookupHmacKeySlotA,
       flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
       vcTransactionCodeHmacSecret: paths.vcTransactionCodeHmacSecret,
@@ -1760,6 +1771,35 @@ async function removeLegacyStaticSecretFiles(keysDir: string): Promise<void> {
  * VersionManager or Admin Machine Access key material. Deploy paths call this
  * before uploading secrets and before bootstrapping DB_ADMIN machine principals.
  */
+export async function ensureLogArchiveContentHmacKey(
+  keysDir: string,
+  options: { requireExisting?: boolean } = {}
+): Promise<boolean> {
+  validateKeysDirectory(keysDir);
+  const path = join(keysDir, 'log_archive_content_hmac_key.txt');
+  const value = await readPrivateFileSecurely(path, {
+    maxBytes: 128,
+    invalidError: 'log_archive_content_key_invalid',
+    permissionsError: 'log_archive_content_key_permissions_invalid',
+  });
+  const metadataText = await readPrivateFileSecurely(join(keysDir, 'metadata.json'), {
+    maxBytes: 128 * 1024,
+    invalidError: 'log_archive_key_metadata_invalid',
+    permissionsError: 'log_archive_key_metadata_permissions_invalid',
+    repairLegacyPublicReadPermissions: true,
+  });
+  const recorded = metadataText
+    ? (JSON.parse(metadataText) as KeyMetadata).files?.logArchiveContentHmacKey
+    : undefined;
+  if (value === null && (recorded !== undefined || options.requireExisting))
+    throw new Error('log_archive_content_key_missing_restore_original_key');
+  if (value !== null && !/^[a-f0-9]{64}$/u.test(value))
+    throw new Error('log_archive_content_key_invalid');
+  if (value === null) await writePrivateFileAtomically(path, generateHexSecret(32));
+  await updateMetadataWithSupplementalFiles(keysDir, { logArchiveContentHmacKey: path });
+  return value === null;
+}
+
 export async function ensureSupplementalKeyFiles(
   keysDir: string,
   options: { includeSetupMachineKeyPair?: boolean } = {}
@@ -1779,6 +1819,7 @@ export async function ensureSupplementalKeyFiles(
     piiEncryptionKey: join(keysDir, 'pii_encryption_key.txt'),
     otpHmacSecret: join(keysDir, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
+    logArchiveContentHmacKey: join(keysDir, 'log_archive_content_hmac_key.txt'),
     lookupHmacKeySlotA: join(keysDir, 'lookup_hmac_key_slot_a.txt'),
     tombstoneHmacKeyring: join(keysDir, 'tombstone_hmac_keyring.json'),
     investigationSubjectHmacKeyring: join(keysDir, 'investigation_subject_hmac_keyring.json'),
@@ -1821,6 +1862,16 @@ export async function ensureSupplementalKeyFiles(
     controlSmokeVerifyingPublicJwks: join(keysDir, 'control_smoke_verify.jwks.json'),
   };
 
+  let archiveKeyRecorded = false;
+  try {
+    archiveKeyRecorded =
+      (JSON.parse(await readFile(join(keysDir, 'metadata.json'), 'utf8')) as KeyMetadata).files
+        ?.logArchiveContentHmacKey !== undefined;
+  } catch {
+    /* Existing metadata repair owns malformed legacy metadata. */
+  }
+  if (existsSync(paths.logArchiveContentHmacKey) || archiveKeyRecorded)
+    await ensureLogArchiveContentHmacKey(keysDir);
   const hexSecretPaths = [
     paths.objectEncryptionRootKey,
     paths.piiEncryptionKey,
@@ -1925,6 +1976,12 @@ export async function ensureSupplementalKeyFiles(
     piiEncryptionKey: paths.piiEncryptionKey,
     otpHmacSecret: paths.otpHmacSecret,
     loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
+    ...(existsSync(paths.logArchiveContentHmacKey)
+      ? { logArchiveContentHmacKey: paths.logArchiveContentHmacKey }
+      : {}),
+    ...(existsSync(join(keysDir, 'log_archive_root_keyring.json'))
+      ? { logArchiveRootKeyring: join(keysDir, 'log_archive_root_keyring.json') }
+      : {}),
     tombstoneHmacKeyring: paths.tombstoneHmacKeyring,
     investigationSubjectHmacKeyring: paths.investigationSubjectHmacKeyring,
     flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,

@@ -380,6 +380,8 @@ export interface AdminAuditLogEntry {
  */
 export interface AdminAuditLogCreateInput {
   id?: string;
+  /** Freeze the original operation time when retrying a stable audit ID. */
+  created_at?: number;
   tenant_id?: string;
   admin_user_id?: string;
   admin_email?: string;
@@ -397,6 +399,8 @@ export interface AdminAuditLogCreateInput {
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  /** Trusted actor/proxy data, kept separate from arbitrary detail metadata. */
+  inline_metadata?: Record<string, unknown>;
   detail_object_catalog_id?: string;
 }
 

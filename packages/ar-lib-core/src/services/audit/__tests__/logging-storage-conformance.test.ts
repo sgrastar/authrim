@@ -1,195 +1,117 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { LogArchiveRecord } from '@authrim/ar-lib-logging/iceberg/schema';
 import { AuditService } from '../audit-service';
-import type { AuditProfile } from '../../../types/runtime-profile';
-
-const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-const PII_ENCRYPTION_KEY = '89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567';
-
-interface PreparedStatementCall {
-  sql: string;
-  params: unknown[];
+import type { Env } from '../../../types/env';
+import { logProducerFixture } from '../../__tests__/log-iceberg-producer-fixture';
+import { decryptLogIcebergRecord } from '../../log-iceberg-record';
+import { decryptProtectedLogIcebergDetail } from '../../log-iceberg-row-codec';
+import { sqliteAdapter } from '../../../repositories/__tests__/sqlite-core-schema';
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
+const close: (() => void)[] = [];
+afterEach(() => close.splice(0).forEach((fn) => fn()));
+async function fixture(mode: 'scheduled' | 'pipeline') {
+  const f = await logProducerFixture(mode),
+    pii = sqliteAdapter('pii');
+  close.push(f.close, () => pii.db.close());
+  Object.assign(pii.adapter, {
+    getType: () => 'd1',
+    close: async () => {},
+    isHealthy: async () => ({ healthy: true, latencyMs: 0, type: 'd1' }),
+    transaction: async () => {
+      throw new Error('use batch');
+    },
+  });
+  pii.db
+    .prepare(
+      'INSERT INTO user_anonymization_map(id,tenant_id,user_id,anonymized_user_id,created_at) VALUES(?,?,?,?,?)'
+    )
+    .run('map', 'tenant-a', 'user-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', Date.now());
+  const oldPut = vi.fn();
+  Object.assign(f.env, { SENSITIVE_DETAILS: { put: oldPut }, AUDIT_ARCHIVE: { put: oldPut } });
+  const service = new AuditService({ env: f.env as Env, piiSource: pii.adapter });
+  const records = async (dataset: string) =>
+    mode === 'scheduled'
+      ? f.staging.readTenant({
+          tenantId: 'tenant-a',
+          tenantKey: 'key-a',
+          sourceDataset: dataset,
+          now: Date.now(),
+        })
+      : [...f.objects.values()]
+          .map((value) => JSON.parse(value.text) as LogArchiveRecord)
+          .filter((record) => record.source_dataset === dataset);
+  return { ...f, pii, service, oldPut, records };
 }
-
-function createRecordingD1(firstResults: unknown[] = [null]): D1Database & {
-  calls: PreparedStatementCall[];
-} {
-  const calls: PreparedStatementCall[] = [];
-  const firstQueue = [...firstResults];
-
-  const db = {
-    calls,
-    prepare: vi.fn((sql: string) => {
-      const statement = {
-        bind: vi.fn((...params: unknown[]) => {
-          calls.push({ sql, params });
-          return statement;
-        }),
-        first: vi.fn(async () => (firstQueue.length > 0 ? (firstQueue.shift() ?? null) : null)),
-        run: vi.fn(async () => ({ success: true, meta: { changes: 1 } })),
-      };
-      return statement;
-    }),
-    batch: vi.fn(async () => []),
-    exec: vi.fn(async () => ''),
-    dump: vi.fn(async () => new ArrayBuffer(0)),
-  };
-
-  return db as unknown as D1Database & { calls: PreparedStatementCall[] };
-}
-
-function createRecordingBucket(): R2Bucket & {
-  writes: Array<{ key: string; body: Uint8Array | string }>;
-} {
-  const writes: Array<{ key: string; body: Uint8Array | string }> = [];
-  const bucket = {
-    writes,
-    put: vi.fn(async (key: string, body: Uint8Array | string) => {
-      writes.push({ key, body });
-      return null;
-    }),
-    get: vi.fn(async () => null),
-    delete: vi.fn(async () => undefined),
-    list: vi.fn(async () => ({ objects: [], truncated: false })),
-    head: vi.fn(async () => null),
-    createMultipartUpload: vi.fn(),
-    resumeMultipartUpload: vi.fn(),
-  };
-
-  return bucket as unknown as R2Bucket & {
-    writes: Array<{ key: string; body: Uint8Array | string }>;
-  };
-}
-
-function auditProfile(dataset: 'event_log' | 'pii_log'): AuditProfile {
-  return {
-    id: `conformance-${dataset}`,
-    kind: 'audit',
-    label: `Conformance ${dataset}`,
-    primary: { type: 'd1', bindingRef: dataset === 'event_log' ? 'DB' : 'DB_PII', dataset },
-    archive: null,
-    sinks: [],
-    archiveFailureMode: 'best_effort',
-    sinkFailureMode: 'best_effort',
-  };
-}
-
-function findInsert(calls: PreparedStatementCall[], table: string): PreparedStatementCall {
-  const call = calls.find((item) => item.sql.includes(`INSERT INTO ${table}`));
-  if (!call) {
-    throw new Error(`missing insert for ${table}`);
+describe('new logging storage conformance', () => {
+  for (const mode of ['scheduled', 'pipeline'] as const) {
+    it(`keeps large event detail only in the canonical encrypted ${mode} record`, async () => {
+      const f = await fixture(mode);
+      await f.service.logEvent('tenant-a', {
+        eventType: 'auth.login',
+        eventCategory: 'auth',
+        result: 'success',
+        details: { payload: 'private-'.repeat(600) },
+      });
+      const rows = await f.rows('core.event_log');
+      expect(rows).toHaveLength(1);
+      expect(String(rows[0].details_json)).toContain('private-');
+      expect(f.db.prepare('SELECT COUNT(*) AS n FROM event_log').get()?.n).toBe(0);
+      expect(f.oldPut).not.toHaveBeenCalled();
+      expect(
+        JSON.stringify(f.db.prepare('SELECT * FROM log_iceberg_record_parts').all())
+      ).not.toContain('private-');
+      expect([...f.objects.values()].map((value) => value.text).join('')).not.toContain('private-');
+      expect([...f.objects.keys()].every((key) => key.startsWith('_authrim_retry/iceberg/'))).toBe(
+        true
+      );
+    });
+    it(`protects large PII values in nested detail in ${mode} without legacy PII rows or JSON objects`, async () => {
+      const f = await fixture(mode);
+      await f.service.logPIIChange('tenant-a', {
+        userId: 'user-1',
+        anonymizedUserId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        changeType: 'update',
+        affectedFields: ['profile'],
+        newValues: { profile: 'private-'.repeat(900) },
+        actorType: 'admin',
+      });
+      const [record] = await f.records('pii.pii_log');
+      expect(record.subject_id).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      const body = await decryptLogIcebergRecord(
+        record,
+        { tenantKey: 'key-a', sourceDataset: 'pii.pii_log' },
+        async () => f.keys
+      );
+      expect(JSON.stringify(body)).not.toContain('private-');
+      const detail = await decryptProtectedLogIcebergDetail({
+        record,
+        body,
+        resolveKeys: async () => f.keys,
+      });
+      expect(detail).toMatchObject({ values: { new: { profile: 'private-'.repeat(900) } } });
+      expect(f.pii.db.prepare('SELECT COUNT(*) AS n FROM pii_log').get()?.n).toBe(0);
+      expect(f.oldPut).not.toHaveBeenCalled();
+    });
   }
-  return call;
-}
-
-describe('logging/storage conformance', () => {
-  let coreDb: D1Database & { calls: PreparedStatementCall[] };
-  let piiDb: D1Database & { calls: PreparedStatementCall[] };
-  let bucket: R2Bucket & { writes: Array<{ key: string; body: Uint8Array | string }> };
-
-  beforeEach(() => {
-    coreDb = createRecordingD1();
-    piiDb = createRecordingD1();
-    bucket = createRecordingBucket();
-  });
-
-  it('stores oversized unified audit details as tenant-keyed sensitive chunks', async () => {
-    const service = new AuditService({
-      coreSource: coreDb,
-      piiSource: piiDb,
-      r2Bucket: bucket,
-      sensitiveDetailBucket: bucket,
-      objectEncryptionRootKey: OBJECT_ROOT_KEY,
-      objectEncryptionKeyVersion: 7,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile('event_log')),
-      tenantKeyResolver: vi.fn(async (tenantId: string) =>
-        tenantId === 'tenant-a' ? 't_conf_a' : 't_conf_b'
-      ),
+  it('fails closed on canonical writer failure without another DB or R2 copy', async () => {
+    const f = await fixture('scheduled');
+    if (!f.env.LOG_ARCHIVE_WRITER) throw new Error('missing writer');
+    f.env.LOG_ARCHIVE_WRITER.writeRecords = vi.fn(async () => {
+      throw new Error('archive_unavailable');
     });
-
-    await service.logEvent('tenant-a', {
-      eventType: 'auth.login',
-      eventCategory: 'auth',
-      result: 'success',
-      details: { payload: 'a'.repeat(3000) },
-    });
-    await service.logEvent('tenant-b', {
-      eventType: 'auth.login',
-      eventCategory: 'auth',
-      result: 'success',
-      details: { payload: 'b'.repeat(3000) },
-    });
-
-    expect(bucket.writes).toHaveLength(2);
-    expect(bucket.writes[0].key).toContain('/t_conf_a/sensitive_detail/event/audit/');
-    expect(bucket.writes[1].key).toContain('/t_conf_b/sensitive_detail/event/audit/');
-    expect(bucket.writes.map((write) => write.key).join('\n')).not.toContain('tenant-a');
-    expect(bucket.writes.map((write) => write.key).join('\n')).not.toContain('tenant-b');
-
-    const eventInserts = coreDb.calls.filter((call) => call.sql.includes('INSERT INTO event_log'));
-    expect(eventInserts).toHaveLength(2);
-    expect(eventInserts[0].params[13]).toMatch(/^sensitive-detail-catalog:/);
-    expect(eventInserts[0].params[14]).toBeNull();
-    expect(eventInserts[1].params[13]).toMatch(/^sensitive-detail-catalog:/);
-    expect(eventInserts[1].params[14]).toBeNull();
-    expect(
-      coreDb.calls.some((call) => call.sql.includes('INSERT INTO sensitive_detail_chunk_index'))
-    ).toBe(true);
-  });
-
-  it('routes oversized PII values through sensitive chunks while keeping PII rows in PII DB', async () => {
-    const service = new AuditService({
-      coreSource: coreDb,
-      piiSource: piiDb,
-      r2Bucket: bucket,
-      sensitiveDetailBucket: bucket,
-      objectEncryptionRootKey: OBJECT_ROOT_KEY,
-      objectEncryptionKeyVersion: 7,
-      piiEncryptionKey: PII_ENCRYPTION_KEY,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile('pii_log')),
-      tenantKeyResolver: vi.fn(async () => 't_conf_pii'),
-    });
-
-    await service.logPIIChange('tenant-pii', {
-      userId: 'user-1',
-      anonymizedUserId: 'anon-1',
-      changeType: 'update',
-      affectedFields: ['profile'],
-      newValues: { profile: 'x'.repeat(6000) },
-      actorType: 'admin',
-    });
-
-    expect(bucket.writes).toHaveLength(1);
-    expect(bucket.writes[0].key).toContain('/t_conf_pii/sensitive_detail/pii/pii/');
-    expect(bucket.writes[0].key).not.toContain('tenant-pii');
-
-    const piiInsert = findInsert(piiDb.calls, 'pii_log');
-    expect(piiInsert.params[6]).toMatch(/^sensitive-detail-catalog:/);
-    expect(piiInsert.params[7]).toBeNull();
-    expect(coreDb.calls.some((call) => call.sql.includes('INSERT INTO pii_log'))).toBe(false);
-    expect(
-      coreDb.calls.some((call) => call.sql.includes('INSERT INTO sensitive_detail_chunk_index'))
-    ).toBe(true);
-  });
-
-  it('fails closed instead of falling back to legacy per-record R2 objects', async () => {
-    const service = new AuditService({
-      coreSource: coreDb,
-      piiSource: piiDb,
-      r2Bucket: bucket,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile('event_log')),
-      tenantKeyResolver: vi.fn(async () => 't_conf_missing'),
-    });
-
     await expect(
-      service.logEvent('tenant-a', {
+      f.service.logEvent('tenant-a', {
         eventType: 'auth.login',
         eventCategory: 'auth',
         result: 'success',
         details: { payload: 'x'.repeat(3000) },
       })
-    ).rejects.toThrow('sensitive_detail_chunk_context_required:event_log_detail');
-
-    expect(bucket.writes).toHaveLength(0);
-    expect(coreDb.calls.some((call) => call.sql.includes('INSERT INTO event_log'))).toBe(false);
+    ).rejects.toThrow('archive_unavailable');
+    expect(f.oldPut).not.toHaveBeenCalled();
+    expect(f.db.prepare('SELECT COUNT(*) AS n FROM event_log').get()?.n).toBe(0);
+    expect(f.db.prepare('SELECT COUNT(*) AS n FROM log_iceberg_records').get()?.n).toBe(0);
   });
 });

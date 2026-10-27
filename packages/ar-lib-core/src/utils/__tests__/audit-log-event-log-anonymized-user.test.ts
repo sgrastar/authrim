@@ -15,6 +15,14 @@ import { sanitizeEventDetails } from '../../services/audit/utils';
 import { DEFAULT_PII_CONFIG } from '../../services/audit/types';
 import { AnonymizationService } from '../../services/audit/anonymization';
 
+vi.mock('../../services/log-iceberg-emitter', () => ({
+  emitLogIcebergRow: vi.fn(
+    async (env: { __events: Map<string, unknown> }, input: { row: { id: string } }) => {
+      env.__events.set(input.row.id, input.row);
+    }
+  ),
+}));
+
 const accountRoutes = vi.hoisted(() => ({
   pii: new Map<string, unknown>(),
 }));
@@ -72,7 +80,13 @@ function setup() {
   const routedPii = gatedPiiStore();
   accountRoutes.pii.set('user-1', routedPii.adapter);
   accountRoutes.pii.set('user-gone', routedPii.adapter);
-  const env = { DB: coreAdapter, DB_PII: asAdapter(defaultPii.adapter) } as unknown as Env;
+  const events = new Map<string, unknown>();
+  const env = {
+    DB: coreAdapter,
+    DB_PII: asAdapter(defaultPii.adapter),
+    __events: events,
+    AUTHRIM_LOG_ARCHIVE_MODE: 'scheduled',
+  } as unknown as Env;
   const pending: Promise<unknown>[] = [];
   const waitUntil = (promise: Promise<unknown>) => {
     pending.push(promise);
@@ -80,21 +94,7 @@ function setup() {
   const afterResponse = async () => {
     while (pending.length > 0) await Promise.all(pending.splice(0));
   };
-  const row = (id: string) =>
-    core.db
-      .prepare(
-        `SELECT result, anonymized_user_id, client_id, session_id, details_json
-           FROM event_log WHERE id = ?`
-      )
-      .get(id) as
-      | {
-          result: string;
-          anonymized_user_id: string | null;
-          client_id: string | null;
-          session_id: string | null;
-          details_json: string | null;
-        }
-      | undefined;
+  const row = (id: string) => events.get(id) as Record<string, string | null> | undefined;
   const mapping = (db: typeof core.db, userId: string) =>
     (
       db
@@ -140,20 +140,11 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('event_log mirror: anonymized_user_id', () => {
-  it('records a sign-in under the user, read from the PII store after the response', async () => {
+  it('finalizes the anonymous user before emitting one immutable sign-in record', async () => {
     const { env, routedPii, defaultPii, waitUntil, afterResponse, row, mapping } = setup();
 
-    const started = performance.now();
-    await createAuditLog(env, signIn('evt_sign_in'), { waitUntil });
-    const requestPathMs = performance.now() - started;
-
-    // The request returned while the PII store still held every call: the event is written,
-    // without the ID yet.
-    expect(requestPathMs).toBeLessThan(250);
-    expect(routedPii.calls.length).toBeLessThanOrEqual(1);
-    expect(row('evt_sign_in')).toMatchObject({ anonymized_user_id: null });
-
     routedPii.release();
+    await createAuditLog(env, signIn('evt_sign_in'), { waitUntil });
     await afterResponse();
 
     const anonymizedUserId = mapping(routedPii.db, 'user-1');
@@ -171,12 +162,17 @@ describe('event_log mirror: anonymized_user_id', () => {
     expect(JSON.parse(details)).toMatchObject({ method: 'passkey', source: 'legacy_audit_log' });
   });
 
-  it('does not wait for the PII store without a waitUntil either', async () => {
+  it('bounds lookup latency and never updates an already emitted record after timeout', async () => {
+    vi.useFakeTimers();
     const { env, routedPii, row } = setup();
-    // The store never answers during this test: an awaited call would hang it.
-    await createAuditLog(env, signIn('evt_no_wait_until'));
+    const writing = createAuditLog(env, signIn('evt_no_wait_until'));
+    await vi.advanceTimersByTimeAsync(2001);
+    await writing;
     expect(row('evt_no_wait_until')).toMatchObject({ anonymized_user_id: null });
     routedPii.release();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(row('evt_no_wait_until')).toMatchObject({ anonymized_user_id: null });
   });
 
   it('uses a cached ID inline without touching the PII store', async () => {
@@ -198,6 +194,7 @@ describe('event_log mirror: anonymized_user_id', () => {
   it('names an admin action on a user by the user, without the raw user ID', async () => {
     const { env, routedPii, waitUntil, afterResponse, row, mapping } = setup();
 
+    routedPii.release();
     const started = performance.now();
     await createAuditLog(
       env,
@@ -218,7 +215,9 @@ describe('event_log mirror: anonymized_user_id', () => {
     expect(performance.now() - started).toBeLessThan(250);
 
     // A fail-closed event: written before the response, without the ID and the raw user ID.
-    expect(row('evt_user_update')).toMatchObject({ anonymized_user_id: null });
+    expect(row('evt_user_update')).toMatchObject({
+      anonymized_user_id: mapping(routedPii.db, 'user-1'),
+    });
     expect(row('evt_user_update')!.details_json).not.toContain('user-1');
 
     routedPii.release();

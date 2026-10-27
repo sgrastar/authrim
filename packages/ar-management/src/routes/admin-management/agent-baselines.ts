@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import {
@@ -103,9 +104,12 @@ async function body(c: BaselineContext): Promise<Record<string, unknown> | null>
 function repositories(c: BaselineContext) {
   const database = requireDedicatedAdminDatabaseAdapter(c.env, 'agent-baseline-management');
   return {
-    baseline: new AgentBaselineRepository(database),
-    bulk: new AgentBulkRepository(database),
-    configuration: new AgentConfigurationRepository(database),
+    baseline: new AgentBaselineRepository(database, createCloudflareAdminAgentAuditWriter(c.env)),
+    bulk: new AgentBulkRepository(database, createCloudflareAdminAgentAuditWriter(c.env)),
+    configuration: new AgentConfigurationRepository(
+      database,
+      createCloudflareAdminAgentAuditWriter(c.env)
+    ),
   };
 }
 

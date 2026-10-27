@@ -97,6 +97,7 @@ export async function processPendingIdentityMappingHistory(
         if (!receiptMatches(row, receipt))
           throw new Error('identity_mapping_history_receipt_mismatch');
         await finalizeIdentityMappingLevelHistoryFromReceipt(
+          env,
           admin,
           {
             historyId: receipt.historyId,

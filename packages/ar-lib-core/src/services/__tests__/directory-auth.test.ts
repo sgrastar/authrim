@@ -1,3 +1,4 @@
+import { emitLogIcebergRow } from '../log-iceberg-emitter';
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, ExecuteResult, HealthStatus, TransactionContext } from '../../db';
 import {
@@ -19,6 +20,8 @@ import {
   type DirectoryAuthMigrationCampaignRow,
   type DirectoryAuthMigrationUserStateRow,
 } from '../directory-auth';
+
+vi.mock('../log-iceberg-emitter', () => ({ emitLogIcebergRow: vi.fn(async () => ({})) }));
 
 function executeResult(rowsAffected = 1): ExecuteResult {
   return { rowsAffected, success: true };
@@ -120,7 +123,7 @@ describe('directory auth service', () => {
   it('stores only a migration transaction token hash and expires it with a non-secret tombstone', async () => {
     const adapter = createAdapter();
 
-    const transaction = await createDirectoryAuthMigrationTransaction(adapter, {
+    const transaction = await createDirectoryAuthMigrationTransaction({}, adapter, {
       tenantId: 'tenant-a',
       tokenHash: 'sha256:token-hash',
       scope: 'passkey_enrollment',
@@ -136,10 +139,16 @@ describe('directory auth service', () => {
       expect.stringContaining('INSERT INTO directory_auth_migration_transactions'),
       expect.arrayContaining(['tenant-a', 'damc_1', 'user-1', null, null, 'sha256:token-hash'])
     );
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO directory_auth_migration_transaction_events'),
-      expect.arrayContaining(['tenant-a', transaction.id, 'damc_1', 'user-1', 'created'])
-    );
+    expect(vi.mocked(emitLogIcebergRow).mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'core.directory_auth_migration_transaction_events',
+      row: {
+        tenant_id: 'tenant-a',
+        transaction_id: transaction.id,
+        campaign_id: 'damc_1',
+        user_id: 'user-1',
+        event_type: 'created',
+      },
+    });
 
     await cleanupExpiredDirectoryAuthMigrationTransactions(adapter, 'tenant-a', 700000);
 
@@ -381,7 +390,7 @@ describe('directory auth service', () => {
   it('completes email-code fallback transactions and marks the migration state recovered', async () => {
     const adapter = createAdapter();
 
-    const completed = await completeDirectoryAuthEmailCodeFallback(adapter, {
+    const completed = await completeDirectoryAuthEmailCodeFallback({}, adapter, {
       tenantId: 'tenant-a',
       transactionId: 'damt_email_1',
       campaignId: 'damc_1',
@@ -405,16 +414,16 @@ describe('directory auth service', () => {
       'damc_1',
       'user_1',
     ]);
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO directory_auth_migration_transaction_events'),
-      expect.arrayContaining([
-        'tenant-a',
-        'damt_email_1',
-        'damc_1',
-        'user_1',
-        'email_code_fallback.completed',
-      ])
-    );
+    expect(vi.mocked(emitLogIcebergRow).mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'core.directory_auth_migration_transaction_events',
+      row: {
+        tenant_id: 'tenant-a',
+        transaction_id: 'damt_email_1',
+        campaign_id: 'damc_1',
+        user_id: 'user_1',
+        event_type: 'email_code_fallback.completed',
+      },
+    });
   });
 
   it('resolves directory unavailable recovery campaigns by tenant, mode, and user target', async () => {
@@ -472,7 +481,7 @@ describe('directory auth service', () => {
   it('completes directory unavailable recovery transactions with a distinct event type', async () => {
     const adapter = createAdapter();
 
-    const completed = await completeDirectoryAuthEmailCodeFallback(adapter, {
+    const completed = await completeDirectoryAuthEmailCodeFallback({}, adapter, {
       tenantId: 'tenant-a',
       transactionId: 'damt_recovery_1',
       campaignId: 'damc_1',
@@ -491,16 +500,16 @@ describe('directory auth service', () => {
       'recovery',
       9000,
     ]);
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO directory_auth_migration_transaction_events'),
-      expect.arrayContaining([
-        'tenant-a',
-        'damt_recovery_1',
-        'damc_1',
-        'user_1',
-        'directory_unavailable_recovery.completed',
-      ])
-    );
+    expect(vi.mocked(emitLogIcebergRow).mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'core.directory_auth_migration_transaction_events',
+      row: {
+        tenant_id: 'tenant-a',
+        transaction_id: 'damt_recovery_1',
+        campaign_id: 'damc_1',
+        user_id: 'user_1',
+        event_type: 'directory_unavailable_recovery.completed',
+      },
+    });
   });
 
   it('matches release advisories against reported Wordwarden versions', () => {

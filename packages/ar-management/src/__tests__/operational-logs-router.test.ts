@@ -10,12 +10,26 @@ const { mockAdapter, mockCreateAuthContextFromHono, mockGetOperationalLog, mockG
       execute: vi.fn(),
     } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
     mockCreateAuthContextFromHono: vi.fn(),
-    mockGetOperationalLog: vi.fn(),
+    mockGetOperationalLog: vi.fn<(...args: unknown[]) => Promise<Record<string, unknown> | null>>(),
     mockGrantRepo: {
       getElevationGrantByPublicId: vi.fn(),
       listActiveElevationGrants: vi.fn(),
     },
   }));
+
+vi.mock('../log-read-adapter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../log-read-adapter')>();
+  return {
+    ...actual,
+    createLogReadAdapter: () => ({
+      adapter: mockAdapter,
+      hasArchive: () => true,
+      pagination: () => undefined,
+      coverage: () => undefined,
+    }),
+    readLogProtectedDetail: (env: unknown, input: unknown) => mockGetOperationalLog(env, input),
+  };
+});
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -97,6 +111,10 @@ describe('operational logs router', () => {
     vi.clearAllMocks();
     mockCreateAuthContextFromHono.mockReturnValue({ coreAdapter: mockAdapter });
     mockGrantRepo.listActiveElevationGrants.mockResolvedValue([]);
+    mockAdapter.queryOne.mockImplementation(async () => {
+      const value: unknown = await mockAdapter.query();
+      return Array.isArray(value) ? (value[0] as unknown) : null;
+    });
     mockAdapter.query.mockResolvedValue([
       {
         id: 'op-1',
@@ -188,15 +206,11 @@ describe('operational logs router', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { reason_detail: string };
     expect(body.reason_detail).toContain('immediate suspension');
-    const actualAdapter = mockGetOperationalLog.mock.calls[0]?.[0] as DatabaseAdapter;
-    expect(typeof actualAdapter.query).toBe('function');
-    expect(typeof actualAdapter.queryOne).toBe('function');
-    expect(mockGetOperationalLog).toHaveBeenCalledWith(
-      actualAdapter,
-      expect.objectContaining({ inlineEncryptionKey: 'test-key' }),
-      'tenant-a',
-      'op-1'
-    );
+    expect(mockGetOperationalLog).toHaveBeenCalledWith(mockEnv, {
+      tenantId: 'tenant-a',
+      sourceDataset: 'core.operational_logs',
+      eventId: 'op-1',
+    });
   });
 
   it('returns operational log detail with a matching elevation grant', async () => {

@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono } from 'hono';
 import {
   AdminAgentAccessRepository,
@@ -37,7 +38,8 @@ myAgentConsentsRouter.get('/', async (c) => {
   const auth = c.get('adminAuth') as AdminAuthContext;
   const tenantId = auth.tenantId ?? c.env.DEFAULT_TENANT_ID ?? 'default';
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'my-agent-consents')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'my-agent-consents'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const consents = await repository.listUserConsents(tenantId, auth.userId);
   return c.json({ consents: consents.map(responseConsent) });
@@ -47,7 +49,8 @@ myAgentConsentsRouter.delete('/:id', async (c) => {
   const auth = c.get('adminAuth') as AdminAuthContext;
   const tenantId = auth.tenantId ?? c.env.DEFAULT_TENANT_ID ?? 'default';
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'my-agent-consents')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'my-agent-consents'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const consent = (await repository.listUserConsents(tenantId, auth.userId)).find(
     (candidate) => candidate.id === c.req.param('id')

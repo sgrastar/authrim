@@ -53,6 +53,12 @@ const mocks = vi.hoisted(() => {
 
   return {
     coreAdapter,
+    emitLog: vi.fn(
+      async (
+        _env: unknown,
+        _input: import('@authrim/ar-lib-core/services/log-iceberg-emitter').LogIcebergRowWrite
+      ) => {}
+    ),
     adminAdapter,
     sessionStore,
     challengeStore,
@@ -71,6 +77,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core/services/log-iceberg-emitter')>()),
+  emitLogIcebergRow: mocks.emitLog,
+}));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -1543,10 +1553,13 @@ describe('LoginUI runtime Flow handlers', () => {
       error_code: 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
     });
     expect(mocks.runtimeUsers.findById).not.toHaveBeenCalled();
-    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO flow_audit_events'),
-      expect.arrayContaining(['flow.interaction.failed', 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED'])
-    );
+    expect(mocks.emitLog.mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'core.flow_audit_events',
+      row: {
+        event_type: 'flow.interaction.failed',
+        error_code: 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
+      },
+    });
     expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
       expect.anything(),
       'user_1'
@@ -4514,10 +4527,7 @@ describe('LoginUI runtime Flow handlers', () => {
       ).toEqual([]);
     };
 
-    const auditEventTypes = () =>
-      mocks.coreAdapter.execute.mock.calls
-        .filter(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO flow_audit_events'))
-        .map(([, params]) => (params as unknown[])[10]);
+    const auditEventTypes = () => mocks.emitLog.mock.calls.map(([, input]) => input.row.event_type);
 
     it.each([
       [

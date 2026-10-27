@@ -1,3 +1,4 @@
+import { emitLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 /**
  * SAML Provider Admin API
  *
@@ -4209,24 +4210,30 @@ async function recordFederationSelectedEntityImportEvent(
     return;
   }
   try {
-    const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
-    await adapter.execute(
-      `INSERT INTO federation_selected_entity_import_events (
-        id, tenant_id, trust_source_id, metadata_entity_summary_id, provider_id,
-        import_action, outcome, reason_codes_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        crypto.randomUUID(),
-        input.tenantId,
-        input.trustSourceId,
-        null,
-        input.providerId ?? null,
-        input.importAction,
-        input.outcome,
-        stableJson(input.reasonCodes),
-        Date.now(),
-      ]
-    );
+    const now = Date.now();
+    await emitLogIcebergRow(env, {
+      tenantId: input.tenantId,
+      sourceDataset: 'admin.federation_selected_entity_import_events',
+      logType: 'normal',
+      eventAt: now,
+      expiresAt: null,
+      overview: {
+        action: input.importAction,
+        result: input.outcome,
+        resource_id: input.providerId ?? input.trustSourceId,
+      },
+      row: {
+        id: crypto.randomUUID(),
+        tenant_id: input.tenantId,
+        trust_source_id: input.trustSourceId,
+        metadata_entity_summary_id: null,
+        provider_id: input.providerId ?? null,
+        import_action: input.importAction,
+        outcome: input.outcome,
+        reason_codes_json: stableJson(input.reasonCodes),
+        created_at: now,
+      },
+    });
   } catch {
     // Best-effort operational evidence must not fail the provider import itself.
   }

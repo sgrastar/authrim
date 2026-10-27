@@ -436,7 +436,7 @@ export interface AuditStorageRoutingRule {
   };
 
   /** Canonical fan-out targets for this rule */
-  targets: AuditStorageRoutingTargets;
+  targets?: AuditStorageRoutingTargets;
 
   /**
    * Deprecated single-backend alias.

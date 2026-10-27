@@ -22,6 +22,7 @@ describe('PermissionChangeNotifier', () => {
   it('invalidates tenant-scoped subject, role, resource, relation, and exact permission keys', async () => {
     const deleteKey = vi.fn().mockResolvedValue(undefined);
     const notifier = createPermissionChangeNotifier({
+      env: {},
       cache: { delete: deleteKey } as unknown as KVNamespace,
     });
 
@@ -45,6 +46,7 @@ describe('PermissionChangeNotifier', () => {
   it('fails closed before side effects when an event has no tenant', async () => {
     const deleteKey = vi.fn();
     const notifier = createPermissionChangeNotifier({
+      env: {},
       cache: { delete: deleteKey } as unknown as KVNamespace,
     });
 
@@ -57,6 +59,7 @@ describe('PermissionChangeNotifier', () => {
   it('reports partial delivery failures without failing other invalidation channels', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response('unavailable', { status: 503 }));
     const notifier = createPermissionChangeNotifier({
+      env: {},
       cache: { delete: vi.fn().mockResolvedValue(undefined) } as unknown as KVNamespace,
       permissionChangeHub: {
         idFromName: vi.fn().mockReturnValue({}),

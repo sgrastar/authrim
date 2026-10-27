@@ -2,51 +2,184 @@
   "schemaVersion": 1,
   "packageName": "@authrim/ar-management",
   "worker": "ar-management",
-  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
+  "requiredDataRoles": [
+    "tenant_core/default",
+    "tenant_core/users",
+    "tenant_pii",
+    "lookup"
+  ],
   "lookupBlindIndex": true,
   "bindings": [
-    { "name": "DB", "kind": "d1", "required": true, "capability": "platform_metadata" },
+    {
+      "name": "DB",
+      "kind": "d1",
+      "required": true,
+      "capability": "platform_metadata"
+    },
     {
       "name": "PLATFORM_NOTIFICATION_DB",
       "kind": "d1",
       "required": true,
       "capability": "notification_intent.platform"
     },
-    { "name": "DB_PII", "kind": "d1", "required": true, "capability": "audit.pii" },
-    { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "admin_data" },
-    { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
-    { "name": "CLIENTS_CACHE", "kind": "kv_namespace", "required": true },
-    { "name": "SETTINGS", "kind": "kv_namespace", "required": true },
-    { "name": "USER_CACHE", "kind": "kv_namespace", "required": true },
-    { "name": "REBAC_CACHE", "kind": "kv_namespace", "required": true },
-    { "name": "INITIAL_ACCESS_TOKENS", "kind": "kv_namespace", "required": true },
-    { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
-    { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
-    { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
-    { "name": "REFRESH_TOKEN_ROTATOR", "kind": "durable_object_namespace", "required": true },
-    { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
-    { "name": "SESSION_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "DB_PII",
+      "kind": "d1",
+      "required": true,
+      "capability": "audit.pii"
+    },
+    {
+      "name": "DB_ADMIN",
+      "kind": "d1",
+      "required": true,
+      "capability": "admin_data"
+    },
+    {
+      "name": "LOOKUP_DB",
+      "kind": "d1",
+      "required": true,
+      "dataRole": "lookup"
+    },
+    {
+      "name": "CLIENTS_CACHE",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "SETTINGS",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "USER_CACHE",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "REBAC_CACHE",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "INITIAL_ACCESS_TOKENS",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "AUTHRIM_CONFIG",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "KEY_MANAGER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "REFRESH_TOKEN_ROTATOR",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "SESSION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     {
       "name": "SESSION_REVOCATION_STORE",
       "kind": "durable_object_namespace",
       "required": true
     },
-    { "name": "SESSION_CLIENT_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "TOKEN_REVOCATION_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "VERSION_MANAGER", "kind": "durable_object_namespace", "required": true },
-    { "name": "CHALLENGE_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "DIRECTORY_CONNECTOR_RELAY", "kind": "durable_object_namespace", "required": true },
-    { "name": "PUBLIC_ASSETS", "kind": "r2_bucket", "required": false },
-    { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
-    { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
-    { "name": "IMPORT_ARTIFACTS", "kind": "r2_bucket", "required": false },
-    { "name": "EXPORT_ARTIFACTS", "kind": "r2_bucket", "required": false },
-    { "name": "SENSITIVE_DETAILS", "kind": "r2_bucket", "required": false },
-    { "name": "LOGGING_DELIVERY_CRITICAL_QUEUE", "kind": "queue", "required": false },
-    { "name": "LOGGING_DELIVERY_QUEUE", "kind": "queue", "required": false },
-    { "name": "LOGGING_DELIVERY_BULK_QUEUE", "kind": "queue", "required": false },
-    { "name": "EXTERNAL_IDP", "kind": "service", "required": true },
+    {
+      "name": "SESSION_CLIENT_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "TOKEN_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "VERSION_MANAGER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "CHALLENGE_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "DPOP_JTI_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "DIRECTORY_CONNECTOR_RELAY",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "PUBLIC_ASSETS",
+      "kind": "r2_bucket",
+      "required": false
+    },
+    {
+      "name": "DIAGNOSTIC_LOGS",
+      "kind": "r2_bucket",
+      "required": false
+    },
+    {
+      "name": "AUDIT_ARCHIVE",
+      "kind": "r2_bucket",
+      "required": false
+    },
+    {
+      "name": "IMPORT_ARTIFACTS",
+      "kind": "r2_bucket",
+      "required": false
+    },
+    {
+      "name": "EXPORT_ARTIFACTS",
+      "kind": "r2_bucket",
+      "required": false
+    },
+    {
+      "name": "SENSITIVE_DETAILS",
+      "kind": "r2_bucket",
+      "required": false
+    },
+    {
+      "name": "LOGGING_DELIVERY_CRITICAL_QUEUE",
+      "kind": "queue",
+      "required": false
+    },
+    {
+      "name": "LOGGING_DELIVERY_QUEUE",
+      "kind": "queue",
+      "required": false
+    },
+    {
+      "name": "LOGGING_DELIVERY_BULK_QUEUE",
+      "kind": "queue",
+      "required": false
+    },
+    {
+      "name": "EXTERNAL_IDP",
+      "kind": "service",
+      "required": true
+    },
     {
       "name": "CONTROL",
       "kind": "service",
@@ -59,23 +192,57 @@
       "required": true,
       "capability": "plugin_hooks.invoke"
     },
-    { "name": "VC_ISSUER", "kind": "service", "required": false },
+    {
+      "name": "VC_ISSUER",
+      "kind": "service",
+      "required": false
+    },
     {
       "name": "TENANT_DATABASE_HYPERDRIVE",
       "kind": "hyperdrive",
       "required": false,
       "capability": "tenant_database_profiles"
     },
-    { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
+    {
+      "name": "CONTROL_SMOKE_VERSION",
+      "kind": "version_metadata",
+      "required": true
+    },
+    {
+      "name": "LOG_ARCHIVE_WRITER",
+      "kind": "service",
+      "required": false,
+      "capability": "logging.archive.write"
+    },
+    {
+      "name": "LOG_ARCHIVE",
+      "kind": "r2_bucket",
+      "required": false,
+      "capability": "logging.archive.objects"
+    },
+    {
+      "name": "LOG_ARCHIVE_STREAM",
+      "kind": "pipelines",
+      "required": false,
+      "capability": "logging.archive.ingest"
+    }
   ],
   "secrets": [
-    { "name": "PUBLIC_JWK_JSON", "capability": "legacy_signing.public", "required": true },
+    {
+      "name": "PUBLIC_JWK_JSON",
+      "capability": "legacy_signing.public",
+      "required": true
+    },
     {
       "name": "RP_TOKEN_ENCRYPTION_KEY",
       "capability": "external_idp_tokens.encrypt",
       "required": true
     },
-    { "name": "PII_ENCRYPTION_KEY", "capability": "tenant_pii.encrypt_decrypt", "required": true },
+    {
+      "name": "PII_ENCRYPTION_KEY",
+      "capability": "tenant_pii.encrypt_decrypt",
+      "required": true
+    },
     {
       "name": "OBJECT_ENCRYPTION_ROOT_KEY",
       "capability": "object_encryption.encrypt_decrypt",
@@ -86,8 +253,16 @@
       "capability": "tenant_backup.key_handoff",
       "required": true
     },
-    { "name": "OTP_HMAC_SECRET", "capability": "otp.issue_verify", "required": true },
-    { "name": "LOGGING_CURSOR_HMAC_SECRET", "capability": "logging_cursor.sign", "required": true },
+    {
+      "name": "OTP_HMAC_SECRET",
+      "capability": "otp.issue_verify",
+      "required": true
+    },
+    {
+      "name": "LOGGING_CURSOR_HMAC_SECRET",
+      "capability": "logging_cursor.sign",
+      "required": true
+    },
     {
       "name": "PLUGIN_ENCRYPTION_KEY",
       "capability": "plugin_config.encrypt_decrypt",
@@ -142,6 +317,26 @@
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
       "capability": "control_smoke.verify",
       "required": true
+    },
+    {
+      "name": "LOG_ARCHIVE_CONTENT_HMAC_KEY",
+      "required": false,
+      "capability": "logging.archive.encrypt"
+    },
+    {
+      "name": "LOG_ARCHIVE_ROOT_KEYRING",
+      "required": false,
+      "capability": "logging.archive.encrypt"
+    },
+    {
+      "name": "LOG_ARCHIVE_CATALOG_READ_TOKEN",
+      "required": false,
+      "capability": "logging.archive.catalog.read"
+    },
+    {
+      "name": "LOG_ARCHIVE_CATALOG_WRITE_TOKEN",
+      "required": false,
+      "capability": "logging.archive.catalog.write"
     }
   ]
 }

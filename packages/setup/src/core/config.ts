@@ -1,3 +1,4 @@
+import { LoggingConfigSchema } from './log-archive-config.js';
 /**
  * Authrim Configuration Schema
  *
@@ -682,6 +683,9 @@ export const AuthrimConfigSchema = z
     /** Feature flags */
     features: FeaturesConfigSchema.prefault({}),
 
+    /** May be omitted in a wizard draft; provisioning and Worker generation require a mode. */
+    logging: LoggingConfigSchema.optional(),
+
     /** Key configuration */
     keys: KeysConfigSchema.prefault({}),
 
@@ -703,7 +707,33 @@ export const AuthrimConfigSchema = z
     /** User-owned service site fallback configuration */
     serviceSite: ServiceSiteConfigSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((config, context) => {
+    if (
+      config.logging?.archive &&
+      config.logging.archive.bucketName !== `${config.environment.prefix}-log-archive`
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['logging', 'archive', 'bucketName'],
+        message: 'Log archive bucket must belong to this environment',
+      });
+    }
+    if (config.logging?.archive && !config.features.r2.enabled) {
+      context.addIssue({
+        code: 'custom',
+        path: ['logging', 'archive'],
+        message: 'Log archive requires R2 storage',
+      });
+    }
+    if (config.logging?.archive?.mode === 'pipeline' && !config.features.queue.enabled) {
+      context.addIssue({
+        code: 'custom',
+        path: ['features', 'queue'],
+        message: 'Pipeline log archive requires durable logging delivery queues',
+      });
+    }
+  });
 
 export type AuthrimConfig = z.infer<typeof AuthrimConfigSchema>;
 export type UrlConfig = z.infer<typeof UrlConfigSchema>;

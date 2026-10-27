@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import {
@@ -34,7 +35,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { isAgentMcpEnabled, type AgentManagementEnv } from '../../agent-downscope-auth';
-import { createLogReadAdapter, logPageRequest } from '../../log-read-adapter';
+import { createLogReadAdapter, logCoverageHeaders, logPageRequest } from '../../log-read-adapter';
 import { logQueryErrorResponse } from '../../log-archive-query';
 
 type AgentGrantContext = Context<{
@@ -176,7 +177,8 @@ agentGrantsRouter.get('/', async (c) => {
     return error(c, 400, 'AGENT_GRANT_INVALID_PAGINATION');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const result = await repository.listGrants({
     tenantId: tenantId(c),
@@ -204,7 +206,8 @@ agentGrantsRouter.get('/eligible-permissions', async (c) => {
   if (!delegatorId) return error(c, 400, 'AGENT_GRANT_INVALID_REQUEST');
 
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-eligibility')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-eligibility'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const delegatorPermissions = await repository.getActiveDelegatorPermissions(
     tenant,
@@ -268,7 +271,8 @@ agentGrantsRouter.get('/:id', async (c) => {
     return error(c, 403, 'ADMIN_INSUFFICIENT_PERMISSIONS');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.getGrantRecord(tenantId(c), c.req.param('id'));
   if (!grant) return error(c, 404, 'AGENT_GRANT_NOT_FOUND');
@@ -291,7 +295,8 @@ agentGrantsRouter.get('/:id/audit', async (c) => {
     return error(c, 400, 'AGENT_GRANT_INVALID_PAGINATION');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const id = c.req.param('id');
   const grant = await repository.getGrant(tenantId(c), id);
@@ -302,14 +307,15 @@ agentGrantsRouter.get('/:id/audit', async (c) => {
       tenantId: tenantId(c),
       adapter: requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-audit-read'),
       dataset: 'admin.admin_audit_log',
+      onCoverage: logCoverageHeaders(c),
       page: logPageRequest(c, tenantId(c), Math.min(limit, 200)),
     });
-    const events = await new AdminAgentAccessRepository(read.adapter).listGrantAudit(
-      tenantId(c),
-      id,
-      limit
-    );
+    const events = await new AdminAgentAccessRepository(
+      read.adapter,
+      createCloudflareAdminAgentAuditWriter(c.env)
+    ).listGrantAudit(tenantId(c), id, limit);
     return c.json({
+      coverage: read.coverage(),
       events: events.map((event) => ({
         id: event.id,
         action: event.action,
@@ -340,7 +346,10 @@ agentGrantsRouter.post('/:id/preauthorize', async (c) => {
   const tenant = tenantId(c);
   if (!(await isAgentMcpEnabled(c.env, tenant))) return error(c, 404, 'AGENT_MCP_DISABLED');
   const admin = requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-preauthorization');
-  const repository = new AdminAgentAccessRepository(admin);
+  const repository = new AdminAgentAccessRepository(
+    admin,
+    createCloudflareAdminAgentAuditWriter(c.env)
+  );
   const grant = await repository.getGrantRecord(tenant, c.req.param('id'));
   if (
     !grant ||
@@ -466,7 +475,8 @@ agentGrantsRouter.put('/:id/self-service-scopes', async (c) => {
   }
 
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-self-service-scopes')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-self-service-scopes'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.getGrantRecord(tenant, c.req.param('id'));
   if (!grant) return error(c, 404, 'AGENT_GRANT_NOT_FOUND');
@@ -687,7 +697,8 @@ agentGrantsRouter.patch('/:id', async (c) => {
     return error(c, 400, 'AGENT_GRANT_INVALID_REQUEST');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.getGrantRecord(tenant, c.req.param('id'));
   if (!grant) return error(c, 404, 'AGENT_GRANT_NOT_FOUND');
@@ -926,7 +937,10 @@ agentGrantsRouter.post('/', async (c) => {
   let resolvedTools: AgentResolvedToolContract[];
   let accessSnapshotHash: string;
   {
-    const configuration = new AgentConfigurationRepository(admin);
+    const configuration = new AgentConfigurationRepository(
+      admin,
+      createCloudflareAdminAgentAuditWriter(c.env)
+    );
     const [taskSet, scopePolicy] = await Promise.all([
       getAgentTaskSetWithBuiltins({
         repository: configuration,
@@ -1007,7 +1021,10 @@ agentGrantsRouter.post('/', async (c) => {
     return error(c, 400, 'AGENT_GRANT_CLIENT_SCOPE_NOT_ALLOWED');
   }
 
-  const repository = new AdminAgentAccessRepository(admin);
+  const repository = new AdminAgentAccessRepository(
+    admin,
+    createCloudflareAdminAgentAuditWriter(c.env)
+  );
   const delegatorPermissions = await repository.getActiveDelegatorPermissions(
     tenant,
     delegatorId,
@@ -1189,7 +1206,8 @@ async function invalidateGrant(
   }
   const tenant = tenantId(c);
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const id = stringField(c.req.param('id'));
   if (!id) return error(c, 404, 'AGENT_GRANT_NOT_FOUND');
@@ -1262,7 +1280,8 @@ agentGrantsRouter.post('/:id/resume', async (c) => {
   const tenant = tenantId(c);
   if (!(await isAgentMcpEnabled(c.env, tenant))) return error(c, 404, 'AGENT_MCP_DISABLED');
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.getGrant(tenant, c.req.param('id'));
   if (!grant) return error(c, 404, 'AGENT_GRANT_NOT_FOUND');
@@ -1271,7 +1290,8 @@ agentGrantsRouter.post('/:id/resume', async (c) => {
     return error(c, 409, 'AGENT_GRANT_CONFIGURATION_SNAPSHOT_INVALID');
   }
   const configuration = new AgentConfigurationRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-configuration-validation')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-grant-configuration-validation'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const [taskSet, scopePolicy] = await Promise.all([
     getAgentTaskSetWithBuiltins({

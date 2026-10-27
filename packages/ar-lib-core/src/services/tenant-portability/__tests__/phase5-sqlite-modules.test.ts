@@ -10,8 +10,8 @@ import {
 describe('Phase 5 SQL settings registry', () => {
   it('adds every remaining Core/Admin settings table exactly once', () => {
     const cumulative = PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS;
-    expect(PHASE5_SQLITE_DATASET_REGISTRATIONS).toHaveLength(39);
-    expect(cumulative).toHaveLength(123);
+    expect(PHASE5_SQLITE_DATASET_REGISTRATIONS).toHaveLength(40);
+    expect(cumulative).toHaveLength(124);
     expect(new Set(cumulative.map(({ dataset }) => dataset.id)).size).toBe(cumulative.length);
 
     const classified = TENANT_DATASET_POLICIES.filter(

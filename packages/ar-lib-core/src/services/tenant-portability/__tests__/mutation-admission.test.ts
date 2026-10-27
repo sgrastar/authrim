@@ -558,3 +558,14 @@ it('records the database release time and recovers the immutable receipt after e
   databaseNow = 70000;
   expect((await receipts.readReleased(identity, [participant], 100))?.released_at).toBe(200);
 });
+
+it('persists completion before a delayed acquire so an aborted writer cannot resurrect an active permit', async () => {
+  await admission.complete('a', 'delayed', 100);
+  expect(await admission.acquire('a', 'delayed', 101)).toBe(false);
+  expect(
+    db.prepare('SELECT completed_at FROM tenant_backup_mutation_permits WHERE id=?').get('delayed')
+      ?.completed_at
+  ).toBe(100);
+  await admission.complete('a', 'delayed', 102);
+  expect(await admission.acquire('a', 'delayed', 103)).toBe(false);
+});

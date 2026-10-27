@@ -352,8 +352,7 @@ describe('admin user account status transitions', () => {
       );
       expect(response.status).toBe(200);
       expect(mocks.operationalLog).toHaveBeenCalledWith(
-        mocks.adapter,
-        expect.objectContaining({ inlineEncryptionKey: 'secret' }),
+        expect.objectContaining({ PII_ENCRYPTION_KEY: 'secret' }),
         expect.objectContaining({ action, reasonDetail: 'private', actorId: 'admin-1' })
       );
       expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('private');

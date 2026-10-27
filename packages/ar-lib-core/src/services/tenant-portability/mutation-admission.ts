@@ -92,8 +92,12 @@ export class TenantBackupMutationAdmission {
   ): Promise<void> {
     validate(now, tenantId, permitId);
     await this.database.execute(
-      `UPDATE tenant_backup_mutation_permits SET completed_at=? WHERE id=? AND tenant_id=? AND environment_id=? AND scope=? AND completed_at IS NULL AND created_at<=?`,
-      [now, permitId, tenantId, this.environmentId, scope, now]
+      `INSERT INTO tenant_backup_mutation_permits(id,tenant_id,created_at,environment_id,scope,completed_at)
+       VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET completed_at=COALESCE(tenant_backup_mutation_permits.completed_at,excluded.completed_at)
+       WHERE tenant_backup_mutation_permits.tenant_id=excluded.tenant_id
+         AND tenant_backup_mutation_permits.environment_id=excluded.environment_id
+         AND tenant_backup_mutation_permits.scope=excluded.scope AND tenant_backup_mutation_permits.created_at<=excluded.completed_at`,
+      [permitId, tenantId, now, this.environmentId, scope, now]
     );
   }
 

@@ -1,19 +1,14 @@
+import { createArchiveTestConfig, generateArchiveTestWrangler } from './fixtures/log-archive.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDefaultConfig } from '../core/config.js';
-import {
-  generateWranglerConfig,
-  toToml,
-  validateWranglerConfigs,
-  type ResourceIds,
-} from '../core/wrangler.js';
+import { toToml, validateWranglerConfigs, type ResourceIds } from '../core/wrangler.js';
 
 const roots: string[] = [];
 
 function deploymentConfig() {
-  const config = createDefaultConfig('test');
+  const config = createArchiveTestConfig('test');
   config.urls = {
     api: { auto: 'https://test-ar-router.example.workers.dev' },
     loginUi: { auto: 'https://test-ar-login-ui.example.workers.dev', sameAsApi: false },
@@ -28,7 +23,7 @@ async function writeConfig(component: 'ar-plugin-runner' | 'ar-auth', resources:
   const packageDir = join(root, 'packages', component);
   await mkdir(packageDir, { recursive: true });
   const config = deploymentConfig();
-  const generated = generateWranglerConfig(component, config, resources);
+  const generated = generateArchiveTestWrangler(component, config, resources);
   await writeFile(join(packageDir, 'wrangler.toml'), toToml(generated, 'test'));
   return root;
 }
@@ -107,7 +102,7 @@ describe('Plugin resource Wrangler validation', () => {
     });
     const content = toToml(
       {
-        ...generateWranglerConfig('ar-auth', deploymentConfig(), { d1: {}, kv: {} }),
+        ...generateArchiveTestWrangler('ar-auth', deploymentConfig(), { d1: {}, kv: {} }),
         d1_databases: [
           { binding: leakedBinding, database_id: 'leaked-id', database_name: 'leaked-name' },
         ],

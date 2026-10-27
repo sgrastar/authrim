@@ -50,11 +50,18 @@ describe('settings field portability coverage', () => {
     ).toEqual([TENANT_SETTING_FIELD_POLICIES[0].key]);
   });
 
+  it('does not classify removed diagnostic bucket overrides as a tenant setting', () => {
+    expect(
+      TENANT_SETTING_FIELD_POLICIES.some(
+        (policy) => policy.key === 'diagnostic-logging.r2_bucket_binding'
+      )
+    ).toBe(false);
+  });
+
   it.each([
     ['tenant.audit_profile_id', 'logical_reference'],
     ['login-entry.app_login_client_id', 'logical_reference'],
     ['dr-backup.storage_destination_id', 'environment_mapping'],
-    ['diagnostic-logging.r2_bucket_binding', 'environment_mapping'],
     ['login-ui.logo_url', 'url_or_asset'],
     ['login-ui.published_snapshot', 'structured'],
     ['login-ui.custom_css', 'structured'],

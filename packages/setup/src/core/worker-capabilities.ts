@@ -28,6 +28,7 @@ export const WORKER_BINDING_KINDS = [
   'worker_loader',
   'durable_object_namespace',
   'queue',
+  'pipelines',
   'send_email',
   'hyperdrive',
   'version_metadata',
@@ -349,6 +350,10 @@ function generatedBindings(
       name: binding.binding,
       kind: 'queue' as const,
     })),
+    ...(config.pipelines ?? []).map((binding) => ({
+      name: binding.binding,
+      kind: 'pipelines' as const,
+    })),
     ...(config.send_email ?? []).map((binding) => ({
       name: binding.name,
       kind: 'send_email' as const,
@@ -423,7 +428,9 @@ export function validateGeneratedWorkerCapabilities(input: {
   const declaredSecrets = new Set(manifest.secrets.map((secret) => secret.name));
   const generatedSecrets = new Set<string>(
     (WORKER_COMPONENTS as readonly string[]).includes(input.compiled.component)
-      ? getSecretNamesForWorker(input.compiled.component as WorkerComponent)
+      ? getSecretNamesForWorker(input.compiled.component as WorkerComponent, {
+          logArchive: input.config.vars.AUTHRIM_LOG_ARCHIVE_MODE !== undefined,
+        })
       : manifest.secrets.map((secret) => secret.name)
   );
   for (const secret of generatedSecrets) {

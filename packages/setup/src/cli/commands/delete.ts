@@ -360,6 +360,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
       knownKVResources,
       knownQueueResources,
       knownR2Resources,
+      knownLogArchiveResource: lock?.logArchive,
       knownPagesResources,
       ...(lock
         ? {

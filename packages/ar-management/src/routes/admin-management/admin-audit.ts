@@ -1,8 +1,9 @@
-import { logQueryErrorResponse } from '../../log-archive-query';
+import { LogQueryIncompleteError, logQueryErrorResponse } from '../../log-archive-query';
 import {
   createLogReadAdapter,
   logDetailWindow,
   logPageRequest,
+  logCoverageHeaders,
   type LogPageRequest,
 } from '../../log-read-adapter';
 /**
@@ -19,7 +20,6 @@ import type { Context } from 'hono';
 import type { Env, AdminAuthContext, AdminAuditLogEntry } from '@authrim/ar-lib-core';
 import {
   AdminAuditLogRepository,
-  AdminUserRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -59,6 +59,7 @@ function getAdminLogRead(c: AdminContext, page?: LogPageRequest) {
     tenantId: getTenantIdFromContext(c),
     adapter: requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management'),
     dataset: 'admin.admin_audit_log',
+    onCoverage: logCoverageHeaders(c),
     page,
     ...(c.req.param('id') ? logDetailWindow(c) : {}),
   });
@@ -210,12 +211,19 @@ export async function listAdminAuditLogs(c: AdminContext) {
     );
 
     // Enrich with admin user info if available
-    const userRepo = new AdminUserRepository(adapter);
+    const metadataAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-audit-metadata');
     const enrichedItems = await Promise.all(
       logs.items.map(async (log) => {
         let adminUserName: string | null = null;
         if (log.admin_user_id) {
-          const user = await userRepo.getAdminUser(log.admin_user_id);
+          const user = await metadataAdapter.queryOne<{
+            id: string;
+            name: string | null;
+            email: string;
+          }>('SELECT id,name,email FROM admin_users WHERE tenant_id=? AND id=?', [
+            tenantId,
+            log.admin_user_id,
+          ]);
           adminUserName = user?.name || null;
         }
         return {
@@ -227,7 +235,12 @@ export async function listAdminAuditLogs(c: AdminContext) {
     );
 
     const archivePage = logRead.pagination();
-    if (archivePage) return c.json({ items: enrichedItems, pagination: archivePage });
+    if (archivePage)
+      return c.json({
+        items: enrichedItems,
+        pagination: archivePage,
+        coverage: logRead.coverage(),
+      });
     return c.json({
       items: enrichedItems,
       total: logs.total,
@@ -252,7 +265,7 @@ adminAuditRouter.get('/:id', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const auditRepo = new AdminAuditLogRepository(adapter);
-    const userRepo = new AdminUserRepository(adapter);
+    const metadataAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-audit-metadata');
     const tenantId = getTenantIdFromContext(c);
 
     const id = c.req.param('id')!;
@@ -273,13 +286,8 @@ adminAuditRouter.get('/:id', async (c) => {
     if (access instanceof Response) {
       return access;
     }
-    const detail = await loadAdminAuditDetail(
-      c,
-      adapter,
-      tenantId,
-      logRecord.detailArtifactId,
-      logRecord.detailObjectCatalogId
-    );
+    const detail = await loadAdminAuditDetail(c, tenantId, id);
+    if (logRecord.detailObjectCatalogId && !detail) throw new LogQueryIncompleteError();
     const log = detail
       ? {
           ...logRecord.entry,
@@ -300,7 +308,14 @@ adminAuditRouter.get('/:id', async (c) => {
     } | null = null;
 
     if (log.admin_user_id) {
-      const user = await userRepo.getAdminUser(log.admin_user_id);
+      const user = await metadataAdapter.queryOne<{
+        id: string;
+        name: string | null;
+        email: string;
+      }>('SELECT id,name,email FROM admin_users WHERE tenant_id=? AND id=?', [
+        tenantId,
+        log.admin_user_id,
+      ]);
       if (user) {
         adminUser = {
           id: user.id,
@@ -501,7 +516,8 @@ adminAuditRouter.get('/user/:userId', async (c) => {
     );
 
     const archivePage = logRead.pagination();
-    if (archivePage) return c.json({ items: logs.items, pagination: archivePage });
+    if (archivePage)
+      return c.json({ items: logs.items, pagination: archivePage, coverage: logRead.coverage() });
     return c.json({
       items: logs.items,
       total: logs.total,

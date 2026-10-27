@@ -4,10 +4,6 @@
 	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import {
-		adminStorageDestinationsAPI,
-		type StorageDestination
-	} from '$lib/api/admin-storage-destinations';
-	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
@@ -64,8 +60,6 @@
 
 	// Connection test state
 	let testTenantId = $state('');
-	let r2BucketBinding = $state('DIAGNOSTIC_LOGS');
-	let pathPrefix = $state('diagnostic-logs');
 
 	// UI state
 	let loading = $state(false);
@@ -76,7 +70,6 @@
 	let settingsError = $state('');
 	let loggingSettings = $state<CategorySettings | null>(null);
 	let loggingEnabled = $state(false);
-	let r2OutputEnabled = $state(false);
 	let sdkIngestEnabled = $state(false);
 	let mergedOutputEnabled = $state(false);
 	let clientsLoading = $state(false);
@@ -86,9 +79,6 @@
 	let testError = $state('');
 	let testSuccess = $state('');
 	let testLatency = $state<number | null>(null);
-	let storageDestinations = $state<StorageDestination[]>([]);
-	let selectedStorageDestinationId = $state('');
-	let storageDestinationError = $state('');
 
 	const canEdit = $derived(settingsContext.canEditAtCurrentScope());
 
@@ -182,7 +172,6 @@
 
 		await loadLoggingSettings();
 		await loadClientOptions();
-		await loadStorageDestinations();
 	});
 
 	// Reload when tenant changes via the header selector
@@ -200,7 +189,6 @@
 		selectedClientIds = [];
 		loadLoggingSettings();
 		loadClientOptions();
-		loadStorageDestinations();
 	});
 
 	async function loadLoggingSettings() {
@@ -211,12 +199,8 @@
 			const result = await adminSettingsAPI.getSettings('diagnostic-logging', tenantId);
 			loggingSettings = result;
 			loggingEnabled = Boolean(result.values['diagnostic-logging.enabled']);
-			r2OutputEnabled = Boolean(result.values['diagnostic-logging.r2_output_enabled']);
 			sdkIngestEnabled = Boolean(result.values['diagnostic-logging.sdk_ingest_enabled']);
 			mergedOutputEnabled = Boolean(result.values['diagnostic-logging.merged_output_enabled']);
-			selectedStorageDestinationId = String(
-				result.values['diagnostic-logging.storage_destination_id'] ?? ''
-			);
 			storageModeDefault = normalizeStorageMode(
 				result.values['diagnostic-logging.storage_mode.default'],
 				'masked'
@@ -233,68 +217,6 @@
 				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_load_settings_failed();
 		} finally {
 			settingsLoading = false;
-		}
-	}
-
-	async function loadStorageDestinations() {
-		storageDestinationError = '';
-		try {
-			const response = await adminStorageDestinationsAPI.listUsable();
-			storageDestinations = response.items;
-		} catch (err) {
-			storageDestinationError =
-				err instanceof Error
-					? err.message
-					: $LL.admin_diagnostic_logging_load_storage_destinations_failed();
-			storageDestinations = [];
-		}
-	}
-
-	async function handleStorageDestinationChange(destinationId: string) {
-		if (!loggingSettings || settingsSaving || !canEdit) return;
-
-		settingsSaving = true;
-		settingsError = '';
-		storageDestinationError = '';
-
-		try {
-			const result = await adminSettingsAPI.updateSettings(
-				'diagnostic-logging',
-				{
-					ifMatch: loggingSettings.version,
-					set: {
-						'diagnostic-logging.storage_destination_id': destinationId
-					}
-				},
-				tenantId
-			);
-
-			if (destinationId) {
-				await adminStorageDestinationsAPI.recordUsage(destinationId, {
-					feature: 'diagnostic_logging',
-					resource_type: 'tenant',
-					resource_id: tenantId,
-					metadata: { setting: 'diagnostic-logging.storage_destination_id' }
-				});
-			}
-
-			loggingSettings = {
-				...loggingSettings,
-				version: result.version,
-				values: {
-					...loggingSettings.values,
-					'diagnostic-logging.storage_destination_id': destinationId
-				}
-			};
-			selectedStorageDestinationId = destinationId;
-			success = $LL.admin_diagnostic_logging_storage_destination_updated();
-		} catch (err) {
-			storageDestinationError =
-				err instanceof Error
-					? err.message
-					: $LL.admin_diagnostic_logging_update_storage_destination_failed();
-		} finally {
-			settingsSaving = false;
 		}
 	}
 
@@ -380,41 +302,6 @@
 				}
 			};
 			loggingEnabled = enabled;
-		} catch (err) {
-			settingsError =
-				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_update_settings_failed();
-		} finally {
-			settingsSaving = false;
-		}
-	}
-
-	async function handleToggleR2Output(enabled: boolean) {
-		if (!loggingSettings || settingsSaving) return;
-
-		settingsSaving = true;
-		settingsError = '';
-
-		try {
-			const result = await adminSettingsAPI.updateSettings(
-				'diagnostic-logging',
-				{
-					ifMatch: loggingSettings.version,
-					set: {
-						'diagnostic-logging.r2_output_enabled': enabled
-					}
-				},
-				tenantId
-			);
-
-			loggingSettings = {
-				...loggingSettings,
-				version: result.version,
-				values: {
-					...loggingSettings.values,
-					'diagnostic-logging.r2_output_enabled': enabled
-				}
-			};
-			r2OutputEnabled = enabled;
 		} catch (err) {
 			settingsError =
 				err instanceof Error ? err.message : $LL.admin_diagnostic_logging_update_settings_failed();
@@ -721,9 +608,7 @@
 				includeJsonContentType: true,
 				tenantId: testTenantId || settingsContext.tenantId,
 				body: JSON.stringify({
-					tenantId: testTenantId || settingsContext.tenantId,
-					r2BucketBinding,
-					pathPrefix
+					tenantId: testTenantId || settingsContext.tenantId
 				})
 			});
 
@@ -816,22 +701,6 @@
 						<p class="toggle-item-description">
 							{$LL.admin_diagnostic_logging_r2_output_desc()}
 						</p>
-						<div class="toggle-row">
-							<ToggleSwitch
-								checked={r2OutputEnabled}
-								disabled={!canEdit || settingsLoading || settingsSaving}
-								label={$LL.admin_diagnostic_logging_r2_toggle_label()}
-								description={r2OutputEnabled
-									? $LL.admin_diagnostic_logging_r2_enabled()
-									: $LL.admin_diagnostic_logging_r2_disabled()}
-								onchange={handleToggleR2Output}
-							/>
-							{#if settingsLoading}
-								<span class="inline-muted">{$LL.admin_diagnostic_logging_loading()}</span>
-							{:else if settingsSaving}
-								<span class="inline-muted">{$LL.admin_diagnostic_logging_saving()}</span>
-							{/if}
-						</div>
 					</div>
 
 					<div class="toggle-item">
@@ -1254,28 +1123,6 @@
 				<div class="card-section">
 					<div class="form-grid">
 						<div class="form-group">
-							<label for="storageDestination"
-								>{$LL.admin_diagnostic_logging_storage_destination()}</label
-							>
-							<select
-								id="storageDestination"
-								class="settings-select"
-								bind:value={selectedStorageDestinationId}
-								onchange={(event) => handleStorageDestinationChange(event.currentTarget.value)}
-								disabled={!canEdit || settingsSaving}
-							>
-								<option value="">{$LL.admin_diagnostic_logging_use_runtime_binding()}</option>
-								{#each storageDestinations as destination (destination.id)}
-									<option value={destination.id}>
-										{destination.display_name} ({destination.provider})
-									</option>
-								{/each}
-							</select>
-							{#if storageDestinationError}
-								<p class="field-error">{storageDestinationError}</p>
-							{/if}
-						</div>
-						<div class="form-group">
 							<label for="testTenantId">{$LL.admin_diagnostic_logging_tenant_id()}</label>
 							<input
 								id="testTenantId"
@@ -1283,19 +1130,6 @@
 								type="text"
 								bind:value={testTenantId}
 							/>
-						</div>
-						<div class="form-group">
-							<label for="r2BucketBinding">{$LL.admin_diagnostic_logging_r2_binding()}</label>
-							<input
-								id="r2BucketBinding"
-								class="settings-input"
-								type="text"
-								bind:value={r2BucketBinding}
-							/>
-						</div>
-						<div class="form-group">
-							<label for="pathPrefix">{$LL.admin_diagnostic_logging_path_prefix()}</label>
-							<input id="pathPrefix" class="settings-input" type="text" bind:value={pathPrefix} />
 						</div>
 					</div>
 				</div>
@@ -1397,12 +1231,6 @@
 	.settings-checkbox-text {
 		color: var(--color-text-muted);
 		font-size: var(--settings-description-size, 0.875rem);
-	}
-
-	.field-error {
-		margin: 6px 0 0;
-		color: var(--color-danger);
-		font-size: 0.8125rem;
 	}
 
 	.card-section {

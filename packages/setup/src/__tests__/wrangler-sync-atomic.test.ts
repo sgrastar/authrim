@@ -18,7 +18,10 @@ vi.mock('../core/cloudflare.js', () => ({
 }));
 
 import * as atomicFile from '../core/atomic-file.js';
-import { createDefaultConfig } from '../core/config.js';
+import {
+  createArchiveTestConfig as createDefaultConfig,
+  archiveResourceIds,
+} from './fixtures/log-archive.js';
 import { getEnvironmentPaths } from '../core/paths.js';
 import {
   backupDeployConfigs,
@@ -82,7 +85,7 @@ describe('atomic wrangler config publication', () => {
 
     const result = await saveMasterWranglerConfigs(
       createWranglerTestConfig(),
-      { d1: {}, kv: {} },
+      archiveResourceIds(createWranglerTestConfig(), { d1: {}, kv: {} }),
       {
         baseDir,
         env: 'test',
@@ -102,7 +105,7 @@ describe('atomic wrangler config publication', () => {
 
     const result = await saveMasterWranglerConfigs(
       createWranglerTestConfig(),
-      { d1: {}, kv: {} },
+      archiveResourceIds(createWranglerTestConfig(), { d1: {}, kv: {} }),
       {
         baseDir,
         env: 'test',

@@ -1,3 +1,4 @@
+import { logCoverageHeaders } from './log-read-adapter';
 import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin Security API Endpoints
@@ -1059,7 +1060,9 @@ export async function adminSecurityIpReputationHandler(c: Context<{ Bindings: En
 
     const { ip_addresses } = parseResult.data;
     const adapter = createAdapter(c, tenantId);
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }

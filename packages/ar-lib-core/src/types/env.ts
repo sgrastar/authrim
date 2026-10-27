@@ -11,6 +11,7 @@ import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
 import type { JWK } from 'jose';
+import type { LogIcebergSettingsEnv } from '../services/log-iceberg-config';
 import type { VCIssuerServiceBinding } from './vc-service';
 import type { ControlServiceBinding } from '../services/control-plane/control-plane-contracts';
 import type { AccountDirectoryServiceBinding } from '../services/lookup-directory/publication';
@@ -423,7 +424,15 @@ export interface PluginRunnerServiceBinding {
  * - API_: API settings
  * - PII_: PII encryption settings
  */
-export interface Env {
+export interface Env extends LogIcebergSettingsEnv {
+  LOG_ARCHIVE?: R2Bucket;
+  LOG_ARCHIVE_STREAM?: import('cloudflare:pipelines').Pipeline;
+  LOG_ARCHIVE_CATALOG_READ_TOKEN?: string;
+  LOG_ARCHIVE_CATALOG_WRITE_TOKEN?: string;
+  LOG_ARCHIVE_CONTENT_HMAC_KEY?: string;
+  /** Private log-only master history; never expose in config or API responses. */
+  LOG_ARCHIVE_ROOT_KEYRING?: string;
+  LOG_ARCHIVE_WRITER?: import('../services/log-iceberg-runtime').LogArchiveWriteServiceBinding;
   /** Setup-generated binding identity metadata; not a user-configurable backup option. */
   AUTHRIM_FIXED_DATABASE_IDS?: string;
   // D1 Databases

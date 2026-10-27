@@ -14,23 +14,17 @@ import type { Context } from 'hono';
 import type { Env } from '../types/env';
 import type { AuditLogEntry } from '../types/admin';
 import { generateSecureRandomString } from './crypto';
-import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from './logger';
 import {
   auditTargetFromBackendConfig,
   buildAuditStorageConfigFromProfile,
-  createExternalAuditStorageAdapter,
   createAuditService,
   resolveAuditEventFailureBehavior,
-  resolveAuditPersistenceSourcesFromEnv,
-  resolveLegacyAuditLogAdapterFromEnv,
   type EventCategory,
   type EventResult,
   type EventSeverity,
   type IAuditService,
-  type IAuditStorageAdapter,
   normalizeAuditStorageRoutingTargets,
-  hasAuditStorageRoutingTargets,
   resolveAuditRoutingTargets,
   resolveAuditRetention,
   DEFAULT_PII_CONFIG,
@@ -41,13 +35,16 @@ import {
 import { resolveTenantRuntimeProfilesFromEnv } from '../services/runtime-profile-resolver';
 import { getCachedAnonymizedUserId } from '../services/audit/anonymized-user-id-cache';
 import {
-  backfillEventLogAnonymizedUserId,
   mirrorableResourceId,
   resolveAnonymizedUserIdFromEnv,
   resolveAuditClientId,
   resolveAuditSessionRef,
   resolveAuditSubjectUserId,
 } from './audit-log-subject';
+import {
+  createLogIcebergPolicySnapshotObjectStore,
+  LOG_ICEBERG_POLICY_PREFIX,
+} from '../services/log-iceberg-policy-artifacts';
 import type { AuditProfile, AuditTarget } from '../types/runtime-profile';
 import {
   RuntimeLoggingPolicySnapshotMemoryCache,
@@ -121,80 +118,15 @@ export interface LegacyAuditLogWriteInput {
   createdAt: number;
 }
 
-function createNoopAuditBucket(): R2Bucket {
-  return {
-    async put() {
-      throw new Error('audit_archive_bucket_not_configured');
-    },
-    async get() {
-      return null;
-    },
-    async head() {
-      return null;
-    },
-    async delete() {},
-    async list() {
-      return {
-        objects: [],
-        truncated: false,
-      };
-    },
-    async createMultipartUpload() {
-      throw new Error('audit_archive_bucket_not_configured');
-    },
-    async resumeMultipartUpload() {
-      throw new Error('audit_archive_bucket_not_configured');
-    },
-  } as unknown as R2Bucket;
-}
-
 function getUnifiedAuditService(env: Env): IAuditService {
-  // Keep adapters and delivery state request-local. Cloudflare request promises
-  // must never be retained by an isolate-wide service object.
-  const primaryAdapterCache = new Map<string, IAuditStorageAdapter | null>();
-  const sources = resolveAuditPersistenceSourcesFromEnv(env);
-
-  const service = createAuditService({
-    coreSource: sources.coreSource,
-    piiSource: sources.piiSource,
-    r2Bucket: env.AUDIT_ARCHIVE ?? createNoopAuditBucket(),
-    sensitiveDetailBucket: env.SENSITIVE_DETAILS,
-    objectEncryptionRootKey: env.OBJECT_ENCRYPTION_ROOT_KEY,
-    objectEncryptionKeyVersion: Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-    piiEncryptionKey: env.PII_ENCRYPTION_KEY,
-    piiEncryptionKeyVersion: Number.parseInt(env.PII_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-    auditQueue: env.AUDIT_QUEUE,
+  return createAuditService({
+    env,
     configKv: env.AUTHRIM_CONFIG,
-    logger: log.module('UNIFIED-MIRROR'),
-    resolveAuditProfile: async (tenantId: string): Promise<AuditProfile> => {
-      const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
-      return resolved.auditProfile;
-    },
+    logger: log.module('AUDIT'),
+    resolveAuditProfile: async (tenantId) =>
+      (await resolveTenantRuntimeProfilesFromEnv(env, tenantId)).auditProfile,
     resolveDeliveryPlan: async (input) => resolveAuditDeliveryPlanFromEnv(env, input),
-    resolvePrimaryAdapter: async (
-      target: AuditTarget,
-      logType: 'event' | 'pii'
-    ): Promise<IAuditStorageAdapter | null> => {
-      const cacheKey = JSON.stringify({ target, logType });
-      if (primaryAdapterCache.has(cacheKey)) {
-        return primaryAdapterCache.get(cacheKey) ?? null;
-      }
-
-      const adapter = createExternalAuditStorageAdapter(
-        env as unknown as Record<string, unknown>,
-        target,
-        logType
-      );
-      if (!adapter) {
-        primaryAdapterCache.set(cacheKey, null);
-        return null;
-      }
-      primaryAdapterCache.set(cacheKey, adapter);
-      return adapter;
-    },
   });
-
-  return service;
 }
 
 function mapLegacySeverity(severity: AuditLogEntry['severity']): EventSeverity {
@@ -283,36 +215,45 @@ function mapLegacyAuditErrorCode(
   return typeof code === 'string' && AUDIT_ERROR_CODE_PATTERN.test(code) ? code : undefined;
 }
 
-async function resolveLegacyAuditLogPolicy(
+async function resolveAuditBackpressure(
+  env: Env,
+  tenantId: string
+): Promise<NonNullable<AuditProfile['backpressure']>['mode']> {
+  try {
+    return (
+      (await resolveTenantRuntimeProfilesFromEnv(env, tenantId)).auditProfile.backpressure?.mode ??
+      'event_class'
+    );
+  } catch {
+    return 'event_class';
+  }
+}
+
+async function resolveFinalAnonymizedUserId(
   env: Env,
   tenantId: string,
-  action: string
-): Promise<{
-  writeLegacyD1: boolean;
-  backpressureMode: NonNullable<AuditProfile['backpressure']>['mode'];
-}> {
+  userId: string | undefined
+): Promise<string | undefined> {
+  if (!userId) return undefined;
+  const cached = getCachedAnonymizedUserId(tenantId, userId);
+  if (cached) return cached;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
-    const primary = resolved.auditProfile.primary;
-
-    if (!primary) {
-      return {
-        writeLegacyD1: false,
-        backpressureMode: resolved.auditProfile.backpressure?.mode ?? 'event_class',
-      };
-    }
-
-    return {
-      writeLegacyD1: primary.type === 'd1' && primary.dataset !== 'event_log',
-      backpressureMode: resolved.auditProfile.backpressure?.mode ?? 'event_class',
-    };
+    return (
+      (await Promise.race([
+        resolveAnonymizedUserIdFromEnv(env, tenantId, userId),
+        new Promise<undefined>((resolve) => {
+          timeout = setTimeout(() => resolve(undefined), 2000);
+        }),
+      ])) ?? undefined
+    );
   } catch (error) {
-    log.warn('Failed to resolve audit profile for legacy audit write; keeping D1 write enabled', {
-      action,
-      tenantId,
+    log.warn('Audit subject lookup unavailable; writing the finalized unlinked event', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
     });
-    log.error('Audit profile resolution failed', {}, error as Error);
-    return { writeLegacyD1: true, backpressureMode: 'event_class' };
+    return undefined;
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
@@ -333,8 +274,7 @@ export function getWaitUntilFromContext(
 }
 
 function getRequestIdFromContext(c: Context<{ Bindings: Env }>): string | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const contextRequestId = (c as any).get?.('requestId');
+  const contextRequestId = (c as unknown as { get(key: string): unknown }).get('requestId');
   if (typeof contextRequestId === 'string' && contextRequestId.length > 0) {
     return contextRequestId;
   }
@@ -419,7 +359,12 @@ function snapshotString(value: unknown): string | null {
 }
 
 function snapshotNumber(value: unknown, fallback: number): number {
-  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -521,7 +466,9 @@ function mapSnapshotFallback(row: unknown): LoggingFallbackPolicy | null {
     return null;
   }
   return {
-    id: snapshotString(raw.id) ?? `${raw.scope_type ?? 'platform'}:${raw.scope_id ?? 'global'}`,
+    id:
+      snapshotString(raw.id) ??
+      `${snapshotString(raw.scope_type) ?? 'platform'}:${snapshotString(raw.scope_id) ?? 'global'}`,
     scopeType: readSnapshotScopeType(raw.scope_type),
     scopeId: snapshotString(raw.scope_id) ?? 'global',
     logType,
@@ -680,7 +627,7 @@ function targetFromLoggingDestination(
       bucketRef:
         snapshotString(config.bindingRef) ??
         snapshotString(config.bucketRef) ??
-        (plane === 'archive' ? 'AUDIT_ARCHIVE' : 'SENSITIVE_DETAILS'),
+        (plane === 'archive' ? 'LOG_ARCHIVE' : 'SENSITIVE_DETAILS'),
       prefix: snapshotString(config.prefix) ?? undefined,
     };
   }
@@ -772,7 +719,8 @@ async function loadRuntimeLoggingPolicySnapshot(
           scopeType,
           scopeId,
           kv: configKv,
-          objectStore: env.DIAGNOSTIC_LOGS,
+          objectStore: createLogIcebergPolicySnapshotObjectStore(env),
+          prefix: LOG_ICEBERG_POLICY_PREFIX,
         }),
     });
     if (snapshot) {
@@ -815,7 +763,8 @@ async function loadRuntimeLoggingPolicySnapshotStrict(
       scopeType,
       scopeId,
       kv: env.AUTHRIM_CONFIG!,
-      objectStore: env.DIAGNOSTIC_LOGS,
+      objectStore: createLogIcebergPolicySnapshotObjectStore(env),
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
       strict: true,
     });
   const snapshot = (await load('tenant', tenantId)) ?? (await load('platform', 'global'));
@@ -988,9 +937,8 @@ export interface TenantAuditRetentionEntry {
   source: AuditRetentionSource;
   variesByRoute: boolean;
   /**
-   * The tenant's logs of this type are also copied to an archive (R2), as they are written or
-   * before the cleanup deletes them. Authrim deletes past-retention logs from the primary store
-   * only; what reaches an archive stays there.
+   * New logs use the configured Iceberg archive mode. Each record keeps its retention deadline;
+   * shared maintenance removes expired records while honoring pending writes and DR pins.
    */
   archived: boolean;
 }
@@ -1027,8 +975,7 @@ function routeRetentionRuleApplies(
     (conditions.region === undefined || conditions.region === '*') &&
     (narrows(conditions.clientId) || narrows(conditions.eventCategory)) &&
     matches(conditions.tenantId, tenantId) &&
-    matches(conditions.logType, logType) &&
-    hasAuditStorageRoutingTargets(normalizeAuditStorageRoutingTargets(rule.targets, rule.backend))
+    matches(conditions.logType, logType)
   );
 }
 
@@ -1078,30 +1025,15 @@ export async function resolveTenantAuditRetentionFromEnv(
     const snapshotPlan = policies
       ? snapshotAuditDeliveryPlan(policies, { tenantId, logType, auditProfile })
       : null;
-    // The cleanup copies past-retention logs to the profile's archive before deleting them.
-    const archivedBeforeDelete = Boolean(
-      auditProfile.retention?.archiveBeforeDelete && auditProfile.archive
-    );
     if (snapshotPlan) {
       return {
         ...resolveAuditRetention(auditProfile, defaults, logType),
         variesByRoute: false,
-        archived: snapshotPlan.archives.length > 0 || archivedBeforeDelete,
+        archived: true,
       };
     }
     const storageConfig = buildAuditStorageConfigFromProfile(auditProfile, { routingRules });
     const resolved = resolveAuditRoutingTargets(storageConfig, { tenantId, logType });
-    const backendById = new Map(storageConfig.backends.map((backend) => [backend.id, backend]));
-    // As the delivery plan picks archives: the profile's own, and R2 backends a rule names (a
-    // rule can name only the profile's backends, so one for some writes adds no other archive).
-    const isArchive = (backendId: string) => {
-      const backend = backendById.get(backendId);
-      return Boolean(backend && auditTargetFromBackendConfig(backend)?.type === 'r2');
-    };
-    const archived =
-      Boolean(auditProfile.archive) ||
-      archivedBeforeDelete ||
-      resolved.archiveStores.some(isArchive);
     const override =
       logType === 'event'
         ? resolved.retention.eventLogRetentionDays
@@ -1111,7 +1043,7 @@ export async function resolveTenantAuditRetentionFromEnv(
       variesByRoute: routingRules.some((rule) =>
         routeRetentionRuleApplies(rule, tenantId, logType)
       ),
-      archived,
+      archived: true,
     };
   };
   const [event, pii] = await Promise.all([resolve('event'), resolve('pii')]);
@@ -1170,59 +1102,34 @@ async function mirrorLegacyAuditLogToUnifiedService(
   });
 }
 
-/**
- * Keep `promise` (which handles its own errors) alive after the response when the caller gave a
- * waitUntil; it is never awaited here, and without a waitUntil it runs detached.
- */
-function runAfterResponse(
-  waitUntil: CreateAuditLogOptions['waitUntil'],
-  promise: Promise<unknown>
-): void {
-  waitUntil?.(promise);
-}
-
 export async function writeLegacyAuditLog(
-  adapter: DatabaseAdapter,
+  env: Env,
   entry: LegacyAuditLogWriteInput
 ): Promise<void> {
-  await adapter.execute(
-    `INSERT INTO audit_log (
-      id, tenant_id, user_id, action, resource_type, resource_id,
-      ip_address, user_agent, metadata_json, severity, created_at
-    ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      WHERE NOT EXISTS (SELECT 1 FROM audit_log WHERE id = ?)`,
-    [
-      entry.id,
-      entry.tenantId,
-      entry.userId ?? null,
-      entry.action,
-      entry.resource,
-      entry.resourceId ?? null,
-      entry.ipAddress ?? null,
-      entry.userAgent ?? null,
-      entry.metadata,
-      entry.severity,
-      entry.createdAt,
-      entry.id,
-    ]
-  );
+  await createAuditLog(env, {
+    ...entry,
+    userId: entry.userId ?? 'system',
+    resourceId: entry.resourceId ?? '',
+    ipAddress: entry.ipAddress ?? '',
+    userAgent: entry.userAgent ?? '',
+    metadata: entry.metadata,
+    createdAt: entry.createdAt,
+    tenantId: entry.tenantId,
+  });
 }
 
 /**
- * Create an audit log entry in the database
+ * Create one immutable canonical audit event
  *
  * This function is non-blocking - if the audit log creation fails,
  * it will log the error but not throw, allowing the main operation to continue.
  *
- * The event_log mirror records the entry's user as anonymized_user_id. That mapping is in the
- * user's PII store, which the request never waits on: a cached ID is written with the event;
- * otherwise the event is written without it, and the mapping is read or created after the
- * response (options.waitUntil) and the ID added to the event's Core row. Archive and sink copies
- * sent with the event carry the ID only when it was cached.
+ * The subject is resolved before emission with a bounded lookup. The resulting immutable
+ * event carries that ID or is permanently unlinked; no later body update is scheduled.
  *
  * @param env - Cloudflare Workers environment bindings
  * @param entry - Audit log entry data (createdAt and an omitted id will be generated)
- * @param options - The request's waitUntil, for the work done after the response
+ * @param _options - Request lifecycle options; storage acceptance is awaited
  */
 export async function createAuditLog(
   env: Env,
@@ -1232,7 +1139,7 @@ export async function createAuditLog(
     createdAt?: number;
     requireDurableFanout?: boolean;
   },
-  options: CreateAuditLogOptions = {}
+  _options: CreateAuditLogOptions = {}
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
@@ -1247,109 +1154,27 @@ export async function createAuditLog(
   if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) {
     throw new AuditLogDeliveryError('audit_log_created_at_invalid', entry.action, tenantId);
   }
-  // The legacy audit_log schema stores seconds; the unified service stores milliseconds.
-  const createdAt = Math.floor(createdAtMs / 1000);
-  let failureBehavior: ReturnType<typeof resolveAuditEventFailureBehavior>['behavior'] =
-    'fail_closed_or_strong_retry';
-  let legacyD1WasPrimary = true;
-
-  try {
-    const legacyPolicy = await resolveLegacyAuditLogPolicy(env, tenantId, entry.action);
-    legacyD1WasPrimary = legacyPolicy.writeLegacyD1;
-    const classification = resolveAuditEventFailureBehavior(
-      entry.action,
-      legacyPolicy.backpressureMode
-    );
-    failureBehavior = classification.behavior;
-
-    if (!legacyPolicy.writeLegacyD1) {
-      log.debug('Skipping legacy D1 audit_log write for non-D1 audit profile', {
-        action: entry.action,
-        tenantId,
-        auditCategory: classification.category,
-        auditFailureBehavior: classification.behavior,
-      });
-    } else {
-      log.info('createAuditLog: Starting INSERT', {
-        id,
-        action: entry.action,
-        tenantId,
-        createdAt,
-        auditCategory: classification.category,
-        auditFailureBehavior: classification.behavior,
-      });
-
-      const coreAdapter: DatabaseAdapter = resolveLegacyAuditLogAdapterFromEnv(env);
-      await writeLegacyAuditLog(coreAdapter, {
-        id,
-        tenantId,
-        userId: entry.userId,
-        action: entry.action,
-        resource: entry.resource,
-        resourceId: entry.resourceId,
-        ipAddress: entry.ipAddress,
-        userAgent: entry.userAgent,
-        metadata: entry.metadata,
-        severity: entry.severity,
-        createdAt,
-      });
-
-      log.info('createAuditLog: INSERT completed successfully', { id, action: entry.action });
-    }
-  } catch (error) {
-    // PII Protection: Don't log entry details (may contain PII in metadata)
-    log.error('Failed to create audit log', {}, error as Error);
-    if (failureBehavior === 'fail_closed_or_strong_retry') {
-      throw new AuditLogDeliveryError('audit_log_write_failed', entry.action, tenantId);
-    }
-  }
-
-  const mirrored: MirroredAuditLogEntry = { ...entry, id, tenantId, createdAt: createdAtMs };
+  const failureBehavior = resolveAuditEventFailureBehavior(
+    entry.action,
+    await resolveAuditBackpressure(env, tenantId)
+  ).behavior;
+  const finalized: MirroredAuditLogEntry = { ...entry, id, tenantId, createdAt: createdAtMs };
   const metadata = parseLegacyMetadata(entry.metadata);
   const subjectUserId = resolveAuditSubjectUserId(entry, metadata);
-  const cachedAnonymizedUserId = subjectUserId
-    ? getCachedAnonymizedUserId(tenantId, subjectUserId)
-    : undefined;
-  let mirrorWritten = false;
+  const anonymizedUserId = await resolveFinalAnonymizedUserId(env, tenantId, subjectUserId);
   try {
     await mirrorLegacyAuditLogToUnifiedService(
       env,
-      mirrored,
+      finalized,
       metadata,
       subjectUserId,
-      cachedAnonymizedUserId
+      anonymizedUserId
     );
-    mirrorWritten = true;
   } catch (error) {
-    log.warn('Failed to mirror audit log to unified audit service', {
-      action: entry.action,
-      tenantId,
-    });
-    log.error('Unified audit mirror failed', {}, error as Error);
-    if (
-      entry.requireDurableFanout ||
-      (failureBehavior === 'fail_closed_or_strong_retry' && !legacyD1WasPrimary)
-    ) {
-      throw new AuditLogDeliveryError('audit_log_unified_mirror_failed', entry.action, tenantId);
+    log.error('Failed to persist canonical audit event', {}, error as Error);
+    if (entry.requireDurableFanout || failureBehavior === 'fail_closed_or_strong_retry') {
+      throw new AuditLogDeliveryError('audit_log_write_failed', entry.action, tenantId);
     }
-  }
-  if (mirrorWritten && subjectUserId && !cachedAnonymizedUserId) {
-    runAfterResponse(
-      options.waitUntil,
-      resolveAnonymizedUserIdFromEnv(env, tenantId, subjectUserId)
-        .then((anonymizedUserId) =>
-          anonymizedUserId
-            ? backfillEventLogAnonymizedUserId(env, tenantId, id, anonymizedUserId)
-            : undefined
-        )
-        .catch((error: unknown) => {
-          log.warn('Failed to add the anonymized user id to the event_log row', {
-            action: entry.action,
-            tenantId,
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-        })
-    );
   }
 
   // Log critical operations to console for immediate visibility
@@ -1397,8 +1222,9 @@ export async function createAuditLogFromContext(
   log.info('Creating audit log from context', { action, resource });
 
   // Get admin auth context (set by adminAuthMiddleware)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
+  const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
+    | { userId: string }
+    | undefined;
   if (!adminAuth) {
     log.error('Cannot create audit log: adminAuth context not found', {
       action,
@@ -1413,8 +1239,10 @@ export async function createAuditLogFromContext(
   log.info('Admin auth found', { userId: adminAuth.userId, action });
 
   // Get tenantId from request context (set by requestContextMiddleware)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tenantId = requireAuditTenantId((c as any).get('tenantId') as string | undefined, action);
+  const tenantId = requireAuditTenantId(
+    (c as unknown as { get(key: string): unknown }).get('tenantId') as string | undefined,
+    action
+  );
   if (!tenantId) {
     if (isFailClosedAuditAction(action)) {
       throw new AuditLogDeliveryError('audit_log_tenant_id_required', action, 'unknown');

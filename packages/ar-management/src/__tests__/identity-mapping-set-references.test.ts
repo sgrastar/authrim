@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import {
   adminAuthMiddleware,
   PLATFORM_MAPPING_TENANT_ID,
@@ -109,6 +110,7 @@ function setup() {
   };
   const settings = kvStore();
 
+  const { DB_ADMIN: _loggingAdmin, ...loggingEnv } = logging.env;
   const context = setupApp(
     (app) => {
       app.use('*', async (c, next) => {
@@ -142,6 +144,7 @@ function setup() {
       app.route('/api/admin', settingsV2);
     },
     {
+      ...loggingEnv,
       DB: countingDirectory,
       SETTINGS: settings.namespace,
       AUTHRIM_CONFIG: settings.namespace,
@@ -284,7 +287,10 @@ const activeActivations = (t: ReturnType<typeof setup>, setId: string) =>
     `SELECT COUNT(*) AS n FROM field_mapping_activations WHERE field_mapping_set_id = '${setId}' AND lifecycle_state = 'active'`
   );
 
-beforeEach(() => {
+let logging: Awaited<ReturnType<typeof logProducerFixture>>;
+afterEach(() => logging?.close());
+beforeEach(async () => {
+  logging = await logProducerFixture('scheduled');
   idempotency = 0;
   vi.mocked(resolveAuthCorePersistenceAdapterFromEnv).mockClear();
 });

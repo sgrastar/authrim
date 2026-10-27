@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from './admin-agent-audit-writer';
 import {
   AdminAgentAccessRepository,
   AgentBaselineRepository,
@@ -132,8 +133,14 @@ const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAg
     getEnvironmentName: (env) => env.AUTHRIM_ENVIRONMENT_NAME,
     createDependencies(env, _getCurrentRequest, discoveryProfiles) {
       const database = requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-worker');
-      const repository = new AdminAgentAccessRepository(database);
-      const configurationRepository = new AgentConfigurationRepository(database);
+      const repository = new AdminAgentAccessRepository(
+        database,
+        createCloudflareAdminAgentAuditWriter(env)
+      );
+      const configurationRepository = new AgentConfigurationRepository(
+        database,
+        createCloudflareAdminAgentAuditWriter(env)
+      );
       const machineRepository = new AdminMachineAccessRepository(
         requireDedicatedAdminDatabaseAdapter(env, 'agent-access-machine-principal')
       );
@@ -218,7 +225,8 @@ const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAg
           settings,
           schemaValidator,
           (tenantIds) => resolveActiveBulkTenantIds(env, tenantIds),
-          () => Date.now()
+          () => Date.now(),
+          createCloudflareAdminAgentAuditWriter(env)
         ),
         runtimeDiagnostics: new CloudflareAgentRuntimeDiagnostics(
           env.OP_DISCOVERY,
@@ -255,7 +263,8 @@ const mcp = createCloudflareAgentAccessMcpWorker<CloudflareAgentAccessWorkerEnv>
       getAdmissionAudit(env) {
         return new CloudflareAgentMcpAdmissionAuditAdapter(
           new AdminAgentAccessRepository(
-            requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-admission-audit')
+            requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-admission-audit'),
+            createCloudflareAdminAgentAuditWriter(env)
           )
         );
       },
@@ -291,7 +300,8 @@ const mcp = createCloudflareAgentAccessMcpWorker<CloudflareAgentAccessWorkerEnv>
 
 function bulkCoordinator(env: CloudflareAgentAccessWorkerEnv): CloudflareAgentBulkCoordinator {
   const repository = new AgentBulkRepository(
-    requireDedicatedAdminDatabaseAdapter(env, 'agent-bulk-coordinator')
+    requireDedicatedAdminDatabaseAdapter(env, 'agent-bulk-coordinator'),
+    createCloudflareAdminAgentAuditWriter(env)
   );
   return new CloudflareAgentBulkCoordinator(
     repository,
@@ -310,8 +320,8 @@ function baselineRemediationCoordinator(
 ): CloudflareAgentBaselineRemediationCoordinator {
   const database = requireDedicatedAdminDatabaseAdapter(env, 'agent-baseline-remediation');
   return new CloudflareAgentBaselineRemediationCoordinator(
-    new AgentBaselineRepository(database),
-    new AgentBulkRepository(database),
+    new AgentBaselineRepository(database, createCloudflareAdminAgentAuditWriter(env)),
+    new AgentBulkRepository(database, createCloudflareAdminAgentAuditWriter(env)),
     new CloudflareAgentSettingsProvider(env),
     { now: () => Date.now() },
     new CloudflareTenantConfigurationReader(env)

@@ -335,7 +335,7 @@ describe('Cloudflare R2 helpers', () => {
     );
   });
 
-  it('preserves the provider cause when baseline R2 provisioning fails', async () => {
+  it('rejects missing log mode before baseline R2 provisioning can start', async () => {
     delete process.env.CLOUDFLARE_API_TOKEN;
     delete process.env.CLOUDFLARE_ACCOUNT_ID;
     execaMock
@@ -366,11 +366,8 @@ describe('Cloudflare R2 helpers', () => {
     }
 
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toBe(
-      'Failed to provision baseline R2 migration release bucket'
-    );
-    expect((failure as Error).cause).toBeInstanceOf(Error);
-    expect(((failure as Error).cause as Error).message).toContain('missing R2 permission');
+    expect((failure as Error).message).toBe('log_archive_mode_required');
+    expect(execaMock).not.toHaveBeenCalled();
   });
 
   it('lists R2 objects through the REST API with prefix and cursor pagination', async () => {
@@ -1440,12 +1437,8 @@ describe('Cloudflare R2 helpers', () => {
       });
 
       const checkpointStates: string[] = [];
-      const resources = await provisionResources({
-        env: 'prod',
-        createD1: false,
-        createKV: false,
-        createQueues: false,
-        createR2: false,
+      const r2 = await provisionR2Buckets('prod', {
+        includeFeatureBuckets: false,
         provisioningIntentResources: attempt.intent.resources,
         onProgress: () => undefined,
         onResourceCreateIssued: (resource) =>
@@ -1481,6 +1474,7 @@ describe('Cloudflare R2 helpers', () => {
           });
         },
       });
+      const resources = { d1: [], kv: [], queues: [], r2 };
       const intent = await loadProvisioningIntent({ baseDir, environment: 'prod' });
       const lock = createLockFile('prod', resources);
       const bucket = resources.r2[0]!;
@@ -1872,8 +1866,8 @@ describe('Cloudflare R2 helpers', () => {
     const status = buildR2BucketProvisioningStatus(
       'prod',
       {
-        DIAGNOSTIC_LOGS: {
-          name: 'prod-diagnostic-logs',
+        PLUGIN_BUNDLES: {
+          name: 'prod-plugin-bundles',
           creationDate: '2026-05-18T00:00:00.000Z',
           ownershipMarkerKey: `__authrim_setup__/ownership-v1-${ownershipId}.json`,
           ownershipId,
@@ -1887,8 +1881,8 @@ describe('Cloudflare R2 helpers', () => {
     expect(status.missing).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          binding: 'DIAGNOSTIC_LOGS',
-          name: 'prod-diagnostic-logs',
+          binding: 'PLUGIN_BUNDLES',
+          name: 'prod-plugin-bundles',
           recorded: true,
           exists: false,
           configured: false,
@@ -1915,8 +1909,6 @@ describe('Cloudflare R2 helpers', () => {
         MIGRATION_RELEASES: exact('prod-migration-releases', 1),
         PLUGIN_BUNDLES: exact('prod-plugin-bundles', 2),
         PUBLIC_ASSETS: exact('prod-public-assets', 3),
-        DIAGNOSTIC_LOGS: exact('prod-diagnostic-logs', 4),
-        AUDIT_ARCHIVE: exact('prod-audit-archive', 5),
         IMPORT_ARTIFACTS: exact('prod-import-artifacts', 6),
         EXPORT_ARTIFACTS: exact('prod-export-artifacts', 7),
         SENSITIVE_DETAILS: exact('prod-sensitive-details', 8),
@@ -1925,8 +1917,6 @@ describe('Cloudflare R2 helpers', () => {
         { name: 'prod-migration-releases', creationDate },
         { name: 'prod-plugin-bundles', creationDate },
         { name: 'prod-public-assets', creationDate },
-        { name: 'prod-diagnostic-logs', creationDate },
-        { name: 'prod-audit-archive', creationDate },
         { name: 'prod-import-artifacts', creationDate },
         { name: 'prod-export-artifacts', creationDate },
         { name: 'prod-sensitive-details', creationDate },
@@ -1934,8 +1924,8 @@ describe('Cloudflare R2 helpers', () => {
     );
 
     expect(status.enabled).toBe(true);
-    expect(status.required).toBe(8);
-    expect(status.configured).toBe(8);
+    expect(status.required).toBe(6);
+    expect(status.configured).toBe(6);
     expect(status.missing).toEqual([]);
     expect(status.buckets.every((bucket) => bucket.state === 'configured')).toBe(true);
   });

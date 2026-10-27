@@ -33,9 +33,9 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_disabled: 'ログは無効です。',
 	admin_diagnostic_logging_loading: '読み込み中...',
 	admin_diagnostic_logging_saving: '保存中...',
-	admin_diagnostic_logging_r2_output: 'R2出力',
+	admin_diagnostic_logging_r2_output: 'ログの保存',
 	admin_diagnostic_logging_r2_output_desc:
-		'有効にするとログはexport用にR2へ保存されます。無効の場合、ログはconsoleにのみ出力され、export結果は空になります。',
+		'診断ログを有効にすると、Setupで選んだ保存方式に従って保存します。PipelineではIcebergへ直接送信し、表示まで数分かかる場合があります。ScheduledではIcebergへの出力を確認するまでDBに保存します。',
 	admin_diagnostic_logging_r2_toggle_label: 'ログをR2へ保存',
 	admin_diagnostic_logging_r2_enabled: 'R2出力は有効です。',
 	admin_diagnostic_logging_r2_disabled: 'R2出力は無効です。',
@@ -115,8 +115,9 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_inherit_default: 'defaultを継承',
 	admin_diagnostic_logging_clear_overrides: 'Overridesをクリア',
 	admin_diagnostic_logging_save_storage_modes: 'Storage Modesを保存',
-	admin_diagnostic_logging_storage_connection: 'Storage接続',
-	admin_diagnostic_logging_storage_connection_desc: '大量exportの前にR2接続を確認します。',
+	admin_diagnostic_logging_storage_connection: 'ログ保存先の接続',
+	admin_diagnostic_logging_storage_connection_desc:
+		'エクスポートする前に、設定済みのIcebergへの読取り接続を確認します。保存方式と認証情報はSetupで管理します。',
 	admin_diagnostic_logging_storage_destination: 'Storage destination',
 	admin_diagnostic_logging_use_runtime_binding: '下のruntime binding項目を使用',
 	admin_diagnostic_logging_r2_binding: 'R2 binding',

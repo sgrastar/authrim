@@ -1,5 +1,7 @@
 import type { DatabaseAdapter, PreparedStatement } from '../db/adapter';
 import { sanitizeObject } from '../utils/security';
+import { prepareLogIcebergRowWrite } from './log-iceberg-emitter';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
 
 export type IdentityMappingLevelHistoryDatabase = Pick<
   DatabaseAdapter,
@@ -61,6 +63,54 @@ export interface IdentityMappingLevelHistoryReceipt {
   after: IdentityMappingLevelHistoryChoice;
   expectedSourceVersion: string;
   sourceVersion: string;
+}
+
+/** The immutable browsing event is separate from the CAS/receipt business ledger. */
+export function prepareIdentityMappingLevelHistoryLog(
+  env: LogIcebergRuntimeEnv,
+  admin: DatabaseAdapter,
+  row: IdentityMappingLevelHistoryRow
+) {
+  return prepareLogIcebergRowWrite(
+    env,
+    admin,
+    {
+      tenantId: row.tenant_id,
+      sourceDataset: 'admin.identity_mapping_level_history',
+      logType: 'admin_audit',
+      eventAt: row.created_at,
+      expiresAt: null,
+      overview: {
+        action: 'identity_mapping.level.changed',
+        subject_id: row.actor_id,
+        resource_id: row.client_id,
+      },
+      row: {
+        id: row.id,
+        tenant_id: row.tenant_id,
+        tier: row.tier,
+        client_id: row.client_id,
+        before_json: row.before_json,
+        after_json: row.after_json,
+        actor_id: row.actor_id,
+        actor_type: row.actor_type,
+        via: row.via,
+        bulk_id: row.bulk_id,
+        source_version: row.source_version,
+        status: 'committed',
+        created_at: row.created_at,
+        // Reconciliation/acknowledgement times remain mutable business state, not log identity.
+        updated_at: row.created_at,
+        committed_at: row.created_at,
+        last_reconciled_at: 0,
+        receipt_acknowledged_at: null,
+      },
+    },
+    {
+      where: `EXISTS(SELECT 1 FROM identity_mapping_level_history WHERE tenant_id=? AND id=? AND status='committed' AND source_version=? AND created_at=?)`,
+      params: [row.tenant_id, row.id, row.source_version, row.created_at],
+    }
+  );
 }
 
 function timestamp(now = Date.now()): number {
@@ -205,18 +255,30 @@ export async function prepareIdentityMappingLevelHistory(
 }
 
 export async function commitIdentityMappingLevelHistory(
-  admin: IdentityMappingLevelHistoryDatabase,
+  env: LogIcebergRuntimeEnv,
+  admin: DatabaseAdapter,
   id: string,
   tenantId: string,
   options: { sourceVersion?: string; now?: number } = {}
 ): Promise<void> {
   const now = timestamp(options.now);
-  await admin.execute(
-    `UPDATE identity_mapping_level_history SET status='committed',source_version=COALESCE(?,source_version),
+  const existing = await readIdentityMappingLevelHistory(admin, tenantId, id);
+  if (!existing || existing.status === 'aborted')
+    throw new Error('identity_mapping_history_unavailable');
+  const prepared = await prepareIdentityMappingLevelHistoryLog(env, admin, {
+    ...existing,
+    source_version: options.sourceVersion ?? existing.source_version,
+    status: 'committed',
+  });
+  await admin.batch([
+    {
+      sql: `UPDATE identity_mapping_level_history SET status='committed',source_version=COALESCE(?,source_version),
        updated_at=max(updated_at,?),committed_at=max(created_at,?)
      WHERE tenant_id=? AND id=? AND status='pending'`,
-    [options.sourceVersion ?? null, now, now, tenantId, id]
-  );
+      params: [options.sourceVersion ?? null, now, now, tenantId, id],
+    },
+    ...prepared.statements,
+  ]);
   const row = await readIdentityMappingLevelHistory(admin, tenantId, id);
   if (
     row?.status !== 'committed' ||
@@ -224,11 +286,13 @@ export async function commitIdentityMappingLevelHistory(
   ) {
     throw new Error('identity_mapping_history_unavailable');
   }
+  await prepared.dispatch();
 }
 
 /** Positive source-side evidence, never the current client value, confirms the prepared history. */
 export async function finalizeIdentityMappingLevelHistoryFromReceipt(
-  admin: IdentityMappingLevelHistoryDatabase,
+  env: LogIcebergRuntimeEnv,
+  admin: DatabaseAdapter,
   receipt: IdentityMappingLevelHistoryReceipt,
   now?: number
 ): Promise<IdentityMappingLevelHistoryRow> {
@@ -253,7 +317,7 @@ export async function finalizeIdentityMappingLevelHistoryFromReceipt(
   ) {
     throw new Error('identity_mapping_history_receipt_mismatch');
   }
-  await commitIdentityMappingLevelHistory(admin, receipt.historyId, receipt.tenantId, {
+  await commitIdentityMappingLevelHistory(env, admin, receipt.historyId, receipt.tenantId, {
     sourceVersion: receipt.sourceVersion,
     now,
   });

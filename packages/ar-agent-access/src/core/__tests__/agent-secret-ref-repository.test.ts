@@ -1,3 +1,4 @@
+import { recordingAdminAgentAuditWriter } from './helpers/admin-audit-writer';
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
 import { AgentConfigurationRepository } from '../repositories/agent-configuration-repository';
@@ -5,7 +6,10 @@ import { AgentConfigurationRepository } from '../repositories/agent-configuratio
 describe('Agent secret reference repository', () => {
   it('derives expired list status at read time without adding a lifecycle transition', async () => {
     const query = vi.fn().mockResolvedValue([]);
-    const repository = new AgentConfigurationRepository({ query } as unknown as DatabaseAdapter);
+    const repository = new AgentConfigurationRepository(
+      { query } as unknown as DatabaseAdapter,
+      recordingAdminAgentAuditWriter
+    );
     await repository.listSecretRefs('tenant-1', 5_000);
     expect(query).toHaveBeenCalledWith(expect.stringContaining("THEN 'expired'"), [
       5_000,
@@ -30,7 +34,10 @@ describe('Agent secret reference repository', () => {
         revoked_by: null,
       },
     ]);
-    const repository = new AgentConfigurationRepository({ query } as unknown as DatabaseAdapter);
+    const repository = new AgentConfigurationRepository(
+      { query } as unknown as DatabaseAdapter,
+      recordingAdminAgentAuditWriter
+    );
     await expect(
       repository.resolveActiveSecretRef({
         tenantId: 'tenant-1',
@@ -53,7 +60,10 @@ describe('Agent secret reference repository', () => {
 
   it('revokes and writes audit evidence in one guarded DatabaseAdapter batch', async () => {
     const batch = vi.fn().mockResolvedValue([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
-    const repository = new AgentConfigurationRepository({ batch } as unknown as DatabaseAdapter);
+    const repository = new AgentConfigurationRepository(
+      { batch } as unknown as DatabaseAdapter,
+      recordingAdminAgentAuditWriter
+    );
     await expect(
       repository.revokeSecretRef({
         tenantId: 'tenant-1',

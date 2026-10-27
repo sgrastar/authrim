@@ -6,7 +6,7 @@ import type { AdminAuthContext, DatabaseAdapter, Env } from '@authrim/ar-lib-cor
 import {
   ADMIN_PERMISSIONS,
   loadInvestigationSubjectHmacKeysFromEnv,
-  recordSignInAttemptFailure,
+  computeInvestigationSubjectHash,
   SIGN_IN_ATTEMPT_METHODS,
   SIGN_IN_ATTEMPT_REASON_CODES,
 } from '@authrim/ar-lib-core';
@@ -58,6 +58,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
+const logRows = vi.hoisted(() => [] as Array<Record<string, string | number | null>>);
+const readLogs = vi.hoisted(() => vi.fn());
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-read', () => ({
+  readLogIcebergDataset: readLogs,
+}));
+
 const audit = vi.hoisted(() => vi.fn());
 vi.mock('../admin-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../admin-shared')>()),
@@ -102,18 +108,22 @@ async function seedAttempts(
            'login-ui', 'active', 'authentication', 'contract', 'sig', ?, ?, ?)`
       )
       .run(interactionId, tenantId, NOW_SECONDS + 600, NOW_SECONDS, NOW_SECONDS);
-    await recordSignInAttemptFailure(
-      store.adapter,
-      keys,
-      {
-        tenantId,
-        interactionId,
-        method: attempt.method,
-        reasonCode: attempt.reasonCode,
-        userId: attempt.userId ?? null,
-      },
-      attempt.at
-    );
+    logRows.push({
+      id: `attempt-${logRows.length}`,
+      tenant_id: tenantId,
+      event_type: 'flow.sign_in_attempt.failed',
+      user_id: null,
+      interaction_id: interactionId,
+      node_id: 'authentication',
+      method: attempt.method,
+      reason_code: attempt.reasonCode,
+      inquiry_number: 'FIXTUREINQUIRY',
+      created_at: attempt.at,
+      subject_hash:
+        keys && attempt.userId
+          ? await computeInvestigationSubjectHash(keys.writeKey, tenantId, attempt.userId)
+          : null,
+    });
   }
 }
 
@@ -352,6 +362,13 @@ describe('status-only investigation read', () => {
   let core: DatabaseAdapter;
 
   beforeEach(() => {
+    logRows.length = 0;
+    readLogs.mockImplementation(async (_env: unknown, scope: { tenantId: string }) => ({
+      rows: logRows.filter((row) => row.tenant_id === scope.tenantId),
+      hasArchive: true,
+      consistency: 'snapshot',
+      pendingDeliveries: 0,
+    }));
     tripwire.touched = [];
     tripwire.routedCore = null;
     tripwire.routeError = null;
@@ -634,14 +651,10 @@ describe('status-only investigation read', () => {
       ],
     });
     // A row of another tenant is never listed, even one carrying this tenant's hash.
-    store.db
-      .prepare(
-        `UPDATE flow_audit_events SET subject_hash = (
-            SELECT subject_hash FROM flow_audit_events
-             WHERE tenant_id = ? AND subject_hash IS NOT NULL LIMIT 1)
-          WHERE tenant_id = 'tenant-b'`
-      )
-      .run(TENANT);
+    for (const row of logRows)
+      if (row.tenant_id === 'tenant-b')
+        row.subject_hash =
+          logRows.find((row) => row.tenant_id === TENANT && row.subject_hash)?.subject_hash ?? null;
     const again = await (
       await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
     ).json<{ recent_attempts: { items: unknown[] } }>();
@@ -667,13 +680,12 @@ describe('status-only investigation read', () => {
     await seedAttempts(store, [
       { userId: USER, method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS },
     ]);
-    store.db
-      .prepare(
-        `UPDATE flow_audit_events
-            SET method = 'password', reason_code = 'denied for Taro Yamada', node_id = 'Taro-Yamada'
-          WHERE event_type = 'flow.sign_in_attempt.failed'`
-      )
-      .run();
+    for (const row of logRows)
+      Object.assign(row, {
+        method: 'password',
+        reason_code: 'denied for Taro Yamada',
+        node_id: 'Taro-Yamada',
+      });
     const text = await (
       await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
     ).text();
@@ -734,12 +746,8 @@ describe('status-only investigation read', () => {
       })),
     ]);
     // Every later record carries a different value outside the vocabulary.
-    store.db
-      .prepare(
-        `UPDATE flow_audit_events SET reason_code = 'unknown-' || rowid
-          WHERE event_type = 'flow.sign_in_attempt.failed' AND method = 'totp'`
-      )
-      .run();
+    for (const [index, row] of logRows.entries())
+      if (row.method === 'totp') row.reason_code = `unknown-${index}`;
     const body = await (
       await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
     ).json<{
@@ -766,12 +774,7 @@ describe('status-only investigation read', () => {
       { userId: USER, method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS - 2 },
       { userId: USER, method: 'totp', reasonCode: 'invalid_code', at: NOW_SECONDS - 1 },
     ]);
-    store.db
-      .prepare(
-        `UPDATE flow_audit_events SET reason_code = 'denied for Taro ' || rowid
-          WHERE event_type = 'flow.sign_in_attempt.failed'`
-      )
-      .run();
+    for (const [index, row] of logRows.entries()) row.reason_code = `denied for Taro ${index}`;
     const text = await (
       await harness({ permissions: permissionsFor('users'), core })(`user:${USER}`)
     ).text();
@@ -815,7 +818,7 @@ describe('status-only investigation read', () => {
       metadata = guarded(openCoreStore(TENANT).adapter, metadataStatements);
     });
 
-    it("reads attempts from the tenant's Flow database, the status from the account's", async () => {
+    it("reads attempts from the log snapshot and the status from the account's Core database", async () => {
       tripwire.routedCore = core;
       const flow = openCoreStore(TENANT);
       await seedAttempts(flow, [
@@ -838,9 +841,12 @@ describe('status-only investigation read', () => {
         route,
       })(`user:${USER}`);
       expect(response.status).toBe(200);
-      // The tenant's database is read for the attempts recorded with Flow interactions only.
-      expect(metadataStatements).toHaveLength(2);
-      for (const sql of metadataStatements) expect(sql).toMatch(/FROM flow_audit_events/u);
+      // Log bodies are queried only in Worker memory; metadata SQL never reads the retired log table.
+      expect(metadataStatements).toHaveLength(0);
+      expect(readLogs).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sourceDataset: 'core.flow_audit_events', tenantId: TENANT })
+      );
       expect(tripwire.touched).toEqual([]);
     });
 

@@ -1,3 +1,6 @@
+import { emitLogIcebergRow } from './log-iceberg-emitter';
+import { resolveLogIcebergConfig } from './log-iceberg-config';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
 import type { Queue } from '@cloudflare/workers-types';
 import {
   createLoggingId,
@@ -7,11 +10,6 @@ import {
 } from '@authrim/ar-lib-logging/contract';
 import { buildArchiveLogRecordV1 } from '@authrim/ar-lib-logging/archive';
 import {
-  writeLogChunkToR2,
-  type LogChunkEncryptionOptions,
-  type WriteLogChunkResult,
-} from '@authrim/ar-lib-logging/chunks';
-import {
   SqlLoggingDeliveryEventStore,
   type LoggingDeliveryLane,
   type LoggingDeliveryQueuePayload,
@@ -19,7 +17,6 @@ import {
 } from '@authrim/ar-lib-logging/delivery';
 import { laneForLogPolicy } from '@authrim/ar-lib-logging/policies';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
-import { SqlLogChunkCatalogStore } from './audit/logging-catalog-store';
 import { resolveAuditTenantKey, type TenantKeyResolver } from './audit/tenant-key';
 import { encryptObjectArtifact } from './object-artifact-crypto';
 import {
@@ -28,13 +25,11 @@ import {
   type RuntimeLoggingPolicyResolution,
 } from './logging-runtime-policy';
 
-export interface RuntimeLogEmitterEnv {
+export interface RuntimeLogEmitterEnv extends LogIcebergRuntimeEnv {
   DB_ADMIN?: DatabaseSource | null;
   LOGGING_INDEX_DB?: DatabaseSource | null;
   AUTHRIM_CONFIG?: KVNamespace;
-  DIAGNOSTIC_LOGS?: R2Bucket;
   SENSITIVE_DETAILS?: R2Bucket;
-  AUDIT_ARCHIVE?: R2Bucket;
   LOGGING_DELIVERY_CRITICAL_QUEUE?: Queue<unknown>;
   LOGGING_DELIVERY_QUEUE?: Queue<unknown>;
   LOGGING_DELIVERY_BULK_QUEUE?: Queue<unknown>;
@@ -46,6 +41,7 @@ export interface RuntimeLogEmitterEnv {
 export interface RuntimeLogRecord {
   id: string;
   eventAt: number;
+  expiresAt?: number | null;
   type?: string;
   source?: string;
   severity?: 'debug' | 'info' | 'warn' | 'error' | 'critical';
@@ -58,76 +54,13 @@ export interface RuntimeLogRecord {
 
 type RuntimeLogSeverity = NonNullable<RuntimeLogRecord['severity']>;
 
-function hexToBytes(hex: string): Uint8Array {
-  const normalized = hex.trim();
-  if (!/^[0-9a-fA-F]{64}$/u.test(normalized)) {
-    throw new Error('object_encryption_root_key_must_be_32_bytes_hex');
-  }
-  const bytes = new Uint8Array(normalized.length / 2);
-  for (let index = 0; index < normalized.length; index += 2) {
-    bytes[index / 2] = Number.parseInt(normalized.slice(index, index + 2), 16);
-  }
-  return bytes;
-}
-
-async function deriveRuntimeLogChunkEncryptionKey(input: {
-  rootKeyHex: string;
-  tenantKey: string;
-  logType: LogType;
-  plane: LogPlane;
-  keyVersion: number;
-}): Promise<Uint8Array> {
-  const material = await crypto.subtle.importKey(
-    'raw',
-    hexToBytes(input.rootKeyHex),
-    'HKDF',
-    false,
-    ['deriveBits']
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new TextEncoder().encode('authrim-log-chunk-archive-encryption'),
-      info: new TextEncoder().encode(
-        `${input.tenantKey}:${input.logType}:${input.plane}:v${input.keyVersion}`
-      ),
-    },
-    material,
-    256
-  );
-  return new Uint8Array(bits);
-}
-
-async function resolveRuntimeLogChunkEncryption(input: {
-  env: RuntimeLogEmitterEnv;
-  tenantKey: string;
-  logType: LogType;
-  plane: LogPlane;
-}): Promise<LogChunkEncryptionOptions> {
-  if (!input.env.OBJECT_ENCRYPTION_ROOT_KEY) {
-    throw new Error('runtime_log_chunk_encryption_root_key_unavailable');
-  }
-  const keyVersion = Number.parseInt(input.env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1', 10);
-  const normalizedKeyVersion = Number.isFinite(keyVersion) && keyVersion > 0 ? keyVersion : 1;
-  return {
-    keyBytes: await deriveRuntimeLogChunkEncryptionKey({
-      rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
-      tenantKey: input.tenantKey,
-      logType: input.logType,
-      plane: input.plane,
-      keyVersion: normalizedKeyVersion,
-    }),
-    encryptionScope: `tenant:${input.tenantKey}:${input.logType}:${input.plane}`,
-    keyVersion: normalizedKeyVersion,
-  };
-}
-
 export interface RuntimeLogEmitInput {
   env: RuntimeLogEmitterEnv;
   tenantId: string;
   logType: LogType;
   surface: string;
+  /** Required for archive writes; explicit producer-owned logical dataset. */
+  sourceDataset?: string;
   records: RuntimeLogRecord[];
   planes?: LogPlane[];
   region?: string | null;
@@ -201,15 +134,8 @@ function isQueueLike(value: unknown): value is Queue<unknown> {
   );
 }
 
-function getBucketBinding(env: RuntimeLogEmitterEnv, bindingRef: string): R2Bucket | null {
-  const value = (env as unknown as Record<string, unknown>)[bindingRef];
-  return value && typeof value === 'object' && typeof (value as R2Bucket).put === 'function'
-    ? (value as R2Bucket)
-    : null;
-}
-
 function getDefaultDeliveryPayloadBucket(env: RuntimeLogEmitterEnv): R2Bucket | null {
-  return env.AUDIT_ARCHIVE ?? null;
+  return env.SENSITIVE_DETAILS ?? null;
 }
 
 function cleanR2ObjectKeySegment(value: string): string {
@@ -481,101 +407,6 @@ async function recordDeliveryEvent(input: {
   });
 }
 
-async function emitArchiveChunk(input: {
-  env: RuntimeLogEmitterEnv;
-  tenantId: string;
-  tenantKey: string;
-  logType: LogType;
-  plane: LogPlane;
-  surface: string;
-  lane: LoggingDeliveryLane;
-  target: Extract<RuntimeLoggingDestinationTarget, { type: 'r2' }>;
-  policyMetadata: RuntimePolicyDeliveryMetadata;
-  requiresDeliveryFanout: boolean;
-  records: RuntimeLogRecord[];
-}): Promise<RuntimeLogEmitTargetResult> {
-  const bucket = getBucketBinding(input.env, input.target.bucketRef);
-  if (!bucket) {
-    throw new Error(`runtime_log_archive_bucket_unavailable:${input.target.bucketRef}`);
-  }
-  const catalogStoreDb = input.env.LOGGING_INDEX_DB ?? input.env.DB_ADMIN;
-  const catalogStore = catalogStoreDb ? new SqlLogChunkCatalogStore(catalogStoreDb) : undefined;
-  const result: WriteLogChunkResult = await writeLogChunkToR2({
-    bucket,
-    tenantKey: input.tenantKey,
-    logType: input.logType,
-    plane: input.plane,
-    surface: input.surface,
-    prefix: input.target.prefix ?? input.logType,
-    indexProfile: input.logType,
-    catalogStore,
-    records: input.records.map((record) => ({
-      id: record.id,
-      eventAt: record.eventAt,
-      payload: canonicalRecord({
-        tenantId: input.tenantId,
-        tenantKey: input.tenantKey,
-        logType: input.logType,
-        plane: input.plane,
-        surface: input.surface,
-        record,
-        target: input.target,
-      }),
-      indexedFields: record.indexedFields,
-    })),
-    encryption: await resolveRuntimeLogChunkEncryption({
-      env: input.env,
-      tenantKey: input.tenantKey,
-      logType: input.logType,
-      plane: input.plane,
-    }),
-  });
-  const enqueueResult = input.requiresDeliveryFanout
-    ? await enqueueDeliveryPayload(input.env, {
-        payload_type: 'delivery_fanout',
-        schema_version: 1,
-        payload_id: `qpl_${crypto.randomUUID()}`,
-        tenant_key: input.tenantKey,
-        lane: input.lane,
-        created_at: result.createdAt,
-        catalog_id: result.objectCatalogId,
-        object_key: result.objectKey,
-        destination_id: input.target.destinationId,
-        log_type: input.logType,
-        plane: input.plane,
-        record_count: result.recordCount,
-      })
-    : null;
-  const status = statusForEnqueueResult(enqueueResult);
-  await recordDeliveryEvent({
-    env: input.env,
-    tenantKey: input.tenantKey,
-    destinationId: input.target.destinationId,
-    logType: input.logType,
-    plane: input.plane,
-    lane: input.lane,
-    status,
-    objectCatalogId: result.objectCatalogId,
-    recordCount: result.recordCount,
-    byteCount: result.byteCount,
-    metadata: {
-      chunk_id: result.chunkId,
-      ...policyDeliveryMetadataObject(input.policyMetadata),
-      delivery_queue_binding: enqueueResult?.bindingName ?? null,
-      delivery_queue_fallback_used: enqueueResult?.fallbackUsed ?? false,
-      delivery_queue_attempted_bindings: enqueueResult?.attemptedBindingNames ?? null,
-    },
-  });
-  return {
-    plane: input.plane,
-    destinationId: input.target.destinationId,
-    lane: input.lane,
-    status,
-    objectCatalogId: result.objectCatalogId,
-    queued: enqueueResult?.queued ?? false,
-  };
-}
-
 async function emitHttpBatch(input: {
   env: RuntimeLogEmitterEnv;
   tenantId: string;
@@ -630,7 +461,7 @@ async function emitHttpBatch(input: {
     Number.isSafeInteger(parsedKeyVersion) && parsedKeyVersion > 0 ? parsedKeyVersion : 1;
   const envelope = await encryptObjectArtifact(JSON.stringify(payload), {
     rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
-    plane: 'AUDIT_ARCHIVE',
+    plane: 'SENSITIVE_DETAILS',
     keyVersion,
     contentType: 'application/json',
     context: {
@@ -745,6 +576,11 @@ async function handleMissingOrInvalidCriticalTarget(input: {
 export async function emitRuntimeLogRecords(
   input: RuntimeLogEmitInput
 ): Promise<RuntimeLogEmitResult> {
+  input = {
+    ...input,
+    records: structuredClone(input.records),
+    planes: input.planes ? [...input.planes] : undefined,
+  };
   if (input.records.length === 0) {
     return { tenantKey: '', targetResults: [] };
   }
@@ -756,6 +592,53 @@ export async function emitRuntimeLogRecords(
   const planes = input.planes ?? (['archive', 'external_sink'] as LogPlane[]);
 
   for (const plane of planes) {
+    if (plane === 'archive') {
+      if (!input.sourceDataset) throw new Error('runtime_log_source_dataset_required');
+      const config = resolveLogIcebergConfig(input.env);
+      for (const record of input.records) {
+        const severity = normalizeRuntimeLogSeverity(
+          record.severity ??
+            stringField(record.indexedFields, 'severity') ??
+            record.payload.severity
+        );
+        await emitLogIcebergRow(input.env, {
+          tenantId: input.tenantId,
+          sourceDataset: input.sourceDataset,
+          logType: input.logType,
+          eventAt: record.eventAt,
+          expiresAt:
+            record.expiresAt === undefined
+              ? input.logType === 'diagnostic'
+                ? record.eventAt + 30 * 86400000
+                : null
+              : record.expiresAt,
+          overview: {
+            action: record.type ?? inferRuntimeLogType(input.logType, input.surface, record),
+            result:
+              stringField(record.indexedFields, 'status') ?? stringField(record.payload, 'status'),
+            severity,
+            request_id: record.correlationId ?? inferRuntimeLogCorrelationId(record),
+            subject_id: record.subject ?? inferRuntimeLogSubject(record),
+          },
+          row: {
+            id: record.id,
+            tenant_id: input.tenantId,
+            created_at: record.eventAt,
+            source: record.source ?? 'authrim/' + input.surface,
+            type: record.type ?? inferRuntimeLogType(input.logType, input.surface, record),
+            payload_json: JSON.stringify(record.payload),
+          },
+        });
+      }
+      targetResults.push({
+        plane,
+        destinationId: null,
+        lane: laneForLogPolicy(input.logType, plane),
+        status: config.mode === 'pipeline' ? 'queued' : 'delivered',
+        queued: config.mode === 'pipeline',
+      });
+      continue;
+    }
     const resolved = await resolveRuntimeLoggingPolicyTargetFromEnv(input.env, {
       tenantId: input.tenantId,
       logType: input.logType,
@@ -788,24 +671,6 @@ export async function emitRuntimeLogRecords(
       continue;
     }
 
-    if (resolved.target.type === 'r2') {
-      targetResults.push(
-        await emitArchiveChunk({
-          env: input.env,
-          tenantId: input.tenantId,
-          tenantKey,
-          logType: input.logType,
-          plane,
-          surface: input.surface,
-          lane,
-          target: resolved.target,
-          policyMetadata,
-          requiresDeliveryFanout: resolved.requiresDeliveryFanout,
-          records: input.records,
-        })
-      );
-      continue;
-    }
     if (resolved.target.type === 'http') {
       targetResults.push(
         await emitHttpBatch({

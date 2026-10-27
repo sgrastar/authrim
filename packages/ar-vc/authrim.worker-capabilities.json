@@ -3,41 +3,139 @@
   "packageName": "@authrim/ar-vc",
   "worker": "ar-vc",
   "lookupBlindIndex": true,
-  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
+  "requiredDataRoles": [
+    "tenant_core/default",
+    "tenant_core/users",
+    "tenant_pii",
+    "lookup"
+  ],
   "bindings": [
-    { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
-    { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "vc_metadata" },
-    { "name": "SETTINGS", "kind": "kv_namespace", "required": true, "capability": "settings.read" },
-    { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
-    { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
-    { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
-    { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
-    { "name": "TOKEN_REVOCATION_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "CREDENTIAL_OFFER_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "VP_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
-    { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
-    { "name": "LOGGING_DELIVERY_CRITICAL_QUEUE", "kind": "queue", "required": false },
-    { "name": "LOGGING_DELIVERY_QUEUE", "kind": "queue", "required": false },
-    { "name": "LOGGING_DELIVERY_BULK_QUEUE", "kind": "queue", "required": false },
-    { "name": "TENANT_DATABASE_HYPERDRIVE", "kind": "hyperdrive", "required": false },
-    { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
+    {
+      "name": "LOOKUP_DB",
+      "kind": "d1",
+      "required": true,
+      "dataRole": "lookup"
+    },
+    {
+      "name": "DB_ADMIN",
+      "kind": "d1",
+      "required": true,
+      "capability": "vc_metadata"
+    },
+    {
+      "name": "SETTINGS",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "settings.read"
+    },
+    {
+      "name": "AUTHRIM_CONFIG",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY",
+      "kind": "kv_namespace",
+      "required": true
+    },
+    {
+      "name": "KEY_MANAGER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "TOKEN_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "CREDENTIAL_OFFER_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "VP_REQUEST_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "DIAGNOSTIC_LOGS",
+      "kind": "r2_bucket",
+      "required": false
+    },
+    {
+      "name": "AUDIT_ARCHIVE",
+      "kind": "r2_bucket",
+      "required": false
+    },
+    {
+      "name": "LOGGING_DELIVERY_CRITICAL_QUEUE",
+      "kind": "queue",
+      "required": false
+    },
+    {
+      "name": "LOGGING_DELIVERY_QUEUE",
+      "kind": "queue",
+      "required": false
+    },
+    {
+      "name": "LOGGING_DELIVERY_BULK_QUEUE",
+      "kind": "queue",
+      "required": false
+    },
+    {
+      "name": "TENANT_DATABASE_HYPERDRIVE",
+      "kind": "hyperdrive",
+      "required": false
+    },
+    {
+      "name": "CONTROL_SMOKE_VERSION",
+      "kind": "version_metadata",
+      "required": true
+    },
+    {
+      "name": "LOG_ARCHIVE_WRITER",
+      "kind": "service",
+      "required": false,
+      "capability": "logging.archive.write"
+    }
   ],
   "secrets": [
-    { "name": "LOOKUP_HMAC_KEY_SLOT_A", "capability": "lookup_blind_index", "required": true },
-    { "name": "LOOKUP_HMAC_KEY_SLOT_B", "capability": "lookup_blind_index", "required": false },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_A",
+      "capability": "lookup_blind_index",
+      "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_B",
+      "capability": "lookup_blind_index",
+      "required": false
+    },
     {
       "name": "OBJECT_ENCRYPTION_ROOT_KEY",
       "capability": "object_encryption.encrypt",
       "required": true
     },
-    { "name": "PUBLIC_JWK_JSON", "capability": "legacy_signing.public", "required": true },
+    {
+      "name": "PUBLIC_JWK_JSON",
+      "capability": "legacy_signing.public",
+      "required": true
+    },
     {
       "name": "VC_TRANSACTION_CODE_HMAC_SECRET",
       "capability": "vc_transaction_code.verify",
       "required": true
     },
-    { "name": "VC_EVIDENCE_HMAC_SECRET", "capability": "vc_evidence.verify", "required": true },
+    {
+      "name": "VC_EVIDENCE_HMAC_SECRET",
+      "capability": "vc_evidence.verify",
+      "required": true
+    },
     {
       "name": "VC_PROFILE_CONTRACT_HMAC_SECRET",
       "capability": "vc_profile_contract.verify",
@@ -52,6 +150,16 @@
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
       "capability": "control_smoke.verify",
       "required": true
+    },
+    {
+      "name": "LOG_ARCHIVE_CONTENT_HMAC_KEY",
+      "required": false,
+      "capability": "logging.archive.encrypt"
+    },
+    {
+      "name": "LOG_ARCHIVE_ROOT_KEYRING",
+      "required": false,
+      "capability": "logging.archive.encrypt"
     }
   ]
 }

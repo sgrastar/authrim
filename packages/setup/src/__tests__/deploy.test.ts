@@ -1,3 +1,6 @@
+import { writeDeploymentArchiveFixture } from './fixtures/log-archive.js';
+import { LOG_ARCHIVE_PRODUCER_COMPONENTS } from '../core/log-archive-config.js';
+import { getSecretNamesForWorker } from '../core/secrets.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   existsSync,
@@ -34,7 +37,7 @@ import {
   type WorkerDeploymentLeaseCoordinator,
 } from '../core/deploy.js';
 import type { WorkerScriptOwnershipGuard } from '../core/worker-script-ownership.js';
-import { CORE_WORKER_COMPONENTS } from '../core/naming.js';
+import { CORE_WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
 import type { SetupWorkerDeploymentLease } from '../core/worker-deployment-lease.js';
 import {
   acquireDeployConfigLock,
@@ -61,38 +64,99 @@ const testWorkerScriptOwnership: WorkerScriptOwnershipGuard = {
   }),
 };
 
+async function withArchiveFixture<T>(
+  options: DeployOptions,
+  targets: readonly WorkerComponent[],
+  operation: (prepared: DeployOptions) => Promise<T>
+): Promise<T> {
+  const producers = targets.filter(
+    (component) =>
+      LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component) &&
+      existsSync(join(options.rootDir, 'packages', component, 'wrangler.toml'))
+  );
+  if (!/^[a-z][a-z0-9-]{0,31}$/u.test(options.env) || producers.length === 0)
+    return operation(options);
+  await writeDeploymentArchiveFixture(options.rootDir, options.env);
+  const ownership =
+    options.deployConfigLockProof || options.dryRun
+      ? undefined
+      : await acquireDeployConfigLock({
+          baseDir: options.rootDir,
+          env: options.env,
+          operation: 'test-new-archive-deploy',
+        });
+  try {
+    const result = await operation({
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+      deploymentStrategy: 'direct',
+      ...(!options.listWorkerSecretNames ? { lookupHmacSlots: ['A'] as const } : {}),
+      listWorkerSecretNames: async (component) =>
+        new Set(getSecretNamesForWorker(component, { logArchive: true })),
+      ...options,
+      secrets: {
+        OBJECT_ENCRYPTION_ROOT_KEY: 'c'.repeat(64),
+        LOG_ARCHIVE_CONTENT_HMAC_KEY: 'd'.repeat(64),
+        LOG_ARCHIVE_ROOT_KEYRING: JSON.stringify({
+          schema_version: 1,
+          current_version: 1,
+          roots: { '1': 'c'.repeat(64) },
+        }),
+        LOG_ARCHIVE_CATALOG_READ_TOKEN: 'fixture-read-token',
+        LOG_ARCHIVE_CATALOG_WRITE_TOKEN: 'fixture-write-token',
+        ...options.secrets,
+      },
+      existingComponents: options.existingComponents
+        ? [
+            ...new Set([
+              ...options.existingComponents,
+              ...(targets.includes('ar-control') ? [] : ['ar-control' as const]),
+            ]),
+          ]
+        : [...CORE_WORKER_COMPONENTS],
+      deployConfigLockProof: options.deployConfigLockProof ?? ownership?.proof,
+      workerScriptOwnership: options.workerScriptOwnership ?? testWorkerScriptOwnership,
+    });
+    return result;
+  } finally {
+    await ownership?.release();
+  }
+}
+
 const deployWorker = (
   ...[component, options]: Parameters<typeof deployWorkerCore>
 ): ReturnType<typeof deployWorkerCore> =>
-  deployWorkerCore(component, {
-    readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
-    ...options,
-    workerScriptOwnership: testWorkerScriptOwnership,
-  });
+  withArchiveFixture(options, [component], (prepared) =>
+    deployWorkerCore(component, {
+      ...prepared,
+      workerScriptOwnership: prepared.workerScriptOwnership ?? testWorkerScriptOwnership,
+    })
+  );
 
 const deployWorkerGradually = (
   ...[component, options, gradual]: Parameters<typeof deployWorkerGraduallyCore>
 ): ReturnType<typeof deployWorkerGraduallyCore> =>
-  deployWorkerGraduallyCore(
-    component,
-    {
-      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
-      ...options,
-      workerScriptOwnership: testWorkerScriptOwnership,
-    },
-    gradual
+  withArchiveFixture(options, [component], (prepared) =>
+    deployWorkerGraduallyCore(
+      component,
+      {
+        ...prepared,
+        workerScriptOwnership: prepared.workerScriptOwnership ?? testWorkerScriptOwnership,
+      },
+      gradual
+    )
   );
 
 const deployAll = (
   ...[options, components]: Parameters<typeof deployAllCore>
 ): ReturnType<typeof deployAllCore> =>
-  deployAllCore(
-    {
-      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
-      ...options,
-      workerScriptOwnership: testWorkerScriptOwnership,
-    },
-    components
+  withArchiveFixture(options, components ?? CORE_WORKER_COMPONENTS, (prepared) =>
+    deployAllCore(
+      {
+        ...prepared,
+        workerScriptOwnership: prepared.workerScriptOwnership ?? testWorkerScriptOwnership,
+      },
+      components
+    )
   );
 
 const deployUiWorkerComponent = (
@@ -206,6 +270,7 @@ function createUiPackage(rootDir: string, component: string): void {
 }
 
 async function acquireManagedDeployProof(rootDir: string, env = 'test'): Promise<DeployConfigLock> {
+  await writeDeploymentArchiveFixture(rootDir, env);
   mkdirSync(join(rootDir, '.authrim', env), { recursive: true });
   return acquireDeployConfigLock({ baseDir: rootDir, env, operation: 'deploy-test' });
 }
@@ -559,7 +624,7 @@ describe('deployWorker', () => {
     mkdirSync(join(rootDir, '.authrim', 'test'), { recursive: true });
 
     await expect(
-      deployWorker('ar-auth', { env: 'test', rootDir, deploymentStrategy: 'direct' })
+      deployWorkerCore('ar-auth', { env: 'test', rootDir, deploymentStrategy: 'direct' })
     ).rejects.toThrow('managed_worker_deploy_config_lock_proof_required:test');
     expect(execa).not.toHaveBeenCalled();
   });
@@ -653,6 +718,16 @@ describe('deployWorker', () => {
       env: 'test',
       rootDir,
       deploymentStrategy: 'direct',
+      existingComponents: ['ar-auth'],
+      secrets: {
+        OBJECT_ENCRYPTION_ROOT_KEY: 'c'.repeat(64),
+        LOG_ARCHIVE_CONTENT_HMAC_KEY: 'd'.repeat(64),
+        LOG_ARCHIVE_ROOT_KEYRING: JSON.stringify({
+          schema_version: 1,
+          current_version: 1,
+          roots: { '1': 'c'.repeat(64) },
+        }),
+      },
       deployConfigLockProof: deployConfigLock.proof,
       workerScriptOwnership: testWorkerScriptOwnership,
       beforeWorkerMutations: async () => {
@@ -736,6 +811,13 @@ describe('deployWorker', () => {
     expect(result.success).toBe(true);
     expect(uploadedSecrets).toEqual({
       FLOW_RUNTIME_HMAC_SECRET: 'flow-secret',
+      OBJECT_ENCRYPTION_ROOT_KEY: 'c'.repeat(64),
+      LOG_ARCHIVE_CONTENT_HMAC_KEY: 'd'.repeat(64),
+      LOG_ARCHIVE_ROOT_KEYRING: JSON.stringify({
+        schema_version: 1,
+        current_version: 1,
+        roots: { '1': 'c'.repeat(64) },
+      }),
     });
     expect(secretFileMode).toBe(0o600);
     expect(secretFilePath).toBeDefined();
@@ -1025,7 +1107,7 @@ describe('deployWorker', () => {
       throw commandError('Authentication error [code: 10000]');
     });
 
-    const result = await deployWorkerCore('ar-auth', {
+    const result = await deployWorker('ar-auth', {
       env: 'test',
       rootDir,
       deploymentStrategy: 'direct',
@@ -1058,7 +1140,7 @@ describe('deployWorker', () => {
       getEvidence: (workerName) => ({ workerName, state: 'absent' }),
     };
 
-    const first = await deployWorkerCore('ar-auth', {
+    const first = await deployWorker('ar-auth', {
       env: 'test',
       rootDir,
       deploymentStrategy: 'direct',
@@ -1074,7 +1156,7 @@ describe('deployWorker', () => {
       TEST_CLOUDFLARE_VERSION_ID
     );
 
-    const recovered = await deployWorkerCore('ar-auth', {
+    const recovered = await deployWorker('ar-auth', {
       env: 'test',
       rootDir,
       deploymentStrategy: 'direct',
@@ -1345,7 +1427,7 @@ describe('deployWorker', () => {
       return successfulCommandResult();
     });
 
-    const result = await deployWorkerCore('ar-auth', {
+    const result = await deployWorker('ar-auth', {
       env: 'test',
       rootDir,
       deploymentStrategy: 'staged',
@@ -2018,6 +2100,13 @@ describe('deployWorkerGradually', () => {
         secretFilePath = commandArgs[secretsFileIndex + 1];
         expect(JSON.parse(readFileSync(secretFilePath, 'utf-8'))).toEqual({
           FLOW_RUNTIME_HMAC_SECRET: 'flow-secret',
+          OBJECT_ENCRYPTION_ROOT_KEY: 'c'.repeat(64),
+          LOG_ARCHIVE_CONTENT_HMAC_KEY: 'd'.repeat(64),
+          LOG_ARCHIVE_ROOT_KEYRING: JSON.stringify({
+            schema_version: 1,
+            current_version: 1,
+            roots: { '1': 'c'.repeat(64) },
+          }),
         });
         writeFileSync(
           join(String(outputDirectory), 'wrangler-output.ndjson'),
@@ -3198,6 +3287,7 @@ describe('deployAll', () => {
             join(rootDir, 'packages', 'ar-lib-core', 'wrangler.toml'),
             'name = "test-ar-lib-core"\n\n[[migrations]]\ntag = "v1"\nnew_sqlite_classes = ["SessionStore"]\n'
           );
+          await writeDeploymentArchiveFixture(rootDir, 'test', { refreshMaster: true });
         },
       },
       ['ar-lib-core']

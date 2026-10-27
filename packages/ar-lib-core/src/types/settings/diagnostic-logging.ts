@@ -23,11 +23,6 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 export type DiagnosticLogFormat = 'json' | 'jsonl' | 'text';
 
 /**
- * Buffering strategy
- */
-export type DiagnosticLogBufferStrategy = 'realtime' | 'batch' | 'queue';
-
-/**
  * Log level (settings type)
  */
 export type DiagnosticLoggingLogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -58,25 +53,9 @@ export interface DiagnosticLoggingSettings {
   /** Enable authentication decision logging */
   'diagnostic-logging.auth_decision_enabled': boolean;
 
-  // R2 output settings
-  /** Enable R2 output */
-  'diagnostic-logging.r2_output_enabled': boolean;
-  /** R2 bucket binding name (environment binding) */
-  'diagnostic-logging.r2_bucket_binding': string;
-  /** R2 path prefix */
-  'diagnostic-logging.r2_path_prefix': string;
-
   // Format settings
   /** Output format (json, jsonl, text) */
   'diagnostic-logging.output_format': DiagnosticLogFormat;
-
-  // Buffering settings
-  /** Buffer strategy (realtime, batch, queue) */
-  'diagnostic-logging.buffer_strategy': DiagnosticLogBufferStrategy;
-  /** Batch size for batch strategy */
-  'diagnostic-logging.batch_size': number;
-  /** Batch interval in milliseconds */
-  'diagnostic-logging.batch_interval_ms': number;
 
   // Filter settings
   /** Redact PII (emails, phone numbers, names, IP addresses) in `full` storage mode */
@@ -169,33 +148,6 @@ export const DIAGNOSTIC_LOGGING_SETTINGS_META: Record<
     description: 'Log final authentication decision and reason',
     visibility: 'admin',
   },
-  'diagnostic-logging.r2_output_enabled': {
-    key: 'diagnostic-logging.r2_output_enabled',
-    type: 'boolean',
-    default: false,
-    envKey: 'DIAGNOSTIC_LOGGING_R2_OUTPUT_ENABLED',
-    label: 'Enable R2 Output',
-    description: 'Persist diagnostic logs to R2 bucket (in addition to console.log)',
-    visibility: 'admin',
-  },
-  'diagnostic-logging.r2_bucket_binding': {
-    key: 'diagnostic-logging.r2_bucket_binding',
-    type: 'string',
-    default: 'DIAGNOSTIC_LOGS',
-    envKey: 'DIAGNOSTIC_LOGGING_R2_BUCKET_BINDING',
-    label: 'R2 Bucket Binding',
-    description: 'R2 bucket binding name (must match wrangler.toml)',
-    visibility: 'admin',
-  },
-  'diagnostic-logging.r2_path_prefix': {
-    key: 'diagnostic-logging.r2_path_prefix',
-    type: 'string',
-    default: 'diagnostic-logs',
-    envKey: 'DIAGNOSTIC_LOGGING_R2_PATH_PREFIX',
-    label: 'R2 Path Prefix',
-    description: 'Path prefix for R2 objects (e.g., diagnostic-logs)',
-    visibility: 'admin',
-  },
   'diagnostic-logging.output_format': {
     key: 'diagnostic-logging.output_format',
     type: 'enum',
@@ -205,39 +157,6 @@ export const DIAGNOSTIC_LOGGING_SETTINGS_META: Record<
     description: 'Log output format (json, jsonl, text)',
     visibility: 'admin',
     enum: ['json', 'jsonl', 'text'],
-  },
-  'diagnostic-logging.buffer_strategy': {
-    key: 'diagnostic-logging.buffer_strategy',
-    type: 'enum',
-    default: 'queue',
-    envKey: 'DIAGNOSTIC_LOGGING_BUFFER_STRATEGY',
-    label: 'Buffer Strategy',
-    description:
-      'Buffering strategy: realtime (immediate), batch (buffered), queue (async via Queue)',
-    visibility: 'admin',
-    enum: ['realtime', 'batch', 'queue'],
-  },
-  'diagnostic-logging.batch_size': {
-    key: 'diagnostic-logging.batch_size',
-    type: 'number',
-    default: 100,
-    envKey: 'DIAGNOSTIC_LOGGING_BATCH_SIZE',
-    label: 'Batch Size',
-    description: 'Maximum number of log entries per batch',
-    visibility: 'admin',
-    min: 1,
-    max: 1000,
-  },
-  'diagnostic-logging.batch_interval_ms': {
-    key: 'diagnostic-logging.batch_interval_ms',
-    type: 'number',
-    default: 5000,
-    envKey: 'DIAGNOSTIC_LOGGING_BATCH_INTERVAL_MS',
-    label: 'Batch Interval (ms)',
-    description: 'Batch flush interval in milliseconds',
-    visibility: 'admin',
-    min: 100,
-    max: 60000,
   },
   'diagnostic-logging.filter_pii': {
     key: 'diagnostic-logging.filter_pii',
@@ -350,13 +269,7 @@ export const DIAGNOSTIC_LOGGING_DEFAULTS: DiagnosticLoggingSettings = {
   'diagnostic-logging.http_response_enabled': true,
   'diagnostic-logging.token_validation_enabled': true,
   'diagnostic-logging.auth_decision_enabled': true,
-  'diagnostic-logging.r2_output_enabled': false,
-  'diagnostic-logging.r2_bucket_binding': 'DIAGNOSTIC_LOGS',
-  'diagnostic-logging.r2_path_prefix': 'diagnostic-logs',
   'diagnostic-logging.output_format': 'jsonl',
-  'diagnostic-logging.buffer_strategy': 'queue',
-  'diagnostic-logging.batch_size': 100,
-  'diagnostic-logging.batch_interval_ms': 5000,
   'diagnostic-logging.filter_pii': true,
   'diagnostic-logging.token_hash_prefix_length': 12,
   'diagnostic-logging.http_safe_headers':

@@ -1,5 +1,9 @@
 import type { DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core/db/adapter';
-import type { AdminAgentAuditWrite } from '../audit';
+import {
+  prepareAdminAgentAuditStatements,
+  type AdminAgentAuditWrite,
+  type AdminAgentAuditWriter,
+} from '../audit';
 import type {
   AgentBulkPlanDefinition,
   AgentBulkPlanStage,
@@ -153,44 +157,6 @@ export interface AgentBulkTenantExecutionRecord {
   childCapabilityExpiresAt?: number;
 }
 
-function auditStatement(
-  audit: AdminAgentAuditWrite,
-  guard?: { from: string; where: string; params: readonly unknown[] }
-): PreparedStatement {
-  const values = [
-    audit.id,
-    audit.tenantId,
-    audit.adminUserId ?? null,
-    audit.action,
-    audit.resourceType,
-    audit.resourceId,
-    audit.result ?? 'success',
-    audit.severity,
-    audit.requestId ?? null,
-    JSON.stringify(audit.metadata),
-    audit.createdAt,
-    audit.actorType,
-    audit.actorSub,
-    audit.actorMode ?? null,
-    audit.actorAssurance ?? null,
-    audit.tokenBinding ?? null,
-    audit.actClientId ?? null,
-    audit.actPrincipalId ?? null,
-    audit.grantId ?? null,
-    audit.elevationId ?? null,
-    audit.mcpTool ?? null,
-  ];
-  return {
-    sql: `INSERT INTO admin_audit_log (
-      id, tenant_id, admin_user_id, action, resource_type, resource_id,
-      result, severity, request_id, metadata_json, created_at,
-      actor_type, actor_sub, actor_mode, actor_assurance, token_binding,
-      act_client_id, act_principal_id, grant_id, elevation_id, mcp_tool
-    ) ${guard ? `SELECT ${values.map(() => '?').join(', ')} FROM ${guard.from} WHERE ${guard.where}` : `VALUES (${values.map(() => '?').join(', ')})`}`,
-    params: guard ? [...values, ...guard.params] : values,
-  };
-}
-
 function parseObject<T>(value: string | null): T | undefined {
   return value === null ? undefined : (JSON.parse(value) as T);
 }
@@ -272,7 +238,10 @@ function tenantExecution(row: TenantExecutionRow): AgentBulkTenantExecutionRecor
 }
 
 export class AgentBulkRepository {
-  constructor(private readonly adapter: DatabaseAdapter) {}
+  constructor(
+    private readonly adapter: DatabaseAdapter,
+    private readonly auditWriter?: AdminAgentAuditWriter
+  ) {}
 
   async create(input: {
     id: string;
@@ -366,7 +335,7 @@ export class AgentBulkRepository {
           ],
         };
       }),
-      auditStatement(input.audit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
     ];
     await this.adapter.batch(statements);
   }
@@ -465,11 +434,11 @@ export class AgentBulkRepository {
           input.now,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_bulk_plans',
         where: 'control_tenant_id = ? AND id = ? AND version = ? AND last_transition_id = ?',
         params: [input.controlTenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -507,11 +476,11 @@ export class AgentBulkRepository {
           input.from,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_bulk_plans',
         where: 'control_tenant_id = ? AND id = ? AND version = ? AND last_transition_id = ?',
         params: [input.controlTenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -560,11 +529,11 @@ export class AgentBulkRepository {
                AND p.control_tenant_id = ? AND p.cancelled_at = ?)`,
         params: [input.now, input.now, input.id, input.version, input.controlTenantId, input.now],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_bulk_plans',
         where: 'control_tenant_id = ? AND id = ? AND version = ? AND last_transition_id = ?',
         params: [input.controlTenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -674,11 +643,11 @@ export class AgentBulkRepository {
           input.controlTenantId,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_bulk_tenant_executions',
         where: 'id = ? AND last_transition_id = ?',
         params: [input.executionId, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -797,11 +766,11 @@ export class AgentBulkRepository {
           input.audit.id,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_bulk_tenant_executions',
         where: 'id = ? AND last_transition_id = ?',
         params: [input.executionId, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1 && (results[1]?.rowsAffected ?? 0) === 1;
   }

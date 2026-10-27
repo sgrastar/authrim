@@ -1,5 +1,9 @@
 import type { DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core/db/adapter';
-import type { AdminAgentAuditWrite } from '../audit';
+import {
+  prepareAdminAgentAuditStatements,
+  type AdminAgentAuditWrite,
+  type AdminAgentAuditWriter,
+} from '../audit';
 import { hasCompleteAgentConfigurationSnapshot } from '../authorization';
 import { canonicalizeJson, sha256Base64Url } from '../canonical-json';
 import type { AgentScopePolicyDefinition, ResolvedAgentTaskSetVersion } from '../configuration';
@@ -837,73 +841,6 @@ interface AuditStatementGuard {
   readonly params: readonly unknown[];
 }
 
-function adminAgentAuditStatement(
-  audit: AdminAgentAuditWrite,
-  guard?: AuditStatementGuard
-): PreparedStatement {
-  const values = [
-    audit.id,
-    audit.tenantId,
-    audit.adminUserId ?? null,
-    audit.action,
-    audit.resourceType,
-    audit.resourceId,
-    audit.result ?? 'success',
-    audit.severity,
-    audit.requestId ?? null,
-    JSON.stringify(audit.metadata),
-    audit.createdAt,
-    audit.actorType,
-    audit.actorSub,
-    audit.actorMode ?? null,
-    audit.actorAssurance ?? null,
-    audit.tokenBinding ?? null,
-    audit.actClientId ?? null,
-    audit.actPrincipalId ?? null,
-    audit.grantId ?? null,
-    audit.elevationId ?? null,
-    audit.mcpTool ?? null,
-  ];
-  const valuePlaceholders = values.map(() => '?').join(', ');
-  const replayMatches = [
-    'tenant_id',
-    'admin_user_id',
-    'action',
-    'resource_type',
-    'resource_id',
-    'result',
-    'severity',
-    'request_id',
-    'metadata_json',
-    'created_at',
-    'actor_type',
-    'actor_sub',
-    'actor_mode',
-    'actor_assurance',
-    'token_binding',
-    'act_client_id',
-    'act_principal_id',
-    'grant_id',
-    'elevation_id',
-    'mcp_tool',
-  ]
-    .map((column) => `admin_audit_log.${column} IS excluded.${column}`)
-    .join(' AND ');
-  return {
-    sql: `INSERT INTO admin_audit_log (
-      id, tenant_id, admin_user_id, action, resource_type, resource_id,
-      result, severity, request_id, metadata_json, created_at,
-      actor_type, actor_sub, actor_mode, actor_assurance, token_binding,
-      act_client_id, act_principal_id, grant_id, elevation_id, mcp_tool
-    ) ${guard ? `SELECT ${valuePlaceholders} FROM ${guard.from} WHERE ${guard.where}` : `VALUES (${valuePlaceholders})`}
-    ON CONFLICT(id) DO UPDATE SET tenant_id = CASE
-      WHEN ${replayMatches} THEN admin_audit_log.tenant_id
-      ELSE NULL
-    END`,
-    params: guard ? [...values, ...guard.params] : values,
-  };
-}
-
 function upsertAgentConsentStatement(
   input: UpsertAgentConsentInput,
   guard?: { from: string; where: string; params: readonly unknown[] }
@@ -1130,7 +1067,10 @@ function toAdminAgentLoginHandoffRecord(
 
 /** Platform-neutral DB_ADMIN persistence using Authrim's existing database abstraction. */
 export class AdminAgentAccessRepository {
-  constructor(private readonly adapter: DatabaseAdapter) {}
+  constructor(
+    private readonly adapter: DatabaseAdapter,
+    private readonly auditWriter?: AdminAgentAuditWriter
+  ) {}
 
   async createLoginHandoff(input: CreateAdminAgentLoginHandoffInput): Promise<void> {
     let targetOrigin: string;
@@ -1169,11 +1109,11 @@ export class AdminAgentAccessRepository {
           input.expiresAt,
         ],
       },
-      adminAgentAuditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'admin_agent_login_handoffs',
         where: "id = ? AND last_transition_id = ? AND status = 'pending'",
         params: [input.id, input.transitionId],
-      }),
+      })),
     ]);
   }
 
@@ -1217,11 +1157,11 @@ export class AdminAgentAccessRepository {
           input.issuedAt,
         ],
       },
-      adminAgentAuditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'admin_agent_login_handoffs',
         where: "id = ? AND target_tenant_id = ? AND last_transition_id = ? AND status = 'issued'",
         params: [input.id, input.targetTenantId, input.transitionId],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -1284,11 +1224,11 @@ export class AdminAgentAccessRepository {
           input.transitionId,
         ],
       },
-      adminAgentAuditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'admin_agent_login_handoffs',
         where: "id = ? AND target_tenant_id = ? AND last_transition_id = ? AND status = 'consumed'",
         params: [input.id, input.targetTenantId, input.transitionId],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -1304,8 +1244,8 @@ export class AdminAgentAccessRepository {
   }
 
   async writeAudit(audit: AdminAgentAuditWrite): Promise<void> {
-    const statement = adminAgentAuditStatement(audit);
-    await this.adapter.execute(statement.sql, statement.params);
+    const statement = await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, audit);
+    await this.adapter.batch(statement);
   }
 
   async createGrant(input: CreateAdminAgentGrantInput): Promise<void> {
@@ -1316,7 +1256,7 @@ export class AdminAgentAccessRepository {
   async createGrantWithAudit(input: CreateAdminAgentGrantWithAuditInput): Promise<void> {
     await this.adapter.batch([
       createAdminAgentGrantStatement(input.grant),
-      adminAgentAuditStatement(input.audit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
     ]);
   }
 
@@ -1344,8 +1284,12 @@ export class AdminAgentAccessRepository {
       createAdminAgentGrantStatement(input.grant),
       createExactSelfServiceConsentStatement(input.delegationConsent, input.audit.id),
       createExactSelfServiceConsentStatement(input.oauthClientConsent, input.audit.id),
-      adminAgentAuditStatement(input.audit),
-      adminAgentAuditStatement(input.consentAudit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
+      ...(await prepareAdminAgentAuditStatements(
+        this.auditWriter,
+        this.adapter,
+        input.consentAudit
+      )),
     ]);
   }
 
@@ -1470,8 +1414,12 @@ export class AdminAgentAccessRepository {
       createAdminAgentGrantStatement(input.grant),
       createExactSelfServiceConsentStatement(input.delegationConsent, input.audit.id),
       createExactSelfServiceConsentStatement(input.oauthClientConsent, input.audit.id),
-      adminAgentAuditStatement(input.audit),
-      adminAgentAuditStatement(input.consentAudit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
+      ...(await prepareAdminAgentAuditStatements(
+        this.auditWriter,
+        this.adapter,
+        input.consentAudit
+      )),
     ]);
   }
 
@@ -1704,8 +1652,18 @@ export class AdminAgentAccessRepository {
           ...guard.params,
         ],
       },
-      adminAgentAuditStatement(input.grantAudit, guard),
-      adminAgentAuditStatement(input.consentAudit, guard),
+      ...(await prepareAdminAgentAuditStatements(
+        this.auditWriter,
+        this.adapter,
+        input.grantAudit,
+        guard
+      )),
+      ...(await prepareAdminAgentAuditStatements(
+        this.auditWriter,
+        this.adapter,
+        input.consentAudit,
+        guard
+      )),
     ]);
     if (results[0]?.rowsAffected !== 1) {
       const replay = await this.adapter.queryOne<{
@@ -1865,7 +1823,9 @@ export class AdminAgentAccessRepository {
           input.transitionId,
         ],
       },
-      adminAgentAuditStatement(
+      ...(await prepareAdminAgentAuditStatements(
+        this.auditWriter,
+        this.adapter,
         {
           id: input.transitionId,
           tenantId: input.tenantId,
@@ -1888,7 +1848,7 @@ export class AdminAgentAccessRepository {
           where: 'tenant_id = ? AND client_id = ? AND last_mutation_id = ?',
           params: [input.tenantId, input.clientId, input.transitionId],
         }
-      ),
+      )),
     ]);
     return { suspendedGrantCount };
   }
@@ -2112,7 +2072,7 @@ export class AdminAgentAccessRepository {
     await this.adapter.batch([
       upsertAgentConsentStatement(delegation),
       upsertAgentConsentStatement(oauthClient),
-      adminAgentAuditStatement({
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, {
         ...input.audit,
         metadata: {
           ...input.audit.metadata,
@@ -2123,7 +2083,7 @@ export class AdminAgentAccessRepository {
           previous_oauth_client_revoked:
             previousOauthClient !== undefined && previousOauthClient.revoked_at !== null,
         },
-      }),
+      })),
     ]);
   }
 
@@ -2257,14 +2217,16 @@ export class AdminAgentAccessRepository {
           input.outboxId,
         ],
       },
-      adminAgentAuditStatement(
+      ...(await prepareAdminAgentAuditStatements(
+        this.auditWriter,
+        this.adapter,
         { ...input.audit, grantId: input.grantId },
         {
           from: 'agent_consents',
           where: 'id = ? AND tenant_id = ? AND last_mutation_id = ?',
           params: [input.consentId, input.tenantId, input.outboxId],
         }
-      ),
+      )),
     ]);
     if (results[0]?.rowsAffected !== 1) {
       const replay = await this.adapter.queryOne<{ last_mutation_id: string }>(
@@ -2494,11 +2456,11 @@ export class AdminAgentAccessRepository {
           input.expiredAt,
         ],
       },
-      adminAgentAuditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_elevation_challenges',
         where: 'tenant_id = ? AND id = ? AND terminal_transition_id = ?',
         params: [input.tenantId, input.challengeId, input.audit.id],
-      }),
+      })),
     ]);
     if (results[0]?.rowsAffected === 1 && results[1]?.rowsAffected === 1) return true;
     const replay = await this.adapter.queryOne<{ terminal_transition_id: string }>(
@@ -2527,11 +2489,11 @@ export class AdminAgentAccessRepository {
           input.now,
         ],
       },
-      adminAgentAuditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_elevation_challenges',
         where: 'tenant_id = ? AND id = ? AND status = ? AND approver_id = ?',
         params: [input.tenantId, input.challengeId, input.decision, input.approverId],
-      }),
+      })),
     ]);
     return results[0]?.rowsAffected === 1 && results[1]?.rowsAffected === 1;
   }
@@ -2557,11 +2519,11 @@ export class AdminAgentAccessRepository {
           input.challengeId,
         ],
       },
-      adminAgentAuditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_elevation_challenges',
         where: 'tenant_id = ? AND id = ? AND reconciled_by = ? AND reconciled_outcome = ?',
         params: [input.tenantId, input.challengeId, input.reconciledBy, input.outcome],
-      }),
+      })),
     ]);
     return results[0]?.rowsAffected === 1 && results[1]?.rowsAffected === 1;
   }
@@ -2723,11 +2685,11 @@ export class AdminAgentAccessRepository {
           input.expectedFence,
         ],
       },
-      adminAgentAuditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_elevation_challenges',
         where: 'tenant_id = ? AND id = ? AND terminal_transition_id = ?',
         params: [input.tenantId, input.challengeId, input.audit.id],
-      }),
+      })),
     ]);
     if (results[0]?.rowsAffected === 1) return true;
     const replay = await this.adapter.queryOne<{ terminal_transition_id: string }>(
@@ -3189,11 +3151,11 @@ export class AdminAgentAccessRepository {
           input.outboxId,
         ],
       },
-      adminAgentAuditStatement(audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, audit, {
         from: 'admin_agent_grants',
         where: 'tenant_id = ? AND id = ? AND last_mutation_id = ?',
         params: [input.tenantId, input.grantId, input.outboxId],
-      }),
+      })),
     ]);
     if (results[0]?.rowsAffected !== 1) {
       const replay = await this.adapter.queryOne<{ last_mutation_id: string }>(
@@ -3365,11 +3327,11 @@ export class AdminAgentAccessRepository {
           input.outboxId,
         ],
       },
-      adminAgentAuditStatement(audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, audit, {
         from: 'admin_agent_grants',
         where: 'tenant_id = ? AND id = ? AND last_mutation_id = ?',
         params: [input.tenantId, input.grantId, input.outboxId],
-      }),
+      })),
     ]);
     if (results[0]?.rowsAffected !== 1) {
       const replay = await this.adapter.queryOne<{
@@ -3451,14 +3413,16 @@ export class AdminAgentAccessRepository {
           input.expectedGeneration,
         ],
       },
-      adminAgentAuditStatement(
+      ...(await prepareAdminAgentAuditStatements(
+        this.auditWriter,
+        this.adapter,
         { ...input.audit, grantId: input.grantId },
         {
           from: 'admin_agent_grants',
           where: 'tenant_id = ? AND id = ? AND last_mutation_id = ?',
           params: [input.tenantId, input.grantId, input.transitionId],
         }
-      ),
+      )),
     ]);
     if (results[0]?.rowsAffected === 1) return true;
     const replay = await this.adapter.queryOne<{ last_mutation_id: string }>(
@@ -3654,11 +3618,17 @@ export class AdminAgentAccessRepository {
           input.expectedAttempt,
         ],
       },
-      adminAgentAuditStatement(input.deadLetterAudit, {
-        from: 'admin_agent_token_revocation_outbox',
-        where: "id = ? AND tenant_id = ? AND status = 'dead_letter' AND failure_transition_id = ?",
-        params: [input.outboxId, input.tenantId, input.deadLetterAudit.id],
-      }),
+      ...(await prepareAdminAgentAuditStatements(
+        this.auditWriter,
+        this.adapter,
+        input.deadLetterAudit,
+        {
+          from: 'admin_agent_token_revocation_outbox',
+          where:
+            "id = ? AND tenant_id = ? AND status = 'dead_letter' AND failure_transition_id = ?",
+          params: [input.outboxId, input.tenantId, input.deadLetterAudit.id],
+        }
+      )),
     ]);
     if (results[0]?.rowsAffected !== 1) {
       const replay = await this.adapter.queryOne<{

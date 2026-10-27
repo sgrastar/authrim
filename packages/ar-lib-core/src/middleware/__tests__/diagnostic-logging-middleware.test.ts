@@ -1,10 +1,18 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Hono, type Context } from 'hono';
+import { logProducerFixture } from '../../services/__tests__/log-iceberg-producer-fixture';
 import type { Env } from '../../types/env';
 import {
   createDiagnosticLoggerFromContext,
   diagnosticLoggingMiddleware,
 } from '../diagnostic-logging-middleware';
+
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
+const close: (() => void)[] = [];
+afterEach(() => close.splice(0).forEach((fn) => fn()));
 
 function createKV(values: Record<string, string>): KVNamespace {
   return {
@@ -21,7 +29,6 @@ describe('diagnostic logging settings source', () => {
     const settings = createKV({
       'settings:tenant:tenant-1:diagnostic-logging': JSON.stringify({
         'diagnostic-logging.enabled': true,
-        'diagnostic-logging.r2_output_enabled': false,
       }),
     });
     const legacy = createKV({});
@@ -46,26 +53,14 @@ describe('diagnostic logging settings source', () => {
 });
 
 describe('diagnostic logging PII filter through the middleware', () => {
-  class Bucket {
-    readonly store = new Map<string, string>();
-    async put(key: string, value: string) {
-      this.store.set(key, value);
-    }
-    async get(key: string) {
-      const value = this.store.get(key);
-      return value === undefined ? null : { text: async () => value };
-    }
-    async list() {
-      return { objects: [...this.store.keys()].map((key) => ({ key })), truncated: false };
-    }
-  }
-
   const SETTINGS_KEY = 'settings:tenant:tenant-1:diagnostic-logging';
 
-  function createApp(settings: KVNamespace, bucket: Bucket) {
+  async function createApp(settings: KVNamespace) {
+    const f = await logProducerFixture('scheduled', { tenantId: 'tenant-1' });
+    close.push(f.close);
     const env = {
+      ...f.env,
       SETTINGS: settings,
-      DIAGNOSTIC_LOGS: bucket as unknown as R2Bucket,
       OTP_HMAC_SECRET: 'secret',
     } as unknown as Env;
     const app = new Hono<{ Bindings: Env }>();
@@ -86,77 +81,71 @@ describe('diagnostic logging PII filter through the middleware', () => {
       await Promise.all(pending);
       return response;
     };
-    return { call };
-  }
-
-  function stored(bucket: Bucket): string {
-    return [...bucket.store.values()].join('\n');
+    const stored = async () =>
+      (await f.rows('diagnostic.diagnostic_log', 'tenant-1'))
+        .map((row) => String(row.entry_json))
+        .join('\n');
+    return { call, stored };
   }
 
   const FULL_MODE = {
     'diagnostic-logging.enabled': true,
-    'diagnostic-logging.r2_output_enabled': true,
-    'diagnostic-logging.buffer_strategy': 'realtime',
     'diagnostic-logging.storage_mode.default': 'full',
   };
 
   it('logs nothing on the first request after a cold start, then redacts the client address', async () => {
-    const bucket = new Bucket();
-    const { call } = createApp(createKV({ [SETTINGS_KEY]: JSON.stringify(FULL_MODE) }), bucket);
+    const { call, stored } = await createApp(
+      createKV({ [SETTINGS_KEY]: JSON.stringify(FULL_MODE) })
+    );
 
     await call();
     // until the tenant's settings are read the defaults apply: logging off
-    expect(bucket.store.size).toBe(0);
+    expect(await stored()).toBe('');
 
     await call();
-    expect(bucket.store.size).toBeGreaterThan(0);
-    expect(stored(bucket)).not.toContain('203.0.113.42');
-    expect(stored(bucket)).toContain('203.0.113.0/24');
+    expect((await stored()).length).toBeGreaterThan(0);
+    expect(await stored()).not.toContain('203.0.113.42');
+    expect(await stored()).toContain('203.0.113.0/24');
   });
 
   it('shows the client address in full mode only when the filter is explicitly off', async () => {
-    const bucket = new Bucket();
-    const { call } = createApp(
+    const { call, stored } = await createApp(
       createKV({
         [SETTINGS_KEY]: JSON.stringify({ ...FULL_MODE, 'diagnostic-logging.filter_pii': false }),
-      }),
-      bucket
+      })
     );
 
     await call();
     await call();
-    expect(stored(bucket)).toContain('203.0.113.42');
+    expect(await stored()).toContain('203.0.113.42');
   });
 
   it('logs nothing when the tenant settings cannot be read', async () => {
-    const bucket = new Bucket();
     const failing = createKV({});
     (failing.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('kv down'));
-    const { call } = createApp(failing, bucket);
+    const { call, stored } = await createApp(failing);
 
     await call();
     await call();
-    expect(bucket.store.size).toBe(0);
+    expect(await stored()).toBe('');
   });
 
   it.each([['jane@example.com'], ['Bearer abc.def'], ['a'.repeat(300)], ['id with spaces']])(
     'does not adopt a client-supplied request id that is not a plain identifier (%s)',
     async (supplied) => {
       for (const filter of [true, false]) {
-        const bucket = new Bucket();
-        const { call } = createApp(
+        const { call, stored } = await createApp(
           createKV({
             [SETTINGS_KEY]: JSON.stringify({
               ...FULL_MODE,
               'diagnostic-logging.filter_pii': filter,
             }),
-          }),
-          bucket
+          })
         );
         await call();
         await call({ 'x-request-id': supplied });
 
-        const text = stored(bucket);
+        const text = await stored();
         expect(text.length).toBeGreaterThan(0);
         expect(text).not.toContain(supplied);
         expect(text).toMatch(/"requestId":"[0-9a-f-]{36}"/);
@@ -165,10 +154,11 @@ describe('diagnostic logging PII filter through the middleware', () => {
   );
 
   it('adopts a plain request id', async () => {
-    const bucket = new Bucket();
-    const { call } = createApp(createKV({ [SETTINGS_KEY]: JSON.stringify(FULL_MODE) }), bucket);
+    const { call, stored } = await createApp(
+      createKV({ [SETTINGS_KEY]: JSON.stringify(FULL_MODE) })
+    );
     await call();
     await call({ 'x-request-id': 'req-123' });
-    expect(stored(bucket)).toContain('"requestId":"req-123"');
+    expect(await stored()).toContain('"requestId":"req-123"');
   });
 });

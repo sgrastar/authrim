@@ -1,3 +1,4 @@
+import type { LogIcebergReadinessResult } from '@authrim/ar-lib-core/services/log-iceberg-readiness';
 import type { R2Bucket } from '@cloudflare/workers-types';
 import type { RuntimeSmokeResult } from '@authrim/ar-lib-core';
 import type {
@@ -72,6 +73,7 @@ export type TenantShardDataRole = 'tenant_core/default' | 'tenant_core/users' | 
 export type ProvisionedD1DataRole = TenantShardDataRole | 'lookup';
 
 export interface RuntimeSmokeServiceBinding {
+  probeLogArchive?: (input: unknown) => Promise<LogIcebergReadinessResult>;
   smokeTenantBinding: (token: string) => Promise<RuntimeSmokeResult>;
   smokeTenantBindings?: (
     tokens: string[]
@@ -136,7 +138,7 @@ export interface ControlEnv {
 }
 
 export interface ControlRpcProps {
-  caller: 'ar-management' | 'ar-plugin-runner';
+  caller: 'ar-management' | 'ar-plugin-runner' | 'ar-lib-core';
   environmentId: string;
   audience: 'authrim-control-v1';
 }

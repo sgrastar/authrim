@@ -85,6 +85,14 @@ vi.mock('../tenant-backup-r2-object-snapshot-port', () => ({
     logArchiveObjects: mocks.record('r2-bodies:logs.archive_object_bodies'),
   }),
 }));
+vi.mock('../tenant-backup-iceberg-log-snapshot-port', () => ({
+  createTenantBackupIcebergLogSnapshotPorts: () => ({
+    records: mocks.record('iceberg-log:records'),
+    prepareBoundary: vi.fn(),
+    prepareSources: vi.fn(async () => ({ cursor: null, done: true })),
+    prepareArtifactResources: vi.fn(async () => ({ cursor: null, done: true })),
+  }),
+}));
 vi.mock('../tenant-backup-r2-catalog-lister', () => ({
   createTenantBackupR2CatalogLister: vi.fn(() => vi.fn()),
 }));

@@ -139,6 +139,14 @@
             {
               "path": "031_support_ops_account_result_receipts.sql",
               "checksum": "e0bb286affe5b6960b7a3fab1814f29c05388d2801888b74fe90aaee1b46f0ec"
+            },
+            {
+              "path": "032_provisioning_revocation_receipts.sql",
+              "checksum": "f1bccf00a93615ef48edd3b63fb5ba9677139e96b2b53e7edb612857983b5b2e"
+            },
+            {
+              "path": "033_log_iceberg_core_publications.sql",
+              "checksum": "27ccbcb08348a7dc7cd20e85d7a7fb150efbc640ead97ccd3d7dc72d87d6bf6e"
             }
           ]
         },
@@ -195,6 +203,10 @@
             {
               "path": "012_tenant_ordered_tenant_indexes.sql",
               "checksum": "9ba43004b26152f0a5fa46c32c37d64ee3e82dae87dbcba1c0b94c8773ec21ef"
+            },
+            {
+              "path": "013_pii_log_purge_operations.sql",
+              "checksum": "7096175c05b7d66237dcdf2203ed0bb74d0716bd2c52a65c7089cbbf1cc3f9dd"
             }
           ]
         },
@@ -406,6 +418,10 @@
             {
               "path": "051_identity_mapping_failures.sql",
               "checksum": "267b99dcd63f0b73ba22de7a1a8aabadb4c6c103497bcf6f1280aa5a916d6025"
+            },
+            {
+              "path": "052_log_iceberg_storage.sql",
+              "checksum": "493c29521086a72229037e944d85b036e5caa8bec6cf2fd7814285637f8c3817"
             }
           ]
         },
@@ -465,6 +481,10 @@
             {
               "path": "013_tenant_backup_preimage_native_order.sql",
               "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+            },
+            {
+              "path": "014_log_archive_pipeline_bindings.sql",
+              "checksum": "e859080c968cea3a96166a1adf25a4303fc3a1d9c6c86dab32729576343844de"
             }
           ]
         },
@@ -576,6 +596,14 @@
             {
               "path": "012_flow_audit_sign_in_attempts.sql",
               "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
+            },
+            {
+              "path": "013_provisioning_revocation_receipts.sql",
+              "checksum": "f3c0245facd2a062429b95fe0cc800b7b0b678e85a794706707e7758337386b5"
+            },
+            {
+              "path": "014_log_iceberg_core_publications.sql",
+              "checksum": "66cbe8cd26d03aca61eb8c3151968e63f0a314c6070f6c8249c94883be0e2255"
             }
           ]
         },
@@ -603,6 +631,10 @@
             {
               "path": "005_service_dynamic_groups.sql",
               "checksum": "23bca89aa3279c160c56558efefcc6b04c2165f7364343325ccaf55e8a2ccc8b"
+            },
+            {
+              "path": "006_pii_log_purge_operations.sql",
+              "checksum": "9ea13c29ed29e366f3f0296d392af227493baf452a4e5582b2839ad35fd6c346"
             }
           ]
         }
@@ -748,6 +780,14 @@
         {
           "path": "031_support_ops_account_result_receipts.sql",
           "checksum": "e0bb286affe5b6960b7a3fab1814f29c05388d2801888b74fe90aaee1b46f0ec"
+        },
+        {
+          "path": "032_provisioning_revocation_receipts.sql",
+          "checksum": "f1bccf00a93615ef48edd3b63fb5ba9677139e96b2b53e7edb612857983b5b2e"
+        },
+        {
+          "path": "033_log_iceberg_core_publications.sql",
+          "checksum": "27ccbcb08348a7dc7cd20e85d7a7fb150efbc640ead97ccd3d7dc72d87d6bf6e"
         }
       ]
     },
@@ -808,6 +848,10 @@
         {
           "path": "012_tenant_ordered_tenant_indexes.sql",
           "checksum": "9ba43004b26152f0a5fa46c32c37d64ee3e82dae87dbcba1c0b94c8773ec21ef"
+        },
+        {
+          "path": "013_pii_log_purge_operations.sql",
+          "checksum": "7096175c05b7d66237dcdf2203ed0bb74d0716bd2c52a65c7089cbbf1cc3f9dd"
         }
       ]
     },
@@ -1023,6 +1067,10 @@
         {
           "path": "051_identity_mapping_failures.sql",
           "checksum": "267b99dcd63f0b73ba22de7a1a8aabadb4c6c103497bcf6f1280aa5a916d6025"
+        },
+        {
+          "path": "052_log_iceberg_storage.sql",
+          "checksum": "493c29521086a72229037e944d85b036e5caa8bec6cf2fd7814285637f8c3817"
         }
       ]
     },
@@ -1086,6 +1134,10 @@
         {
           "path": "013_tenant_backup_preimage_native_order.sql",
           "checksum": "faadc3b940fa6f8d9ae277437a5339a52da8d25498822c4bf2e074b1d2d8d15f"
+        },
+        {
+          "path": "014_log_archive_pipeline_bindings.sql",
+          "checksum": "e859080c968cea3a96166a1adf25a4303fc3a1d9c6c86dab32729576343844de"
         }
       ]
     },
@@ -1209,6 +1261,14 @@
         {
           "path": "012_flow_audit_sign_in_attempts.sql",
           "checksum": "a02e4c4ee4754ffe7e37c11b6b480c30e780a5cb0489a9e04f840975eabc70bb"
+        },
+        {
+          "path": "013_provisioning_revocation_receipts.sql",
+          "checksum": "f3c0245facd2a062429b95fe0cc800b7b0b678e85a794706707e7758337386b5"
+        },
+        {
+          "path": "014_log_iceberg_core_publications.sql",
+          "checksum": "66cbe8cd26d03aca61eb8c3151968e63f0a314c6070f6c8249c94883be0e2255"
         }
       ]
     },
@@ -1240,6 +1300,10 @@
         {
           "path": "005_service_dynamic_groups.sql",
           "checksum": "23bca89aa3279c160c56558efefcc6b04c2165f7364343325ccaf55e8a2ccc8b"
+        },
+        {
+          "path": "006_pii_log_purge_operations.sql",
+          "checksum": "9ea13c29ed29e366f3f0296d392af227493baf452a4e5582b2839ad35fd6c346"
         }
       ]
     }

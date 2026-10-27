@@ -9,6 +9,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RefreshTokenRotator, rotatedExpiry } from '../RefreshTokenRotator';
 import type { Env } from '../../types/env';
 
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
+
 // Mock DurableObjectState
 class MockDurableObjectState implements Partial<DurableObjectState> {
   private _storage = new Map<string, unknown>();
@@ -128,6 +133,35 @@ const createMockEnv = (): Env =>
   ({
     DB: createMockD1(),
     DB_PII: createMockD1(),
+    AUTHRIM_LOG_ARCHIVE_MODE: 'scheduled',
+    AUTHRIM_LOG_ARCHIVE_STORAGE_GENERATION: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    AUTHRIM_LOG_ARCHIVE_SCHEMA_VERSION: '1',
+    AUTHRIM_LOG_ARCHIVE_ACTIVATED_AT: '1970-01-01T00:00:00.000Z',
+    AUTHRIM_LOG_ARCHIVE_ACCOUNT_ID: 'a'.repeat(32),
+    AUTHRIM_LOG_ARCHIVE_BUCKET: 'archive-logs',
+    AUTHRIM_LOG_ARCHIVE_CATALOG_URI: `https://catalog.cloudflarestorage.com/${'a'.repeat(32)}/archive-logs`,
+    AUTHRIM_LOG_ARCHIVE_WAREHOUSE: `${'a'.repeat(32)}_archive-logs`,
+    AUTHRIM_LOG_ARCHIVE_NAMESPACE: 'authrim',
+    AUTHRIM_LOG_ARCHIVE_TABLE: 'logs_v1',
+    AUTHRIM_LOG_ARCHIVE_TABLE_UUID: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    AUTHRIM_LOG_ARCHIVE_PHYSICAL_FINGERPRINT: 'f'.repeat(64),
+    AUTHRIM_LOG_ARCHIVE_DB_RETENTION_DAYS: '7',
+    AUTHRIM_LOG_ARCHIVE_EXPORT_INTERVAL_MINUTES: '5',
+    OBJECT_ENCRYPTION_ROOT_KEY: 'ab'.repeat(32),
+    LOG_ARCHIVE_CONTENT_HMAC_KEY: 'cd'.repeat(32),
+    LOG_ARCHIVE_ROOT_KEYRING: JSON.stringify({
+      schema_version: 1,
+      current_version: 1,
+      roots: { 1: 'ab'.repeat(32) },
+    }),
+    LOG_ARCHIVE_WRITER: {
+      resolveTenantKey: async () => 'key-default',
+      writeRecords: async () => ({ stored: 1, queued: 0 }),
+    },
+    CONTROL: {
+      acquireTenantBackupMutationPermit: async () => ({ admitted: true }),
+      completeTenantBackupMutationPermit: async () => {},
+    },
   }) as unknown as Env;
 
 describe('RefreshTokenRotator V2', () => {

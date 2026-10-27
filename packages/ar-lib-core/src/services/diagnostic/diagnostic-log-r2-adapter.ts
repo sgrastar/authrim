@@ -1,511 +1,201 @@
-/**
- * Diagnostic Log R2 Storage Adapter
- *
- * Storage adapter for diagnostic logs to Cloudflare R2.
- * Supports immutable JSONL chunks with date-based partitioning.
- *
- * Path structure:
- * - {prefix}/v1/{tenantKey}/diagnostic_detail/diagnostic/{category}/_tenant/{yyyy}/{mm}/{dd}/{hh}/{chunkId}.jsonl
- * - {prefix}/v1/{tenantKey}/diagnostic_detail/diagnostic/{category}/{clientId}/{yyyy}/{mm}/{dd}/{hh}/{chunkId}.jsonl
- */
-
-import {
-  createLoggingId,
-  deriveTenantKeyFromTenantId,
-  formatUtcPartition,
-} from '@authrim/ar-lib-logging/contract';
+/** Diagnostic storage follows the selected archive mode; no JSONL objects are written. */
+import type { Env } from '../../types/env';
+import { logIcebergCanonicalJson } from '../log-iceberg-record';
+import { emitLogIcebergRow } from '../log-iceberg-emitter';
+import { readLogIcebergDataset } from '../log-iceberg-read';
 import type {
   DiagnosticLogEntry,
   DiagnosticLogWriteResult,
   DiagnosticLogQueryOptions,
   DiagnosticLogQueryResult,
-  DiagnosticLogCategory,
 } from './types';
-import { readR2ObjectTextWithLimit } from '../../utils/body-limits';
 
-const DIAGNOSTIC_R2_OBJECT_MAX_BYTES = 16 * 1024 * 1024;
-const DIAGNOSTIC_CHUNK_WINDOW_MS = 5 * 60 * 1000;
-const TENANT_SCOPE_SEGMENT = '_tenant';
-
-/**
- * R2 adapter configuration
- */
+export const DIAGNOSTIC_LOG_DATASET = 'diagnostic.diagnostic_log';
 export interface DiagnosticLogR2AdapterConfig {
-  /** R2 bucket binding */
-  bucket: R2Bucket;
-
-  /** Path prefix (e.g., "diagnostic-logs") */
-  pathPrefix: string;
-
-  /** Tenant ID */
+  env: Env;
   tenantId: string;
-
-  /** Opaque tenant key for R2 paths */
-  tenantKey?: string;
-
-  /** Salt used when deriving tenant keys from tenant IDs */
-  tenantKeySalt?: string;
-
-  /** Client ID (optional, for future client-scoped logging) */
   clientId?: string;
+  retentionDays?: number;
 }
 
-function cleanDiagnosticSegment(value: string): string {
-  return value.replaceAll(/[^a-zA-Z0-9._=-]/g, '_').slice(0, 128) || '_';
-}
-
-function trimSlashes(value: string): string {
-  let start = 0;
-  let end = value.length;
-  while (start < end && value.charCodeAt(start) === 47) {
-    start += 1;
-  }
-  while (end > start && value.charCodeAt(end - 1) === 47) {
-    end -= 1;
-  }
-  return value.slice(start, end);
-}
-
-function normalizeDiagnosticPrefix(prefix?: string): string {
-  const raw = trimSlashes(prefix ?? 'diagnostic-logs');
-  const cleaned = raw
-    .split('/')
-    .map((segment) => cleanDiagnosticSegment(segment))
-    .filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
-    .join('/');
-  return cleaned || 'diagnostic-logs';
-}
-
-async function resolveDiagnosticTenantKey(options: {
-  tenantId: string;
-  tenantKey?: string;
-  tenantKeySalt?: string;
-}): Promise<string> {
-  return (
-    options.tenantKey ??
-    (await deriveTenantKeyFromTenantId(options.tenantId, options.tenantKeySalt))
-  );
-}
-
-function floorToDiagnosticChunkWindow(timestamp: number): number {
-  return Math.floor(timestamp / DIAGNOSTIC_CHUNK_WINDOW_MS) * DIAGNOSTIC_CHUNK_WINDOW_MS;
-}
-
-/**
- * Build R2 object key for diagnostic logs
- *
- * Tenant path by default; include clientId when available. The key uses an
- * opaque tenant key so raw tenant IDs are not embedded in R2 object names.
- *
- * @param options - Path construction options
- * @returns R2 object key
- */
-export async function buildDiagnosticLogPath(options: {
-  pathPrefix: string;
-  tenantId: string;
-  tenantKey?: string;
-  tenantKeySalt?: string;
-  clientId?: string;
-  category: DiagnosticLogCategory;
-  timestamp: number;
-  chunkId?: string;
-}): Promise<string> {
-  const tenantKey = await resolveDiagnosticTenantKey(options);
-  const partition = formatUtcPartition(options.timestamp);
-  const chunkId = options.chunkId ?? createLoggingId('chk', options.timestamp);
-  return [
-    normalizeDiagnosticPrefix(options.pathPrefix),
-    'v1',
-    cleanDiagnosticSegment(tenantKey),
-    'diagnostic_detail',
-    'diagnostic',
-    cleanDiagnosticSegment(options.category),
-    options.clientId ? cleanDiagnosticSegment(options.clientId) : TENANT_SCOPE_SEGMENT,
-    partition.year,
-    partition.month,
-    partition.day,
-    partition.hour,
-    `${cleanDiagnosticSegment(chunkId)}.jsonl`,
-  ].join('/');
-}
-
-export async function buildDiagnosticLogPrefix(options: {
-  pathPrefix: string;
-  tenantId: string;
-  tenantKey?: string;
-  tenantKeySalt?: string;
-  category?: DiagnosticLogCategory;
-  clientId?: string;
-}): Promise<string> {
-  const tenantKey = await resolveDiagnosticTenantKey(options);
-  const segments = [
-    normalizeDiagnosticPrefix(options.pathPrefix),
-    'v1',
-    cleanDiagnosticSegment(tenantKey),
-    'diagnostic_detail',
-    'diagnostic',
-  ];
-  if (options.category) {
-    segments.push(cleanDiagnosticSegment(options.category));
-  }
-  if (options.clientId) {
-    segments.push(cleanDiagnosticSegment(options.clientId));
-  }
-  return segments.join('/');
-}
-
-/**
- * Diagnostic Log R2 Adapter
- */
 export class DiagnosticLogR2Adapter {
-  private readonly bucket: R2Bucket;
-  private readonly pathPrefix: string;
+  private readonly env: Env;
   private readonly tenantId: string;
-  private readonly tenantKey?: string;
-  private readonly tenantKeySalt?: string;
   private readonly clientId?: string;
+  private readonly retentionDays: number;
 
   constructor(config: DiagnosticLogR2AdapterConfig) {
-    this.bucket = config.bucket;
-    this.pathPrefix = normalizeDiagnosticPrefix(config.pathPrefix);
+    this.env = config.env;
     this.tenantId = config.tenantId;
-    this.tenantKeySalt = config.tenantKeySalt;
-    this.tenantKey = config.tenantKey;
     this.clientId = config.clientId;
+    this.retentionDays = config.retentionDays ?? 30;
+    if (
+      !Number.isSafeInteger(this.retentionDays) ||
+      this.retentionDays < 1 ||
+      this.retentionDays > 3650
+    )
+      throw new Error('diagnostic_retention_invalid');
   }
 
-  /**
-   * Write a single diagnostic log entry
-   */
   async writeLog(entry: DiagnosticLogEntry): Promise<DiagnosticLogWriteResult> {
     return this.writeLogBatch([entry]);
   }
 
-  /**
-   * Write a batch of diagnostic log entries
-   */
   async writeLogBatch(entries: DiagnosticLogEntry[]): Promise<DiagnosticLogWriteResult> {
-    if (entries.length === 0) {
-      return {
-        success: true,
-        entriesWritten: 0,
-        backend: 'r2-diagnostic',
-        durationMs: 0,
-      };
-    }
-
-    const startTime = Date.now();
-
-    // Group entries by category and bounded chunk window. Each group becomes a
-    // new immutable object; existing chunks are never read and rewritten.
-    const grouped = this.groupEntriesByChunkWindow(entries);
-    const tenantKey = await resolveDiagnosticTenantKey({
-      tenantId: this.tenantId,
-      tenantKey: this.tenantKey,
-      tenantKeySalt: this.tenantKeySalt,
-    });
-
+    const started = Date.now();
     let written = 0;
-    const errors: string[] = [];
-
-    for (const [key, groupEntries] of grouped) {
-      try {
-        const [category, chunkStartAtText] = key.split('|') as [DiagnosticLogCategory, string];
-        const chunkStartAt = Number.parseInt(chunkStartAtText, 10);
-        const chunkEndAt = Math.max(...groupEntries.map((entry) => entry.timestamp));
-        const chunkId = createLoggingId('chk', chunkStartAt);
-        const r2Key = await buildDiagnosticLogPath({
-          pathPrefix: this.pathPrefix,
+    try {
+      for (const input of entries) {
+        const entry = structuredClone(input);
+        if (
+          entry.tenantId !== this.tenantId ||
+          (this.clientId && entry.clientId !== this.clientId) ||
+          !entry.id ||
+          !Number.isSafeInteger(entry.timestamp) ||
+          entry.timestamp < 0
+        )
+          throw new Error('diagnostic_log_scope_invalid');
+        await emitLogIcebergRow(this.env, {
           tenantId: this.tenantId,
-          tenantKey,
-          clientId: this.clientId,
-          category,
-          timestamp: chunkStartAt,
-          chunkId,
-        });
-        const content = `${groupEntries.map((e) => JSON.stringify(e)).join('\n')}\n`;
-
-        await this.bucket.put(r2Key, content, {
-          httpMetadata: { contentType: 'application/x-ndjson' },
-          customMetadata: {
-            tenantKey,
-            clientId: this.clientId ?? '',
-            category,
-            entryCount: String(groupEntries.length),
-            chunkStartAt: String(chunkStartAt),
-            chunkEndAt: String(chunkEndAt),
-            createdAt: new Date().toISOString(),
+          sourceDataset: DIAGNOSTIC_LOG_DATASET,
+          logType: 'diagnostic',
+          eventAt: entry.timestamp,
+          expiresAt: entry.timestamp + this.retentionDays * 86_400_000,
+          row: {
+            id: entry.id,
+            tenant_id: this.tenantId,
+            client_id: entry.clientId ?? null,
+            category: entry.category,
+            level: entry.level,
+            created_at: entry.timestamp,
+            diagnostic_session_id: entry.diagnosticSessionId ?? null,
+            request_id: entry.requestId ?? null,
+            flow_id: entry.flowId ?? null,
+            source: entry.source ?? null,
+            storage_mode: entry.storageMode ?? null,
+            entry_json: logIcebergCanonicalJson(JSON.parse(JSON.stringify(entry))),
+          },
+          overview: {
+            action: entry.category,
+            severity: entry.level,
+            request_id: entry.requestId ?? null,
+            client_id: entry.clientId ?? null,
           },
         });
-
-        written += groupEntries.length;
-      } catch (error) {
-        errors.push(String(error));
+        written++;
       }
-    }
-
-    return {
-      success: errors.length === 0,
-      entriesWritten: written,
-      backend: 'r2-diagnostic',
-      durationMs: Date.now() - startTime,
-      errorMessage: errors.length > 0 ? errors.join('; ') : undefined,
-    };
-  }
-
-  /**
-   * Query diagnostic logs
-   */
-  async query(options: DiagnosticLogQueryOptions): Promise<DiagnosticLogQueryResult> {
-    const startTime = Date.now();
-
-    const limit = options.limit ?? 100;
-    const offset = options.offset ?? 0;
-
-    try {
-      const entries: DiagnosticLogEntry[] = [];
-      const objects = await this.listQueryObjects(options);
-      const filteredObjects = this.filterObjectsByDate(objects, options.startTime, options.endTime);
-
-      // Read and parse entries
-      for (const obj of filteredObjects) {
-        if (entries.length >= limit + offset) break;
-
-        const content = await this.bucket.get(obj.key);
-        if (!content) continue;
-
-        const text = await readR2ObjectTextWithLimit(content, DIAGNOSTIC_R2_OBJECT_MAX_BYTES);
-
-        // Parse JSONL
-        const lines = text.split('\n').filter((l) => l.trim());
-        for (const line of lines) {
-          if (entries.length >= limit + offset) break;
-          try {
-            const entry = JSON.parse(line) as DiagnosticLogEntry;
-            if (this.matchesQueryOptions(entry, options)) {
-              entries.push(entry);
-            }
-          } catch {
-            // Skip malformed lines
-          }
-        }
-      }
-
-      // Apply pagination
-      const paginatedEntries = entries.slice(offset, offset + limit);
-
       return {
-        entries: paginatedEntries,
-        totalCount: entries.length,
-        hasMore: entries.length > offset + limit,
-        durationMs: Date.now() - startTime,
-        backend: 'r2-diagnostic',
-      };
-    } catch {
-      return {
-        entries: [],
-        totalCount: 0,
-        hasMore: false,
-        durationMs: Date.now() - startTime,
-        backend: 'r2-diagnostic',
-      };
-    }
-  }
-
-  /**
-   * Delete logs older than retention period
-   */
-  async deleteByRetention(beforeTime: number, batchSize: number = 100): Promise<number> {
-    let deleted = 0;
-    let cursor: string | undefined;
-
-    do {
-      const result = await this.deleteByRetentionPage(beforeTime, batchSize, cursor);
-      deleted += result.deleted;
-      cursor = result.cursor;
-    } while (cursor);
-
-    return deleted;
-  }
-
-  /**
-   * Delete at most one R2 list page of expired logs. Scheduled maintenance uses
-   * this bounded form and persists the returned cursor between invocations.
-   */
-  async deleteByRetentionPage(
-    beforeTime: number,
-    batchSize: number = 100,
-    cursor?: string
-  ): Promise<{ deleted: number; scanned: number; cursor?: string }> {
-    const prefix = await buildDiagnosticLogPrefix({
-      pathPrefix: this.pathPrefix,
-      tenantId: this.tenantId,
-      tenantKey: this.tenantKey,
-      tenantKeySalt: this.tenantKeySalt,
-    });
-
-    const listed = await this.bucket.list({ prefix, limit: batchSize, cursor });
-    const expiredKeys = listed.objects
-      .filter((object) => this.getObjectDayTimestamp(object.key) < beforeTime)
-      .map((object) => object.key);
-    if (expiredKeys.length > 0) {
-      await this.bucket.delete(expiredKeys);
-    }
-    return {
-      deleted: expiredKeys.length,
-      scanned: listed.objects.length,
-      cursor: listed.truncated ? listed.cursor : undefined,
-    };
-  }
-
-  /**
-   * Health check
-   */
-  async isHealthy(): Promise<{ healthy: boolean; latencyMs: number; errorMessage?: string }> {
-    const startTime = Date.now();
-
-    try {
-      // List a small number of objects to check connectivity
-      await this.bucket.list({ prefix: this.pathPrefix, limit: 1 });
-
-      return {
-        healthy: true,
-        latencyMs: Date.now() - startTime,
+        success: true,
+        entriesWritten: written,
+        backend: 'iceberg-diagnostic',
+        durationMs: Date.now() - started,
       };
     } catch (error) {
       return {
-        healthy: false,
-        latencyMs: Date.now() - startTime,
-        errorMessage: String(error),
+        success: false,
+        entriesWritten: written,
+        backend: 'iceberg-diagnostic',
+        durationMs: Date.now() - started,
+        errorMessage: error instanceof Error ? error.message : 'diagnostic_log_write_failed',
       };
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Helper Methods
-  // ---------------------------------------------------------------------------
-
-  private groupEntriesByChunkWindow(
-    entries: DiagnosticLogEntry[]
-  ): Map<string, DiagnosticLogEntry[]> {
-    const grouped = new Map<string, DiagnosticLogEntry[]>();
-
-    for (const entry of entries) {
-      const chunkStartAt = floorToDiagnosticChunkWindow(entry.timestamp);
-      const key = `${entry.category}|${chunkStartAt}`;
-
-      const existing = grouped.get(key) ?? [];
-      existing.push(entry);
-      grouped.set(key, existing);
-    }
-
-    return grouped;
+  async query(options: DiagnosticLogQueryOptions): Promise<DiagnosticLogQueryResult> {
+    if (options.tenantId !== this.tenantId || (this.clientId && options.clientId !== this.clientId))
+      throw new Error('diagnostic_log_scope_invalid');
+    const started = Date.now();
+    const result = await readLogIcebergDataset(this.env, {
+      tenantId: this.tenantId,
+      sourceDataset: DIAGNOSTIC_LOG_DATASET,
+      fromMs: options.startTime,
+      toMs: options.endTime,
+    });
+    const entries = result.rows
+      .map((row) => {
+        if (typeof row.entry_json !== 'string')
+          throw new Error('diagnostic_archive_record_invalid');
+        const entry = JSON.parse(row.entry_json) as DiagnosticLogEntry;
+        if (
+          entry.id !== row.id ||
+          entry.tenantId !== this.tenantId ||
+          !Number.isSafeInteger(entry.timestamp)
+        )
+          throw new Error('diagnostic_archive_record_invalid');
+        return entry;
+      })
+      .filter((entry) => this.matchesQueryOptions(entry, options))
+      .sort((a, b) => b.timestamp - a.timestamp || a.id.localeCompare(b.id));
+    const offset = options.offset ?? 0,
+      limit = options.limit ?? 100;
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 10000
+    )
+      throw new Error('diagnostic_pagination_invalid');
+    return {
+      entries: entries.slice(offset, offset + limit),
+      totalCount: entries.length,
+      hasMore: entries.length > offset + limit,
+      durationMs: Date.now() - started,
+      backend: 'iceberg-diagnostic',
+      consistency: result.consistency,
+    };
   }
 
-  private async listQueryObjects(options: DiagnosticLogQueryOptions): Promise<R2Object[]> {
-    const prefix = await buildDiagnosticLogPrefix({
-      pathPrefix: this.pathPrefix,
-      tenantId: options.tenantId,
-      tenantKey: options.tenantId === this.tenantId ? this.tenantKey : undefined,
-      tenantKeySalt: this.tenantKeySalt,
-      category: options.category,
-      clientId: options.category ? options.clientId : undefined,
-    });
-    const objects: R2Object[] = [];
-    let cursor: string | undefined;
+  /** Shared Iceberg maintenance applies each immutable record's expires_at. */
+  async deleteByRetention(_beforeTime: number, _batchSize = 100): Promise<number> {
+    throw new Error('diagnostic_retention_managed_by_iceberg');
+  }
+  async deleteByRetentionPage(
+    _beforeTime: number,
+    _batchSize = 100,
+    _cursor?: string
+  ): Promise<{ deleted: number; scanned: number; cursor?: string }> {
+    throw new Error('diagnostic_retention_managed_by_iceberg');
+  }
 
-    do {
-      const listed = await this.bucket.list({
-        prefix,
-        limit: 1000,
-        cursor,
+  async isHealthy(): Promise<{ healthy: boolean; latencyMs: number; errorMessage?: string }> {
+    const started = Date.now();
+    try {
+      await readLogIcebergDataset(this.env, {
+        tenantId: this.tenantId,
+        sourceDataset: DIAGNOSTIC_LOG_DATASET,
+        fromMs: started,
+        toMs: started + 1,
       });
-      objects.push(...listed.objects);
-      cursor = listed.truncated ? listed.cursor : undefined;
-    } while (cursor);
-
-    return objects;
-  }
-
-  private getObjectDayTimestamp(key: string): number {
-    const partitionMatch = key.match(/\/(\d{4})\/(\d{2})\/(\d{2})\/\d{2}\//);
-    if (partitionMatch) {
-      return Date.UTC(
-        Number.parseInt(partitionMatch[1], 10),
-        Number.parseInt(partitionMatch[2], 10) - 1,
-        Number.parseInt(partitionMatch[3], 10)
-      );
+      return { healthy: true, latencyMs: Date.now() - started };
+    } catch (error) {
+      return {
+        healthy: false,
+        latencyMs: Date.now() - started,
+        errorMessage: error instanceof Error ? error.message : 'diagnostic_storage_unavailable',
+      };
     }
-
-    return Number.POSITIVE_INFINITY;
-  }
-
-  private filterObjectsByDate(
-    objects: R2Object[],
-    startTime?: number,
-    endTime?: number
-  ): R2Object[] {
-    if (!startTime && !endTime) return objects;
-
-    return objects.filter((obj) => {
-      const objDate = this.getObjectDayTimestamp(obj.key);
-      if (!Number.isFinite(objDate)) return true;
-
-      if (startTime && objDate < startTime - 86400000) return false; // Day buffer
-      if (endTime && objDate > endTime + 86400000) return false;
-      return true;
-    });
   }
 
   private matchesQueryOptions(
     entry: DiagnosticLogEntry,
     options: DiagnosticLogQueryOptions
   ): boolean {
-    if (entry.tenantId !== options.tenantId) return false;
-    if (options.clientId && entry.clientId !== options.clientId) return false;
-
-    // Time range filter
-    if (options.startTime && entry.timestamp < options.startTime) return false;
-    if (options.endTime && entry.timestamp >= options.endTime) return false;
-
-    // Diagnostic session ID filter
-    if (options.diagnosticSessionId && entry.diagnosticSessionId !== options.diagnosticSessionId) {
-      return false;
-    }
-
-    // Request ID filter
-    if (options.requestId && entry.requestId !== options.requestId) {
-      return false;
-    }
-
-    // Category filter (already filtered by prefix, but double-check)
-    if (options.category && entry.category !== options.category) {
-      return false;
-    }
-
-    return true;
+    return (
+      entry.tenantId === options.tenantId &&
+      (!options.clientId || entry.clientId === options.clientId) &&
+      (options.startTime === undefined || entry.timestamp >= options.startTime) &&
+      (options.endTime === undefined || entry.timestamp < options.endTime) &&
+      (!options.diagnosticSessionId || entry.diagnosticSessionId === options.diagnosticSessionId) &&
+      (!options.requestId || entry.requestId === options.requestId) &&
+      (!options.category || entry.category === options.category)
+    );
   }
 }
 
-/**
- * Create a diagnostic log R2 adapter
- */
 export function createDiagnosticLogR2Adapter(
-  bucket: R2Bucket,
-  options: {
-    pathPrefix?: string;
-    tenantId: string;
-    tenantKey?: string;
-    tenantKeySalt?: string;
-    clientId?: string;
-  }
+  env: Env,
+  options: { tenantId: string; clientId?: string; retentionDays?: number }
 ): DiagnosticLogR2Adapter {
-  return new DiagnosticLogR2Adapter({
-    bucket,
-    pathPrefix: options.pathPrefix ?? 'diagnostic-logs',
-    tenantId: options.tenantId,
-    tenantKey: options.tenantKey,
-    tenantKeySalt: options.tenantKeySalt,
-    clientId: options.clientId,
-  });
+  return new DiagnosticLogR2Adapter({ env, ...options });
 }

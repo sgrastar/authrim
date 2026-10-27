@@ -1,3 +1,12 @@
+import {
+  assertLogArchiveImplemented,
+  assertLogArchiveLockMatches,
+  logArchiveRuntimeVars,
+  localLogArchiveRuntimeVars,
+  LOG_ARCHIVE_PRODUCER_COMPONENTS,
+  type LogArchiveLock,
+} from './log-archive-config.js';
+import { LOG_ARCHIVE_SCHEMA_DIGEST } from './log-archive.js';
 /**
  * Wrangler Configuration Generator
  *
@@ -33,6 +42,7 @@ import { MANAGED_WORKER_DEPLOY_BUILD_COMMAND } from './managed-worker-deploy.js'
 // =============================================================================
 
 export interface ResourceIds {
+  logArchive?: LogArchiveLock;
   d1: Record<string, { id: string; name: string }>;
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
@@ -44,6 +54,7 @@ export interface ResourceIds {
 
 export function buildResourceIdsFromLock(lock: AuthrimLock, config?: AuthrimConfig): ResourceIds {
   return {
+    ...(lock.logArchive ? { logArchive: lock.logArchive } : {}),
     d1: Object.fromEntries(
       Object.entries(lock.d1 || {}).map(([key, value]) => [key, { id: value.id, name: value.name }])
     ),
@@ -82,6 +93,7 @@ export interface WranglerConfig {
   d1_databases?: Array<{ binding: string; database_name: string; database_id: string }>;
   hyperdrive?: Array<{ binding: string; id: string }>;
   r2_buckets?: Array<{ binding: string; bucket_name: string }>;
+  pipelines?: Array<{ binding: string; stream: string }>;
   durable_objects?: {
     bindings: Array<{ name: string; class_name: string; script_name?: string }>;
   };
@@ -704,6 +716,19 @@ export function generateWranglerConfig(
   workersSubdomain?: string,
   options: GenerateWranglerConfigOptions = {}
 ): WranglerConfig {
+  assertLogArchiveImplemented(config.logging?.archive);
+  const archive = config.logging?.archive;
+  if (archive && !config.features.r2.enabled) throw new Error('log_archive_requires_r2');
+  if (archive?.mode === 'pipeline' && !config.features.queue.enabled)
+    throw new Error('log_archive_pipeline_requires_durable_queue');
+  if (options.local && archive?.mode !== 'scheduled')
+    throw new Error('local_log_archive_requires_scheduled');
+  if (archive && !options.local) {
+    const locked = resourceIds.logArchive;
+    assertLogArchiveLockMatches(archive, locked, config.cloudflare.accountId);
+    if (locked.schemaDigest !== LOG_ARCHIVE_SCHEMA_DIGEST)
+      throw new Error('log_archive_schema_digest_mismatch');
+  }
   const env = config.environment.prefix;
   const multiTenantBaseDomain =
     config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
@@ -736,6 +761,21 @@ export function generateWranglerConfig(
       options.local ? { allowLocalhostSameSite: true } : {}
     ),
   };
+  if (archive && options.local && LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component))
+    Object.assign(wranglerConfig.vars, localLogArchiveRuntimeVars(archive));
+  if (
+    archive &&
+    !options.local &&
+    resourceIds.logArchive &&
+    LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component)
+  ) {
+    const locked = resourceIds.logArchive;
+    Object.assign(wranglerConfig.vars, logArchiveRuntimeVars(archive, locked));
+    if (archive.mode === 'pipeline' && component === 'ar-management') {
+      if (!locked.stream?.id) throw new Error('log_archive_stream_binding_missing');
+      wranglerConfig.pipelines = [{ binding: 'LOG_ARCHIVE_STREAM', stream: locked.stream.id }];
+    }
+  }
   if (resourceIds.controlKeyState && component === 'ar-control') {
     wranglerConfig.vars['RUNTIME_REGISTRY_SIGNING_ACTIVE_SLOT'] =
       resourceIds.controlKeyState.runtimeRegistry.activeSlot;
@@ -860,6 +900,16 @@ export function generateWranglerConfig(
 
   // D1 databases, including Control-managed TDB_* routes where a Worker needs data-plane access.
   const d1Databases = collectD1DatabaseBindings(component, resourceIds);
+  if (archive && component === 'ar-lib-core') {
+    const database = resourceIds.d1.DB_ADMIN;
+    if (!database?.id) throw new Error('log_archive_staging_admin_database_missing');
+    if (!d1Databases.some((entry) => entry.binding === 'DB_ADMIN'))
+      d1Databases.push({
+        binding: 'DB_ADMIN',
+        database_name: database.name,
+        database_id: database.id,
+      });
+  }
   if (d1Databases.length > 0) {
     wranglerConfig.d1_databases = d1Databases;
     const fixedDatabaseBindings = new Set([
@@ -996,19 +1046,6 @@ export function generateWranglerConfig(
       addProvisionedR2Binding('PUBLIC_ASSETS');
     }
 
-    if (
-      component === 'ar-auth' ||
-      component === 'ar-token' ||
-      component === 'ar-async' ||
-      component === 'ar-saml' ||
-      component === 'ar-bridge' ||
-      component === 'ar-vc' ||
-      component === 'ar-management'
-    ) {
-      addProvisionedR2Binding('DIAGNOSTIC_LOGS');
-      addProvisionedR2Binding('AUDIT_ARCHIVE');
-    }
-
     if (component === 'ar-bridge') {
       addProvisionedR2Binding('SENSITIVE_DETAILS');
     }
@@ -1022,6 +1059,13 @@ export function generateWranglerConfig(
     if (r2Buckets.length > 0) {
       wranglerConfig.r2_buckets = r2Buckets;
     }
+  }
+
+  if (archive && (component === 'ar-management' || component === 'ar-lib-core')) {
+    wranglerConfig.r2_buckets = [
+      ...(wranglerConfig.r2_buckets ?? []),
+      { binding: 'LOG_ARCHIVE', bucket_name: archive.bucketName },
+    ];
   }
 
   // Queues (optional)
@@ -1042,8 +1086,13 @@ export function generateWranglerConfig(
       });
     }
 
-    if (LOGGING_DELIVERY_PRODUCER_COMPONENTS.includes(component)) {
-      for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS) {
+    if (
+      LOGGING_DELIVERY_PRODUCER_COMPONENTS.includes(component) ||
+      (archive?.mode === 'pipeline' && component === 'ar-lib-core')
+    ) {
+      for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS.filter(
+        (entry) => component !== 'ar-lib-core' || entry.binding === 'LOGGING_DELIVERY_QUEUE'
+      )) {
         producers.push({
           queue: resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
           binding: definition.binding,
@@ -1192,6 +1241,30 @@ export function generateWranglerConfig(
         environmentId: env,
         audience: 'authrim-plugin-runner-v1',
       },
+    });
+  }
+
+  if (archive && component === 'ar-lib-core') {
+    wranglerConfig.services ??= [];
+    if (!wranglerConfig.services.some((binding) => binding.binding === 'CONTROL'))
+      wranglerConfig.services.push({
+        binding: 'CONTROL',
+        service: `${env}-ar-control`,
+        props: { caller: 'ar-lib-core', audience: 'authrim-control-v1', environmentId: env },
+      });
+  }
+
+  if (
+    archive &&
+    component !== 'ar-lib-core' &&
+    LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component)
+  ) {
+    wranglerConfig.services ??= [];
+    wranglerConfig.services.push({
+      binding: 'LOG_ARCHIVE_WRITER',
+      service: `${env}-ar-lib-core`,
+      entrypoint: 'LogArchiveWriteEntrypoint',
+      props: { caller: component, audience: 'authrim-log-archive-v1', environmentId: env },
     });
   }
 
@@ -1584,7 +1657,9 @@ export function generateEnvVars(
     vars['AUTHRIM_CHALLENGE_SHARDS'] = (config.sharding.challengeShards ?? 4).toString();
   }
 
-  const componentSecrets = getSecretNamesForWorker(component);
+  const componentSecrets = getSecretNamesForWorker(component, {
+    logArchive: Boolean(config.logging?.archive),
+  });
   if (componentSecrets.includes('PLUGIN_ENCRYPTION_KEY')) {
     vars['PLUGIN_ENCRYPTION_KEY'] = ''; // Set via secret
   }
@@ -1912,6 +1987,15 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     }
 
     // R2 Buckets
+    if (config.pipelines?.length) {
+      for (const pipeline of config.pipelines) {
+        lines.push(`[[env.${envName}.pipelines]]`);
+        lines.push(`binding = ${JSON.stringify(pipeline.binding)}`);
+        lines.push(`stream = ${JSON.stringify(pipeline.stream)}`);
+        lines.push('');
+      }
+    }
+
     if (config.r2_buckets && config.r2_buckets.length > 0) {
       lines.push('# R2 Buckets');
       for (const r2 of config.r2_buckets) {
@@ -2112,6 +2196,15 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     }
 
     // R2 Buckets
+    if (config.pipelines?.length) {
+      for (const pipeline of config.pipelines) {
+        lines.push('[[pipelines]]');
+        lines.push(`binding = ${JSON.stringify(pipeline.binding)}`);
+        lines.push(`stream = ${JSON.stringify(pipeline.stream)}`);
+        lines.push('');
+      }
+    }
+
     if (config.r2_buckets && config.r2_buckets.length > 0) {
       lines.push('# R2 Buckets');
       for (const r2 of config.r2_buckets) {
@@ -2718,4 +2811,50 @@ export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOption
   }
 
   return lines.join('\n') + '\n';
+}
+
+/** Read only Setup's generated vars section; unknown explicit modes fail closed. */
+export function parseGeneratedLogArchiveVars(
+  content: string,
+  environment: string
+): Record<string, string> {
+  const scopes: Record<string, Record<string, string>> = { root: {}, environment: {} };
+  let scope: 'root' | 'environment' | undefined;
+  for (const line of content.split(/\r?\n/u)) {
+    const text = line.trim();
+    if (text.startsWith('['))
+      scope =
+        text === `[env.${environment}.vars]`
+          ? 'environment'
+          : text === '[vars]'
+            ? 'root'
+            : undefined;
+    if (
+      !scope ||
+      !(text.startsWith('AUTHRIM_LOG_ARCHIVE_') || text.startsWith('OBJECT_ENCRYPTION_KEY_VERSION'))
+    )
+      continue;
+    const match =
+      /^(AUTHRIM_LOG_ARCHIVE_[A-Z_]+|OBJECT_ENCRYPTION_KEY_VERSION)\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$/u.exec(
+        text
+      );
+    if (!match || scopes[scope][match[1]] !== undefined)
+      throw new Error('log_archive_generated_vars_invalid');
+    scopes[scope][match[1]] = JSON.parse(match[2]) as string;
+  }
+  const result = { ...scopes.root, ...scopes.environment };
+  if (result.AUTHRIM_LOG_ARCHIVE_LOCAL_STAGING_ONLY !== undefined)
+    throw new Error('local_log_archive_cannot_be_deployed');
+  return result;
+}
+
+export function parseGeneratedLogArchiveMode(
+  content: string,
+  environment: string
+): 'pipeline' | 'scheduled' | undefined {
+  const value = parseGeneratedLogArchiveVars(content, environment).AUTHRIM_LOG_ARCHIVE_MODE;
+  if (value === undefined) return undefined;
+  if (value !== 'pipeline' && value !== 'scheduled')
+    throw new Error('log_archive_generated_mode_invalid');
+  return value;
 }

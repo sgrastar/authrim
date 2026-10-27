@@ -50,6 +50,7 @@ interface Cursor {
 
 export interface Phase5OtherStorePorts {
   phase4: Phase4OtherStorePorts;
+  isDatasetSelected?: Phase4OtherStorePorts['isDatasetSelected'];
   loadSqlite(
     context: TenantBackupStepContext,
     planDigest: string,
@@ -223,6 +224,13 @@ export function createPhase5OtherStoreHandlers(
       };
     }
     const datasetId = cursor.datasetId ?? invalid();
+    if (
+      ports.isDatasetSelected &&
+      !(await ports.isDatasetSelected(context, planDigest, datasetId))
+    ) {
+      if (cursor.sourceCursor !== null) invalid();
+      return next(datasetId, purpose);
+    }
     if (isSql(datasetId)) {
       const source = await ports.loadSqlite(context, planDigest, purpose, datasetId);
       if (source.policy.dataset.id !== datasetId) invalid();

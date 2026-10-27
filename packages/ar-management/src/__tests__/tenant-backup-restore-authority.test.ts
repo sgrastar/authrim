@@ -1,3 +1,10 @@
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
+import { SqlLogIcebergRecordStore } from '@authrim/ar-lib-core/services/log-iceberg-store';
+import { decryptLogIcebergRecord } from '@authrim/ar-lib-core/services/log-iceberg-record';
+import {
+  decodeLogIcebergRow,
+  decryptProtectedLogIcebergDetail,
+} from '@authrim/ar-lib-core/services/log-iceberg-row-codec';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -43,6 +50,28 @@ function freshDatabase(family: 'core' | 'pii' | 'admin') {
 
 function adapter(database: DatabaseSync) {
   return {
+    getType: () => 'sqlite',
+    close: async () => {},
+    isHealthy: async () => ({ healthy: true, latencyMs: 0, type: 'sqlite' }),
+    transaction: async <T>(_work: unknown): Promise<T> => {
+      throw new Error('Use batch');
+    },
+    batch: async (statements: import('@authrim/ar-lib-core').PreparedStatement[]) => {
+      database.exec('BEGIN');
+      try {
+        const result = statements.map((statement) => ({
+          success: true,
+          rowsAffected: Number(
+            database.prepare(statement.sql).run(...(statement.params ?? [])).changes
+          ),
+        }));
+        database.exec('COMMIT');
+        return result;
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    },
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
       return database.prepare(sql).all(...params) as T[];
     },
@@ -85,6 +114,31 @@ const platformOperator = {
 } as unknown as AdminAuthContext;
 
 let admin: DatabaseSync;
+let logFixture: Awaited<ReturnType<typeof logProducerFixture>>;
+async function auditRows(): Promise<Record<string, unknown>[]> {
+  const records = await new SqlLogIcebergRecordStore(adapter(admin)).readTenant({
+    tenantId: 'tenant-a',
+    tenantKey: 'key-a',
+    sourceDataset: 'admin.admin_audit_log',
+    now: Date.now(),
+  });
+  return Promise.all(
+    records.map(async (record) => {
+      const body = await decryptLogIcebergRecord(
+        record,
+        { tenantKey: 'key-a', sourceDataset: 'admin.admin_audit_log' },
+        async () => logFixture.keys
+      );
+      const row = decodeLogIcebergRow(body, 'tenant-a', record.event_id);
+      const details = await decryptProtectedLogIcebergDetail({
+        record,
+        body,
+        resolveKeys: async () => logFixture.keys,
+      });
+      return { ...row, metadata_json: details?.metadata_json ?? row.metadata_json };
+    })
+  );
+}
 /** The validated `admin.admin_roles` rows of the bundle being restored. */
 let bundleRoles: string[] = [];
 let policies: Map<string, SqliteDatasetInspectionPolicy>;
@@ -148,6 +202,7 @@ async function importRequest(authority: TenantBackupImportAuthority | null, tena
 
 function guarded() {
   const guard = createTenantBackupRestoreAuthorityGuard({
+    logEnv: logFixture.env,
     database: adapter(admin),
     loadBundleRoles: async () => bundleRoles,
   });
@@ -196,6 +251,7 @@ async function restore(
 beforeEach(async () => {
   bundleRoles = [];
   admin = freshDatabase('admin');
+  logFixture = await logProducerFixture('scheduled');
   policies = new Map((await realPolicies()).map((policy) => [policy.dataset.id, policy]));
   // What the shared Admin database already holds: the platform's own global super_admin, an
   // institution document the platform set for this provisioning tenant, and a custom role the
@@ -212,7 +268,10 @@ beforeEach(async () => {
     VALUES ('restored-operator','tenant-a','operator','Operator','["*"]',10,'custom',0,1,1);
   `);
 });
-afterEach(() => admin.close());
+afterEach(() => {
+  admin.close();
+  logFixture?.db.close();
+});
 
 describe('what an import requester may grant', () => {
   it('records no platform-only settings or global Admin authority for a tenant-only super_admin', () => {
@@ -334,14 +393,14 @@ describe('global Admin role assignments', () => {
     await restore(ADMIN_ROLE_ASSIGNMENTS_DATASET, context, row);
     // A retried write records it once; verification records nothing.
     await policy.restoreTransform!.transform(context, row, 'write');
-    const audits = admin
-      .prepare(
-        `SELECT tenant_id,admin_user_id,action,resource_type,resource_id,result,severity,metadata_json
-         FROM admin_audit_log WHERE action='tenant_backup.global_admin_assignment_restored'`
-      )
-      .all() as Record<string, string>[];
+    const audits = (await auditRows()).filter(
+      (row) => row.action === 'tenant_backup.global_admin_assignment_restored'
+    );
     expect(audits).toHaveLength(1);
-    expect({ ...audits[0], metadata_json: JSON.parse(audits[0].metadata_json) }).toEqual({
+    expect({
+      ...audits[0],
+      metadata_json: JSON.parse(String(audits[0].metadata_json)),
+    }).toMatchObject({
       tenant_id: 'tenant-a',
       admin_user_id: 'platform-admin',
       action: 'tenant_backup.global_admin_assignment_restored',
@@ -396,12 +455,8 @@ describe('global Admin role assignments', () => {
     ).rejects.toThrow(REFUSED);
     // Nothing refused was audited.
     expect(
-      admin
-        .prepare(
-          "SELECT count(*) AS n FROM admin_audit_log WHERE resource_id='assignment-global-role_super_admin'"
-        )
-        .get().n
-    ).toBe(0);
+      (await auditRows()).filter((row) => row.resource_id === 'assignment-global-role_super_admin')
+    ).toHaveLength(0);
   });
 
   it('refuses a global assignment of an unknown role and writes nothing when the audit fails', async () => {
@@ -415,11 +470,12 @@ describe('global Admin role assignments', () => {
       REFUSED
     );
     const failing = createTenantBackupRestoreAuthorityGuard({
+      logEnv: logFixture.env,
       database: {
         ...adapter(admin),
         // The audit entry cannot be written (the statement returns no row).
         queryOne: async <T>(sql: string, params?: unknown[]) =>
-          sql.includes('INSERT INTO admin_audit_log')
+          sql.includes('FROM admin_audit_receipts')
             ? null
             : adapter(admin).queryOne<T>(sql, params),
       } as never,
@@ -573,17 +629,10 @@ describe('global assignments of roles defined by the bundle', () => {
       tenantBackupImportAuthority(platformOperator, 'platform-admin')
     );
     await restore(ADMIN_ROLE_ASSIGNMENTS_DATASET, context, assignmentRow('global', 'bundle-new'));
-    expect(
-      JSON.parse(
-        (
-          admin
-            .prepare(
-              "SELECT metadata_json FROM admin_audit_log WHERE resource_id='assignment-global-bundle-new'"
-            )
-            .get() as { metadata_json: string }
-        ).metadata_json
-      ).roleLevel
-    ).toBe(50);
+    const written = (await auditRows()).find(
+      (row) => row.resource_id === 'assignment-global-bundle-new'
+    );
+    expect(JSON.parse(String(written?.metadata_json)).roleLevel).toBe(50);
   });
 
   it('refuses, while the restore can still be cleaned up, a low role inheriting super_admin', async () => {
@@ -701,6 +750,7 @@ describe('role chains and system roles the restore itself brings', () => {
     const context = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
     const local = new Map(
       createTenantBackupRestoreAuthorityGuard({
+        logEnv: logFixture.env,
         database: adapter(admin),
         loadBundleRoles: async () => {
           throw new Error('bundle roles read');
@@ -731,6 +781,7 @@ describe('the cost and value range of the checks', () => {
     let queries = 0;
     const counted = adapter(admin);
     const database = {
+      ...counted,
       query: async <T>(sql: string, params?: unknown[]) => (
         queries++,
         counted.query<T>(sql, params)
@@ -742,7 +793,11 @@ describe('the cost and value range of the checks', () => {
       execute: async (sql: string, params?: unknown[]) => (queries++, counted.execute(sql, params)),
     };
     const wrapped = new Map(
-      createTenantBackupRestoreAuthorityGuard({ database, loadBundleRoles: async () => [] })
+      createTenantBackupRestoreAuthorityGuard({
+        logEnv: logFixture.env,
+        database,
+        loadBundleRoles: async () => [],
+      })
         .wrap(
           [...policies.values()].filter(({ dataset }) =>
             [
@@ -768,13 +823,14 @@ describe('the cost and value range of the checks', () => {
     expect(queries).toBeLessThanOrEqual(8);
   });
 
-  it('reads the database about once per global assignment for hundreds of them', async () => {
+  it('keeps global assignment publication bounded per row for hundreds of them', async () => {
     const context = await importRequest(
       tenantBackupImportAuthority(platformOperator, 'platform-admin')
     );
     let queries = 0;
     const counted = adapter(admin);
     const database = {
+      ...counted,
       query: async <T>(sql: string, params?: unknown[]) => (
         queries++,
         counted.query<T>(sql, params)
@@ -786,6 +842,7 @@ describe('the cost and value range of the checks', () => {
       execute: async (sql: string, params?: unknown[]) => (queries++, counted.execute(sql, params)),
     };
     const policy = createTenantBackupRestoreAuthorityGuard({
+      logEnv: logFixture.env,
       database,
       loadBundleRoles: async () => [],
     }).wrap([policies.get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!])[0];
@@ -796,8 +853,9 @@ describe('the cost and value range of the checks', () => {
       });
       await policy.restoreTransform!.transform(context, row, 'write');
     }
-    // The audit entry of each, plus a fixed few (authority, the role, the bundle roles).
-    expect(queries).toBeLessThanOrEqual(300 + 5);
+    // One fixed source timestamp and one exact completion-receipt read per entry.
+    // Envelope/parts are committed in one batch, never a per-field read loop.
+    expect(queries).toBeLessThanOrEqual(2 * 300 + 5);
   });
 
   it('takes fractional and missing role levels as the Admin repositories do', async () => {
@@ -846,8 +904,8 @@ describe('the critical audit of a restored global assignment', () => {
     // As a bundle with audit rows could restore it before the assignment.
     admin
       .prepare(
-        `INSERT INTO admin_audit_log(id,tenant_id,action,result,severity,created_at)
-         VALUES (?,'tenant-a','unrelated.event','success','info',1)`
+        `INSERT INTO admin_audit_receipts(id,tenant_id,payload_hmac,recorded_at)
+         VALUES (?,'tenant-a','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1)`
       )
       .run(`tenant-backup-global-grant:${operationId}:assignment-global-role_admin`);
     const policy = guarded().get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!;
@@ -878,6 +936,7 @@ describe('policy wrapping', () => {
 
   it('pins the guard into the guarded datasets and leaves the others alone', () => {
     const guard = createTenantBackupRestoreAuthorityGuard({
+      logEnv: logFixture.env,
       database: adapter(admin),
       loadBundleRoles: async () => bundleRoles,
     });

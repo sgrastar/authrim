@@ -1,3 +1,4 @@
+import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -20,7 +21,9 @@ function applyControlMigrations(database: DatabaseSync): void {
   for (const file of readdirSync(directory)
     .filter((name) => name.endsWith('.sql'))
     .sort()) {
-    database.exec(readFileSync(resolve(directory, file), 'utf8'));
+    database.exec(
+      renderPortableMigrationSql(readFileSync(resolve(directory, file), 'utf8'), 'sqlite')
+    );
   }
 }
 

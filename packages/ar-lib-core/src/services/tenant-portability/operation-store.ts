@@ -44,6 +44,9 @@ export const TENANT_BACKUP_PERMANENT_FAILURES = [
   'backup_export_too_large',
   'backup_artifact_too_large',
   'backup_sqlite_row_too_large',
+  'backup_iceberg_log_source_expired',
+  'backup_iceberg_log_partial_capture',
+  'backup_iceberg_log_boundary_changed',
 ] as const;
 export type TenantBackupPermanentFailure = (typeof TENANT_BACKUP_PERMANENT_FAILURES)[number];
 

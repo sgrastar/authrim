@@ -1,6 +1,9 @@
-import { AdminAuditLogRepository, type DatabaseAdapter, type Env } from '@authrim/ar-lib-core';
-import { emitRuntimeLogRecords } from '@authrim/ar-lib-core/services/logging-runtime-emitter';
-import { createLoggingTenantKeyResolverFromSource } from './logging-tenant-key';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import { prepareLogIcebergRowWrite } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
+import {
+  adminAuditReceiptStatement,
+  confirmAdminAuditReceipt,
+} from '@authrim/ar-lib-core/services/admin-audit-receipts';
 
 export const SUPPORT_OPS_LOGOUT_JOB_TYPE = 'support-ops/action-execute-logout';
 export async function supportOpsEvidenceId(...parts: string[]): Promise<string> {
@@ -93,7 +96,7 @@ export async function keepSupportOpsLogoutPage(
     throw new Error('support_ops_logout_job_conflict');
   return id;
 }
-/** D1 audit evidence is idempotent. Archive delivery retries at least once using the same event ID. */
+/** Commit minimal business evidence and durable log delivery in one Admin batch. */
 export async function keepSupportOpsFinalAudit(
   env: Env,
   db: DatabaseAdapter,
@@ -116,97 +119,54 @@ export async function keepSupportOpsFinalAudit(
     decided_at: input.decidedAtMs,
     result: input.summary,
   };
-  const encoded = JSON.stringify(metadata);
-  type Row = {
-    tenant_id: string;
-    admin_user_id: string | null;
-    action: string;
-    resource_type: string;
-    resource_id: string;
-    result: string;
-    metadata_json: string;
-    created_at: number;
-  };
-  const read = () =>
-    db.queryOne<Row>(
-      'SELECT tenant_id,admin_user_id,action,resource_type,resource_id,result,metadata_json,created_at FROM admin_audit_log WHERE id=?',
-      [id],
-      { consistencyClass: 'primary_required' }
-    );
-  let row = await read();
-  if (!row) {
-    try {
-      await beforeEffect();
-      await new AdminAuditLogRepository(db).createAuditLog({
-        id,
-        tenant_id: input.tenantId,
-        admin_user_id: input.actor.adminUserId ?? undefined,
-        action: 'support_ops.action.execute',
-        resource_type: 'support_ops',
-        resource_id: input.actionId,
-        result: input.result,
-        severity: input.result === 'success' ? 'info' : 'warn',
-        metadata,
-      });
-    } catch (error) {
-      // Includes an insert response lost after commit. An absent or different row still fails.
-      row = await read();
-      if (!row) throw error;
-    }
-    row ??= await read();
-  }
-  if (
-    !row ||
-    row.tenant_id !== input.tenantId ||
-    row.admin_user_id !== input.actor.adminUserId ||
-    row.action !== 'support_ops.action.execute' ||
-    row.resource_type !== 'support_ops' ||
-    row.resource_id !== input.actionId ||
-    row.result !== input.result ||
-    row.metadata_json !== encoded
-  )
-    throw new Error('support_ops_final_audit_conflict');
-  if (!env.AUDIT_ARCHIVE && !env.AUTHRIM_CONFIG) return;
-  await beforeEffect();
-  const emitted = await emitRuntimeLogRecords({
-    env: { ...env, DB_ADMIN: db, LOGGING_INDEX_DB: db },
+  const prepared = await prepareLogIcebergRowWrite(env, db, {
     tenantId: input.tenantId,
+    sourceDataset: 'admin.admin_audit_log',
     logType: 'admin_audit',
-    surface: 'admin_audit',
-    tenantKeyResolver: createLoggingTenantKeyResolverFromSource(env.DB, 'admin-audit-archive'),
-    planes: ['archive'],
-    records: [
-      {
-        id,
-        eventAt: row.created_at,
-        type: 'admin_audit.support_ops.action.execute',
-        source: 'authrim/admin',
-        severity: input.result === 'success' ? 'info' : 'warn',
-        subject: input.actionId,
-        payload: {
-          action: 'support_ops.action.execute',
-          resource_type: 'support_ops',
-          resource_id: input.actionId,
-          result: input.result,
-          actor: {
-            type: input.actor.metadata.admin_actor_type ?? null,
-            id: input.actor.metadata.admin_actor_id ?? null,
-            auth_method: input.actor.metadata.admin_auth_method ?? null,
-          },
-          detail_object_catalog_id: null,
-          detail_storage: 'inline_admin_audit_row',
-          inline_metadata_keys: Object.keys(input.actor.metadata).sort(),
-        },
-        indexedFields: {
-          action: 'support_ops.action.execute',
-          resourceType: 'support_ops',
-          resourceId: input.actionId,
-          result: input.result,
-          severity: input.result === 'success' ? 'info' : 'warn',
-        },
-      },
-    ],
+    eventAt: input.decidedAtMs,
+    expiresAt: null,
+    adminInlineMetadata: input.actor.metadata,
+    overview: {
+      action: 'support_ops.action.execute',
+      result: input.result,
+      severity: input.result === 'success' ? 'info' : 'warn',
+      resource_id: input.actionId,
+      subject_id: input.actor.adminUserId,
+    },
+    row: {
+      id,
+      tenant_id: input.tenantId,
+      admin_user_id: input.actor.adminUserId,
+      admin_email: null,
+      action: 'support_ops.action.execute',
+      resource_type: 'support_ops',
+      resource_id: input.actionId,
+      result: input.result,
+      severity: input.result === 'success' ? 'info' : 'warn',
+      error_code: null,
+      error_message: null,
+      ip_address: null,
+      user_agent: null,
+      request_id: null,
+      session_id: null,
+      before_json: null,
+      after_json: null,
+      metadata_json: JSON.stringify(metadata),
+      created_at: input.decidedAtMs,
+      detail_object_catalog_id: null,
+    },
   });
-  if (emitted.targetResults.some((target) => target.error !== undefined))
-    throw new Error('support_ops_final_audit_fanout_pending');
+  await beforeEffect();
+  try {
+    await db.batch([
+      adminAuditReceiptStatement(prepared.record, input.tenantId),
+      ...prepared.statements,
+    ]);
+  } catch {
+    // Recover a lost commit reply only when the exact business receipt survived.
+    await confirmAdminAuditReceipt(db, prepared.record, input.tenantId);
+  }
+  await confirmAdminAuditReceipt(db, prepared.record, input.tenantId);
+  await beforeEffect();
+  await prepared.dispatch();
 }

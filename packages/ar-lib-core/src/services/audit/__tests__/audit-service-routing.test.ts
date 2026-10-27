@@ -1,643 +1,274 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AuditService } from '../audit-service';
-import type { AuditQueueMessage } from '../types';
+import type { Env } from '../../../types/env';
 import type { AuditProfile } from '../../../types/runtime-profile';
-import type { IAuditStorageAdapter } from '../storage';
-import type { DatabaseAdapter } from '../../../db';
+import { AuditService } from '../audit-service';
+import { emitLogIcebergRow } from '../../log-iceberg-emitter';
+import { eraseLogIcebergSubject } from '../../log-iceberg-subject-erasure';
 
-const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-const PII_ENCRYPTION_KEY = '89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567';
+const mapping = vi.hoisted(() => ({
+  current: vi.fn(),
+  prepare: vi.fn(),
+  complete: vi.fn(),
+}));
+vi.mock('../anonymization', () => ({
+  AnonymizationService: class {
+    getAnonymizedUserIdUnlessErased = mapping.current;
+    preparePIILogPurge = mapping.prepare;
+    completePIILogPurge = mapping.complete;
+  },
+}));
+vi.mock('../../log-iceberg-emitter', () => ({ emitLogIcebergRow: vi.fn() }));
+vi.mock('../../log-iceberg-subject-erasure', () => ({ eraseLogIcebergSubject: vi.fn() }));
 
-function createMockD1(firstResults: unknown[] = [null]): D1Database {
-  const firstQueue = [...firstResults];
-  const statement = {
-    bind: vi.fn().mockReturnThis(),
-    first: vi
-      .fn()
-      .mockImplementation(async () =>
-        firstQueue.length > 0 ? (firstQueue.shift() ?? null) : null
-      ),
-    run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
-  };
+const ANON = '3a28112c-6276-46d4-8845-021e88617d27';
+const baseProfile = {
+  kind: 'audit',
+  id: 'profile',
+  primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+  archive: { type: 'r2', bucketBinding: 'AUDIT_ARCHIVE', prefix: 'old' },
+  sinks: [],
+} as AuditProfile;
+const event = {
+  id: 'event-1',
+  eventType: 'auth.login',
+  eventCategory: 'auth' as const,
+  result: 'success' as const,
+  createdAt: 1_800_000_000_000,
+};
+const pii = {
+  userId: 'account-1',
+  anonymizedUserId: ANON,
+  changeType: 'update' as const,
+  affectedFields: ['email'],
+  actorType: 'user' as const,
+  oldValues: { email: 'old@example.test' },
+  newValues: { email: 'new@example.test' },
+};
+const purgeContext = {
+  actorType: 'admin' as const,
+  deletionReason: 'user_request',
+  legalBasis: 'consent_withdrawal',
+};
 
-  return {
-    prepare: vi.fn().mockReturnValue(statement),
-    batch: vi.fn().mockResolvedValue([]),
-    exec: vi.fn(),
-    dump: vi.fn(),
-  } as unknown as D1Database;
+function fixture(mode: 'pipeline' | 'scheduled' = 'scheduled', profile = baseProfile) {
+  const forbidden = vi.fn(() => {
+    throw new Error('old log storage must not be called');
+  });
+  const queue = { send: vi.fn().mockResolvedValue(undefined) };
+  const env = {
+    AUTHRIM_LOG_ARCHIVE_MODE: mode,
+    CONTROL: {
+      acquireTenantBackupMutationPermit: vi.fn().mockResolvedValue({ admitted: true }),
+      completeTenantBackupMutationPermit: vi.fn().mockResolvedValue(undefined),
+    },
+    LOG_ARCHIVE_WRITER: { registerPiiPurgeScope: vi.fn(async () => {}) },
+    AUDIT_QUEUE: queue,
+    DB: { prepare: forbidden },
+    DB_PII: { prepare: forbidden },
+    AUDIT_ARCHIVE: { put: forbidden },
+    SENSITIVE_DETAILS: { put: forbidden },
+  } as unknown as Env;
+  const service = new AuditService({
+    env,
+    piiSource: {} as never,
+    resolveAuditProfile: async () => profile,
+  });
+  return { service, env, queue, forbidden };
 }
 
-function createMockQueue() {
-  return {
-    send: vi.fn<[AuditQueueMessage], Promise<void>>().mockResolvedValue(undefined),
-  } as unknown as Queue<AuditQueueMessage>;
-}
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(emitLogIcebergRow).mockResolvedValue(undefined as never);
+  vi.mocked(eraseLogIcebergSubject).mockResolvedValue({ complete: true, removed: 2 });
+  mapping.current.mockResolvedValue(ANON);
+  mapping.prepare.mockResolvedValue({ id: 'purge-op', old_anonymized_user_id: ANON });
+  mapping.complete.mockResolvedValue(undefined);
+});
 
-function createMockStorageAdapter(): IAuditStorageAdapter {
-  return {
-    getBackendType: vi.fn().mockReturnValue('HYPERDRIVE'),
-    getIdentifier: vi.fn().mockReturnValue('audit-pg'),
-    writeEventLog: vi.fn().mockResolvedValue({
-      success: true,
-      entriesWritten: 1,
-      backend: 'audit-pg',
-      durationMs: 1,
-    }),
-    writeEventLogBatch: vi.fn(),
-    writePIILog: vi.fn().mockResolvedValue({
-      success: true,
-      entriesWritten: 1,
-      backend: 'audit-pg',
-      durationMs: 1,
-    }),
-    writePIILogBatch: vi.fn(),
-    query: vi.fn(),
-    count: vi.fn(),
-    listTenantRetentionCandidates: vi.fn().mockResolvedValue([]),
-    listGlobalRetentionCandidates: vi.fn().mockResolvedValue([]),
-    deleteTenantByRetention: vi.fn(),
-    deleteGlobalByRetention: vi.fn(),
-    isHealthy: vi.fn(),
-    close: vi.fn(),
-  };
-}
+describe('AuditService canonical storage', () => {
+  it.each(['pipeline', 'scheduled'] as const)(
+    'emits exactly one event in %s and never writes the old primary/archive',
+    async (mode) => {
+      const { service, env, forbidden, queue } = fixture(mode);
+      await service.logEvent('tenant-1', event);
+      expect(emitLogIcebergRow).toHaveBeenCalledExactlyOnceWith(
+        env,
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          sourceDataset: 'core.event_log',
+          logType: 'audit',
+          eventAt: event.createdAt,
+          expiresAt: event.createdAt + 90 * 86_400_000,
+          row: expect.objectContaining({ id: event.id, created_at: event.createdAt }),
+        })
+      );
+      expect(forbidden).not.toHaveBeenCalled();
+      expect(queue.send).not.toHaveBeenCalled();
+    }
+  );
 
-function createMockDatabaseAdapter(name: string): DatabaseAdapter {
-  return {
-    query: vi.fn(),
-    queryOne: vi.fn(),
-    execute: vi.fn().mockResolvedValue({
-      rowsAffected: 1,
-      success: true,
-    }),
-    transaction: vi.fn(),
-    batch: vi.fn(),
-    isHealthy: vi.fn().mockResolvedValue({
-      healthy: true,
-      latencyMs: 1,
-      type: name,
-    }),
-    getType: vi.fn().mockReturnValue(name),
-    close: vi.fn(),
-  };
-}
-
-describe('AuditService routing', () => {
-  let coreSource: D1Database;
-  let piiSource: D1Database;
-  let r2Bucket: R2Bucket;
-
-  beforeEach(() => {
-    coreSource = createMockD1();
-    piiSource = createMockD1();
-    r2Bucket = {
-      put: vi.fn(),
-      get: vi.fn(),
-      delete: vi.fn(),
-      list: vi.fn(),
-      head: vi.fn(),
-      createMultipartUpload: vi.fn(),
-      resumeMultipartUpload: vi.fn(),
-    } as unknown as R2Bucket;
+  it('uses the delivery retention override and keeps the original timestamp', async () => {
+    const { env } = fixture();
+    const service = new AuditService({
+      env,
+      resolveAuditProfile: async () => baseProfile,
+      resolveDeliveryPlan: async () => ({
+        auditProfileId: 'profile',
+        primary: null,
+        archives: [],
+        sinks: [],
+        retentionDays: 7,
+      }),
+    });
+    await service.logEvent('tenant-1', event);
+    expect(emitLogIcebergRow).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        eventAt: event.createdAt,
+        expiresAt: event.createdAt + 7 * 86_400_000,
+      })
+    );
   });
 
-  it('writes the primary store synchronously and sends archive/logpush fanout to the queue', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-profile-1',
-      kind: 'audit',
-      label: 'Primary + Fanout',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-      sinks: [{ type: 'logpush', destinationRef: 'workers-logpush', dataset: 'authrim_audit' }],
-      archiveFailureMode: 'gate_cleanup',
-      sinkFailureMode: 'retry_until_ttl',
-      retention: { primaryDays: 3, archiveDays: 30 },
-    };
-    const queue = createMockQueue();
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      auditQueue: queue,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+  it('keeps PII values in nested protected detail with the anonymous subject and 365-day retention', async () => {
+    const { service, env, forbidden } = fixture('pipeline');
+    const now = Date.now();
+    await service.logPIIChange('tenant-1', pii);
+    const input = vi.mocked(emitLogIcebergRow).mock.calls[0][1];
+    expect(input).toMatchObject({
+      sourceDataset: 'pii.pii_log',
+      overview: { subject_id: ANON },
+      protectedDetail: { values: { old: pii.oldValues, new: pii.newValues } },
+      row: { values_encrypted: null, values_r2_key: null },
     });
+    expect(input.expiresAt! - input.eventAt).toBe(365 * 86_400_000);
+    expect(input.eventAt).toBeGreaterThanOrEqual(now);
+    expect(JSON.stringify(input.row)).not.toContain('old@example.test');
+    expect(forbidden).not.toHaveBeenCalled();
+    expect(env.PII_ENCRYPTION_KEY).toBeUndefined();
+  });
 
-    await service.logEvent('tenant-a', {
-      eventType: 'auth.login',
-      eventCategory: 'auth',
-      result: 'success',
-    });
+  it('rejects an invalid anonymous subject before emitting PII', async () => {
+    mapping.current.mockResolvedValue('raw-user');
+    await expect(fixture().service.logPIIChange('tenant-1', pii)).rejects.toThrow(
+      'audit_pii_subject_invalid'
+    );
+    expect(emitLogIcebergRow).not.toHaveBeenCalled();
+  });
 
-    expect(coreSource.prepare).toHaveBeenCalledOnce();
-    expect(queue.send).toHaveBeenCalledOnce();
+  it('preserves only configured HTTP external sinks and never queues archive duplication', async () => {
+    const http = { type: 'http', destinationId: 'https-sink' };
+    const { service, queue } = fixture('scheduled', {
+      ...baseProfile,
+      sinks: [http, { type: 'logpush', dataset: 'old-logpush' }],
+    } as AuditProfile);
+    await service.logEvent('tenant-1', event);
     expect(queue.send).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'event_log',
-        tenantId: 'tenant-a',
-        fanout: {
-          auditProfileId: 'audit-profile-1',
-          archives: [{ type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' }],
-          sinks: [
-            {
-              type: 'logpush',
-              destinationRef: 'workers-logpush',
-              dataset: 'authrim_audit',
-            },
-          ],
-          archiveFailureMode: 'gate_cleanup',
-          sinkFailureMode: 'retry_until_ttl',
-        },
+        fanout: expect.objectContaining({ archives: [], sinks: [http] }),
       })
     );
+    expect(emitLogIcebergRow).toHaveBeenCalledOnce();
   });
 
-  it('does not enqueue fanout again when a stable event ID already exists in D1', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-profile-idempotent',
-      kind: 'audit',
-      label: 'Idempotent fanout',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-      sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
-      archiveFailureMode: 'gate_cleanup',
+  it('fails a required durable HTTP fanout when the queue refuses acceptance', async () => {
+    const { service, queue } = fixture('scheduled', {
+      ...baseProfile,
+      sinks: [{ type: 'http', destinationId: 'https-sink' }],
       sinkFailureMode: 'retry_until_ttl',
-    };
-    const coreAdapter = createMockDatabaseAdapter('core-adapter');
-    vi.mocked(coreAdapter.execute)
-      .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
-      .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
-    const queue = createMockQueue();
-    const service = new AuditService({
-      coreSource: coreAdapter,
-      piiSource,
-      r2Bucket,
-      auditQueue: queue,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-    });
-    const event = {
-      id: 'stable-event-id',
-      createdAt: 1_725_000_000_000,
-      eventType: 'user.deleted',
-      eventCategory: 'user' as const,
-      result: 'success' as const,
-    };
-
-    await service.logEvent('tenant-a', event);
-    await service.logEvent('tenant-a', event);
-
-    expect(coreAdapter.execute).toHaveBeenCalledTimes(2);
-    expect(queue.send).toHaveBeenCalledOnce();
-  });
-
-  it('retries gated fanout after the primary insert succeeded but queue delivery failed', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-profile-gated-retry',
-      kind: 'audit',
-      label: 'Gated fanout retry',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-      sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
-      archiveFailureMode: 'gate_cleanup',
-      sinkFailureMode: 'retry_until_ttl',
-    };
-    const coreAdapter = createMockDatabaseAdapter('core-adapter');
-    vi.mocked(coreAdapter.execute)
-      .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
-      .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
-    const queue = createMockQueue();
-    vi.mocked(queue.send)
-      .mockRejectedValueOnce(new Error('queue unavailable'))
-      .mockResolvedValueOnce(undefined);
-    const service = new AuditService({
-      coreSource: coreAdapter,
-      piiSource,
-      r2Bucket,
-      auditQueue: queue,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-    });
-    const event = {
-      id: 'stable-gated-event-id',
-      createdAt: 1_725_000_000_000,
-      eventType: 'user.deleted',
-      eventCategory: 'user' as const,
-      result: 'success' as const,
-      requireDurableFanout: true,
-    };
-
-    await expect(service.logEvent('tenant-a', event)).rejects.toThrow('audit_fanout_queue_failed');
-    await expect(service.logEvent('tenant-a', event)).resolves.toBeUndefined();
-
-    expect(coreAdapter.execute).toHaveBeenCalledTimes(2);
-    expect(queue.send).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(queue.send).mock.calls[0][0]).toEqual(vi.mocked(queue.send).mock.calls[1][0]);
-  });
-
-  it('preserves a supplied event timestamp in primary and fanout records', async () => {
-    const createdAt = 1_779_321_600_123;
-    const auditProfile: AuditProfile = {
-      id: 'audit-profile-1',
-      kind: 'audit',
-      label: 'Primary + Fanout',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-      sinks: [],
-      archiveFailureMode: 'gate_cleanup',
-      sinkFailureMode: 'retry_until_ttl',
-      retention: { primaryDays: 3, archiveDays: 30 },
-    };
-    const queue = createMockQueue();
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      auditQueue: queue,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-    });
-
-    await service.logEvent('tenant-a', {
-      createdAt,
-      eventType: 'user.deleted',
-      eventCategory: 'user',
-      result: 'success',
-    });
-
-    expect(queue.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        timestamp: createdAt,
-        entries: [
-          expect.objectContaining({
-            createdAt,
-            retentionUntil: createdAt + 3 * 24 * 60 * 60 * 1000,
-          }),
-        ],
-      })
-    );
-  });
-
-  it('supports archive-only audit profiles by skipping the primary write and queueing fanout', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'archive-only',
-      kind: 'audit',
-      label: 'Archive Only',
-      primary: null,
-      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-      sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
-      archiveFailureMode: 'gate_cleanup',
-      sinkFailureMode: 'best_effort',
-    };
-    const queue = createMockQueue();
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      auditQueue: queue,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-    });
-
-    await service.logEvent('tenant-a', {
-      eventType: 'auth.logout',
-      eventCategory: 'auth',
-      result: 'success',
-    });
-
-    expect(coreSource.prepare).not.toHaveBeenCalled();
-    expect(queue.send).toHaveBeenCalledOnce();
-    expect(queue.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fanout: expect.objectContaining({
-          archives: [{ type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' }],
-        }),
-      })
-    );
-  });
-
-  it('rejects archive-only writes when fanout cannot be queued durably', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'archive-only',
-      kind: 'audit',
-      label: 'Archive Only',
-      primary: null,
-      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-      sinks: [],
-      archiveFailureMode: 'gate_cleanup',
-      sinkFailureMode: 'best_effort',
-    };
-    const queue = createMockQueue();
-    vi.mocked(queue.send).mockRejectedValueOnce(new Error('queue unavailable'));
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      auditQueue: queue,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-    });
-
+    } as AuditProfile);
+    queue.send.mockRejectedValue(new Error('queue_down'));
     await expect(
-      service.logEvent('tenant-a', {
-        id: 'stable-archive-only-event',
-        eventType: 'user.deleted',
-        eventCategory: 'user',
-        result: 'success',
-      })
+      service.logEvent('tenant-1', { ...event, requireDurableFanout: true })
     ).rejects.toThrow('audit_fanout_queue_failed');
+    expect(emitLogIcebergRow).toHaveBeenCalledOnce();
   });
 
-  it('applies runtime delivery-plan overrides for routing fanout and retention', async () => {
-    const now = Date.now();
-    vi.spyOn(Date, 'now').mockReturnValue(now);
-
-    const auditProfile: AuditProfile = {
-      id: 'audit-profile-1',
-      kind: 'audit',
-      label: 'Profile Base',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-      archive: null,
-      sinks: [],
-      archiveFailureMode: 'gate_cleanup',
-      sinkFailureMode: 'retry_until_ttl',
-    };
-    const queue = createMockQueue();
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      auditQueue: queue,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-      resolveDeliveryPlan: vi.fn().mockResolvedValue({
-        auditProfileId: 'audit-profile-1',
-        primary: null,
-        archives: [
-          { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-          { type: 'r2', bucketRef: 'SECONDARY_BUCKET', prefix: 'secondary/' },
-        ],
-        sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
-        retentionDays: 30,
-        archiveFailureMode: 'gate_cleanup',
-        sinkFailureMode: 'retry_until_ttl',
-        matchedRuleNames: ['tenant-archive'],
-      }),
-    });
-
-    await service.logEvent('tenant-a', {
-      eventType: 'auth.login',
-      eventCategory: 'auth',
-      result: 'success',
-    });
-
-    expect(coreSource.prepare).not.toHaveBeenCalled();
-    expect(queue.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fanout: expect.objectContaining({
-          archives: [
-            { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-            { type: 'r2', bucketRef: 'SECONDARY_BUCKET', prefix: 'secondary/' },
-          ],
-          matchedRuleNames: ['tenant-archive'],
-        }),
-        entries: [
-          expect.objectContaining({
-            retentionUntil: expect.any(Number),
-          }),
-        ],
-      })
-    );
-    const sentMessage = (queue.send as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(sentMessage.entries[0].retentionUntil).toBeGreaterThanOrEqual(
-      now + 29 * 24 * 60 * 60 * 1000
-    );
+  it('propagates canonical storage failure instead of falling back to old tables', async () => {
+    const { service, forbidden } = fixture();
+    vi.mocked(emitLogIcebergRow).mockRejectedValue(new Error('archive_unavailable'));
+    await expect(service.logEvent('tenant-1', event)).rejects.toThrow('archive_unavailable');
+    expect(forbidden).not.toHaveBeenCalled();
   });
 
-  it('writes external postgres primary synchronously through the resolved adapter', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-postgres',
-      kind: 'audit',
-      label: 'Postgres Primary',
-      primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'event_log' },
-      archive: null,
-      sinks: [],
-      archiveFailureMode: 'best_effort',
-      sinkFailureMode: 'best_effort',
-    };
-    const primaryAdapter = createMockStorageAdapter();
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-      resolvePrimaryAdapter: vi.fn().mockResolvedValue(primaryAdapter),
-    });
-
-    await service.logEvent('tenant-a', {
-      eventType: 'auth.login',
-      eventCategory: 'auth',
-      result: 'success',
-    });
-
-    expect(coreSource.prepare).not.toHaveBeenCalled();
-    expect(primaryAdapter.writeEventLog).toHaveBeenCalledOnce();
-  });
-
-  it('writes external mysql primary synchronously through the resolved adapter', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-mysql',
-      kind: 'audit',
-      label: 'MySQL Primary',
-      primary: { type: 'mysql', connectionRef: 'audit-primary-mysql', dataset: 'event_log' },
-      archive: null,
-      sinks: [],
-      archiveFailureMode: 'best_effort',
-      sinkFailureMode: 'best_effort',
-    };
-    const primaryAdapter = createMockStorageAdapter();
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-      resolvePrimaryAdapter: vi.fn().mockResolvedValue(primaryAdapter),
-    });
-
-    await service.logEvent('tenant-a', {
-      eventType: 'auth.login',
-      eventCategory: 'auth',
-      result: 'success',
-    });
-
-    expect(coreSource.prepare).not.toHaveBeenCalled();
-    expect(primaryAdapter.writeEventLog).toHaveBeenCalledOnce();
-  });
-
-  it('writes pii audit entries to external postgres primary through the resolved adapter', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-postgres',
-      kind: 'audit',
-      label: 'Postgres Primary',
-      primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'pii_log' },
-      archive: null,
-      sinks: [],
-      archiveFailureMode: 'best_effort',
-      sinkFailureMode: 'best_effort',
-    };
-    const primaryAdapter = createMockStorageAdapter();
-    const piiSourceForTest = createMockD1([null, { anonymized_user_id: 'anon-1' }]);
-    const service = new AuditService({
-      coreSource,
-      piiSource: piiSourceForTest,
-      r2Bucket,
-      piiEncryptionKey: PII_ENCRYPTION_KEY,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-      resolvePrimaryAdapter: vi.fn().mockResolvedValue(primaryAdapter),
-    });
-
-    await service.logPIIChange('tenant-a', {
-      userId: 'user-1',
-      changeType: 'update',
-      affectedFields: ['email'],
-      newValues: { email: 'u@example.com' },
-      actorType: 'admin',
-    });
-
-    expect(piiSourceForTest.prepare).toHaveBeenCalled();
-    expect(primaryAdapter.writePIILog).toHaveBeenCalledOnce();
-  });
-
-  it('fails PII audit encryption when no PII encryption key is configured', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-d1-primary',
-      kind: 'audit',
-      label: 'D1 Primary',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'pii_log' },
-      archive: null,
-      sinks: [],
-      archiveFailureMode: 'best_effort',
-      sinkFailureMode: 'best_effort',
-    };
-    const piiSourceForTest = createMockD1([null, { anonymized_user_id: 'anon-1' }]);
-    const service = new AuditService({
-      coreSource,
-      piiSource: piiSourceForTest,
-      r2Bucket,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-    });
-
+  it('retains the purge operation and reports pending until physical PII deletion finishes', async () => {
+    const { service, env } = fixture();
+    vi.mocked(eraseLogIcebergSubject).mockResolvedValue({ complete: false, removed: 1 });
     await expect(
-      service.logPIIChange('tenant-a', {
-        userId: 'user-1',
-        changeType: 'update',
-        affectedFields: ['email'],
-        newValues: { email: 'u@example.com' },
-        actorType: 'admin',
-      })
-    ).rejects.toThrow('PII_ENCRYPTION_KEY is required for audit PII encryption');
+      service.purgeUserPII('tenant-1', 'account-1', purgeContext)
+    ).resolves.toMatchObject({
+      success: false,
+      pending: true,
+      piiLogsDeleted: 1,
+      errorMessage: 'pii_purge_pending',
+    });
+    expect(eraseLogIcebergSubject).toHaveBeenCalledWith(env, {
+      tenantId: 'tenant-1',
+      sourceDataset: 'pii.pii_log',
+      subjectId: ANON,
+    });
+    expect(mapping.complete).not.toHaveBeenCalled();
+    expect(vi.mocked(emitLogIcebergRow).mock.calls.map(([, row]) => row.row.event_type)).toEqual([
+      'user.pii_purge_started',
+    ]);
   });
 
-  it('accepts pre-resolved database adapters for transitional audit paths', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-d1-primary',
-      kind: 'audit',
-      label: 'D1 Primary',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-      archive: null,
-      sinks: [],
-      archiveFailureMode: 'best_effort',
-      sinkFailureMode: 'best_effort',
-    };
-    const coreAdapter = createMockDatabaseAdapter('core-adapter');
-    const piiAdapter = createMockDatabaseAdapter('pii-adapter');
-    const service = new AuditService({
-      coreSource: coreAdapter,
-      piiSource: piiAdapter,
-      r2Bucket,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-    });
+  it('clears the purge operation and emits completion only after physical deletion succeeds', async () => {
+    const { service } = fixture();
+    await expect(
+      service.purgeUserPII('tenant-1', 'account-1', purgeContext)
+    ).resolves.toMatchObject({ success: true, piiLogsDeleted: 2 });
+    expect(mapping.complete).toHaveBeenCalledWith('tenant-1', 'account-1', 'purge-op');
+    expect(vi.mocked(emitLogIcebergRow).mock.calls.map(([, row]) => row.row.event_type)).toEqual([
+      'user.pii_purge_started',
+      'user.pii_purge_completed',
+    ]);
+  });
 
-    await service.logEvent('tenant-a', {
-      eventType: 'auth.login',
-      eventCategory: 'auth',
-      result: 'success',
+  it('retains the old subject operation if completion logging fails', async () => {
+    const { service } = fixture();
+    vi.mocked(emitLogIcebergRow).mockImplementation(async (_env, row) => {
+      if (row.row.event_type === 'user.pii_purge_completed') throw new Error('archive_unavailable');
+      return undefined as never;
     });
+    await expect(
+      service.purgeUserPII('tenant-1', 'account-1', purgeContext)
+    ).resolves.toMatchObject({ success: false });
+    expect(mapping.complete).not.toHaveBeenCalled();
+  });
 
-    expect(coreAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO event_log'),
-      expect.any(Array)
+  it('does not rotate a PII mapping when Control cannot admit its business mutation', async () => {
+    const { service, env } = fixture();
+    vi.mocked(env.CONTROL!.acquireTenantBackupMutationPermit).mockResolvedValue({
+      admitted: false,
+    } as never);
+    await expect(
+      service.purgeUserPII('tenant-1', 'account-1', purgeContext)
+    ).resolves.toMatchObject({
+      success: false,
+      errorMessage: expect.stringContaining('backup_mutation_unavailable'),
+    });
+    expect(mapping.prepare).not.toHaveBeenCalled();
+    expect(emitLogIcebergRow).not.toHaveBeenCalled();
+  });
+
+  it('does not create a replacement mapping or claim success when purge cannot find the original subject', async () => {
+    mapping.prepare.mockRejectedValue(new Error('pii_purge_subject_mapping_missing'));
+    await expect(
+      fixture().service.purgeUserPII('tenant-1', 'account-1', purgeContext)
+    ).resolves.toMatchObject({
+      success: false,
+      errorMessage: expect.stringContaining('mapping_missing'),
+    });
+    expect(mapping.current).not.toHaveBeenCalled();
+    expect(eraseLogIcebergSubject).not.toHaveBeenCalled();
+  });
+
+  it('does not substitute a random ID after an account tombstone denies mapping creation', async () => {
+    mapping.current.mockResolvedValue(null);
+    await expect(fixture().service.getAnonymizedUserId('tenant-1', 'account-1')).rejects.toThrow(
+      'audit_subject_erased'
     );
-  });
-
-  it('uses registry tenant keys for chunked event detail evacuation', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-d1-primary',
-      kind: 'audit',
-      label: 'D1 Primary',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-      archive: null,
-      sinks: [],
-      archiveFailureMode: 'best_effort',
-      sinkFailureMode: 'best_effort',
-    };
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      sensitiveDetailBucket: r2Bucket,
-      objectEncryptionRootKey: OBJECT_ROOT_KEY,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-      tenantKeyResolver: vi.fn().mockResolvedValue('t_registry_direct'),
-    });
-
-    await service.logEvent('tenant-a', {
-      eventType: 'auth.login',
-      eventCategory: 'auth',
-      result: 'success',
-      details: {
-        payload: 'x'.repeat(3000),
-      },
-    });
-
-    expect(r2Bucket.put).toHaveBeenCalledOnce();
-    const objectKey = (r2Bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(objectKey).toContain(
-      'sensitive-details/v1/t_registry_direct/sensitive_detail/event/audit/'
-    );
-    expect(objectKey).not.toContain('tenant-a');
-  });
-
-  it('uses registry tenant keys for chunked PII value evacuation', async () => {
-    const auditProfile: AuditProfile = {
-      id: 'audit-d1-primary',
-      kind: 'audit',
-      label: 'D1 Primary',
-      primary: { type: 'd1', bindingRef: 'DB', dataset: 'pii_log' },
-      archive: null,
-      sinks: [],
-      archiveFailureMode: 'best_effort',
-      sinkFailureMode: 'best_effort',
-    };
-    const service = new AuditService({
-      coreSource,
-      piiSource,
-      r2Bucket,
-      sensitiveDetailBucket: r2Bucket,
-      objectEncryptionRootKey: OBJECT_ROOT_KEY,
-      piiEncryptionKey: PII_ENCRYPTION_KEY,
-      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
-      tenantKeyResolver: vi.fn().mockResolvedValue('t_registry_pii'),
-    });
-
-    await service.logPIIChange('tenant-a', {
-      userId: 'user-1',
-      anonymizedUserId: 'anon-1',
-      changeType: 'update',
-      affectedFields: ['profile'],
-      newValues: {
-        profile: 'x'.repeat(6000),
-      },
-      actorType: 'admin',
-    });
-
-    expect(r2Bucket.put).toHaveBeenCalledOnce();
-    const objectKey = (r2Bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(objectKey).toContain('sensitive-details/v1/t_registry_pii/sensitive_detail/pii/pii/');
-    expect(objectKey).not.toContain('tenant-a');
   });
 });

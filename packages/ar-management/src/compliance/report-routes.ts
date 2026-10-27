@@ -9,7 +9,8 @@
  * catalogued in the admin database, and its SHA-256 recorded and checked on download.
  */
 import type { Context } from 'hono';
-import { logQueryErrorResponse } from '../log-archive-query';
+import { LogQueryIncompleteError, logQueryErrorResponse } from '../log-archive-query';
+import { logCoverageHeaders, type LogReadCoverage } from '../log-read-adapter';
 import { legacyDatetimeString, z } from '../zod';
 import {
   AR_ERROR_CODES,
@@ -144,6 +145,31 @@ function parseParameters(value: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function storedLogCoverage(row: ComplianceReportRow): LogReadCoverage | undefined {
+  const raw = parseParameters(row.parameters)?.log_coverage;
+  if (raw === undefined) return;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new LogQueryIncompleteError();
+  const value = raw as Record<string, unknown>;
+  if (
+    !['snapshot', 'eventual'].includes(String(value.consistency)) ||
+    typeof value.pending_deliveries !== 'number' ||
+    !Number.isSafeInteger(value.pending_deliveries) ||
+    value.pending_deliveries < 0 ||
+    typeof value.complete !== 'boolean' ||
+    (value.consistency === 'eventual' && value.complete)
+  )
+    throw new LogQueryIncompleteError();
+  return {
+    consistency: value.consistency as 'snapshot' | 'eventual',
+    pending_deliveries: value.pending_deliveries,
+    complete: value.complete,
+  };
+}
+function applyReportLogCoverage(c: Context<{ Bindings: Env }>, row: ComplianceReportRow): void {
+  const coverage = storedLogCoverage(row);
+  if (coverage) logCoverageHeaders(c)(coverage);
 }
 
 /** A report as the API shows it (its storage reference stays internal). */
@@ -281,6 +307,11 @@ export async function getComplianceReport(c: Context<{ Bindings: Env }>) {
     [tenantId, id]
   );
   if (!row) return reportNotFound(c, id);
+  try {
+    applyReportLogCoverage(c, row);
+  } catch (error) {
+    return logQueryErrorResponse(c, error) ?? createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
   return c.json(serializeReport(row));
 }
 
@@ -342,7 +373,7 @@ export async function createComplianceReport(c: Context<{ Bindings: Env }>) {
   const now = Date.now();
   const createdAt = new Date(now).toISOString();
   const name = input.name ?? `${input.type} ${createdAt.slice(0, 10)}`;
-  const parameters = input.parameters ? JSON.stringify(input.parameters) : null;
+  let parameters = input.parameters ? JSON.stringify(input.parameters) : null;
   const record = (status: 'generating' | 'failed', fields: Record<string, unknown>) =>
     core.execute(
       `INSERT INTO compliance_reports (id, tenant_id, type, name, status, requested_by, parameters,
@@ -377,6 +408,10 @@ export async function createComplianceReport(c: Context<{ Bindings: Env }>) {
   let report: GeneratedReport;
   try {
     report = await generate(c, tenantId, input, adminAdapter);
+    if (report.logCoverage) {
+      parameters = JSON.stringify({ ...input.parameters, log_coverage: report.logCoverage });
+      logCoverageHeaders(c)(report.logCoverage);
+    }
   } catch (error) {
     const incomplete = logQueryErrorResponse(c, error);
     if (incomplete) return incomplete;
@@ -541,7 +576,10 @@ export async function createComplianceReport(c: Context<{ Bindings: Env }>) {
           { consistencyClass: 'primary_required' }
         )
         .catch(() => null);
-      if (row?.status === 'completed') return c.json(serializeReport(row), 201);
+      if (row?.status === 'completed') {
+        applyReportLogCoverage(c, row);
+        return c.json(serializeReport(row), 201);
+      }
       // Failed here though its answer was lost: its file, still referenced and due, is left to
       // the retention task, but the failure is audited all the same.
       failed = row?.status === 'failed' && row.error_message === 'storage_failed';
@@ -600,6 +638,12 @@ export async function downloadComplianceReport(c: Context<{ Bindings: Env }>) {
     sha256: row.artifact_sha256,
   });
   const extension = row.format === 'csv' ? 'csv' : 'json';
+  let logCoverage: LogReadCoverage | undefined;
+  try {
+    logCoverage = storedLogCoverage(row);
+  } catch (error) {
+    return logQueryErrorResponse(c, error) ?? createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
   return new Response(loaded.content, {
     status: 200,
     headers: {
@@ -607,6 +651,13 @@ export async function downloadComplianceReport(c: Context<{ Bindings: Env }>) {
       'Content-Disposition': `attachment; filename="compliance-${row.type}-${row.id}.${extension}"`,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
+      ...(logCoverage
+        ? {
+            'X-Authrim-Log-Consistency': logCoverage.consistency,
+            'X-Authrim-Log-Complete': String(logCoverage.complete),
+            'X-Authrim-Log-Pending-Deliveries': String(logCoverage.pending_deliveries),
+          }
+        : {}),
     },
   });
 }

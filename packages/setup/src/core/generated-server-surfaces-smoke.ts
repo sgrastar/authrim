@@ -1269,7 +1269,7 @@ export async function runGeneratedServerSurfacesSmoke(
         priority: 100,
         enabled: true,
         conditions: { tenantId },
-        backend: 'd1-core',
+        retention: { eventLogRetentionDays: 90 },
       },
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.rule)) {

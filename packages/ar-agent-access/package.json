@@ -58,6 +58,11 @@
       "import": "./dist/platform/cloudflare/service-binding.js",
       "types": "./dist/platform/cloudflare/service-binding.d.ts",
       "default": "./src/platform/cloudflare/service-binding.ts"
+    },
+    "./platform/cloudflare/admin-agent-audit-writer": {
+      "import": "./dist/platform/cloudflare/admin-agent-audit-writer.js",
+      "types": "./dist/platform/cloudflare/admin-agent-audit-writer.d.ts",
+      "default": "./src/platform/cloudflare/admin-agent-audit-writer.ts"
     }
   },
   "scripts": {

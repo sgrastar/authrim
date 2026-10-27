@@ -46,6 +46,12 @@ interface Cursor {
 }
 
 export interface Phase4OtherStorePorts {
+  /** Installed adapters with request-scoped selection skip only trusted unselected datasets. */
+  isDatasetSelected?(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    datasetId: string
+  ): Promise<boolean>;
   load(
     context: TenantBackupStepContext,
     planDigest: string,
@@ -193,6 +199,24 @@ async function runPage(
   context.signal.throwIfAborted();
   if (!/^[a-f0-9]{64}$/.test(planDigest)) invalid();
   const cursor = parseCursor(cursorValue, purpose);
+  if (
+    ports.isDatasetSelected &&
+    !(await ports.isDatasetSelected(context, planDigest, cursor.datasetId))
+  ) {
+    if (cursor.sourceCursor !== null) invalid();
+    const index = DATASETS.indexOf(cursor.datasetId) + 1;
+    return index === DATASETS.length
+      ? { cursor: null, done: true }
+      : {
+          cursor: encodedCursor({
+            version: 1,
+            datasetId: DATASETS[index],
+            purpose,
+            sourceCursor: null,
+          }),
+          done: false,
+        };
+  }
   if (cursor.datasetId === 'credentials.key_manager_tenant_state') {
     const source = await ports.loadKeyManager(context, planDigest, purpose);
     if (source.policy.dataset.id !== cursor.datasetId) invalid();

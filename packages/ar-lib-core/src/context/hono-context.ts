@@ -218,7 +218,7 @@ export function createPIIContextFromHono(
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),
-      auditLog: new PIIAuditLogRepository(piiAdapter),
+      auditLog: new PIIAuditLogRepository(c.env, resolvedTenantId),
     },
     partitionRouter,
     defaultPiiAdapter: piiAdapter,

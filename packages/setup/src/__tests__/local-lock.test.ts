@@ -1,7 +1,12 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execFile: vi.fn(actual.execFile) };
+});
 import {
   acquireLocalEnvironmentLock,
   findLocalLockOwner,
@@ -42,6 +47,21 @@ describe('environment lock', () => {
     writeFileSync(join(paths.lock, file), content);
     return file;
   };
+
+  it('keeps live owners authoritative when spawning ps throws synchronously', async () => {
+    vi.mocked(execFile).mockImplementationOnce(() => {
+      throw Object.assign(new Error('spawn denied'), { code: 'EPERM' });
+    });
+    await expect(getProcessStartSeconds(process.pid)).resolves.toBeNull();
+    const live = plantEntry(process.pid);
+    vi.mocked(execFile).mockImplementationOnce(() => {
+      throw Object.assign(new Error('spawn denied'), { code: 'EPERM' });
+    });
+    await expect(acquireLocalEnvironmentLock(paths, 'local', 'reset')).rejects.toBeInstanceOf(
+      LocalEnvironmentBusyError
+    );
+    expect(entries()).toEqual([live]);
+  });
 
   it('lets one operation hold the environment and names the holder to the next', async () => {
     const lock = await acquireLocalEnvironmentLock(paths, 'local', 'up');

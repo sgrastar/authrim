@@ -76,6 +76,9 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
     tenant_backup_snapshots: null,
     tenant_backup_preimages: null,
     authrim_runtime_probes: null,
+    // Keep the tiny source publication witness so an import's audit can finish
+    // publication/recovery even after its restored user state is discarded.
+    log_iceberg_core_publications: null,
     account_routing_outbox: byTenantId,
     contact_point_search_indexes: byTenantId,
     identity_binding_lookup_indexes: byTenantId,

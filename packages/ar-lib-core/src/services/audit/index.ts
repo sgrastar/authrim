@@ -178,17 +178,6 @@ export type {
   CanonicalAuditDeliveryChannel,
 } from './canonical-format';
 
-// Operational Logs (reason_detail storage with encryption)
-export {
-  storeOperationalLog,
-  getOperationalLog,
-  listOperationalLogs,
-  deleteUserOperationalLogs,
-} from './operational-logs';
-
-export type {
-  OperationalLogEntry,
-  StoreOperationalLogParams,
-  OperationalLogObjectStorageOptions,
-  OperationalLogStorageOptions,
-} from './operational-logs';
+// Operational reasons use the shared encrypted new-log backend.
+export { storeOperationalLog } from './operational-logs';
+export type { StoreOperationalLogParams } from './operational-logs';

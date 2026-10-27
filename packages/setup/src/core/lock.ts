@@ -1,3 +1,4 @@
+import { LogArchiveLockSchema } from './log-archive-config.js';
 /**
  * Authrim Lock File Module
  *
@@ -288,6 +289,7 @@ export const AuthrimLockSchema = z.object({
   kv: z.record(z.string(), KVResourceEntrySchema).default({}),
   queues: z.record(z.string(), ResourceEntrySchema).optional(),
   r2: z.record(z.string(), R2ResourceEntrySchema).optional(),
+  logArchive: LogArchiveLockSchema.optional(),
   /** Exact provider identities for retired Pages projects retained only for safe cleanup. */
   pages: z.record(z.string(), PagesResourceEntrySchema).optional(),
   dns: z.partialRecord(DnsOwnershipRoleSchema, DnsOwnershipEntrySchema).optional(),
@@ -457,6 +459,10 @@ export function reconcileLockAfterResourceDeletion(
     kv: omitResourceNames(lock.kv, deleted.kv) ?? {},
     queues: omitResourceNames(lock.queues, deleted.queues),
     r2: omitResourceNames(lock.r2, deleted.r2),
+    logArchive:
+      lock.logArchive && deleted.r2.includes(lock.logArchive.bucketName)
+        ? undefined
+        : lock.logArchive,
     pages: omitResourceNames(lock.pages, deleted.pages ?? []),
     dns:
       deletedDnsNames.size > 0
@@ -541,6 +547,7 @@ export function createLockFile(env: string, resources: ProvisionedResources): Au
     }
   }
 
+  if (resources.logArchive) lock.logArchive = resources.logArchive;
   return lock;
 }
 
@@ -577,6 +584,7 @@ export function mergeProvisionedResourcesIntoLock(
     kv: provisioned.kv,
     queues: provisioned.queues,
     r2: provisioned.r2,
+    logArchive: provisioned.logArchive,
   });
 }
 
@@ -1954,8 +1962,10 @@ export function lockToResourceIds(lock: AuthrimLock): {
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
   r2?: Record<string, { name: string }>;
+  logArchive?: AuthrimLock['logArchive'];
 } {
   return {
+    ...(lock.logArchive ? { logArchive: lock.logArchive } : {}),
     d1: lock.d1,
     kv: Object.fromEntries(
       Object.entries(lock.kv).map(([key, value]) => [key, { id: value.id, name: value.name }])
@@ -1980,6 +1990,7 @@ export function mergeLockFiles(existing: AuthrimLock, newData: Partial<AuthrimLo
     kv: { ...existing.kv, ...newData.kv },
     queues: { ...existing.queues, ...newData.queues },
     r2: { ...existing.r2, ...newData.r2 },
+    logArchive: newData.logArchive ?? existing.logArchive,
     pages: { ...existing.pages, ...newData.pages },
     workers: { ...existing.workers, ...newData.workers },
     updatedAt: new Date().toISOString(),

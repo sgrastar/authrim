@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { DatabaseSync, type SQLInputValue } from './sqlite-history-fixture';
+import { logProducerFixture } from './log-iceberg-producer-fixture';
+import type { DatabaseSync, SQLInputValue } from './sqlite-history-fixture';
 import type { PreparedStatement } from '../../db/adapter';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSettingsCanonicalStore } from '../settings-canonical-store';
@@ -62,60 +62,27 @@ function category(manager: SettingsManager) {
   return manager;
 }
 
-describe('DatabaseSettingsCanonicalStore', () => {
+describe.each(['scheduled', 'pipeline'] as const)('DatabaseSettingsCanonicalStore (%s)', (mode) => {
   let db: DatabaseSync;
   let now: number;
   let values: Map<string, string>;
   let put: ReturnType<typeof vi.fn<(key: string, value: string) => Promise<Map<string, string>>>>;
+  let logFixture: Awaited<ReturnType<typeof logProducerFixture>>;
+  const logging = () => ({ env: logFixture.env, adapter: logFixture.adminAdapter });
   let store: DatabaseSettingsCanonicalStore;
 
-  beforeEach(() => {
-    db = new DatabaseSync(':memory:');
-    db.exec(
-      readFileSync(
-        new URL(
-          '../../../../../migrations/admin/d1/028_tenant_settings_documents.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
-    db.exec(
-      readFileSync(
-        new URL(
-          '../../../../../migrations/admin/d1/038_tenant_settings_reconciled_at.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
-    db.exec(
-      readFileSync(
-        new URL(
-          '../../../../../migrations/admin/d1/039_platform_settings_documents.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
+  beforeEach(async () => {
+    logFixture = await logProducerFixture(mode, { separateAdmin: true });
+    db = logFixture.adminDb;
     now = 100;
-    db.exec(
-      readFileSync(
-        new URL(
-          '../../../../../migrations/admin/d1/050_identity_mapping_level_history.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
     values = new Map([
       ['settings:tenant:tenant-a:security', JSON.stringify({ 'security.enabled': true })],
     ]);
     put = vi.fn(async (key: string, value: string) => values.set(key, value));
-    store = new DatabaseSettingsCanonicalStore(adapter(db), () => now++);
+    store = new DatabaseSettingsCanonicalStore(adapter(db), () => now++, logging());
   });
 
-  afterEach(() => db.close());
+  afterEach(() => logFixture.close());
 
   function manager() {
     return category(
@@ -338,7 +305,7 @@ describe('DatabaseSettingsCanonicalStore', () => {
       }
     );
     const [pending] = await store.pending();
-    const backwardsClockStore = new DatabaseSettingsCanonicalStore(adapter(db), () => 1);
+    const backwardsClockStore = new DatabaseSettingsCanonicalStore(adapter(db), () => 1, logging());
     await backwardsClockStore.markProjected(pending.category, pending.scope, pending.version);
     const timestamps = db
       .prepare('SELECT updated_at,projected_at FROM tenant_settings_documents')
@@ -634,6 +601,15 @@ describe('DatabaseSettingsCanonicalStore', () => {
         },
       ]);
       expect(history()[0].committed_at).toBe(history()[0].created_at);
+      expect(await logFixture.rows('admin.identity_mapping_level_history')).toEqual([
+        expect.objectContaining({
+          id: history()[0].id,
+          source_version: saved.version,
+          status: 'committed',
+          before_json: 'null',
+          after_json: '"set-a"',
+        }),
+      ]);
       await m.patch(
         'identity-mapping',
         scope,
@@ -742,7 +718,8 @@ describe('DatabaseSettingsCanonicalStore', () => {
             return sql.batch(statements);
           },
         },
-        () => now++
+        () => now++,
+        logging()
       );
       const m = mappingManager();
       const initial = await m.getAll('identity-mapping', scope);
@@ -767,7 +744,8 @@ describe('DatabaseSettingsCanonicalStore', () => {
             throw new Error('response_lost');
           },
         },
-        () => now++
+        () => now++,
+        logging()
       );
       const m = mappingManager();
       const initial = await m.getAll('identity-mapping', scope);

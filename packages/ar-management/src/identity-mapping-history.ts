@@ -1,4 +1,6 @@
 import type { Context } from 'hono';
+import { createLogReadAdapter, logCoverageHeaders } from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 import {
   ADMIN_PERMISSIONS,
   arrayBufferToBase64Url,
@@ -345,7 +347,32 @@ export async function adminIdentityMappingHistoryHandler(c: HistoryContext): Pro
       clauses.push('(created_at < ? OR (created_at = ? AND id < ?))');
       params.push(cursor.time, cursor.time, cursor.id);
     }
-    const rows = await admin.query<IdentityMappingLevelHistoryRow>(
+    const logs = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'admin.identity_mapping_level_history',
+      onCoverage: logCoverageHeaders(c),
+      columns: [
+        'id',
+        'tenant_id',
+        'tier',
+        'client_id',
+        'before_json',
+        'after_json',
+        'actor_id',
+        'actor_type',
+        'via',
+        'bulk_id',
+        'source_version',
+        'status',
+        'created_at',
+        'updated_at',
+        'committed_at',
+        'last_reconciled_at',
+        'receipt_acknowledged_at',
+      ],
+    });
+    const rows = await logs.adapter.query<IdentityMappingLevelHistoryRow>(
       `SELECT * FROM identity_mapping_level_history WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC,id DESC LIMIT ?`,
       [...params, limit + 1],
       { consistencyClass: 'primary_required' }
@@ -355,6 +382,7 @@ export async function adminIdentityMappingHistoryHandler(c: HistoryContext): Pro
     const cache = historyReadCache();
     return c.json({
       entries: await mapWithConcurrency(page, 4, (row) => publicEntry(c, admin, row, cache)),
+      log_coverage: logs.coverage(),
       next_cursor:
         rows.length > page.length && last
           ? arrayBufferToBase64Url(
@@ -364,8 +392,8 @@ export async function adminIdentityMappingHistoryHandler(c: HistoryContext): Pro
             )
           : null,
     });
-  } catch {
-    return unavailable(c);
+  } catch (error) {
+    return logQueryErrorResponse(c, error) ?? unavailable(c);
   }
 }
 

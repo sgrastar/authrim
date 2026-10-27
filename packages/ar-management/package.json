@@ -26,6 +26,7 @@
     "@simplewebauthn/server": "^14.0.2",
     "hono": "4.13.2",
     "jose": "^6.2.9",
+    "squirreling": "0.16.9",
     "zod": "^4.6.7"
   },
   "devDependencies": {

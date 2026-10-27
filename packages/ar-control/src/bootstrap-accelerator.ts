@@ -60,6 +60,7 @@ function activeSmokePublicJwk(
 export async function admitInitialBootstrapAcceleration(input: {
   env: ControlEnv;
   proof: string;
+  purpose?: BootstrapAcceleratorClaims['purpose'];
   now?: number;
 }): Promise<BootstrapAcceleratorAdmission> {
   const environmentId = input.env.AUTHRIM_ENVIRONMENT_NAME;
@@ -68,9 +69,14 @@ export async function admitInitialBootstrapAcceleration(input: {
   const claims = await verifyBootstrapAcceleratorProof(input.proof, {
     environmentId,
     publicJwk: activeSmokePublicJwk(input.env),
+    purpose: input.purpose,
     now,
   });
 
+  const allowedStates =
+    claims.purpose === 'log_archive_readiness'
+      ? "'accepted'"
+      : "'creating', 'pending_verification'";
   await input.env.CONTROL_DB.prepare(
     `DELETE FROM control_bootstrap_accelerator_proofs
       WHERE environment_id = ? AND expires_at < ?
@@ -91,7 +97,7 @@ export async function admitInitialBootstrapAcceleration(input: {
      SELECT ?, ?, ?, ?
       WHERE EXISTS (
         SELECT 1 FROM control_bootstrap_handoffs
-         WHERE environment_id = ? AND state IN ('creating', 'pending_verification')
+         WHERE environment_id = ? AND state IN (${allowedStates})
       )
      ON CONFLICT(environment_id, jti) DO NOTHING`
   )
@@ -103,7 +109,11 @@ export async function admitInitialBootstrapAcceleration(input: {
     )
       .bind(environmentId)
       .first<{ state: string }>();
-    return handoff?.state === 'creating' || handoff?.state === 'pending_verification'
+    return (
+      claims.purpose === 'log_archive_readiness'
+        ? handoff?.state === 'accepted'
+        : handoff?.state === 'creating' || handoff?.state === 'pending_verification'
+    )
       ? { state: 'replayed' }
       : { state: 'inactive' };
   }

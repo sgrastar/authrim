@@ -1078,6 +1078,7 @@ async function emitWebhookDeliveryRuntimeLog(
       tenantId: input.tenantId,
       logType: 'webhook',
       surface: 'webhook_delivery',
+      sourceDataset: 'runtime.webhook_delivery_events',
       tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
       records: [
         {

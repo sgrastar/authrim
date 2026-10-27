@@ -1,3 +1,7 @@
+import { logProducerFixture } from '../../../../../test/helpers/log-iceberg-producer-fixture.mjs';
+import { decryptLogIcebergRecord } from '@authrim/ar-lib-core/services/log-iceberg-record';
+import { decodeLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-row-codec';
+import type { LogArchiveRecord } from '@authrim/ar-lib-logging/iceberg/schema';
 /** Real Admin/Core schemas and actual DO RPCs; only routing/Workers transport are test seams. */
 import { readdirSync, readFileSync } from 'node:fs';
 import type { DatabaseAdapter, Env, PreparedStatement } from '@authrim/ar-lib-core';
@@ -97,8 +101,23 @@ function openAdminStore(): { db: SQLiteDatabase; adapter: DatabaseAdapter } {
     queryOne: async (sql: string, params?: unknown[]) =>
       db.prepare(sql).get(...values(params)) ?? null,
     execute: async (sql: string, params?: unknown[]) => execute({ sql, params }),
-    batch: async (statements: PreparedStatement[]) => statements.map(execute),
+    batch: async (statements: PreparedStatement[]) => {
+      db.exec('BEGIN');
+      try {
+        const result = statements.map(execute);
+        db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
     getType: () => 'sqlite',
+    isHealthy: async () => ({ healthy: true, latencyMs: 0, type: 'sqlite' }),
+    close: async () => {},
+    transaction: async () => {
+      throw new Error('Use atomic batch');
+    },
   } as unknown as DatabaseAdapter;
   return { db, adapter };
 }
@@ -184,7 +203,10 @@ export async function createExecuteFixture(sessionCount = 1, targetCount = 1) {
     metadataIdentity: { ...METADATA_IDENTITY },
     accounts: [{ key: 'ACCOUNTS', identity: { ...ACCOUNT_IDENTITY }, adapter: core.adapter }],
   };
-  const env = {} as Env;
+  const logging = await logProducerFixture('pipeline');
+  logging.env.DB_ADMIN = admin.adapter;
+  const env = Object.assign({} as Env, logging.env);
+  const dispatch = vi.spyOn(logging.env.LOG_ARCHIVE_WRITER!, 'dispatchPipelineReferences');
   await createSupportOpsExecuteJob(admin.adapter, {
     jobId: 'job-1',
     tenantId: TENANT,
@@ -261,9 +283,10 @@ export async function createExecuteFixture(sessionCount = 1, targetCount = 1) {
       if (['completed', 'failed'].includes(row().status)) return;
       await step();
     }
-    throw new Error('unbounded_job');
+    throw new Error(`unbounded_job:${row().error_message}`);
   }
   const close = () => {
+    logging.db.close();
     core.db.close();
     admin.db.close();
     for (const { storage } of receipts.values()) storage.db.close();
@@ -280,6 +303,26 @@ export async function createExecuteFixture(sessionCount = 1, targetCount = 1) {
     finish,
     close,
     sourceVersionMs,
+    dispatch,
+    logging,
+    auditRows: async () => {
+      const heads = await admin.adapter.query<{ payload_key: string }>(
+        "SELECT payload_key FROM log_iceberg_outbox WHERE state IN('pending','queued','ingested')"
+      );
+      return Promise.all(
+        heads.map(async (head) => {
+          const record = JSON.parse(
+            logging.objects.get(head.payload_key)!.text
+          ) as LogArchiveRecord;
+          const body = await decryptLogIcebergRecord(
+            record,
+            { tenantKey: 'key-a', sourceDataset: 'admin.admin_audit_log' },
+            async () => logging.keys
+          );
+          return decodeLogIcebergRow(body, TENANT, record.event_id);
+        })
+      );
+    },
   };
 }
 export type ExecuteFixture = Awaited<ReturnType<typeof createExecuteFixture>>;

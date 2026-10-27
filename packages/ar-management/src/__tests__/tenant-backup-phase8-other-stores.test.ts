@@ -73,6 +73,7 @@ describe('Phase 8 sensitive sidecars', () => {
         PII_ENCRYPTION_KEY_VERSION: '7',
       },
       {
+        isDatasetSelected: vi.fn(async () => true),
         loadPhase8Sqlite: vi.fn(async () => loaded),
         restorePhase8Envelope,
         verifyPhase8Envelope: vi.fn(),
@@ -104,6 +105,7 @@ describe('Phase 8 sensitive sidecars', () => {
     );
     const restorePhase8Envelope = vi.fn();
     const handlers = createPhase8OtherStoreHandlers({}, {
+      isDatasetSelected: vi.fn(async () => true),
       loadPhase8Sqlite: vi.fn(async () => loaded),
       restorePhase8Envelope,
       verifyPhase8Envelope: vi.fn(),
@@ -132,6 +134,7 @@ describe('Phase 8 sensitive sidecars', () => {
       })
     );
     const handlers = createPhase8OtherStoreHandlers({}, {
+      isDatasetSelected: vi.fn(async () => true),
       loadPhase8Sqlite: vi.fn(async () => loaded),
       restorePhase8Envelope: vi.fn(),
       verifyPhase8Envelope: vi.fn(async () => false),
@@ -159,6 +162,7 @@ describe('Phase 8 sensitive sidecars', () => {
     const loaded = source('users.public_avatars', [], rowJson);
     const importAsset = vi.fn();
     const handlers = createPhase8OtherStoreHandlers({}, {
+      isDatasetSelected: vi.fn(async () => true),
       loadPhase8Record: vi.fn(async () => loaded),
       importAsset,
     } as never);
@@ -199,6 +203,7 @@ describe('Phase 8 sensitive sidecars', () => {
     const loaded = source('artifacts.object_catalog_bodies', [], rowJson);
     const importR2Chunk = vi.fn();
     const handlers = createPhase8OtherStoreHandlers({}, {
+      isDatasetSelected: vi.fn(async () => true),
       loadPhase8Record: vi.fn(async () => loaded),
       importR2Chunk,
     } as never);
@@ -258,6 +263,7 @@ describe('Phase 8 sensitive sidecars', () => {
       active.value -= 1;
     });
     const handlers = createPhase8OtherStoreHandlers({}, {
+      isDatasetSelected: vi.fn(async () => true),
       loadPhase8Record: vi.fn(async () => loaded),
       importR2Chunk,
     } as never);
@@ -282,3 +288,50 @@ describe('Phase 8 sensitive sidecars', () => {
     expect(active.maximum).toBe(4);
   });
 });
+
+for (const purpose of ['restore', 'verify'] as const) {
+  it(`${purpose} skips unselected Iceberg categories without loading absent bundle datasets`, async () => {
+    const auditId = 'logs.iceberg_audit_records';
+    const loadPhase8Record = vi.fn(
+      async (_context: unknown, _digest: string, _purpose: string, id: string) => {
+        if (id !== auditId) throw new Error('unexpected_unselected_load');
+        return {
+          policy: { dataset: { id } },
+          manifest: {},
+          readNextValidatedRow: async () => null,
+        };
+      }
+    );
+    const selected = vi.fn(
+      async (_context: unknown, _digest: string, id: string) => id === auditId
+    );
+    const handlers = createPhase8OtherStoreHandlers({}, {
+      loadPhase8Record,
+      isDatasetSelected: selected,
+    } as never);
+    const run = purpose === 'restore' ? handlers.restoreOtherStores : handlers.verifyOtherStores;
+    let value: string | null = cursor(auditId, purpose);
+    let done = false;
+    for (let step = 0; step < 3; step++) {
+      const result = await run(context, digest, value);
+      value = result.cursor;
+      done = result.done;
+    }
+    expect(done).toBe(true);
+    expect(loadPhase8Record).toHaveBeenCalledOnce();
+    expect(selected).toHaveBeenCalledTimes(3);
+    // A settings-only request has no log dataset owner at all.
+    selected.mockResolvedValue(false);
+    loadPhase8Record.mockClear();
+    value = cursor(auditId, purpose);
+    for (let step = 0; step < 3; step++) value = (await run(context, digest, value)).cursor;
+    expect(value).toBeNull();
+    expect(loadPhase8Record).not.toHaveBeenCalled();
+    // Selecting a category never turns a missing owner into an empty successful source.
+    selected.mockResolvedValue(true);
+    loadPhase8Record.mockRejectedValueOnce(new Error('backup_validated_input_invalid'));
+    await expect(run(context, digest, cursor(auditId, purpose))).rejects.toThrow(
+      'backup_validated_input_invalid'
+    );
+  });
+}

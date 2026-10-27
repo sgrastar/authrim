@@ -78,10 +78,10 @@ describe('the bulk apply policy', () => {
       'structured_value',
     ],
     [
-      'a storage binding',
+      'a removed diagnostic bucket override',
       'diagnostic-logging',
       'diagnostic-logging.r2_bucket_binding',
-      'environment_mapping',
+      'unknown_setting',
     ],
     [
       'a backup destination',

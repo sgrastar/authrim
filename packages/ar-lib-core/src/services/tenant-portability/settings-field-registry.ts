@@ -747,7 +747,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     diagnostic-logging.http_response_enabled
     diagnostic-logging.token_validation_enabled
     diagnostic-logging.auth_decision_enabled
-    diagnostic-logging.r2_output_enabled
     diagnostic-logging.filter_pii
     diagnostic-logging.http_body_schema_aware
     diagnostic-logging.sdk_ingest_enabled
@@ -761,17 +760,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       `
     diagnostic-logging.log_level
     diagnostic-logging.output_format
-    diagnostic-logging.buffer_strategy
     diagnostic-logging.storage_mode.default
-  `,
-    ],
-    [
-      'diagnostic-logging',
-      'string',
-      'environment_mapping',
-      `
-    diagnostic-logging.r2_bucket_binding
-    diagnostic-logging.r2_path_prefix
   `,
     ],
     [
@@ -779,8 +768,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'number',
       'value',
       `
-    diagnostic-logging.batch_size
-    diagnostic-logging.batch_interval_ms
     diagnostic-logging.token_hash_prefix_length
     diagnostic-logging.retention_days
   `,

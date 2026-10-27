@@ -1,11 +1,13 @@
+import { createLogIcebergWritePort } from '../log-iceberg-runtime';
+import { resolveLogIcebergConfig } from '../log-iceberg-config';
 /**
  * Audit Service Implementation
  *
  * Provides unified audit logging with:
- * - Event logging via Queue (with D1 fallback)
- * - PII change logging with AES-256-GCM encryption
+ * - Canonical event storage using the configured Iceberg mode
+ * - Nested encrypted PII change values
  * - 2-stage purge workflow for GDPR compliance
- * - Automatic detail evacuation to R2
+ * - Independent HTTP external delivery
  */
 
 import type {
@@ -18,25 +20,27 @@ import type {
   EventLogEntry,
   PIILogEntry,
   TenantPIIConfig,
-  EncryptedValue,
   AuditQueueMessage,
   EventCategory,
+  EncryptedValue,
 } from './types';
 import { DEFAULT_PII_CONFIG } from './types';
 import type { AuditProfile, AuditTarget } from '../../types/runtime-profile';
-import type { IAuditStorageAdapter } from './storage';
 import { BUILTIN_RUNTIME_PROFILES, DEFAULT_AUDIT_PROFILE_ID } from '../../types/runtime-profile';
-import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../../db';
+import type { DatabaseSource } from '../../db';
 import {
   sanitizeEventDetails,
   sanitizeErrorMessage,
-  writeEventDetails,
-  writePIIValues,
-  generateAAD,
   calculateRetentionUntil,
+  generateAAD,
   arrayBufferToBase64,
 } from './utils';
-import type { TenantKeyResolver } from './tenant-key';
+import type { Env } from '../../types/env';
+import { logIcebergCanonicalJson } from '../log-iceberg-record';
+import { emitLogIcebergRow } from '../log-iceberg-emitter';
+import { resolveAccountPiiSourceForAudit } from '../runtime-data-context';
+import { eraseLogIcebergSubject } from '../log-iceberg-subject-erasure';
+import { runTenantBackupCoveredEffect } from '../tenant-portability/covered-mutation';
 import { AnonymizationService } from './anonymization';
 import { createLogger, type Logger } from '../../utils/logger';
 
@@ -55,43 +59,13 @@ export interface AuditDeliveryPlan {
  * Dependencies for audit service.
  */
 export interface AuditServiceDependencies {
-  /** Core database source (non-PII) */
-  coreSource: DatabaseSource;
-
-  /** PII database source */
-  piiSource: DatabaseSource;
-
-  /** R2 bucket for large details */
-  r2Bucket: R2Bucket;
-
-  /** R2 bucket for chunked sensitive detail payloads */
-  sensitiveDetailBucket?: R2Bucket;
-
-  /** Root key for object-plane sensitive detail encryption */
-  objectEncryptionRootKey?: string;
-
-  /** Object-plane encryption key version */
-  objectEncryptionKeyVersion?: number;
-
-  /** Hex-encoded AES-256 key for PII audit value encryption */
-  piiEncryptionKey?: string;
-
-  /** PII audit encryption key version */
-  piiEncryptionKeyVersion?: number;
-
-  /** Audit queue for async processing (optional) */
-  auditQueue?: Queue<AuditQueueMessage>;
-
-  /** KV for PII config cache (optional) */
+  /** Explicit archive bindings; a missing mode never falls back to old log tables. */
+  env: Env;
+  /** Explicit PII mapping source when an account-scoped caller already resolved it. */
+  piiSource?: DatabaseSource;
   configKv?: KVNamespace;
-
-  /** Logger instance (optional) */
   logger?: Logger;
-
-  /** Runtime resolver for tenant audit profiles (optional) */
   resolveAuditProfile?: (tenantId: string) => Promise<AuditProfile>;
-
-  /** Runtime resolver for per-event delivery plans (optional) */
   resolveDeliveryPlan?: (input: {
     tenantId: string;
     logType: 'event' | 'pii';
@@ -99,15 +73,6 @@ export interface AuditServiceDependencies {
     clientId?: string;
     auditProfile: AuditProfile;
   }) => Promise<AuditDeliveryPlan | null>;
-
-  /** Runtime resolver for synchronous primary adapters (optional) */
-  resolvePrimaryAdapter?: (
-    target: AuditTarget,
-    logType: 'event' | 'pii'
-  ) => Promise<IAuditStorageAdapter | null>;
-
-  /** Optional tenant registry backed tenant_key resolver for direct R2 detail evacuation */
-  tenantKeyResolver?: TenantKeyResolver;
 }
 
 /**
@@ -149,22 +114,13 @@ export function resolveAuditRetention(
 }
 
 export class AuditService implements IAuditService {
-  private readonly coreAdapter: DatabaseAdapter;
-  private readonly piiAdapter: DatabaseAdapter;
-  private readonly r2Bucket: R2Bucket;
-  private readonly sensitiveDetailBucket?: R2Bucket;
-  private readonly objectEncryptionRootKey?: string;
-  private readonly objectEncryptionKeyVersion?: number;
-  private readonly piiEncryptionKey?: string;
-  private readonly piiEncryptionKeyVersion: number;
+  private readonly env: Env;
+  private readonly piiSource?: DatabaseSource;
   private readonly auditQueue?: Queue<AuditQueueMessage>;
   private readonly configKv?: KVNamespace;
   private readonly logger: Logger;
-  private readonly anonymizationService: AnonymizationService;
-  private readonly resolveAuditProfile?: (tenantId: string) => Promise<AuditProfile>;
+  private readonly resolveAuditProfile?: AuditServiceDependencies['resolveAuditProfile'];
   private readonly resolveDeliveryPlan?: AuditServiceDependencies['resolveDeliveryPlan'];
-  private readonly resolvePrimaryAdapter?: AuditServiceDependencies['resolvePrimaryAdapter'];
-  private readonly tenantKeyResolver?: TenantKeyResolver;
 
   // In-memory config cache (3 minute TTL)
   private configCache: Map<string, { config: TenantPIIConfig; expiresAt: number }> = new Map();
@@ -174,32 +130,29 @@ export class AuditService implements IAuditService {
   private readonly AUDIT_PROFILE_CACHE_TTL_MS = 60_000; // 1 minute
 
   constructor(deps: AuditServiceDependencies) {
-    this.coreAdapter = ensureDatabaseAdapter(deps.coreSource, 'audit-core');
-    this.piiAdapter = ensureDatabaseAdapter(deps.piiSource, 'audit-pii');
-    this.r2Bucket = deps.r2Bucket;
-    this.sensitiveDetailBucket = deps.sensitiveDetailBucket;
-    this.objectEncryptionRootKey = deps.objectEncryptionRootKey;
-    this.objectEncryptionKeyVersion = deps.objectEncryptionKeyVersion;
-    this.piiEncryptionKey = deps.piiEncryptionKey;
-    this.piiEncryptionKeyVersion =
-      Number.isInteger(deps.piiEncryptionKeyVersion) && (deps.piiEncryptionKeyVersion ?? 0) > 0
-        ? deps.piiEncryptionKeyVersion!
-        : 1;
-    this.auditQueue = deps.auditQueue;
-    this.configKv = deps.configKv;
+    this.env = deps.env;
+    this.piiSource = deps.piiSource;
+    this.auditQueue = deps.env.AUDIT_QUEUE;
+    this.configKv = deps.configKv ?? deps.env.AUTHRIM_CONFIG;
     this.logger = deps.logger ?? createLogger().module('AuditService');
-    this.anonymizationService = new AnonymizationService(deps.piiSource);
     this.resolveAuditProfile = deps.resolveAuditProfile;
     this.resolveDeliveryPlan = deps.resolveDeliveryPlan;
-    this.resolvePrimaryAdapter = deps.resolvePrimaryAdapter;
-    this.tenantKeyResolver = deps.tenantKeyResolver;
+  }
+
+  private async anonymizationFor(tenantId: string, userId: string): Promise<AnonymizationService> {
+    const source =
+      this.piiSource ??
+      (await resolveAccountPiiSourceForAudit(this.env, { tenantId, accountId: userId }));
+    return new AnonymizationService(source);
   }
 
   private getDefaultAuditProfile(): AuditProfile {
-    return BUILTIN_RUNTIME_PROFILES.find(
+    const profile = BUILTIN_RUNTIME_PROFILES.find(
       (profile): profile is AuditProfile =>
         profile.kind === 'audit' && profile.id === DEFAULT_AUDIT_PROFILE_ID
-    )!;
+    );
+    if (!profile) throw new Error('builtin_audit_profile_missing');
+    return profile;
   }
 
   private async getTenantAuditProfile(tenantId: string): Promise<AuditProfile> {
@@ -235,76 +188,6 @@ export class AuditService implements IAuditService {
     overrideDays?: number | null
   ): number {
     return resolveAuditRetention(profile, defaults, logType, overrideDays).days;
-  }
-
-  private isD1PrimaryTarget(
-    target: AuditTarget | null | undefined
-  ): target is Extract<AuditTarget, { type: 'd1' }> {
-    return Boolean(target && target.type === 'd1');
-  }
-
-  private async writePrimaryEventLog(
-    tenantId: string,
-    plan: AuditDeliveryPlan,
-    entry: EventLogEntry
-  ): Promise<boolean> {
-    if (!plan.primary) {
-      return true;
-    }
-
-    if (this.isD1PrimaryTarget(plan.primary)) {
-      return this.directInsertEventLog(entry);
-    }
-
-    const adapter = this.resolvePrimaryAdapter
-      ? await this.resolvePrimaryAdapter(plan.primary, 'event')
-      : null;
-    if (!adapter) {
-      this.logger.warn('unsupported_audit_primary_target', {
-        tenantId,
-        targetType: plan.primary.type,
-        auditProfileId: plan.auditProfileId,
-      });
-      return true;
-    }
-
-    const result = await adapter.writeEventLog(entry);
-    if (!result.success) {
-      throw new Error(result.errorMessage ?? 'audit_primary_event_write_failed');
-    }
-    return result.entriesWritten > 0;
-  }
-
-  private async writePrimaryPIILog(
-    tenantId: string,
-    plan: AuditDeliveryPlan,
-    entry: PIILogEntry
-  ): Promise<void> {
-    if (!plan.primary) {
-      return;
-    }
-
-    if (this.isD1PrimaryTarget(plan.primary)) {
-      await this.directInsertPIILog(entry);
-      return;
-    }
-
-    const adapter = this.resolvePrimaryAdapter
-      ? await this.resolvePrimaryAdapter(plan.primary, 'pii')
-      : null;
-    if (!adapter) {
-      this.logger.warn('unsupported_audit_primary_target', {
-        tenantId,
-        targetType: plan.primary.type,
-        auditProfileId: plan.auditProfileId,
-      });
-      return;
-    }
-
-    const result = await adapter.writePIILog(entry);
-    if (!result.success) {
-      throw new Error(result.errorMessage ?? 'audit_primary_pii_write_failed');
-    }
   }
 
   private buildBaseDeliveryPlan(profile: AuditProfile): AuditDeliveryPlan {
@@ -344,17 +227,64 @@ export class AuditService implements IAuditService {
   }
 
   private buildFanoutPlan(plan: AuditDeliveryPlan): AuditQueueMessage['fanout'] | undefined {
-    if (plan.archives.length === 0 && plan.sinks.length === 0) {
-      return undefined;
-    }
-
+    const sinks = plan.sinks.filter((target) => target.type === 'http');
+    if (sinks.length === 0) return undefined;
     return {
       auditProfileId: plan.auditProfileId,
-      archives: plan.archives,
-      sinks: plan.sinks,
-      archiveFailureMode: plan.archiveFailureMode,
+      archives: [],
+      sinks,
       sinkFailureMode: plan.sinkFailureMode,
       matchedRuleNames: plan.matchedRuleNames,
+    };
+  }
+
+  private async deliverExternalSinks(
+    plan: AuditDeliveryPlan,
+    body: Omit<AuditQueueMessage, 'fanout'>,
+    requireDurable = false
+  ): Promise<void> {
+    const fanout = this.buildFanoutPlan(plan);
+    if (!fanout) return;
+    try {
+      if (!this.auditQueue) throw new Error('audit_external_sink_queue_unavailable');
+      await this.auditQueue.send({ ...body, fanout });
+    } catch (error) {
+      this.logger.warn('audit_external_sink_queue_failed', {
+        tenantId: body.tenantId,
+        error: sanitizeErrorMessage(String(error)),
+      });
+      if (requireDurable && plan.sinkFailureMode === 'retry_until_ttl')
+        throw new Error('audit_fanout_queue_failed');
+    }
+  }
+
+  private async encryptValuesForExternal(
+    values: Record<string, unknown>,
+    tenantId: string,
+    fields: string[]
+  ): Promise<EncryptedValue> {
+    const keyHex = this.env.PII_ENCRYPTION_KEY;
+    if (!keyHex || !/^[a-f0-9]{64}$/iu.test(keyHex))
+      throw new Error('audit_external_pii_key_unavailable');
+    const key = await crypto.subtle.importKey(
+      'raw',
+      Uint8Array.from({ length: 32 }, (_, index) =>
+        Number.parseInt(keyHex.slice(index * 2, index * 2 + 2), 16)
+      ),
+      'AES-GCM',
+      false,
+      ['encrypt']
+    );
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: generateAAD(tenantId, fields) },
+      key,
+      new TextEncoder().encode(JSON.stringify(values))
+    );
+    return {
+      ciphertext: arrayBufferToBase64(ciphertext),
+      iv: arrayBufferToBase64(iv.buffer),
+      keyId: `pii-key-v${this.env.PII_ENCRYPTION_KEY_VERSION ?? '1'}`,
     };
   }
 
@@ -416,36 +346,13 @@ export class AuditService implements IAuditService {
       createdAtDate
     );
 
-    // Sanitize details if provided
-    let detailsJson: string | null = null;
-    let detailsR2Key: string | null = null;
-
-    if (params.details) {
-      const sanitizedDetails = sanitizeEventDetails(
-        params.details as Record<string, unknown>,
-        config
-      );
-      const result = await writeEventDetails(
-        sanitizedDetails,
-        this.r2Bucket,
-        tenantId,
-        entryId,
-        undefined,
-        this.tenantKeyResolver,
-        this.sensitiveDetailBucket && this.objectEncryptionRootKey
-          ? {
-              adapter: this.coreAdapter,
-              bucket: this.sensitiveDetailBucket,
-              rootKeyHex: this.objectEncryptionRootKey,
-              keyVersion: this.objectEncryptionKeyVersion,
-              createdAt,
-              tenantKeyResolver: this.tenantKeyResolver,
-            }
-          : undefined
-      );
-      detailsJson = result.detailsJson;
-      detailsR2Key = result.detailsR2Key;
-    }
+    const detailsJson = params.details
+      ? logIcebergCanonicalJson(
+          JSON.parse(
+            JSON.stringify(sanitizeEventDetails(params.details as Record<string, unknown>, config))
+          )
+        )
+      : null;
 
     // Sanitize error message if present
     const errorMessage = params.errorMessage
@@ -466,87 +373,52 @@ export class AuditService implements IAuditService {
       sessionId: params.sessionId,
       requestId: params.requestId,
       durationMs: params.durationMs,
-      detailsR2Key: detailsR2Key ?? undefined,
+      detailsR2Key: undefined,
       detailsJson: detailsJson ?? undefined,
       retentionUntil,
       createdAt,
     };
 
-    const shouldFanout = await this.writePrimaryEventLog(tenantId, deliveryPlan, entry);
-
-    const fanout = this.buildFanoutPlan(deliveryPlan);
-    const hasGatedFanout =
-      (deliveryPlan.archives.length > 0 && deliveryPlan.archiveFailureMode === 'gate_cleanup') ||
-      (deliveryPlan.sinks.length > 0 && deliveryPlan.sinkFailureMode === 'retry_until_ttl');
-    const requiresDurableFanout =
-      !deliveryPlan.primary || (params.requireDurableFanout === true && hasGatedFanout);
-    // A failed durable fanout is replayed with the same event ID. The primary insert then reports
-    // zero rows, so gated delivery must still retry; downstream fanout IDs remain idempotent.
-    const shouldQueueFanout = shouldFanout || requiresDurableFanout;
-
-    if (fanout && this.auditQueue && shouldQueueFanout) {
-      try {
-        await this.auditQueue.send({
-          type: 'event_log',
-          entries: [entry],
-          tenantId,
-          timestamp: createdAt,
-          fanout,
-        });
-      } catch (queueError) {
-        this.logger.warn('audit_queue_failed', {
-          error: sanitizeErrorMessage(String(queueError)),
-          tenantId,
-        });
-        if (requiresDurableFanout) {
-          throw new Error('audit_fanout_queue_failed');
-        }
-      }
-    } else if (fanout && !this.auditQueue && shouldQueueFanout) {
-      this.logger.warn('audit_fanout_skipped_without_queue', {
-        tenantId,
-        auditProfileId: deliveryPlan.auditProfileId,
-      });
-      if (requiresDurableFanout) {
-        throw new Error('audit_fanout_queue_unavailable');
-      }
-    }
-  }
-
-  /**
-   * Direct insert to event_log table.
-   */
-  private async directInsertEventLog(entry: EventLogEntry): Promise<boolean> {
-    const result = await this.coreAdapter.execute(
-      `INSERT INTO event_log (
-        id, tenant_id, event_type, event_category, result, severity,
-        error_code, error_message, anonymized_user_id, client_id,
-        session_id, request_id, duration_ms, details_r2_key, details_json,
-        retention_until, created_at
-      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT EXISTS (SELECT 1 FROM event_log WHERE id = ?)`,
-      [
-        entry.id,
-        entry.tenantId,
-        entry.eventType,
-        entry.eventCategory,
-        entry.result,
-        entry.severity,
-        entry.errorCode ?? null,
-        entry.errorMessage ?? null,
-        entry.anonymizedUserId ?? null,
-        entry.clientId ?? null,
-        entry.sessionId ?? null,
-        entry.requestId ?? null,
-        entry.durationMs ?? null,
-        entry.detailsR2Key ?? null,
-        entry.detailsJson ?? null,
-        entry.retentionUntil ?? null,
-        entry.createdAt,
-        entry.id,
-      ]
+    await emitLogIcebergRow(this.env, {
+      tenantId,
+      sourceDataset: 'core.event_log',
+      logType: 'audit',
+      eventAt: createdAt,
+      expiresAt: retentionUntil,
+      row: {
+        id: entry.id,
+        tenant_id: tenantId,
+        event_type: entry.eventType,
+        event_category: entry.eventCategory,
+        result: entry.result,
+        severity: entry.severity,
+        error_code: entry.errorCode ?? null,
+        error_message: entry.errorMessage ?? null,
+        anonymized_user_id: entry.anonymizedUserId ?? null,
+        client_id: entry.clientId ?? null,
+        session_id: entry.sessionId ?? null,
+        request_id: entry.requestId ?? null,
+        duration_ms: entry.durationMs ?? null,
+        details_r2_key: null,
+        details_json: detailsJson,
+        retention_until: retentionUntil,
+        created_at: createdAt,
+      },
+      overview: {
+        action: entry.eventType,
+        result: entry.result,
+        severity: entry.severity,
+        reason_code: entry.errorCode ?? null,
+        request_id: entry.requestId ?? null,
+        subject_id: entry.anonymizedUserId ?? null,
+        client_id: entry.clientId ?? null,
+      },
+    });
+    await this.deliverExternalSinks(
+      deliveryPlan,
+      { type: 'event_log', entries: [entry], tenantId, timestamp: createdAt },
+      params.requireDurableFanout === true
     );
-    return result.rowsAffected > 0;
   }
 
   /**
@@ -566,43 +438,18 @@ export class AuditService implements IAuditService {
       this.resolveRetentionDays(auditProfile, config, 'pii', deliveryPlan.retentionDays)
     );
 
-    // Get or create anonymized user ID
-    const anonymizedUserId =
-      params.anonymizedUserId ??
-      (await this.anonymizationService.getAnonymizedUserId(tenantId, params.userId));
-
-    // Prepare values to encrypt
-    const valuesToEncrypt: Record<string, unknown> = {};
-    if (params.oldValues) {
-      valuesToEncrypt.old = params.oldValues;
-    }
-    if (params.newValues) {
-      valuesToEncrypt.new = params.newValues;
-    }
-
-    // Encrypt values
-    const encrypted = await this.encryptPIIValues(valuesToEncrypt, tenantId, params.affectedFields);
-
-    // Write encrypted values (inline or R2)
-    const { valuesEncrypted, valuesR2Key } = await writePIIValues(
-      JSON.stringify(encrypted),
-      this.r2Bucket,
-      tenantId,
-      entryId,
-      undefined,
-      this.tenantKeyResolver,
-      this.sensitiveDetailBucket && this.objectEncryptionRootKey
-        ? {
-            adapter: this.coreAdapter,
-            bucket: this.sensitiveDetailBucket,
-            rootKeyHex: this.objectEncryptionRootKey,
-            keyVersion: this.objectEncryptionKeyVersion,
-            createdAt,
-            tenantKeyResolver: this.tenantKeyResolver,
-          }
-        : undefined
-    );
-
+    // New PII records always resolve the live business mapping; only encrypted Queue retries
+    // preserve an older subject after a purge has rotated the mapping.
+    const anonymizedUserId = await this.getAnonymizedUserId(tenantId, params.userId);
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+        anonymizedUserId
+      )
+    )
+      throw new Error('audit_pii_subject_invalid');
+    const values: Record<string, unknown> = {};
+    if (params.oldValues) values.old = params.oldValues;
+    if (params.newValues) values.new = params.newValues;
     const entry: PIILogEntry = {
       id: entryId,
       tenantId,
@@ -610,10 +457,8 @@ export class AuditService implements IAuditService {
       anonymizedUserId,
       changeType: params.changeType,
       affectedFields: JSON.stringify(params.affectedFields),
-      valuesR2Key: valuesR2Key ?? undefined,
-      valuesEncrypted: valuesEncrypted ?? undefined,
-      encryptionKeyId: encrypted.keyId,
-      encryptionIv: encrypted.iv,
+      encryptionKeyId: `object-key-v${this.env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1'}`,
+      encryptionIv: '',
       actorUserId: params.actorUserId,
       actorType: params.actorType,
       requestId: params.requestId,
@@ -622,65 +467,56 @@ export class AuditService implements IAuditService {
       retentionUntil,
       createdAt,
     };
-
-    await this.writePrimaryPIILog(tenantId, deliveryPlan, entry);
-
-    const fanout = this.buildFanoutPlan(deliveryPlan);
-
-    if (fanout && this.auditQueue) {
-      try {
-        await this.auditQueue.send({
-          type: 'pii_log',
-          entries: [entry],
-          tenantId,
-          timestamp: createdAt,
-          fanout,
-        });
-      } catch (queueError) {
-        this.logger.warn('audit_queue_failed_pii', {
-          error: sanitizeErrorMessage(String(queueError)),
-          tenantId,
-        });
-      }
-    } else if (fanout && !this.auditQueue) {
-      this.logger.warn('audit_fanout_skipped_without_queue', {
+    await emitLogIcebergRow(this.env, {
+      tenantId,
+      sourceDataset: 'pii.pii_log',
+      logType: 'pii',
+      eventAt: createdAt,
+      expiresAt: retentionUntil,
+      row: {
+        id: entryId,
+        tenant_id: tenantId,
+        user_id: params.userId,
+        anonymized_user_id: anonymizedUserId,
+        change_type: params.changeType,
+        affected_fields: entry.affectedFields,
+        values_r2_key: null,
+        values_encrypted: null,
+        encryption_key_id: entry.encryptionKeyId,
+        encryption_iv: null,
+        actor_user_id: params.actorUserId ?? null,
+        actor_type: params.actorType,
+        request_id: params.requestId ?? null,
+        legal_basis: params.legalBasis ?? null,
+        consent_reference: params.consentReference ?? null,
+        retention_until: retentionUntil,
+        created_at: createdAt,
+      },
+      overview: {
+        action: params.changeType,
+        result: 'success',
+        subject_id: anonymizedUserId,
+        request_id: params.requestId ?? null,
+      },
+      protectedDetail: { values: JSON.parse(JSON.stringify(values)) },
+    });
+    if (this.buildFanoutPlan(deliveryPlan)) {
+      const encrypted = await this.encryptValuesForExternal(
+        values,
         tenantId,
-        auditProfileId: deliveryPlan.auditProfileId,
-      });
+        params.affectedFields
+      );
+      entry.valuesEncrypted = JSON.stringify(encrypted);
+      entry.encryptionKeyId = encrypted.keyId;
+      entry.encryptionIv = encrypted.iv;
     }
-  }
-
-  /**
-   * Direct insert to pii_log table.
-   */
-  private async directInsertPIILog(entry: PIILogEntry): Promise<void> {
-    await this.piiAdapter.execute(
-      `INSERT INTO pii_log (
-        id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
-        values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
-        actor_user_id, actor_type, request_id, legal_basis, consent_reference,
-        retention_until, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        entry.id,
-        entry.tenantId,
-        entry.userId,
-        entry.anonymizedUserId,
-        entry.changeType,
-        entry.affectedFields,
-        entry.valuesR2Key ?? null,
-        entry.valuesEncrypted ?? null,
-        entry.encryptionKeyId,
-        entry.encryptionIv,
-        entry.actorUserId ?? null,
-        entry.actorType,
-        entry.requestId ?? null,
-        entry.legalBasis ?? null,
-        entry.consentReference ?? null,
-        entry.retentionUntil,
-        entry.createdAt,
-      ]
-    );
+    // The external protocol keeps its existing encrypted values; it never creates another stored log copy.
+    await this.deliverExternalSinks(deliveryPlan, {
+      type: 'pii_log',
+      entries: [entry],
+      tenantId,
+      timestamp: createdAt,
+    });
   }
 
   /**
@@ -688,10 +524,7 @@ export class AuditService implements IAuditService {
    */
   async logEventWithPII(tenantId: string, params: CombinedLogParams): Promise<void> {
     // Get anonymized user ID first (shared between both logs)
-    const anonymizedUserId = await this.anonymizationService.getAnonymizedUserId(
-      tenantId,
-      params.pii.userId
-    );
+    const anonymizedUserId = await this.getAnonymizedUserId(tenantId, params.pii.userId);
 
     // Log both in parallel
     await Promise.all([
@@ -708,7 +541,10 @@ export class AuditService implements IAuditService {
    * Get or create anonymized user ID.
    */
   async getAnonymizedUserId(tenantId: string, userId: string): Promise<string> {
-    return this.anonymizationService.getAnonymizedUserId(tenantId, userId);
+    const service = await this.anonymizationFor(tenantId, userId);
+    const id = await service.getAnonymizedUserIdUnlessErased(tenantId, userId);
+    if (!id) throw new Error('audit_subject_erased');
+    return id;
   }
 
   /**
@@ -720,15 +556,86 @@ export class AuditService implements IAuditService {
     userId: string,
     context: PurgeContext
   ): Promise<PurgeResult> {
-    const purgeJobId = crypto.randomUUID();
+    return this.executePIIPurge(tenantId, userId, { ...context });
+  }
 
-    // Get anonymized user ID before deletion
+  /** Cron resumes the durable authorization only; it cannot create a fresh purge of B. */
+  async resumePendingPIIPurge(
+    tenantId: string,
+    userId: string,
+    expectedOperationId: string
+  ): Promise<PurgeResult> {
+    if (
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+        expectedOperationId
+      )
+    )
+      throw new Error('pii_purge_operation_id_invalid');
+    return this.executePIIPurge(
+      tenantId,
+      userId,
+      {
+        actorUserId: 'system',
+        actorType: 'system',
+        deletionReason: 'durable_intent_resume',
+        requestId: `pii-purge-resume:${expectedOperationId}`,
+      },
+      expectedOperationId
+    );
+  }
+
+  private async executePIIPurge(
+    tenantId: string,
+    userId: string,
+    context: Omit<PurgeContext, 'deletionReason'> & {
+      deletionReason: PurgeContext['deletionReason'] | 'durable_intent_resume';
+    },
+    expectedOperationId?: string
+  ): Promise<PurgeResult> {
+    let purgeJobId = crypto.randomUUID();
+
     let anonymizedUserId: string;
     try {
-      anonymizedUserId = await this.anonymizationService.getAnonymizedUserId(tenantId, userId);
-    } catch {
-      // User might not have any events, create a temporary ID for logging
-      anonymizedUserId = crypto.randomUUID();
+      // Register the bounded maintenance scope before the PII intent: a crash can leave an
+      // empty scope, but can never leave a newly authorized intent undiscoverable by cron.
+      const writer =
+        this.env.LOG_ARCHIVE_WRITER ??
+        createLogIcebergWritePort(this.env, resolveLogIcebergConfig(this.env));
+      if (this.env.LOG_ARCHIVE_WRITER) await writer.registerPiiPurgeScope(tenantId);
+      else
+        await runTenantBackupCoveredEffect(
+          { CONTROL: this.env.CONTROL, TENANT_BACKUP_WRAPPING_KEY: 'required' },
+          { tenantId },
+          () => writer.registerPiiPurgeScope(tenantId)
+        );
+      const operation = await runTenantBackupCoveredEffect(
+        { CONTROL: this.env.CONTROL, TENANT_BACKUP_WRAPPING_KEY: 'required' },
+        { tenantId },
+        async () =>
+          expectedOperationId
+            ? (await this.anonymizationFor(tenantId, userId)).loadPendingPIILogPurge(
+                tenantId,
+                userId,
+                expectedOperationId
+              )
+            : (await this.anonymizationFor(tenantId, userId)).preparePIILogPurge(tenantId, userId)
+      );
+      if (!operation)
+        return {
+          success: true,
+          skipped: true,
+          piiLogsDeleted: 0,
+          purgeJobId: expectedOperationId ?? purgeJobId,
+        };
+      anonymizedUserId = operation.old_anonymized_user_id;
+      purgeJobId = operation.id;
+    } catch (error) {
+      return {
+        success: false,
+        piiLogsDeleted: 0,
+        purgeJobId,
+        errorMessage: sanitizeErrorMessage(String(error)),
+      };
     }
 
     // Step 1: Log purge started
@@ -749,24 +656,28 @@ export class AuditService implements IAuditService {
     });
 
     try {
-      // Step 2: Delete PII logs
-      const piiDeleteResult = await this.piiAdapter.execute(
-        'DELETE FROM pii_log WHERE tenant_id = ? AND user_id = ?',
-        [tenantId, userId]
-      );
-
-      const piiLogsDeleted = piiDeleteResult.rowsAffected;
-
-      // Step 3: Delete anonymization mapping
-      await this.anonymizationService.deleteMapping(tenantId, userId);
-
+      const erased = await eraseLogIcebergSubject(this.env, {
+        tenantId,
+        sourceDataset: 'pii.pii_log',
+        subjectId: anonymizedUserId,
+      });
+      if (!erased.complete) {
+        return {
+          success: false,
+          pending: true,
+          piiLogsDeleted: erased.removed,
+          purgeJobId,
+          errorMessage: 'pii_purge_pending',
+        };
+      }
+      const piiLogsDeleted = erased.removed;
       // Step 4: Log purge completed
       await this.logEvent(tenantId, {
         eventType: 'user.pii_purge_completed',
         eventCategory: 'security',
         result: 'success',
         severity: 'critical',
-        // Don't use anonymizedUserId - mapping was just deleted
+        // Do not attach the erased generation to the completion event; the live mapping is retained.
         requestId: context.requestId,
         details: {
           purgeJobId,
@@ -774,6 +685,19 @@ export class AuditService implements IAuditService {
           deletionReason: context.deletionReason,
         },
       });
+
+      // Retain the restart pointer until completion logging is accepted. A failed log write
+      // must retry the old subject instead of starting a new purge of the live generation.
+      await runTenantBackupCoveredEffect(
+        { CONTROL: this.env.CONTROL, TENANT_BACKUP_WRAPPING_KEY: 'required' },
+        { tenantId },
+        async () =>
+          (await this.anonymizationFor(tenantId, userId)).completePIILogPurge(
+            tenantId,
+            userId,
+            purgeJobId
+          )
+      );
 
       return {
         success: true,
@@ -805,61 +729,6 @@ export class AuditService implements IAuditService {
         errorMessage,
       };
     }
-  }
-
-  /**
-   * Encrypt PII values using AES-256-GCM.
-   */
-  private async encryptPIIValues(
-    values: Record<string, unknown>,
-    tenantId: string,
-    affectedFields: string[]
-  ): Promise<EncryptedValue> {
-    const keyId = `pii-key-v${this.piiEncryptionKeyVersion}`;
-
-    // Generate random IV (12 bytes for GCM)
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-
-    // Generate AAD from tenant and fields
-    const aad = generateAAD(tenantId, affectedFields);
-
-    const keyMaterial = await this.getEncryptionKey();
-
-    // Encrypt
-    const plaintextBytes = new TextEncoder().encode(JSON.stringify(values));
-    const ciphertext = await crypto.subtle.encrypt(
-      {
-        name: 'AES-GCM',
-        iv,
-        additionalData: aad,
-      },
-      keyMaterial,
-      plaintextBytes
-    );
-
-    return {
-      ciphertext: arrayBufferToBase64(ciphertext),
-      iv: arrayBufferToBase64(iv.buffer),
-      keyId,
-    };
-  }
-
-  private async getEncryptionKey(): Promise<CryptoKey> {
-    const keyHex = this.piiEncryptionKey?.trim();
-    if (!keyHex) {
-      throw new Error('PII_ENCRYPTION_KEY is required for audit PII encryption');
-    }
-    if (keyHex.length !== 64 || !/^[0-9a-fA-F]+$/.test(keyHex)) {
-      throw new Error('PII_ENCRYPTION_KEY must be exactly 64 hex characters');
-    }
-
-    const keyBytes = new Uint8Array(
-      keyHex.match(/.{2}/g)!.map((byte) => Number.parseInt(byte, 16))
-    );
-    return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, [
-      'encrypt',
-      'decrypt',
-    ]);
   }
 }
 
