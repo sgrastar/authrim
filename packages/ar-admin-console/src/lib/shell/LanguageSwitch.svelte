@@ -4,10 +4,20 @@
 	import { useBusy } from '$lib/ui/busy/busy';
 	import { changeLanguage } from './language';
 
+	/**
+	 * `block`: fills the width it is given and names each language in full (the display menu).
+	 * Otherwise a compact two-letter switch (the sign-in pages).
+	 */
+	interface Props {
+		block?: boolean;
+	}
+
+	let { block = false }: Props = $props();
+
 	const busy = useBusy();
 </script>
 
-<div class="lang" role="group" aria-label={t('app.language')}>
+<div class="lang" class:lang--block={block} role="group" aria-label={t('app.language')}>
 	{#each SUPPORTED_LOCALES as locale (locale)}
 		<button
 			type="button"
@@ -16,7 +26,8 @@
 			aria-label={LOCALE_LABELS[locale].native}
 			aria-pressed={i18n.locale === locale}
 			disabled={busy()}
-			onclick={() => changeLanguage(locale)}>{LOCALE_LABELS[locale].short}</button
+			onclick={() => changeLanguage(locale)}
+			>{block ? LOCALE_LABELS[locale].native : LOCALE_LABELS[locale].short}</button
 		>
 	{/each}
 </div>
@@ -28,6 +39,17 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-control);
 		background: var(--bg-card);
+	}
+
+	.lang--block {
+		display: flex;
+		width: 100%;
+	}
+
+	.lang--block button {
+		flex: 1;
+		min-width: 0;
+		padding: 0 6px;
 	}
 
 	button {

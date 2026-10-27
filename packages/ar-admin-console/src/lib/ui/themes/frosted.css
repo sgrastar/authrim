@@ -28,6 +28,11 @@
 	--changed: #e8a07c;
 	--warning: #8c5c14;
 	--danger: #b0344c;
+	/* Circles of the header notification area: red, orange, yellow, blue. */
+	--sev-critical: #e23d5e;
+	--sev-high: #f0883a;
+	--sev-caution: #efc142;
+	--sev-info: #4a90de;
 
 	--surface-bg: linear-gradient(
 		135deg,
@@ -80,6 +85,11 @@
 	--changed: #c98b73;
 	--warning: #f3c66d;
 	--danger: #ff8ca1;
+	/* Circles of the header notification area: red, orange, yellow, blue. */
+	--sev-critical: #ff6f8c;
+	--sev-high: #ffa860;
+	--sev-caution: #ffdc7c;
+	--sev-info: #7cb8f7;
 
 	--surface-bg: linear-gradient(
 		135deg,

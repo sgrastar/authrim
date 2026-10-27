@@ -33,6 +33,11 @@
 	--warning: #a33a00;
 	--warning-bg: #fbe8dc;
 	--danger: #b8201c;
+	/* Circles of the header notification area: red, orange, yellow, blue. */
+	--sev-critical: #e2231a;
+	--sev-high: #f5680a;
+	--sev-caution: #f6c000;
+	--sev-info: #0b63ce;
 	--danger-bg: #f8e2e0;
 	--info: #1f5c93;
 	--info-bg: #e2ebf3;
@@ -108,6 +113,11 @@
 	--warning: #ff8a4c;
 	--warning-bg: rgba(255, 90, 20, 0.13);
 	--danger: #ff6b67;
+	/* Circles of the header notification area: red, orange, yellow, blue. */
+	--sev-critical: #ff4d46;
+	--sev-high: #ff8a2e;
+	--sev-caution: #ffd400;
+	--sev-info: #4aa3ff;
 	--danger-bg: rgba(255, 107, 103, 0.13);
 	--info: #74aee0;
 	--info-bg: rgba(116, 174, 224, 0.13);

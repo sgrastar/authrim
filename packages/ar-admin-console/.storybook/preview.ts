@@ -7,7 +7,12 @@ import { adminAccess } from '../src/lib/access/admin-access.svelte';
 import { DEFAULT_PERSONA, persona, PERSONAS } from '../src/lib/access/personas';
 import { i18n } from '../src/lib/i18n/i18n.svelte';
 import { enSettings } from '../src/lib/i18n/messages/settings/en';
-import { isSupportedLocale, LOCALE_LABELS, SUPPORTED_LOCALES } from '../src/lib/i18n/locales';
+import {
+	DEFAULT_LOCALE,
+	isSupportedLocale,
+	LOCALE_LABELS,
+	SUPPORTED_LOCALES
+} from '../src/lib/i18n/locales';
 import { applyThemeAttributes } from '../src/lib/ui/theme/theme-config';
 
 /** Toolbar-only check language: English pseudo-localised (src/lib/i18n/pseudo.ts). */
@@ -30,7 +35,7 @@ function applyGlobals(globals: Record<string, unknown>): void {
 		return;
 	}
 	if (i18n.pseudo) i18n.setPseudo(false);
-	const locale = isSupportedLocale(globals.locale) ? globals.locale : 'ja';
+	const locale = isSupportedLocale(globals.locale) ? globals.locale : DEFAULT_LOCALE;
 	if (i18n.locale !== locale) i18n.set(locale);
 }
 
@@ -115,7 +120,12 @@ const preview: Preview = {
 			}
 		}
 	},
-	initialGlobals: { look: 'standard', scheme: 'light', locale: 'ja', admin: DEFAULT_PERSONA },
+	initialGlobals: {
+		look: 'standard',
+		scheme: 'light',
+		locale: DEFAULT_LOCALE,
+		admin: DEFAULT_PERSONA
+	},
 	// Globals are applied before the story renders (state cannot change during Svelte's render
 	// phase). The decorator re-applies them after toolbar changes, outside the render pass.
 	beforeEach: ({ globals }) => applyGlobals(globals),
