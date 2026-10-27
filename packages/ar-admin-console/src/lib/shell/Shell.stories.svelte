@@ -171,5 +171,14 @@
 		await userEvent.keyboard('{Escape}');
 		await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
 		await expect(trigger).toHaveFocus();
+		// Following a notification folds the sheet, so it does not cover the page it leads to.
+		// (The navigation itself is held back here, so the story stays on its page.)
+		await userEvent.click(trigger);
+		canvasElement.addEventListener('click', (event) => event.preventDefault(), { once: true });
+		const first = within(canvas.getByRole('list', { name: /Notifications|通知/ })).getAllByRole(
+			'link'
+		)[0];
+		await userEvent.click(first);
+		await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
 	}}
 />

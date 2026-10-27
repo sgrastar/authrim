@@ -156,7 +156,12 @@
 				<ul class="notify__list" id="{uid}-list" aria-label={t('notify.label')} bind:this={list}>
 					{#each ordered as item, index (item.id)}
 						<li class="notify__row">
-							<a class="notify__link" href={notificationHref(item.id)} onmousedown={keepFocus}>
+							<a
+								class="notify__link"
+								href={notificationHref(item.id)}
+								onmousedown={keepFocus}
+								onclick={() => close()}
+							>
 								<span
 									class="notify__pill notify__pill--row notify__pill--{item.severity}"
 									aria-hidden="true">{t(`notify.short.${item.severity}`)}</span
@@ -539,8 +544,9 @@
 		white-space: nowrap;
 	}
 
-	@media (max-width: 640px) {
-		/* The phone header has no room for names: a circle above its count. */
+	/* Below this width the header has no room for names: a circle beside its count. Wider than the
+	   phone layout, because between the two the tenant switcher is squeezed to nothing. */
+	@media (max-width: 760px) {
 		.notify__cluster {
 			align-items: flex-start;
 			gap: 4px;
@@ -551,7 +557,8 @@
 			gap: 3px;
 		}
 
-		.notify__pill {
+		/* Only the summary loses its names; the rows of the list keep theirs. */
+		.notify__count .notify__pill {
 			display: none;
 		}
 
