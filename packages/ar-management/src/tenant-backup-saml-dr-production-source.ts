@@ -49,11 +49,42 @@ interface SourcePlan {
   platformSettings: Collections['platformSettings'];
   accountRoutes: Collections['accountRoutes'];
   runtimeSettings: Collections['runtimeSettings'];
+  loginUiConfiguration: Collections['loginUiConfiguration'];
 }
 function invalid(): never {
   return invalidSamlDrSqlSource();
 }
 const canonical = canonicalSamlDrSource;
+
+/** Deployment-owned UI selection is frozen with the SQL snapshot, never inferred after release. */
+function loginUiConfiguration(
+  env: Env,
+  issuer: string
+): Collections['loginUiConfiguration'][number] {
+  if (env.LOGIN_UI_ENABLED === 'false') return { mode: 'disabled' };
+  if (env.LOGIN_UI_ENABLED !== undefined && env.LOGIN_UI_ENABLED !== 'true') invalid();
+  if (
+    env.LOGIN_UI_EXECUTION_HOST_MODE !== undefined &&
+    !['issuer', 'dedicated'].includes(env.LOGIN_UI_EXECUTION_HOST_MODE)
+  )
+    invalid();
+  const issuerHosted =
+    env.LOGIN_UI_EXECUTION_HOST_MODE === 'issuer' ||
+    (env.LOGIN_UI_EXECUTION_HOST_MODE === undefined && !!env.BASE_DOMAIN);
+  const selected = issuerHosted ? issuer : (env.UI_URL ?? issuer);
+  if (env.LOGIN_UI_EXECUTION_HOST_MODE === 'dedicated' && !env.UI_URL) invalid();
+  const url = new URL(selected);
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !['', '/'].includes(url.pathname)
+  )
+    invalid();
+  return { mode: 'registered', clientId: 'login-ui', origin: url.origin };
+}
 
 function boundary(plan: SourcePlan) {
   return {
@@ -351,6 +382,7 @@ export function createProductionSamlDrSnapshotSources(input: {
       })),
       accountRoutes,
       runtimeSettings: [runtime],
+      loginUiConfiguration: [loginUiConfiguration(env, identity.source.issuer)],
     };
   };
   const collections = async (context: AdapterContext, plan: SourcePlan): Promise<Collections> => {
@@ -367,11 +399,29 @@ export function createProductionSamlDrSnapshotSources(input: {
       );
       if (!row || samlDrText(row, 'lifecycle_state') !== state.lifecycle) invalid();
     }
-    const clients = await readFrozenSamlDrSqlRows(context, installed, 'core.oauth_clients');
-    const origins = await readFrozenSamlDrSqlRows(context, installed, 'core.web_origin_registry');
+    const [configuration] = plan.loginUiConfiguration;
+    if (plan.loginUiConfiguration.length !== 1) invalid();
+    const clients =
+      configuration.mode === 'disabled'
+        ? []
+        : await readFrozenSamlDrSqlRows(context, installed, 'core.oauth_clients');
+    const origins =
+      configuration.mode === 'disabled'
+        ? []
+        : await readFrozenSamlDrSqlRows(context, installed, 'core.web_origin_registry');
     return {
-      loginUiClients: clients.filter((row) => samlDrText(row, 'client_id') === 'login-ui'),
-      loginUiOrigins: origins.filter((row) => samlDrText(row, 'client_id') === 'login-ui'),
+      loginUiConfiguration: plan.loginUiConfiguration,
+      loginUiClients: clients.filter(
+        (row) =>
+          configuration.mode === 'registered' &&
+          samlDrText(row, 'client_id') === configuration.clientId
+      ),
+      loginUiOrigins: origins.filter(
+        (row) =>
+          configuration.mode === 'registered' &&
+          samlDrText(row, 'client_id') === configuration.clientId &&
+          samlDrText(row, 'origin') === configuration.origin
+      ),
       ...accounts,
       platformDestinationProfiles: plan.platformDestinationProfiles,
       platformDestinationProfileVersions: plan.platformDestinationProfileVersions,

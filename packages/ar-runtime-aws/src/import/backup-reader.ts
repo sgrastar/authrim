@@ -24,10 +24,7 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-portability/input-frame-index';
 import type { TenantPortableDataset } from '@authrim/ar-lib-core/services/tenant-portability/module-contract';
 import { PinnedTenantBackupInputObject } from '@authrim/ar-lib-core/services/tenant-portability/pinned-input-object';
-import type {
-  TenantBackupSelection,
-  TenantPortableSourceIdentity,
-} from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
+import type { TenantBackupSelection } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 
 const HASH_CHUNK_BYTES = 1024 * 1024;
 const MAX_PARTS = TENANT_BACKUP_CONTAINER_V2_MAX_DATA_FRAMES + 1;
@@ -36,15 +33,8 @@ const HEX_SHA256 = /^[a-f0-9]{64}$/u;
 const HEX_BUNDLE_ID = /^[a-f0-9]{32}$/u;
 const MAGIC = new TextEncoder().encode('AUTHRIM2');
 
-/** Obtained independently from the Cloudflare export operation, not parsed from this artifact. */
-export interface TrustedTenantBackupExportReceiptV2 {
-  source: TenantPortableSourceIdentity;
-  bundleId: string;
-  snapshotId: string;
-  inventoryDigestSha256: string;
-  /** Exact download order. Each digest is of one encrypted file, never plaintext. */
-  parts: readonly { size: number; sha256: string }[];
-}
+import type { TrustedTenantBackupExportReceiptV2 } from '@authrim/ar-lib-core/services/tenant-portability/trusted-export-receipt';
+export type { TrustedTenantBackupExportReceiptV2 } from '@authrim/ar-lib-core/services/tenant-portability/trusted-export-receipt';
 
 export interface VerifiedTenantBackupDatasetV2 {
   readonly id: string;

@@ -5,6 +5,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import { createSAMLIdPApp } from '@authrim/ar-saml/idp-app';
 import { fetchAwsPasskeyIdpAuth, isAwsPasskeyIdpAuthRoute } from '@authrim/ar-auth/aws-passkey-idp';
 import { normalizeAwsRuntimeUiConfig, type AwsRuntimeUiConfig } from './ui/runtime-ui-config';
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 
 declare const AUTHRIM_AWS_EMBEDDED_UI: boolean;
 
@@ -169,14 +170,21 @@ export function createAwsSamlRuntime(options: AwsSamlRuntimeOptions) {
       props: {},
     } as unknown as ExecutionContext;
     try {
-      const response = await (isAuthRoute
-        ? fetchAwsPasskeyIdpAuth(request, tenant.env, execution)
-        : idp.fetch(request, tenant.env, execution));
-      for (let index = 0; index < pending.length; index += 1) {
-        const result = await pending[index];
-        if (result.status === 'rejected') throw result.reason;
-      }
-      return response;
+      return await runSamlDrCoveredOperation(tenant.env, execution, async (covered, tracked) => {
+        try {
+          if (!tracked) throw new Error('aws_execution_context_missing');
+          const response = await (isAuthRoute
+            ? fetchAwsPasskeyIdpAuth(request, covered, tracked)
+            : idp.fetch(request, covered, tracked));
+          for (let index = 0; index < pending.length; index += 1) {
+            const result = await pending[index];
+            if (result.status === 'rejected') throw result.reason;
+          }
+          return response;
+        } finally {
+          await Promise.allSettled(pending);
+        }
+      });
     } catch {
       await Promise.allSettled(pending);
       return c.json({ error: 'temporarily_unavailable' }, 503);

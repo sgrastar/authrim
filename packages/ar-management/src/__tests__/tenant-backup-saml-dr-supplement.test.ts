@@ -85,6 +85,9 @@ async function fixture() {
   const live: {
     [Collection in keyof SamlDrSourceCollections]: SamlDrSourceCollections[Collection][];
   } = {
+    loginUiConfiguration: [
+      { mode: 'registered', clientId: 'login-ui', origin: identity.source.issuer },
+    ],
     loginUiClients: [{ tenant_id: ['text', 'tenant-a'], client_id: ['text', 'login-ui'] }],
     loginUiOrigins: [
       {
@@ -258,6 +261,59 @@ describe('SAML DR supplemental snapshot export', () => {
     expect(f.storage.values.size).toBe(0);
     expect(f.sources.release).toHaveBeenCalledOnce();
   });
+
+  it.each(['disabled', 'external'] as const)(
+    'preserves %s Login UI selection and an explicitly disabled Flow runtime',
+    async (mode) => {
+      const f = await fixture();
+      f.live.runtimeSettings[0].sourceFlowRuntimeEnabled = false;
+      if (mode === 'disabled') {
+        f.live.loginUiConfiguration = [{ mode: 'disabled' }];
+        f.live.loginUiClients = [];
+        f.live.loginUiOrigins = [];
+      } else {
+        f.live.loginUiConfiguration = [
+          { mode: 'registered', clientId: 'login-ui', origin: 'https://login.example.test' },
+        ];
+        f.live.loginUiOrigins[0] = {
+          ...f.live.loginUiOrigins[0],
+          origin: ['text', 'https://login.example.test'],
+        };
+      }
+      await f.start();
+      f.releaseBoundary();
+      const row = await f.read();
+      const encoded = JSON.parse(new TextDecoder().decode(row?.bytes)) as {
+        capture_json: ['text', string];
+      };
+      const capture = JSON.parse(encoded.capture_json[1]) as SamlDrFrozenSourceCapture;
+      expect(capture.payload.sourceFlowRuntimeEnabled).toBe(false);
+      expect(capture.payload.sourceLoginUi).toEqual(
+        mode === 'disabled'
+          ? { mode: 'disabled' }
+          : { client: f.live.loginUiClients[0], origins: f.live.loginUiOrigins }
+      );
+    }
+  );
+  it.each(['disabled-with-client', 'missing-client', 'wrong-origin', 'wrong-tenant'])(
+    'rejects inconsistent UI selection: %s',
+    async (kind) => {
+      const f = await fixture();
+      if (kind === 'disabled-with-client') f.live.loginUiConfiguration = [{ mode: 'disabled' }];
+      if (kind === 'missing-client') f.live.loginUiClients = [];
+      if (kind === 'wrong-origin')
+        f.live.loginUiOrigins[0] = {
+          ...f.live.loginUiOrigins[0],
+          origin: ['text', 'https://other.example.test'],
+        };
+      if (kind === 'wrong-tenant')
+        f.live.loginUiClients[0] = { ...f.live.loginUiClients[0], tenant_id: ['text', 'tenant-b'] };
+      await f.start();
+      f.releaseBoundary();
+      await expect(f.read()).rejects.toThrow();
+      expect(f.storage.values.size).toBe(0);
+    }
+  );
 
   it('requires a released boundary before reading or staging the source', async () => {
     const f = await fixture();

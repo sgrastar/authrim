@@ -33,6 +33,7 @@ import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js
 import { controlProvisionCommand } from './cli/commands/control-provision.js';
 import { registerLocalCommands } from './cli/commands/local.js';
 import { registerAwsCommands } from './cli/commands/aws.js';
+import { registerReplicationCommands } from './cli/commands/replication.js';
 import { recoverInitialD1Command } from './cli/commands/recover-initial-d1.js';
 import { recoverAbsentQueueCommand } from './cli/commands/recover-absent-queue.js';
 import {
@@ -730,7 +731,9 @@ program
             await ensureSupplementalKeyFiles(keysDirectory.path);
           }
           const secrets = keysDirectory
-            ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent])
+            ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent], {
+                replicationWriter: cfg?.features.replicationWriter !== undefined,
+              })
             : {};
           const { resolveDeployLookupHmacState } =
             await import('./core/control-generated-state.js');
@@ -754,6 +757,7 @@ program
               ])
             ),
             secrets,
+            replicationWriter: cfg?.features.replicationWriter !== undefined,
             cleanupLegacyStaticSecrets: true,
             deployConfigLockProof: deployConfigLock?.proof,
             concurrency: 2,
@@ -1044,6 +1048,7 @@ program
 
 registerLocalCommands(program);
 registerAwsCommands(program);
+registerReplicationCommands(program);
 
 function normalizePnpmScriptArgv(argv: string[]): string[] {
   const [, , commandName, firstCommandArg] = argv;

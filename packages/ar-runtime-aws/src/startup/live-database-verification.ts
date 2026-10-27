@@ -7,7 +7,14 @@ import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../import/postgres-restore-tab
 import { restoreEvidenceDigest } from '../import/restore-evidence';
 import { readVerifiedRows } from '../import/verified-rows';
 
-const MUTABLE_DATASETS = ['core.identity_accounts', 'core.passkeys'] as const;
+import { verifyActivatedLoginProjections } from './live-login-projections';
+
+const MUTABLE_DATASETS = [
+  'core.identity_accounts',
+  'core.passkeys',
+  'core.service_group_inputs',
+  'core.account_webhook_outbox',
+] as const;
 const ACCOUNT_COLUMNS =
   POSTGRES_RESTORE_TABLE_CONTRACTS.find((spec) => spec.datasetId === 'core.identity_accounts')
     ?.columns ?? [];
@@ -261,6 +268,12 @@ export async function verifyActivatedDatabaseRows(input: {
               invalid();
           }
         }
+        await verifyActivatedLoginProjections({
+          backup: input.backup,
+          core,
+          accounts: liveAccounts,
+          activatedAtMs: input.activatedAtMs,
+        });
         await core.query('COMMIT');
       } catch {
         await core.query('ROLLBACK').catch(() => undefined);

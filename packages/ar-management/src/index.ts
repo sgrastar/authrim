@@ -1,3 +1,8 @@
+import {
+  environmentReplicationGrantsRouter,
+  environmentReplicationMachineRouter,
+  isEnvironmentReplicationControlRequest,
+} from './routes/replication-environments';
 import { processTenantBackupMaintenance } from './tenant-backup-services';
 import { processTenantBackupOperations } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupExportAdapter } from './tenant-backup-production-export';
@@ -735,6 +740,10 @@ import { getSessionShards, updateSessionShards } from './routes/settings/session
 import { getChallengeShards, updateChallengeShards } from './routes/settings/challenge-shards';
 import { approvalArtifactsRouter } from './routes/approval-artifacts';
 import { approvalReceiptsRouter } from './routes/approval-receipts';
+import {
+  replicationBackupMachineRouter,
+  isReplicationBackupControlRequest,
+} from './routes/replication-backups';
 import { stepUpRouter } from './routes/step-up';
 import {
   getPartitionSettings,
@@ -2169,6 +2178,9 @@ app.route('/api/admin', policyRouter);
 app.route('/api/admin', adminManagementRouter);
 app.route('/api/approval-artifacts', approvalArtifactsRouter);
 app.route('/api/approval-receipts', approvalReceiptsRouter);
+app.route('/api/replication-backups', replicationBackupMachineRouter);
+app.route('/api/admin/replication-environments', environmentReplicationGrantsRouter);
+app.route('/api/replication-environments', environmentReplicationMachineRouter);
 app.route('/auth/step-up', stepUpRouter);
 
 // =============================================================================
@@ -4860,8 +4872,16 @@ export const SAML_DR_WRITER_SURFACES = [
 export const SAML_DR_COORDINATOR_SURFACES = [
   'scheduled.export-backup',
   'test.run-scheduled',
+  'fetch.replication-export-control',
 ] as const;
 export const SAML_DR_READ_ONLY_SURFACES = ['GuestUpgradeReadinessEntrypoint.read'] as const;
+
+// Export control must remain available while the source's business writers are drained.
+// This isolated router authenticates its own narrow, revocable export grant on every request;
+// it has no business mutation, import, login, generic Admin, or user-supplied destination route.
+const replicationBackupControlApp = new Hono<{ Bindings: Env }>()
+  .route('/api/replication-backups', replicationBackupMachineRouter)
+  .route('/api/replication-environments', environmentReplicationMachineRouter);
 
 export default {
   fetch(request: Request, env: Env, executionContext?: ExecutionContext) {
@@ -4869,6 +4889,17 @@ export default {
       ? attachInternalAccountDirectoryBinding(env, executionContext)
       : env;
     const pathname = new URL(request.url).pathname;
+    if (
+      isReplicationBackupControlRequest(request) ||
+      isEnvironmentReplicationControlRequest(request)
+    ) {
+      if (new URL(request.url).protocol !== 'https:')
+        return new Response('HTTPS required', {
+          status: 426,
+          headers: { 'Cache-Control': 'no-store' },
+        });
+      return replicationBackupControlApp.fetch(request, effectiveEnv, executionContext);
+    }
     if (env.ENABLE_SAML_DR_EXPORT === 'true') {
       // This authenticated, test-only route executes the export coordinator itself. Every other
       // HTTP route (including GET and backup control requests) remains behind writer admission.

@@ -9,6 +9,8 @@
     "build": "node scripts/build.mjs",
     "restore:offline": "node dist/restore-cli.mjs",
     "collect:supplement": "node dist/collector-cli.mjs",
+    "replication": "node dist/replication-cli.mjs",
+    "package:replication-authority": "node scripts/build.mjs && node scripts/package-replication-authority.mjs",
     "package:lambda": "node scripts/build.mjs && node scripts/package-lambda.mjs",
     "package:browser-sp": "node scripts/build.mjs && node scripts/package-browser-sp.mjs",
     "package:db-bootstrap": "node scripts/build.mjs && node scripts/package-db-bootstrap.mjs",
@@ -24,7 +26,7 @@
     "test:packaging": "node --test scripts/package-serving.test.mjs",
     "test:browser-deployment": "node --test scripts/browser-deployment.test.mjs scripts/auth-state-deployment.test.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --fileParallelism=false && node --test scripts/setup-plan.test.mjs scripts/aws-preflight.test.mjs scripts/package-serving.test.mjs scripts/browser-deployment.test.mjs scripts/auth-state-deployment.test.mjs scripts/setup-executor.test.mjs scripts/setup-artifacts.test.mjs scripts/setup-plan-adoption.test.mjs scripts/setup-dsql.test.mjs scripts/setup-config.test.mjs",
+    "test": "vitest run --fileParallelism=false && node --test scripts/setup-plan.test.mjs scripts/aws-preflight.test.mjs scripts/package-serving.test.mjs scripts/browser-deployment.test.mjs scripts/auth-state-deployment.test.mjs scripts/setup-executor.test.mjs scripts/setup-artifacts.test.mjs scripts/setup-plan-adoption.test.mjs scripts/setup-dsql.test.mjs scripts/setup-config.test.mjs scripts/replication-execute.test.mjs scripts/replication-authority-package.test.mjs scripts/replication-authority-deployment.test.mjs",
     "lint": "eslint src --pass-on-unpruned-suppressions"
   },
   "dependencies": {
@@ -34,6 +36,8 @@
     "@aws-sdk/client-dynamodb": "3.1152.0",
     "@aws-sdk/client-s3": "3.1152.0",
     "@aws-sdk/client-secrets-manager": "3.1152.0",
+    "@aws-sdk/client-sts": "3.1152.0",
+    "@aws-sdk/credential-providers": "3.1152.0",
     "@aws-sdk/dsql-signer": "3.1152.0",
     "hono": "4.13.2",
     "pg": "^8.16.3"

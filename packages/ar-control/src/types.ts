@@ -100,6 +100,8 @@ export interface RuntimeSmokeServiceBinding {
 }
 
 export interface ControlEnv {
+  AUTHRIM_REPLICATION_WRITER?: string;
+  AUTHRIM_REPLICATION_WRITER_SECRET?: string;
   ENABLE_SAML_DR_EXPORT?: string;
   /** Setup-generated binding identity metadata; not a user-configurable backup option. */
   AUTHRIM_FIXED_DATABASE_IDS?: string;

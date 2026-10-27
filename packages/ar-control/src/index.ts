@@ -1,3 +1,4 @@
+import { readControlEnvironmentReplicationInventory } from './environment-replication-inventory';
 import { verifyEnvironmentSamlDrWriterInventory } from './saml-dr-writer-inventory';
 import type { SamlDrWriterInventoryReceipt } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer-contract';
 import { controlTenantBackupBoundary } from './tenant-backup-boundary';
@@ -1212,6 +1213,7 @@ export const SAML_DR_CONTROL_SURFACE = {
     'getTenantDisasterRecovery',
     'getTenantPlacementMigration',
     'getTenantPlacementPolicy',
+    'getEnvironmentReplicationInventory',
     'getTenantProvisioningRegionShardPolicy',
     'getTenantProvisioningRouteTargets',
     'getTenantRegionShardPolicy',
@@ -1721,6 +1723,16 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       assertControlPlaneRecordIsSecretFree(result);
       return result;
     });
+  }
+
+  getEnvironmentReplicationInventory(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      exactInput(input, [], 'invalid_replication_environment_inventory');
+      if (caller.environmentId !== this.env.AUTHRIM_ENVIRONMENT_NAME)
+        throw new Error('control_rpc_caller_unauthorized');
+      return readControlEnvironmentReplicationInventory(this.env.CONTROL_DB, caller.environmentId);
+    }, 'getEnvironmentReplicationInventory');
   }
 
   inspectSamlDrWriterCoverage(input: unknown) {

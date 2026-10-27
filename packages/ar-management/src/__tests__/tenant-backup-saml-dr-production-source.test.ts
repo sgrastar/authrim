@@ -214,6 +214,37 @@ beforeEach(() => {
 });
 
 describe('installed SAML DR production source', () => {
+  it.each(['disabled', 'external'] as const)(
+    'freezes %s UI configuration before release and does not substitute issuer origin',
+    async (mode) => {
+      const f = fixture();
+      f.env.LOGIN_UI_ENABLED = mode === 'disabled' ? 'false' : 'true';
+      f.env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
+      f.env.UI_URL = 'https://login.example.test';
+      const source = f.source();
+      await source.prepare(f.context);
+      await source.bindParticipants?.(f.context, f.participants);
+      await source.start(f.context, 'record-a', identity, async () => {});
+      f.env.LOGIN_UI_ENABLED = 'true';
+      f.env.UI_URL = 'https://changed-after-freeze.example.test';
+      const page = await f
+        .source()
+        .readPage(f.context, 'record-a', identity, 'loginUiConfiguration', null, 128);
+      expect(page.items).toEqual([
+        mode === 'disabled'
+          ? { mode: 'disabled' }
+          : { mode: 'registered', clientId: 'login-ui', origin: 'https://login.example.test' },
+      ]);
+      if (mode === 'disabled') {
+        expect(
+          (await f.source().readPage(f.context, 'record-a', identity, 'loginUiClients', null, 128))
+            .items
+        ).toEqual([]);
+        expect(mocks.frozen).not.toHaveBeenCalled();
+      }
+    }
+  );
+
   it('freezes actual sources, encrypts staging, and reloads immutable data after worker restart', async () => {
     const f = fixture(),
       source = f.source(),

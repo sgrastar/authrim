@@ -334,3 +334,43 @@ it('does not equate a Hyperdrive identity with an authoritative external databas
     'saml_dr_writer_inventory_external_source_unsupported'
   );
 });
+
+it('requires identical environment writer config and secret presence on every deployed holder', async () => {
+  const f = fixture();
+  const writer = {
+    version: 2 as const,
+    endpoint: 'https://authority.example.test/replication/v1/rpc',
+    credentialId: 'writer',
+    pairId: 'pair-a',
+    environmentId: 'test',
+    deploymentId: 'cf-a',
+    epoch: 1,
+    generationId: 'initial',
+  };
+  for (const component of SAML_DR_WRITER_COMPONENTS)
+    f.bindings(component).push(
+      { type: 'plain_text', name: 'AUTHRIM_REPLICATION_WRITER', text: JSON.stringify(writer) },
+      { type: 'secret_text', name: 'AUTHRIM_REPLICATION_WRITER_SECRET' }
+    );
+  await expect(
+    verifySamlDrSourceWriterInventory({ ...f.input, replicationWriter: writer })
+  ).resolves.toHaveProperty('inventoryDigest');
+  const bindings = f.bindings('ar-auth');
+  bindings.splice(
+    bindings.findIndex((b) => b.name === 'AUTHRIM_REPLICATION_WRITER_SECRET'),
+    1
+  );
+  await expect(
+    verifySamlDrSourceWriterInventory({ ...f.input, replicationWriter: writer })
+  ).rejects.toThrow('replication_secret_missing');
+  bindings.push({ type: 'secret_text', name: 'AUTHRIM_REPLICATION_WRITER_SECRET' });
+  const binding = bindings.find((b) => b.name === 'AUTHRIM_REPLICATION_WRITER');
+  if (!binding) throw new Error('fixture binding missing');
+  binding.text = JSON.stringify({
+    ...writer,
+    environmentId: 'other',
+  });
+  await expect(
+    verifySamlDrSourceWriterInventory({ ...f.input, replicationWriter: writer })
+  ).rejects.toThrow('replication_configuration_mismatch');
+});

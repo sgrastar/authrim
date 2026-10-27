@@ -52,6 +52,52 @@ describe('Management opt-in SAML DR admission', () => {
       expect(mocks.operations).not.toHaveBeenCalled();
     }
   );
+  it.each([
+    ['POST', '/api/replication-backups/grant-a/exports'],
+    ['GET', '/api/replication-backups/grant-a/exports/operation-a/export-receipt'],
+    ['GET', '/api/replication-backups/grant-a/exports/operation-a/download'],
+  ])(
+    'reaches only the separate grant authenticator for %s %s during drain',
+    async (method, path) => {
+      const { env, control } = environment(false);
+      const response = await worker.fetch(
+        new Request('https://idp.example.test' + path, { method }),
+        env
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'backup_replication_grant_denied' });
+      expect(control.acquireEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+      for (const effect of [mocks.maintenance, mocks.operations, mocks.audit, mocks.logging])
+        expect(effect).not.toHaveBeenCalled();
+    }
+  );
+  it.each([
+    ['POST', '/api/replication-backups/grant-a/imports'],
+    ['POST', '/api/replication-backups/grant-a/exports/operation-a/approve'],
+    ['DELETE', '/api/replication-backups/grant-a/exports/operation-a'],
+    ['POST', '/api/admin/replication-backups/grants'],
+  ])('does not exempt unrelated %s %s from business-writer admission', async (method, path) => {
+    const { env, control } = environment(false);
+    const response = await worker.fetch(
+      new Request('https://idp.example.test' + path, { method }),
+      env
+    );
+    expect(response.status).toBe(503);
+    expect(control.acquireEnvironmentBackupMutationPermit).toHaveBeenCalledOnce();
+    expect(mocks.operations).not.toHaveBeenCalled();
+  });
+  it('requires HTTPS even for the isolated export control surface', async () => {
+    const { env, control } = environment(false);
+    const response = await worker.fetch(
+      new Request('http://idp.example.test/api/replication-backups/grant-a/exports', {
+        method: 'POST',
+      }),
+      env
+    );
+    expect(response.status).toBe(426);
+    expect(control.acquireEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+  });
+
   it.each(['AUDIT_QUEUE', 'LOGGING_DELIVERY_CRITICAL_QUEUE'])(
     'fences queue %s before consumer side effects',
     async (queue) => {

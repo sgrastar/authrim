@@ -1,4 +1,8 @@
 import {
+  parseReplicationWriterConfiguration,
+  type ReplicationWriterConfiguration,
+} from '@authrim/ar-lib-core/services/deployment-replication/writer';
+import {
   CloudflareControlApiClient,
   type CloudflareWorkerBinding,
   type CloudflareWorkerDeployment,
@@ -222,6 +226,7 @@ export async function verifySamlDrSourceWriterInventory(input: {
   tenantId: string;
   probeWorker(component: SamlDrWriterComponent): Promise<SamlDrWriterProbe>;
   expectedReceipt?: SamlDrWriterInventoryReceipt;
+  replicationWriter?: ReplicationWriterConfiguration;
 }): Promise<SamlDrWriterInventoryReceipt> {
   if (
     !/^[a-f0-9]{32}$/u.test(input.accountId) ||
@@ -292,6 +297,25 @@ export async function verifySamlDrSourceWriterInventory(input: {
           (binding.environment !== undefined && binding.environment !== 'production')
         )
           fail('durable_object_owner_unverified');
+      }
+      if (input.replicationWriter) {
+        const configuration = worker.bindings.find(
+          (binding) => binding.name === 'AUTHRIM_REPLICATION_WRITER'
+        );
+        if (
+          configuration?.type !== 'plain_text' ||
+          typeof configuration.text !== 'string' ||
+          canonical(parseReplicationWriterConfiguration(configuration.text)) !==
+            canonical(input.replicationWriter)
+        )
+          fail('replication_configuration_mismatch');
+        if (
+          !worker.bindings.some(
+            (binding) =>
+              binding.name === 'AUTHRIM_REPLICATION_WRITER_SECRET' && binding.type === 'secret_text'
+          )
+        )
+          fail('replication_secret_missing');
       }
       requirePlainBinding(worker.bindings, 'ENABLE_SAML_DR_EXPORT', 'true');
       requirePlainBinding(worker.bindings, 'AUTHRIM_ENVIRONMENT_NAME', input.environmentId);
@@ -403,6 +427,9 @@ export function verifyEnvironmentSamlDrWriterInventory(
     accountId: env.CLOUDFLARE_ACCOUNT_ID,
     environmentId: env.AUTHRIM_ENVIRONMENT_NAME,
     ...input,
+    ...(env.AUTHRIM_REPLICATION_WRITER
+      ? { replicationWriter: parseReplicationWriterConfiguration(env.AUTHRIM_REPLICATION_WRITER) }
+      : {}),
     probeWorker(component) {
       const name = `SMOKE_${component.replaceAll('-', '_').toUpperCase()}` as keyof ControlEnv;
       const binding = env[name];

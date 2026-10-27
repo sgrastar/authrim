@@ -7,6 +7,21 @@ import {
   type PostgresRestoreTableContract,
 } from './postgres-restore-table-contract';
 
+import {
+  POSTGRES_RESTORE_EXTENSION_CONTRACTS,
+  POSTGRES_RESTORE_DEPENDENCIES,
+} from './postgres-restore-extension-contract';
+import {
+  suspendSnapshotProjectionTriggers,
+  restoreSnapshotProjectionTriggers,
+} from './postgres-restore-triggers';
+
+import {
+  hasPostgresReferenceSeed,
+  preparePostgresReferenceSeeds,
+  verifyPostgresReferenceSeed,
+} from './postgres-restore-reference-seeds';
+
 type Family = 'core' | 'pii';
 type NormalizedValue = string | boolean | null;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -14,13 +29,6 @@ const INTEGER = /^(0|-?[1-9][0-9]{0,18})$/u;
 const MAX_DATASET_ROWS = 100_000;
 const MAX_DATASET_BYTES = 64 * 1024 * 1024;
 const utf8 = new TextEncoder();
-/** The Core PostgreSQL baseline seeds these reference Flow rows for tenant `default`. */
-const BASELINE_DEFAULT_REFERENCE_DATASETS = new Set([
-  'core.flows',
-  'core.flow_versions',
-  'core.flow_assignments',
-]);
-
 export interface PostgresRestoreTableReceipt {
   datasetId: string;
   rowCount: number;
@@ -36,6 +44,8 @@ export interface PostgresFamilyRestoreReceipt {
   bundleId: string;
   snapshotId: string;
   inventoryDigestSha256: string;
+  /** Absent on the original 18-table contract. Version 2 preserves exact native JSONB text. */
+  projectionVersion?: 2;
   tables: PostgresRestoreTableReceipt[];
   digestSha256: string;
 }
@@ -75,11 +85,129 @@ export interface VerifyPostgresFamilyStagingRowsInput extends ReadPostgresFamily
    * Only these Core tables may be omitted from the historical row digest after serving begins.
    * The caller must verify their immutable columns and allowed live changes separately.
    */
-  skipDatasetIds?: readonly ('core.identity_accounts' | 'core.passkeys')[];
+  skipDatasetIds?: readonly (
+    | 'core.identity_accounts'
+    | 'core.passkeys'
+    | 'core.service_group_inputs'
+    | 'core.account_webhook_outbox'
+  )[];
+}
+
+/** No row data or secrets are included in this diagnostic. */
+export class UnsupportedPostgresBackupProjectionError extends Error {
+  readonly code = 'aws_postgres_restore_unsupported_datasets';
+  constructor(readonly datasets: readonly { datasetId: string; rowCount: number }[]) {
+    super('aws_postgres_restore_unsupported_datasets');
+  }
+}
+
+function projectionContracts(ids: ReadonlySet<string>, family: Family) {
+  return [
+    ...POSTGRES_RESTORE_TABLE_CONTRACTS.filter((spec) => spec.family === family),
+    ...POSTGRES_RESTORE_EXTENSION_CONTRACTS.filter(
+      (spec) => spec.family === family && ids.has(spec.datasetId)
+    ),
+  ];
+}
+
+/** Validate authenticated dataset descriptors/counts without opening or creating a database. */
+export function assertPostgresBackupProjectionSupported(
+  backup: VerifiedTenantBackupV2,
+  family?: Family
+): void {
+  const ids = new Set(backup.manifest.datasets.map((dataset) => dataset.id));
+  if (ids.size !== backup.manifest.datasets.length) invalid();
+  const families = family ? [family] : (['core', 'pii'] as const);
+  const unsupported: { datasetId: string; rowCount: number }[] = [];
+  for (const selectedFamily of families) {
+    const specs = projectionContracts(ids, selectedFamily);
+    const required = specs.filter(
+      (spec) => !['core.oauth_clients', 'core.web_origin_registry'].includes(spec.datasetId)
+    );
+    if (required.some((spec) => !ids.has(spec.datasetId))) invalid();
+    for (const dataset of backup.manifest.datasets) {
+      if (!dataset.id.startsWith(`${selectedFamily}.`)) continue;
+      if (specs.some((spec) => spec.datasetId === dataset.id)) {
+        if (dataset.store !== 'database' || dataset.disposition !== 'include') invalid();
+        const source = backup.dataset(dataset.id);
+        if (
+          !Number.isSafeInteger(source.rows) ||
+          source.rows < 0 ||
+          source.rows > MAX_DATASET_ROWS ||
+          !Number.isSafeInteger(source.bytes) ||
+          source.bytes < 0 ||
+          source.bytes > MAX_DATASET_BYTES
+        )
+          invalid();
+      } else if (dataset.store === 'database' && dataset.disposition === 'include') {
+        const rowCount = backup.dataset(dataset.id).rows;
+        if (!Number.isSafeInteger(rowCount) || rowCount < 0) invalid();
+        if (rowCount !== 0) unsupported.push({ datasetId: dataset.id, rowCount });
+      }
+    }
+  }
+  if (unsupported.length)
+    throw new UnsupportedPostgresBackupProjectionError(
+      unsupported.sort((left, right) => left.datasetId.localeCompare(right.datasetId))
+    );
+}
+
+function insertionOrder(specs: readonly PostgresRestoreTableContract[]) {
+  const remaining = new Map(specs.map((spec) => [spec.datasetId, spec]));
+  const result: PostgresRestoreTableContract[] = [];
+  while (remaining.size) {
+    const next = [...remaining.values()].find((spec) =>
+      (POSTGRES_RESTORE_DEPENDENCIES[spec.datasetId] ?? []).every((id) => !remaining.has(id))
+    );
+    if (!next) invalid();
+    result.push(next);
+    remaining.delete(next.datasetId);
+  }
+  return result;
 }
 
 function invalid(): never {
   throw new Error('aws_postgres_restore_invalid');
+}
+
+function parentFirstRoles(
+  rows: readonly string[],
+  spec: PostgresRestoreTableContract,
+  tenantId: string
+): string[] {
+  const byId = new Map<string, { json: string; parent: string | null }>();
+  let bytes = 0;
+  for (const json of rows) {
+    bytes += utf8.encode(json).byteLength;
+    if (bytes > MAX_DATASET_BYTES) invalid();
+    sourceRow(json, spec, tenantId);
+    const row = JSON.parse(json) as PortableSqliteRow;
+    const id = row.id[1];
+    const parent = row.parent_role_id[1];
+    if (!id || byId.has(id)) invalid();
+    byId.set(id, { json, parent });
+  }
+  const children = new Map<string, string[]>();
+  const ready: string[] = [];
+  for (const [id, row] of byId) {
+    if (row.parent === null) ready.push(id);
+    else {
+      if (!byId.has(row.parent)) invalid();
+      const list = children.get(row.parent) ?? [];
+      list.push(id);
+      children.set(row.parent, list);
+    }
+  }
+  const result: string[] = [];
+  for (let index = 0; index < ready.length; index++) {
+    const id = ready[index];
+    const row = byId.get(id);
+    if (!row) invalid();
+    result.push(row.json);
+    ready.push(...(children.get(id) ?? []));
+  }
+  if (result.length !== rows.length) invalid();
+  return result;
 }
 
 function identifier(value: string): string {
@@ -178,7 +306,8 @@ function sourceRow(rowJson: string, spec: PostgresRestoreTableContract, tenantId
 
 function returnedRow(
   row: Record<string, unknown>,
-  spec: PostgresRestoreTableContract
+  spec: PostgresRestoreTableContract,
+  preciseJsonb = false
 ): NormalizedValue[] {
   const numeric = new Set(spec.sqliteIntegerColumns);
   const boolean = new Set(spec.postgresBooleanColumns);
@@ -196,7 +325,13 @@ function returnedRow(
       if (!INTEGER.test(decimal)) invalid();
       return decimal;
     }
-    if (jsonb.has(column)) return stableJson(value);
+    if (jsonb.has(column)) {
+      if (preciseJsonb) {
+        if (typeof value !== 'string') invalid();
+        return value;
+      }
+      return stableJson(value);
+    }
     if (typeof value !== 'string') invalid();
     return value;
   });
@@ -256,22 +391,10 @@ export async function restoreVerifiedPostgresFamily(
       ))
   )
     invalid();
-  const specs = POSTGRES_RESTORE_TABLE_CONTRACTS.filter((spec) => spec.family === family);
+  assertPostgresBackupProjectionSupported(backup, family);
   const inManifest = new Map(backup.manifest.datasets.map((dataset) => [dataset.id, dataset]));
-  const required = specs.filter(
-    (spec) => !['core.oauth_clients', 'core.web_origin_registry'].includes(spec.datasetId)
-  );
-  if (required.some((spec) => !inManifest.has(spec.datasetId))) invalid();
-  for (const dataset of backup.manifest.datasets) {
-    if (
-      !dataset.id.startsWith(`${family}.`) ||
-      dataset.store !== 'database' ||
-      dataset.disposition !== 'include'
-    )
-      continue;
-    if (specs.some((spec) => spec.datasetId === dataset.id)) continue;
-    if (backup.dataset(dataset.id).rows !== 0) invalid();
-  }
+  const specs = projectionContracts(new Set(inManifest.keys()), family);
+  const extended = specs.some((spec) => POSTGRES_RESTORE_EXTENSION_CONTRACTS.includes(spec));
   const client =
     input.clientFactory?.(input.connectionString) ??
     new Client({ connectionString: input.connectionString });
@@ -285,6 +408,12 @@ export async function restoreVerifiedPostgresFamily(
       'SELECT target_id FROM authrim_aws_import_staging LIMIT 1'
     );
     if (priorJournal.rowCount !== 0) invalid();
+    if (family === 'core')
+      await preparePostgresReferenceSeeds(
+        client,
+        tenantId,
+        new Set(specs.map((spec) => spec.datasetId))
+      );
     // Existing rows in any tenant-scoped table make this target nonempty, even if
     // the table is outside the deliberately narrow import allowlist.
     const scopedTables = await client.query<{ table_name: string }>(
@@ -296,6 +425,13 @@ export async function restoreVerifiedPostgresFamily(
           AND a.attname='tenant_id' AND NOT a.attisdropped`
     );
     for (const { table_name: tableName } of scopedTables.rows) {
+      if (
+        tenantId === 'default' &&
+        family === 'core' &&
+        hasPostgresReferenceSeed(`core.${tableName}`) &&
+        !specs.some((spec) => spec.table === tableName)
+      )
+        continue;
       const prior = await client.query(
         `SELECT 1 FROM ${identifier(tableName)} WHERE tenant_id=$1 LIMIT 1`,
         [tenantId]
@@ -310,8 +446,9 @@ export async function restoreVerifiedPostgresFamily(
       ]);
       if (prior.rowCount !== 0) invalid();
     }
-    const tables: PostgresRestoreTableReceipt[] = [];
-    for (const spec of specs) {
+    const suspended = extended ? await suspendSnapshotProjectionTriggers(client, specs) : [];
+    const tableReceipts = new Map<string, PostgresRestoreTableReceipt>();
+    for (const spec of insertionOrder(specs)) {
       const dataset = inManifest.get(spec.datasetId);
       const source = dataset ? backup.dataset(spec.datasetId) : null;
       const supplements =
@@ -329,37 +466,88 @@ export async function restoreVerifiedPostgresFamily(
       const expected = new Map<string, NormalizedValue[]>();
       let cursor: string | null = null;
       const names = spec.columns.map(identifier);
-      const placeholders = names.map((_, index) => `$${index + 1}`);
-      const insertSql = `INSERT INTO ${identifier(spec.table)} (${names.join(',')}) VALUES (${placeholders.join(',')}) RETURNING ${names.join(',')}`;
-      const insertRow = async (rowJson: string, supplement: boolean) => {
+      const placeholders = names.map((_, index) =>
+        extended && spec.postgresJsonbColumns.includes(spec.columns[index])
+          ? `$${index + 1}::text::jsonb`
+          : `$${index + 1}`
+      );
+      const returnedNames = names.map((name, index) =>
+        extended && spec.postgresJsonbColumns.includes(spec.columns[index])
+          ? `${name}::text AS ${name}`
+          : name
+      );
+      const jsonChecks = extended
+        ? spec.postgresJsonbColumns.map(
+            (column) =>
+              `(${identifier(column)} IS NOT DISTINCT FROM $${spec.columns.indexOf(column) + 1}::text::jsonb AND ($${spec.columns.indexOf(column) + 1}::text IS NULL OR $${spec.columns.indexOf(column) + 1}::text IS JSON WITH UNIQUE KEYS)) AS ${identifier(`authrim_json_${spec.columns.indexOf(column)}`)}`
+          )
+        : [];
+      const insertSql = `INSERT INTO ${identifier(spec.table)} (${names.join(',')}) VALUES (${placeholders.join(',')}) RETURNING ${[...returnedNames, ...jsonChecks].join(',')}`;
+      const recordSourceRow = (rowJson: string) => {
+        const rowBytes = utf8.encode(rowJson).byteLength;
+        sourceBytes += rowBytes;
+        if (rowBytes > 1024 * 1024 || sourceBytes > MAX_DATASET_BYTES) invalid();
+        sourceHash.update(String(rowBytes)).update(':').update(rowJson);
+      };
+      const insertRow = async (rowJson: string, supplement: boolean, alreadyHashed = false) => {
         if (supplement) {
           const row = JSON.parse(rowJson) as PortableSqliteRow;
           const clientId = row.client_id;
           if (!clientId || clientId[0] !== 'text' || clientId[1] !== supplementalClientId)
             invalid();
         }
-        const rowBytes = utf8.encode(rowJson).byteLength;
-        sourceBytes += rowBytes;
-        if (rowBytes > 1024 * 1024 || sourceBytes > MAX_DATASET_BYTES) invalid();
-        sourceHash.update(String(rowBytes)).update(':').update(rowJson);
+        if (!alreadyHashed) recordSourceRow(rowJson);
         const decoded = sourceRow(rowJson, spec, tenantId);
         if (expected.has(decoded.key)) invalid();
+        let inserted;
+        if (spec.datasetId === 'core.account_lifecycle_event_outbox') {
+          // Historical outbox states enter through the same guarded state machine.
+          // No notification workers can observe this isolated, uncommitted staging DB.
+          const initial = [...decoded.values];
+          const at = (column: string) => spec.columns.indexOf(column);
+          initial[at('status')] = 'pending';
+          initial[at('attempt_count')] = '0';
+          initial[at('lease_owner')] = null;
+          initial[at('lease_expires_at')] = null;
+          await client.query(insertSql, initial);
+          if (decoded.values[at('status')] === 'retry') {
+            await client.query(
+              `UPDATE account_lifecycle_event_outbox SET status='leased',lease_owner='authrim-isolated-restore',lease_expires_at=1 WHERE event_id=$1 AND tenant_id=$2`,
+              [decoded.values[at('event_id')], tenantId]
+            );
+          }
+          inserted = await client.query<Record<string, unknown>>(
+            `UPDATE ${identifier(spec.table)} SET ${names.map((name, index) => `${name}=$${index + 1}`).join(',')}
+             WHERE event_id=$${at('event_id') + 1} AND tenant_id=$${at('tenant_id') + 1} RETURNING ${returnedNames.join(',')}`,
+            decoded.values
+          );
+        } else inserted = await client.query<Record<string, unknown>>(insertSql, decoded.values);
+        if (inserted.rowCount !== 1 || inserted.rows.length !== 1) invalid();
+        const observed = returnedRow(inserted.rows[0], spec, extended);
+        if (extended) {
+          for (const column of spec.postgresJsonbColumns) {
+            const index = spec.columns.indexOf(column);
+            if (inserted.rows[0][`authrim_json_${index}`] !== true) invalid();
+            decoded.normalized[index] = observed[index];
+          }
+        }
+        if (JSON.stringify(observed) !== JSON.stringify(decoded.normalized)) invalid();
         expected.set(decoded.key, decoded.normalized);
-        const inserted = await client.query<Record<string, unknown>>(insertSql, decoded.values);
-        if (
-          inserted.rowCount !== 1 ||
-          inserted.rows.length !== 1 ||
-          JSON.stringify(returnedRow(inserted.rows[0], spec)) !== JSON.stringify(decoded.normalized)
-        )
-          invalid();
       };
+      const roleRows: string[] = [];
       for (let count = 0; source && count < source.rows; count++) {
         const next = await source.readNextRow(cursor);
         if (!next || next.nextCursor === cursor) invalid();
         cursor = next.nextCursor;
-        await insertRow(next.rowJson, false);
+        if (spec.datasetId === 'core.roles') {
+          recordSourceRow(next.rowJson);
+          roleRows.push(next.rowJson);
+        } else await insertRow(next.rowJson, false);
       }
       if (source && (await source.readNextRow(cursor)) !== null) invalid();
+      if (roleRows.length)
+        for (const role of parentFirstRoles(roleRows, spec, tenantId))
+          await insertRow(role, false, true);
       for (const row of supplements) {
         let rowJson: string;
         try {
@@ -370,7 +558,7 @@ export async function restoreVerifiedPostgresFamily(
         await insertRow(rowJson, true);
       }
       const selected = await client.query<Record<string, unknown>>(
-        `SELECT ${names.join(',')} FROM ${identifier(spec.table)} WHERE ${identifier(spec.tenantColumn)} = $1`,
+        `SELECT ${returnedNames.join(',')} FROM ${identifier(spec.table)} WHERE ${identifier(spec.tenantColumn)} = $1`,
         [tenantId]
       );
       if (selected.rowCount !== expected.size) invalid();
@@ -378,19 +566,46 @@ export async function restoreVerifiedPostgresFamily(
       for (const row of selected.rows) {
         const key = JSON.stringify(spec.primaryKey.map((column) => String(row[column])));
         if (observed.has(key)) invalid();
-        observed.set(key, returnedRow(row, spec));
+        observed.set(key, returnedRow(row, spec, extended));
       }
       const expectedDigest = rowsDigest(expected);
       const targetDigest = rowsDigest(observed);
       if (targetDigest !== expectedDigest) invalid();
-      tables.push({
+      tableReceipts.set(spec.datasetId, {
         datasetId: spec.datasetId,
         rowCount: expected.size,
         sourceSha256: sourceHash.digest('hex'),
         targetSha256: targetDigest,
       });
     }
+    if (
+      family === 'core' &&
+      specs.some((spec) => spec.datasetId === 'core.account_legal_hold_states')
+    ) {
+      const inconsistent = await client.query(
+        `SELECT 1 FROM identity_accounts a LEFT JOIN account_legal_hold_states s
+           ON s.tenant_id=a.tenant_id AND s.account_id=a.id
+         WHERE a.tenant_id=$1 AND s.account_id IS NULL
+         UNION ALL
+         SELECT 1 FROM account_legal_hold_states s LEFT JOIN legal_holds h
+           ON h.tenant_id=s.tenant_id AND h.subject_id=s.account_id AND h.id=s.active_hold_id AND h.state='active'
+         WHERE s.tenant_id=$1 AND s.projection_state='active' AND h.id IS NULL
+         UNION ALL
+         SELECT 1 FROM legal_holds h LEFT JOIN account_legal_hold_states s
+           ON s.tenant_id=h.tenant_id AND s.account_id=h.subject_id AND s.active_hold_id=h.id AND s.projection_state='active'
+         WHERE h.tenant_id=$1 AND h.state='active' AND s.account_id IS NULL LIMIT 1`,
+        [tenantId]
+      );
+      if (inconsistent.rows.length) invalid();
+    }
+    await restoreSnapshotProjectionTriggers(client, suspended);
+    const tables = specs.map((spec) => {
+      const receipt = tableReceipts.get(spec.datasetId);
+      if (!receipt) invalid();
+      return receipt;
+    });
     const body = {
+      ...(extended ? { projectionVersion: 2 as const } : {}),
       status: 'committed_staging' as const,
       family,
       targetId,
@@ -483,15 +698,27 @@ export async function verifyPostgresFamilyStagingRows(
   const skipDatasetIds = input.skipDatasetIds ?? [];
   const skipped = new Set<string>(skipDatasetIds);
   if (
-    skipDatasetIds.length > 2 ||
+    skipDatasetIds.length > 4 ||
     skipped.size !== skipDatasetIds.length ||
     skipDatasetIds.some(
       (id) =>
-        receipt.family !== 'core' || (id !== 'core.identity_accounts' && id !== 'core.passkeys')
+        receipt.family !== 'core' ||
+        ![
+          'core.identity_accounts',
+          'core.passkeys',
+          'core.service_group_inputs',
+          'core.account_webhook_outbox',
+        ].includes(id)
     )
   )
     invalid();
-  const specs = POSTGRES_RESTORE_TABLE_CONTRACTS.filter((spec) => spec.family === receipt.family);
+  const extended = receipt.projectionVersion === 2;
+  if (receipt.projectionVersion !== undefined && !extended) invalid();
+  const specs = extended
+    ? projectionContracts(new Set(receipt.tables.map((table) => table.datasetId)), receipt.family)
+    : POSTGRES_RESTORE_TABLE_CONTRACTS.filter((spec) => spec.family === receipt.family);
+  if (extended && !specs.some((spec) => POSTGRES_RESTORE_EXTENSION_CONTRACTS.includes(spec)))
+    invalid();
   if (
     receipt.tables.length !== specs.length ||
     receipt.tables.some(
@@ -514,13 +741,21 @@ export async function verifyPostgresFamilyStagingRows(
     for (let index = 0; index < specs.length; index++) {
       const spec = specs[index];
       const tableReceipt = receipt.tables[index];
-      const permitsBaselineDefaultRows = BASELINE_DEFAULT_REFERENCE_DATASETS.has(spec.datasetId);
+      const permitsBaselineDefaultRows =
+        hasPostgresReferenceSeed(spec.datasetId) && receipt.tenantId !== 'default';
+      if (permitsBaselineDefaultRows) await verifyPostgresReferenceSeed(client, spec.table);
       const foreign = await client.query(
         `SELECT 1 FROM ${identifier(spec.table)} WHERE ${identifier(spec.tenantColumn)} IS DISTINCT FROM $1${permitsBaselineDefaultRows ? ` AND ${identifier(spec.tenantColumn)} IS DISTINCT FROM 'default'` : ''} LIMIT 1`,
         [receipt.tenantId]
       );
       if (foreign.rowCount !== 0) invalid();
-      const names = spec.columns.map(identifier);
+      // Live verification separately proves source rows immutable and the bounded login-only append set.
+      if (spec.datasetId === 'core.account_webhook_outbox' && skipped.has(spec.datasetId)) continue;
+      const names = spec.columns.map((column) =>
+        extended && spec.postgresJsonbColumns.includes(column)
+          ? `${identifier(column)}::text AS ${identifier(column)}`
+          : identifier(column)
+      );
       const selected = await client.query<Record<string, unknown>>(
         `SELECT ${names.join(',')} FROM ${identifier(spec.table)} WHERE ${identifier(spec.tenantColumn)}=$1 LIMIT $2`,
         [receipt.tenantId, tableReceipt.rowCount + 1]
@@ -531,7 +766,7 @@ export async function verifyPostgresFamilyStagingRows(
       for (const row of selected.rows) {
         const key = JSON.stringify(spec.primaryKey.map((column) => String(row[column])));
         if (observed.has(key)) invalid();
-        observed.set(key, returnedRow(row, spec));
+        observed.set(key, returnedRow(row, spec, extended));
       }
       if (rowsDigest(observed) !== tableReceipt.targetSha256) invalid();
     }

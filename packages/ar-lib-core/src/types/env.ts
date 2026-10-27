@@ -605,6 +605,9 @@ export interface Env {
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
   /** Experimental source capture remains unavailable until all writers can be verified. */
   ENABLE_SAML_DR_EXPORT?: string;
+  /** Opt-in cross-provider writer authority. Partial configuration fails closed. */
+  AUTHRIM_REPLICATION_WRITER?: string;
+  AUTHRIM_REPLICATION_WRITER_SECRET?: string;
   SAML_DR_MUTATION_CONTROL?: Pick<
     ControlServiceBinding,
     'acquireEnvironmentBackupMutationPermit' | 'completeEnvironmentBackupMutationPermit'

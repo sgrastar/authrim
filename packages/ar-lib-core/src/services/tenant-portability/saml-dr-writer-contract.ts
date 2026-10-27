@@ -26,7 +26,11 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
     'guarded:rpc:AgentDownscopeEntrypoint.issueAgentBulkChildToken',
   ],
   'ar-userinfo': ['guarded:fetch'],
-  'ar-router': ['guarded:fetch', 'guarded:rpc:LoginUiBackendEntrypoint.fetch'],
+  'ar-router': [
+    'coordinator:fetch.replication-export-control',
+    'guarded:fetch',
+    'guarded:rpc:LoginUiBackendEntrypoint.fetch',
+  ],
   'ar-async': ['guarded:fetch'],
   'ar-policy': ['guarded:fetch'],
   'ar-bridge': ['guarded:fetch', 'guarded:scheduled'],
@@ -359,6 +363,7 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
     'readonly:rpc:ControlWorker.getTenantRegionShardPolicy',
     'readonly:rpc:ControlWorker.getTenantRuntimeRouteTargets',
     'readonly:rpc:ControlWorker.inspectSamlDrWriterCoverage',
+    'readonly:rpc:ControlWorker.getEnvironmentReplicationInventory',
     'readonly:rpc:ControlWorker.listAccountDirectorySourceShards',
     'readonly:rpc:ControlWorker.listAccountRouteSourceShards',
     'readonly:rpc:ControlWorker.listPendingWorkerInventoryDriftFindings',
@@ -371,6 +376,7 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
   ],
   'ar-management': [
     'coordinator:scheduled.export-backup',
+    'coordinator:fetch.replication-export-control',
     'coordinator:test.run-scheduled',
     'guarded:AccountDirectoryEntrypoint.publishAccountDirectory',
     'guarded:AccountDirectoryEntrypoint.removeAccountDirectory',

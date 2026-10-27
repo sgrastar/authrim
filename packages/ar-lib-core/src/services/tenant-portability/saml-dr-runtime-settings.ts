@@ -96,7 +96,6 @@ export async function readSamlDrRuntimeSettings(env: RuntimeSettingsEnv, tenantI
     readSamlDrFlowRuntimeEnabled(env, tenantId),
     readSamlDrConsentIpSalt(env, tenantId),
   ]);
-  if (!sourceFlowRuntimeEnabled) unavailable();
   if (env.PAIRWISE_SALT !== undefined && env.PAIRWISE_SALT.length < 32) unavailable();
   return {
     sourceFlowRuntimeEnabled,

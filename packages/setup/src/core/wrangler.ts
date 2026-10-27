@@ -1302,6 +1302,15 @@ export function generateWranglerConfig(
     }
   }
 
+  if (config.features.replicationWriter !== undefined) {
+    if (config.features.samlDrExport?.enabled !== true)
+      throw new Error('replication_requires_coordinated_export');
+    // Every Worker, including the DO host and Control, receives the same environment-wide fence.
+    wranglerConfig.vars['AUTHRIM_REPLICATION_WRITER'] = JSON.stringify(
+      config.features.replicationWriter
+    );
+  }
+
   if (options.local) {
     applyLocalDevelopmentShape(wranglerConfig, env, component, options.local);
   }

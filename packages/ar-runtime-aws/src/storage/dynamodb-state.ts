@@ -1,5 +1,6 @@
 /** Regional DynamoDB implementations of the existing AWS authentication state ports. */
 import { createHash, randomUUID } from 'node:crypto';
+import { trackReplicationStorageOperation } from '@authrim/ar-lib-core/services/deployment-replication/write-effects';
 import {
   GetItemCommand,
   PutItemCommand,
@@ -59,6 +60,50 @@ export function createDynamoStateClient(options: {
     maxAttempts: 1,
     ignoreConfiguredEndpointUrls: true,
   });
+  client.middlewareStack.add(
+    (next, context) => async (args) => {
+      if (
+        ![
+          'PutItemCommand',
+          'UpdateItemCommand',
+          'DeleteItemCommand',
+          'BatchWriteItemCommand',
+          'TransactWriteItemsCommand',
+        ].includes(context.commandName ?? '')
+      )
+        return next(args);
+      return trackReplicationStorageOperation(
+        () => next(args),
+        (error) => {
+          const failure = error as {
+            name?: unknown;
+            $metadata?: { httpStatusCode?: unknown };
+          } | null;
+          const status = failure?.$metadata?.httpStatusCode;
+          // An explicit service rejection proves no accepted mutation. A lost response, timeout,
+          // abort, or 5xx does not; application recovery cannot silently release that writer.
+          return (
+            typeof status === 'number' &&
+            status >= 400 &&
+            status < 500 &&
+            typeof failure?.name === 'string' &&
+            [
+              'ConditionalCheckFailedException',
+              'TransactionCanceledException',
+              'ValidationException',
+              'AccessDeniedException',
+              'ResourceNotFoundException',
+              'ProvisionedThroughputExceededException',
+              'RequestLimitExceeded',
+              'ThrottlingException',
+              'ItemCollectionSizeLimitExceededException',
+            ].includes(failure.name)
+          );
+        }
+      );
+    },
+    { step: 'initialize', name: 'authrimDynamoReplicationWriteObservation', priority: 'high' }
+  );
   // Retry only a transport-failed GetItem once. Writes retain one HTTP attempt.
   client.middlewareStack.add(
     (next, context) => async (args) => {

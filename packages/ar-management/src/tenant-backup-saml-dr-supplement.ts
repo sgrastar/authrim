@@ -34,6 +34,9 @@ type RuntimeSettings = Pick<
 
 /** Each collection is read from a source snapshot, never from current live state. */
 export interface SamlDrSourceCollections {
+  loginUiConfiguration:
+    | { mode: 'disabled' }
+    | { mode: 'registered'; clientId: string; origin: string };
   loginUiClients: PortableSqliteRow;
   loginUiOrigins: PortableSqliteRow;
   platformDestinationProfiles: PortableSqliteRow;
@@ -201,18 +204,36 @@ export async function captureSamlDrFrozenSource(input: {
     return invalid();
   }
   await sources.assertBoundaryReleased(context, identity);
+  const configuration = await read('loginUiConfiguration');
   const clients = await read('loginUiClients');
   const origins = await read('loginUiOrigins');
-  if (
-    clients.length !== 1 ||
-    text(clients[0], 'tenant_id') !== tenantId ||
-    text(clients[0], 'client_id') !== 'login-ui' ||
-    origins.length !== 1 ||
-    text(origins[0], 'tenant_id') !== tenantId ||
-    text(origins[0], 'client_id') !== 'login-ui' ||
-    text(origins[0], 'origin') !== identity.source.issuer
-  )
-    invalid();
+  if (configuration.length !== 1) invalid();
+  let sourceLoginUi: SamlDrSnapshotPayload['sourceLoginUi'];
+  const selected = configuration[0];
+  if (selected.mode === 'disabled') {
+    if (Object.keys(selected).length !== 1 || clients.length || origins.length) invalid();
+    sourceLoginUi = { mode: 'disabled' };
+  } else {
+    if (
+      selected.mode !== 'registered' ||
+      Object.keys(selected).length !== 3 ||
+      !/^[A-Za-z0-9_.:-]{1,128}$/.test(selected.clientId)
+    )
+      invalid();
+    const url = new URL(selected.origin);
+    if (url.protocol !== 'https:' || url.origin !== selected.origin) invalid();
+    if (
+      clients.length !== 1 ||
+      text(clients[0], 'tenant_id') !== tenantId ||
+      text(clients[0], 'client_id') !== selected.clientId ||
+      origins.length !== 1 ||
+      text(origins[0], 'tenant_id') !== tenantId ||
+      text(origins[0], 'client_id') !== selected.clientId ||
+      text(origins[0], 'origin') !== selected.origin
+    )
+      invalid();
+    sourceLoginUi = { client: clients[0], origins };
+  }
   const profiles = await read('platformDestinationProfiles');
   const versions = await read('platformDestinationProfileVersions');
   const accounts = await read('accountAuthStates');
@@ -249,7 +270,7 @@ export async function captureSamlDrFrozenSource(input: {
   const runtime = await read('runtimeSettings');
   if (
     runtime.length !== 1 ||
-    runtime[0].sourceFlowRuntimeEnabled !== true ||
+    typeof runtime[0].sourceFlowRuntimeEnabled !== 'boolean' ||
     typeof runtime[0].consentIpSalt !== 'string' ||
     runtime[0].consentIpSalt.length < 32 ||
     (runtime[0].sourcePairwiseFallbackSecret !== undefined &&
@@ -274,7 +295,7 @@ export async function captureSamlDrFrozenSource(input: {
       sourceRuntimeSettings: true,
     },
     payload: {
-      sourceLoginUi: { client: clients[0], origins },
+      sourceLoginUi,
       platformDestinationProfiles: { profiles, versions },
       state: {
         accountAuthStates: accounts,

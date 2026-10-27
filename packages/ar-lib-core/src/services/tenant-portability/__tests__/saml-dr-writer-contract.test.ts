@@ -125,6 +125,13 @@ describe('installed SAML DR writer capability contract', () => {
   );
   it('pins plugin read-only exemptions and Management coordinator exceptions explicitly', () => {
     expect(
+      samlDrWriterSurfaces('ar-router').filter((surface) => surface.startsWith('coordinator:'))
+    ).toEqual(
+      array('packages/ar-router/src/index.ts', 'SAML_DR_COORDINATOR_SURFACES')
+        .map((surface) => `coordinator:${surface}`)
+        .sort()
+    );
+    expect(
       samlDrWriterSurfaces('ar-plugin-runner').filter((surface) => surface.startsWith('read-only:'))
     ).toEqual(
       array('packages/ar-plugin-runner/src/worker.ts', 'SAML_DR_READ_ONLY_SURFACES')

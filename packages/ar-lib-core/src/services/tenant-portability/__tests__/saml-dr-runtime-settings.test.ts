@@ -51,9 +51,10 @@ describe('SAML DR source/runtime authority', () => {
       version: generateVersion(data),
     });
     await expect(readSamlDrFlowRuntimeEnabled(f.env, 'tenant-a')).resolves.toBe(false);
-    await expect(readSamlDrRuntimeSettings(f.env, 'tenant-a')).rejects.toThrow(
-      'saml_dr_runtime_settings_authority_unavailable'
-    );
+    await expect(readSamlDrRuntimeSettings(f.env, 'tenant-a')).resolves.toEqual({
+      sourceFlowRuntimeEnabled: false,
+      consentIpSalt: 's'.repeat(32),
+    });
   });
   it.each(['missing', 'stale', 'duplicate', 'malformed'])(
     'rejects %s canonical settings',

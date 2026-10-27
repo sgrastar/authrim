@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
-import { Client } from 'pg';
-import { expect, it } from 'vitest';
+import { Client, Pool } from 'pg';
+import { verifyActivatedDatabaseRows } from '../../startup/live-database-verification';
+import { verifyActivatedLoginProjections } from '../../startup/live-login-projections';
+import { expect, it, vi } from 'vitest';
 import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { renderPortableMigrationSql } from '../../../../ar-lib-core/src/migrations/sql-portability';
 import type { VerifiedTenantBackupV2 } from '../backup-reader';
 import {
+  assertPostgresBackupProjectionSupported,
+  UnsupportedPostgresBackupProjectionError,
   readPostgresFamilyStagingReceipt,
   restoreVerifiedPostgresFamily,
   type PostgresFamilyStagingReceiptRow,
@@ -13,6 +17,7 @@ import {
   verifyPostgresFamilyStagingRows,
 } from '../postgres-restore';
 import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../postgres-restore-table-contract';
+import { POSTGRES_RESTORE_EXTENSION_CONTRACTS } from '../postgres-restore-extension-contract';
 
 const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
 const run = databaseUrl ? it : it.skip;
@@ -45,12 +50,12 @@ async function withFamilyDatabase<T>(
       for (const file of (await readdir(migrations))
         .filter((name) => /^\d+.*\.sql$/u.test(name))
         .sort()) {
-        await client.query('SET search_path TO public');
-        await client.query(
+        await client.query<Record<string, unknown>>('SET search_path TO public');
+        await client.query<Record<string, unknown>>(
           renderPortableMigrationSql(await readFile(new URL(file, migrations), 'utf8'), 'postgres')
         );
       }
-      await client.query('SET search_path TO public');
+      await client.query<Record<string, unknown>>('SET search_path TO public');
       return await runTest(urlFor(name), client);
     } finally {
       await client.end();
@@ -326,10 +331,12 @@ run(
       expect(await verifyPostgresFamilyStagingRows({ connectionString, targetId })).toEqual(
         receipt
       );
-      await client.query(
+      await client.query<Record<string, unknown>>(
         "UPDATE identity_accounts SET updated_at=updated_at+1 WHERE id='account:alice'"
       );
-      await client.query("UPDATE passkeys SET counter=counter+1 WHERE user_id='alice'");
+      await client.query<Record<string, unknown>>(
+        "UPDATE passkeys SET counter=counter+1 WHERE user_id='alice'"
+      );
       await expect(verifyPostgresFamilyStagingRows({ connectionString, targetId })).rejects.toThrow(
         'aws_postgres_restore_invalid'
       );
@@ -347,7 +354,7 @@ run(
           skipDatasetIds: ['core.passkeys', 'core.passkeys'],
         })
       ).rejects.toThrow('aws_postgres_restore_invalid');
-      await client.query(
+      await client.query<Record<string, unknown>>(
         `INSERT INTO tenants
            (id, tenant_code, tenant_key, name, is_default, created_at, updated_at,
             lifecycle_state, isolation_policy)
@@ -361,9 +368,13 @@ run(
           skipDatasetIds: ['core.identity_accounts', 'core.passkeys'],
         })
       ).rejects.toThrow('aws_postgres_restore_invalid');
-      await client.query("DELETE FROM tenants WHERE id='tenant-b'");
+      await client.query<Record<string, unknown>>("DELETE FROM tenants WHERE id='tenant-b'");
       expect(
-        (await client.query('SELECT tenant_id, client_id FROM web_origin_registry')).rows
+        (
+          await client.query<Record<string, unknown>>(
+            'SELECT tenant_id, client_id FROM web_origin_registry'
+          )
+        ).rows
       ).toEqual([expect.objectContaining({ tenant_id: 'tenant-a', client_id: 'login-ui' })]);
       await expect(
         restoreVerifiedPostgresFamily({
@@ -377,7 +388,9 @@ run(
       expect(await readPostgresFamilyStagingReceipt({ connectionString, targetId })).toEqual(
         receipt
       );
-      await client.query("UPDATE identity_providers SET name='changed' WHERE id='provider-a'");
+      await client.query<Record<string, unknown>>(
+        "UPDATE identity_providers SET name='changed' WHERE id='provider-a'"
+      );
       await expect(
         verifyPostgresFamilyStagingRows({
           connectionString,
@@ -423,10 +436,12 @@ run('rolls back all Core rows and journal on cross-tenant source data', async ()
 
 run('refuses an occupied tenant in a table outside the import allowlist', async () => {
   await withFamilyDatabase('core', async (connectionString, client) => {
-    await client.query(
+    await client.query<Record<string, unknown>>(
       'CREATE TABLE extra_tenant_data (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL)'
     );
-    await client.query("INSERT INTO extra_tenant_data (id,tenant_id) VALUES ('old','tenant-a')");
+    await client.query<Record<string, unknown>>(
+      "INSERT INTO extra_tenant_data (id,tenant_id) VALUES ('old','tenant-a')"
+    );
     await expect(
       restoreVerifiedPostgresFamily({
         backup: backup('core', { 'core.tenants': [tenantRow()] }),
@@ -487,7 +502,7 @@ run(
           targetId: randomUUID(),
           connectionString,
         })
-      ).rejects.toThrow('aws_postgres_restore_invalid');
+      ).rejects.toThrow('aws_postgres_restore_unsupported_datasets');
       expect(
         (
           await client.query<{ count: number }>(
@@ -553,5 +568,627 @@ run('converts D1 JSON text to PII JSONB and keeps its target separate from Core'
         skipDatasetIds: ['core.passkeys'],
       })
     ).rejects.toThrow('aws_postgres_restore_invalid');
+  });
+});
+
+// The real D1 engine supplies trigger-generated rows and native storage tags.
+interface LocalSqlite {
+  exec(sql: string): void;
+  close(): void;
+  prepare(sql: string): {
+    run(...values: (string | bigint | null)[]): unknown;
+    setReadBigInts(enabled: boolean): void;
+    all(...values: (string | bigint | null)[]): Array<Record<string, string | bigint | null>>;
+  };
+}
+const sqliteModule = 'node:sqlite';
+const { DatabaseSync } = (await import(sqliteModule)) as {
+  DatabaseSync: new (path: string) => LocalSqlite;
+};
+
+async function actualSource(family: 'core' | 'pii', tenantId = 'tenant-a') {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const migrations = new URL(`../../../../../migrations/${family}/d1/`, import.meta.url);
+    for (const file of (await readdir(migrations))
+      .filter((name) => /^\d+.*\.sql$/u.test(name))
+      .sort())
+      db.exec(
+        renderPortableMigrationSql(await readFile(new URL(file, migrations), 'utf8'), 'sqlite')
+      );
+    const insert = (table: string, value: PortableSqliteRow) => {
+      const columns = Object.keys(value);
+      db.prepare(
+        `INSERT INTO "${table}" (${columns.map((key) => `"${key}"`).join(',')}) VALUES (${columns.map(() => '?').join(',')})`
+      ).run(
+        ...columns.map((key) =>
+          value[key][0] === 'integer'
+            ? BigInt(
+                value[key][1] ??
+                  (() => {
+                    throw new Error('invalid_test_integer');
+                  })()
+              )
+            : value[key][1]
+        )
+      );
+    };
+    if (family === 'core') {
+      const initial = { 'core.tenants': [tenantRow()], ...personRows() };
+      for (const [id, rows] of Object.entries(initial))
+        for (const value of rows) {
+          const replaced = Object.fromEntries(
+            Object.entries(value).map(([key, tagged]) => [
+              key,
+              tagged[0] === 'text' && tagged[1] === 'tenant-a' ? t(tenantId) : tagged,
+            ])
+          );
+          if (!(id === 'core.tenants' && tenantId === 'default')) insert(id.slice(5), replaced);
+        }
+      db.exec(`INSERT INTO legal_holds (id,tenant_id,subject_id,reason_code,created_by,created_at,updated_at)
+        VALUES ('hold-a','${tenantId}','account:alice','litigation','operator-a',${now},${now});
+        INSERT INTO roles (id,tenant_id,name,permissions_json,created_at) VALUES ('z-parent','${tenantId}','parent','[]',${now});
+        INSERT INTO roles (id,tenant_id,name,permissions_json,created_at,parent_role_id) VALUES ('a-child','${tenantId}','child','[]',${now},'z-parent');
+        INSERT INTO account_creation_operations
+          (operation_id,tenant_id,actor_id,idempotency_key,allocation_idempotency_key,request_hash,user_id,account_id,status,created_at,completed_at,updated_at)
+          VALUES ('creation-a','${tenantId}','operator-a','key-a','allocation-a','${'a'.repeat(64)}','alice','account:alice','succeeded',${now},${now},${now});
+        INSERT INTO account_lifecycle_event_outbox
+          (event_id,tenant_id,account_id,operation_id,event_type,payload_json,status,created_at,succeeded_at,updated_at)
+          VALUES ('created-a','${tenantId}','account:alice','creation-a','account.created','{"account_id":"account:alice"}','pending',${now},NULL,${now});
+        UPDATE account_lifecycle_event_outbox SET status='succeeded',succeeded_at=${now} WHERE event_id='created-a';
+        INSERT INTO idempotency_keys
+          (id,tenant_id,actor_id,method,path,idempotency_key,body_hash,response_status,response_body,created_at,expires_at)
+          VALUES ('request-a','${tenantId}','operator-a','POST','/users','key-a','${'b'.repeat(64)}',201,'{"id":"alice"}',${now},${now + 1000});`);
+    } else {
+      db.prepare(
+        `INSERT INTO users_pii (id,tenant_id,email,custom_attributes_json,created_at,updated_at)
+        VALUES ('alice',?,'alice@example.test','{"precise":9007199254740993}',?,?)`
+      ).run(tenantId, BigInt(now), BigInt(now));
+      db.prepare(
+        `INSERT INTO identity_sensitive_values
+        (id,tenant_id,owner_type,owner_id,value_key,value_json,created_at,updated_at)
+        VALUES ('value-a',?,'user','alice','name','{"precise":9007199254740993}',?,?)`
+      ).run(tenantId, BigInt(now), BigInt(now));
+    }
+    const rows: Record<string, PortableSqliteRow[]> = {};
+    const extensions: Record<string, PortableSqliteRow[]> = {};
+    for (const spec of [
+      ...POSTGRES_RESTORE_TABLE_CONTRACTS,
+      ...POSTGRES_RESTORE_EXTENSION_CONTRACTS,
+    ].filter((spec) => spec.family === family)) {
+      const info = db.prepare(`PRAGMA table_info("${spec.table}")`);
+      info.setReadBigInts(true);
+      const columns = info.all();
+      expect(columns.map((column) => String(column.name)).sort(), spec.datasetId).toEqual(
+        [...spec.columns].sort()
+      );
+      expect(
+        columns
+          .filter((column) => typeof column.pk === 'bigint' && column.pk > 0n)
+          .sort((left, right) => Number(left.pk) - Number(right.pk))
+          .map((column) => String(column.name)),
+        spec.datasetId
+      ).toEqual(spec.primaryKey);
+      const stmt = db.prepare(
+        `SELECT * FROM "${spec.table}" WHERE "${spec.tenantColumn}"=? ORDER BY ${spec.primaryKey.map((key) => `"${key}"`).join(',')}`
+      );
+      stmt.setReadBigInts(true);
+      const values = stmt.all(tenantId).map(
+        (value) =>
+          Object.fromEntries(
+            spec.columns.map((key) => {
+              const cell = value[key];
+              return [
+                key,
+                cell === null
+                  ? ['null', null]
+                  : typeof cell === 'bigint'
+                    ? ['integer', String(cell)]
+                    : ['text', cell],
+              ];
+            })
+          ) as PortableSqliteRow
+      );
+      (POSTGRES_RESTORE_EXTENSION_CONTRACTS.includes(spec) ? extensions : rows)[spec.datasetId] =
+        values;
+    }
+    const result = backup(family, rows, extensions);
+    result.manifest.source.tenantId = tenantId;
+    return { backup: result, rows, extensions };
+  } finally {
+    db.close();
+  }
+}
+
+run(
+  'restores real D1 trigger rows, creation bookkeeping and role hierarchy without duplicate effects',
+  async () => {
+    const source = await actualSource('core');
+    await withFamilyDatabase('core', async (connectionString, client) => {
+      const targetId = randomUUID();
+      const receipt = await restoreVerifiedPostgresFamily({
+        backup: source.backup,
+        family: 'core',
+        tenantId: 'tenant-a',
+        targetId,
+        connectionString,
+      });
+      expect(receipt.projectionVersion).toBe(2);
+      expect(receipt.tables).toHaveLength(59);
+      expect(await verifyPostgresFamilyStagingRows({ connectionString, targetId })).toEqual(
+        receipt
+      );
+      expect(
+        (
+          await client.query<Record<string, unknown>>(
+            `SELECT projection_state,projection_generation FROM account_legal_hold_states WHERE account_id='account:alice'`
+          )
+        ).rows
+      ).toEqual([{ projection_state: 'active', projection_generation: '2' }]);
+      expect(
+        (
+          await client.query<Record<string, unknown>>(
+            "SELECT parent_role_id FROM roles WHERE id='a-child'"
+          )
+        ).rows[0].parent_role_id
+      ).toBe('z-parent');
+      for (const id of [
+        'core.account_creation_operations',
+        'core.account_lifecycle_event_outbox',
+        'core.idempotency_keys',
+      ])
+        expect(receipt.tables.find((table) => table.datasetId === id)?.rowCount).toBe(1);
+      await expect(
+        client.query(
+          `UPDATE account_lifecycle_event_outbox SET status='pending' WHERE event_id='created-a'`
+        )
+      ).rejects.toThrow('invalid_account_lifecycle_event_status_transition');
+      await expect(
+        client.query(
+          `UPDATE account_creation_operations SET status='preparing' WHERE operation_id='creation-a'`
+        )
+      ).rejects.toThrow('invalid_account_creation_operation_status_transition');
+      const before = (
+        await client.query<Record<string, unknown>>(
+          `SELECT revision FROM service_group_inputs WHERE user_id='alice'`
+        )
+      ).rows[0].revision as string;
+      const outbox = (
+        await client.query<Record<string, unknown>>(
+          'SELECT count(*)::text AS count FROM account_webhook_outbox'
+        )
+      ).rows[0].count as string;
+      await client.query<Record<string, unknown>>(
+        `UPDATE identity_accounts SET metadata_json='{"last_login_at":1780000001000}' WHERE id='account:alice'`
+      );
+      expect(
+        (
+          await client.query<Record<string, unknown>>(
+            `SELECT revision FROM service_group_inputs WHERE user_id='alice'`
+          )
+        ).rows[0].revision
+      ).toBe(String(BigInt(before) + 1n));
+      expect(
+        (
+          await client.query<Record<string, unknown>>(
+            'SELECT count(*)::text AS count FROM account_webhook_outbox'
+          )
+        ).rows[0].count
+      ).toBe(String(BigInt(outbox) + 1n));
+      await expect(
+        client.query<Record<string, unknown>>(
+          `DELETE FROM identity_accounts WHERE id='account:alice'`
+        )
+      ).rejects.toThrow();
+      expect(
+        (
+          await client.query<Record<string, unknown>>(
+            `SELECT count(*)::int AS n FROM pg_trigger WHERE NOT tgisinternal AND tgenabled<>'O'`
+          )
+        ).rows[0].n
+      ).toBe(0);
+    });
+  }
+);
+
+run(
+  'preserves exact JSONB beyond JavaScript integer precision and detects a one-unit mutation',
+  async () => {
+    const source = await actualSource('pii');
+    await withFamilyDatabase('pii', async (connectionString, client) => {
+      const targetId = randomUUID();
+      await restoreVerifiedPostgresFamily({
+        backup: source.backup,
+        family: 'pii',
+        tenantId: 'tenant-a',
+        targetId,
+        connectionString,
+      });
+      await verifyPostgresFamilyStagingRows({ connectionString, targetId });
+      expect(
+        (
+          await client.query<Record<string, unknown>>(
+            `SELECT custom_attributes_json->>'precise' AS value FROM users_pii`
+          )
+        ).rows[0].value
+      ).toBe('9007199254740993');
+      await client.query<Record<string, unknown>>(
+        `UPDATE users_pii SET custom_attributes_json='{"precise":9007199254740992}'`
+      );
+      await expect(verifyPostgresFamilyStagingRows({ connectionString, targetId })).rejects.toThrow(
+        'aws_postgres_restore_invalid'
+      );
+    });
+  }
+);
+
+run('replaces only attested fresh reference seeds for the actual default tenant', async () => {
+  const source = await actualSource('core', 'default');
+  await withFamilyDatabase('core', async (connectionString) => {
+    const targetId = randomUUID();
+    const receipt = await restoreVerifiedPostgresFamily({
+      backup: source.backup,
+      family: 'core',
+      tenantId: 'default',
+      targetId,
+      connectionString,
+    });
+    expect(receipt.tenantId).toBe('default');
+    expect(await verifyPostgresFamilyStagingRows({ connectionString, targetId })).toEqual(receipt);
+  });
+});
+
+run('rolls back imported rows and suspended triggers on a missing role parent', async () => {
+  const source = await actualSource('core');
+  source.extensions['core.roles'][0] = {
+    ...source.extensions['core.roles'][0],
+    parent_role_id: t('missing-parent'),
+  };
+  const input = backup('core', source.rows, source.extensions);
+  await withFamilyDatabase('core', async (connectionString, client) => {
+    await expect(
+      restoreVerifiedPostgresFamily({
+        backup: input,
+        family: 'core',
+        tenantId: 'tenant-a',
+        targetId: randomUUID(),
+        connectionString,
+      })
+    ).rejects.toThrow('aws_postgres_restore_invalid');
+    expect(
+      (
+        await client.query<Record<string, unknown>>(
+          `SELECT count(*)::int AS n FROM identity_accounts`
+        )
+      ).rows[0].n
+    ).toBe(0);
+    expect(
+      (
+        await client.query<Record<string, unknown>>(
+          `SELECT count(*)::int AS n FROM pg_trigger WHERE NOT tgisinternal AND tgenabled<>'O'`
+        )
+      ).rows[0].n
+    ).toBe(0);
+    expect(
+      (
+        await client.query<Record<string, unknown>>(
+          `SELECT to_regclass('authrim_aws_import_staging') AS name`
+        )
+      ).rows[0].name
+    ).toBeNull();
+  });
+});
+
+it('rejects unsupported nonempty profiles before opening a target and exposes names/counts only', async () => {
+  const source = backup(
+    'core',
+    {},
+    {
+      'core.totp_secrets': [{ secret: t('sensitive-do-not-print') }],
+      'core.webauthn_challenges': [],
+    }
+  );
+  expect(() => assertPostgresBackupProjectionSupported(source, 'core')).toThrow(
+    UnsupportedPostgresBackupProjectionError
+  );
+  try {
+    assertPostgresBackupProjectionSupported(source, 'core');
+  } catch (error) {
+    expect(error).toMatchObject({
+      code: 'aws_postgres_restore_unsupported_datasets',
+      datasets: [{ datasetId: 'core.totp_secrets', rowCount: 1 }],
+    });
+    expect(JSON.stringify(error)).not.toContain('sensitive-do-not-print');
+  }
+  const clientFactory = vi.fn();
+  await expect(
+    restoreVerifiedPostgresFamily({
+      backup: source,
+      family: 'core',
+      tenantId: 'tenant-a',
+      targetId: randomUUID(),
+      connectionString: 'unused',
+      clientFactory,
+    })
+  ).rejects.toThrow(UnsupportedPostgresBackupProjectionError);
+  expect(clientFactory).not.toHaveBeenCalled();
+});
+
+run(
+  'verifies cold-start after a real login and rejects projection rollback, deletion and unrelated appends',
+  async () => {
+    const [coreSource, piiSource] = await Promise.all([actualSource('core'), actualSource('pii')]);
+    const combined: VerifiedTenantBackupV2 = {
+      ...coreSource.backup,
+      manifest: {
+        ...coreSource.backup.manifest,
+        datasets: [...coreSource.backup.manifest.datasets, ...piiSource.backup.manifest.datasets],
+      },
+      dataset(id) {
+        return (id.startsWith('core.') ? coreSource.backup : piiSource.backup).dataset(id);
+      },
+    };
+    await withFamilyDatabase('core', async (coreUrl, core) =>
+      withFamilyDatabase('pii', async (piiUrl) => {
+        const coreTargetId = randomUUID();
+        const piiTargetId = randomUUID();
+        await restoreVerifiedPostgresFamily({
+          backup: combined,
+          family: 'core',
+          tenantId: 'tenant-a',
+          targetId: coreTargetId,
+          connectionString: coreUrl,
+        });
+        await restoreVerifiedPostgresFamily({
+          backup: combined,
+          family: 'pii',
+          tenantId: 'tenant-a',
+          targetId: piiTargetId,
+          connectionString: piiUrl,
+        });
+        const stateDb = new Pool({ connectionString: coreUrl });
+        try {
+          const verify = () =>
+            verifyActivatedDatabaseRows({
+              backup: combined,
+              core: { connectionString: coreUrl, targetId: coreTargetId },
+              pii: { connectionString: piiUrl, targetId: piiTargetId },
+              stateDb,
+              readPasskeyCounters: async () => [
+                { user_id: 'alice', credential_id: 'passkey-a', counter: '5' },
+              ],
+              activatedAtMs: now,
+            });
+          await verify();
+          await core.query(
+            `UPDATE identity_accounts SET metadata_json='{"last_login_at":1780000001000}',updated_at=1780000001000 WHERE id='account:alice'`
+          );
+          await verify();
+          const verifyProjection = async () => {
+            const accounts = (
+              await core.query<Record<string, unknown>>('SELECT * FROM identity_accounts')
+            ).rows;
+            return verifyActivatedLoginProjections({
+              backup: combined,
+              core,
+              accounts: new Map(accounts.map((row) => [String(row.id), row])),
+              activatedAtMs: now,
+            });
+          };
+          for (const sql of [
+            `UPDATE service_group_inputs SET revision=revision-1 WHERE user_id='alice'`,
+            `UPDATE service_group_inputs SET revision=revision+1 WHERE user_id='alice'`,
+            `DELETE FROM account_webhook_outbox WHERE id=(SELECT id FROM account_webhook_outbox WHERE event_type='account.created' LIMIT 1)`,
+            `UPDATE account_webhook_outbox SET attempts=1 WHERE event_type='account.created'`,
+            `UPDATE account_webhook_outbox SET event_type='account.deleted' WHERE event_type='account.updated'`,
+            `UPDATE account_webhook_outbox SET occurred_at=1 WHERE event_type='account.updated'`,
+          ]) {
+            await core.query('BEGIN');
+            try {
+              await core.query(sql);
+              await expect(verifyProjection()).rejects.toThrow('aws_live_database_invalid');
+            } finally {
+              await core.query('ROLLBACK');
+            }
+          }
+          await verify();
+        } finally {
+          await stateDb.end();
+        }
+      })
+    );
+  }
+);
+
+run(
+  'checks every optional contract against both canonical SQL schemas and keeps native constraints active',
+  async () => {
+    for (const family of ['core', 'pii'] as const)
+      await withFamilyDatabase(family, async (_url, client) => {
+        for (const spec of POSTGRES_RESTORE_EXTENSION_CONTRACTS.filter(
+          (item) => item.family === family
+        )) {
+          const columns = (
+            await client.query<{ column_name: string; data_type: string }>(
+              `SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position`,
+              [spec.table]
+            )
+          ).rows;
+          expect(columns.map((row) => row.column_name).sort(), spec.datasetId).toEqual(
+            [...spec.columns].sort()
+          );
+          expect(
+            columns
+              .filter((row) => ['integer', 'bigint', 'boolean'].includes(row.data_type))
+              .map((row) => row.column_name)
+              .sort(),
+            spec.datasetId
+          ).toEqual([...spec.sqliteIntegerColumns].sort());
+          expect(
+            columns
+              .filter((row) => row.data_type === 'boolean')
+              .map((row) => row.column_name)
+              .sort(),
+            spec.datasetId
+          ).toEqual([...spec.postgresBooleanColumns].sort());
+          expect(
+            columns
+              .filter((row) => row.data_type === 'jsonb')
+              .map((row) => row.column_name)
+              .sort(),
+            spec.datasetId
+          ).toEqual([...spec.postgresJsonbColumns].sort());
+          const primary = (
+            await client.query<{ column_name: string }>(
+              `SELECT a.attname AS column_name FROM pg_index i JOIN pg_class c ON c.oid=i.indrelid JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,pos) ON true JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.attnum WHERE i.indisprimary AND c.relname=$1 ORDER BY k.pos`,
+              [spec.table]
+            )
+          ).rows;
+          expect(
+            primary.map((row) => row.column_name),
+            spec.datasetId
+          ).toEqual(spec.primaryKey);
+        }
+      });
+  }
+);
+
+run(
+  'rejects cross-tenant optional rows and contradictory active-hold projection without leaving data',
+  async () => {
+    for (const variant of ['tenant', 'hold'] as const) {
+      const source = await actualSource('core');
+      if (variant === 'tenant')
+        source.extensions['core.account_creation_operations'][0] = {
+          ...source.extensions['core.account_creation_operations'][0],
+          tenant_id: t('tenant-b'),
+        };
+      else
+        source.extensions['core.account_legal_hold_states'][0] = {
+          ...source.extensions['core.account_legal_hold_states'][0],
+          projection_state: t('inactive'),
+          active_hold_id: ['null', null],
+        };
+      await withFamilyDatabase('core', async (connectionString, client) => {
+        await expect(
+          restoreVerifiedPostgresFamily({
+            backup: backup('core', source.rows, source.extensions),
+            family: 'core',
+            tenantId: 'tenant-a',
+            targetId: randomUUID(),
+            connectionString,
+          })
+        ).rejects.toThrow('aws_postgres_restore_invalid');
+        expect(
+          (
+            await client.query<Record<string, unknown>>(
+              'SELECT count(*)::int AS n FROM identity_accounts'
+            )
+          ).rows[0].n
+        ).toBe(0);
+        expect(
+          (
+            await client.query<Record<string, unknown>>(
+              `SELECT count(*)::int AS n FROM pg_trigger WHERE NOT tgisinternal AND tgenabled<>'O'`
+            )
+          ).rows[0].n
+        ).toBe(0);
+      });
+    }
+  }
+);
+
+run(
+  'refuses modified reference seeds and never replaces existing default-tenant business data',
+  async () => {
+    const source = await actualSource('core', 'default');
+    await withFamilyDatabase('core', async (connectionString, client) => {
+      await client.query(
+        `UPDATE screens SET display_name='modified' WHERE id='screen-login-default'`
+      );
+      await expect(
+        restoreVerifiedPostgresFamily({
+          backup: source.backup,
+          family: 'core',
+          tenantId: 'default',
+          targetId: randomUUID(),
+          connectionString,
+        })
+      ).rejects.toThrow('aws_postgres_restore_seed_invalid');
+      expect(
+        (
+          await client.query<{ name: string }>(
+            `SELECT display_name AS name FROM screens WHERE id='screen-login-default'`
+          )
+        ).rows[0].name
+      ).toBe('modified');
+      expect(
+        (await client.query<{ n: number }>('SELECT count(*)::int AS n FROM identity_accounts'))
+          .rows[0].n
+      ).toBe(0);
+    });
+  }
+);
+
+run('retains foreign-key enforcement for historical account creation events', async () => {
+  const source = await actualSource('core');
+  source.extensions['core.account_lifecycle_event_outbox'][0] = {
+    ...source.extensions['core.account_lifecycle_event_outbox'][0],
+    account_id: t('missing-account'),
+  };
+  await withFamilyDatabase('core', async (connectionString, client) => {
+    await expect(
+      restoreVerifiedPostgresFamily({
+        backup: backup('core', source.rows, source.extensions),
+        family: 'core',
+        tenantId: 'tenant-a',
+        targetId: randomUUID(),
+        connectionString,
+      })
+    ).rejects.toMatchObject({ code: '23503' });
+    expect(
+      (await client.query<{ n: number }>('SELECT count(*)::int AS n FROM identity_accounts'))
+        .rows[0].n
+    ).toBe(0);
+    expect(
+      (
+        await client.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_trigger WHERE NOT tgisinternal AND tgenabled<>'O'`
+        )
+      ).rows[0].n
+    ).toBe(0);
+  });
+});
+
+it.each([
+  'core.attribute_verifications',
+  'core.user_verified_attributes',
+  'core.oauth_client_consents',
+])('reports incompatible nonempty dataset %s instead of guessing a conversion', (datasetId) => {
+  const source = backup('core', {}, { [datasetId]: [{ id: t('record-a') }] });
+  expect(() => assertPostgresBackupProjectionSupported(source, 'core')).toThrow(
+    UnsupportedPostgresBackupProjectionError
+  );
+});
+
+run('rejects duplicate JSON keys instead of changing their SQLite interpretation', async () => {
+  const source = await actualSource('pii');
+  source.rows['pii.users_pii'][0] = {
+    ...source.rows['pii.users_pii'][0],
+    custom_attributes_json: t('{"role":"user","role":"admin"}'),
+  };
+  await withFamilyDatabase('pii', async (connectionString, client) => {
+    await expect(
+      restoreVerifiedPostgresFamily({
+        backup: backup('pii', source.rows, source.extensions),
+        family: 'pii',
+        tenantId: 'tenant-a',
+        targetId: randomUUID(),
+        connectionString,
+      })
+    ).rejects.toThrow('aws_postgres_restore_invalid');
+    expect(
+      (await client.query<{ n: number }>('SELECT count(*)::int AS n FROM users_pii')).rows[0].n
+    ).toBe(0);
   });
 });

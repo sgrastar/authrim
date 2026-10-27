@@ -5,6 +5,7 @@ import {
 /** Reconstruct a published SAML IdP after a Lambda cold start without importing rows again. */
 import { Client, Pool } from 'pg';
 import { PostgresAdapter } from '@authrim/ar-lib-core';
+import { withReplicationSqlQueries } from '@authrim/ar-lib-core/services/deployment-replication/write-effects';
 import type { LookupBlindIndexKey } from '@authrim/ar-lib-core/services/lookup-directory/blind-index';
 import { createPostgresAuditRuntimePorts } from '../storage/postgres-audit';
 import { assertAwsRuntimeSchemaReady } from '../import/aws-schema-bootstrap';
@@ -56,7 +57,9 @@ function invalid(): never {
 }
 
 function boundedClient(connectionString: string): Client {
-  return new Client({ connectionString, connectionTimeoutMillis: 5_000 });
+  return withReplicationSqlQueries(
+    new Client({ connectionString, connectionTimeoutMillis: 5_000 })
+  );
 }
 
 async function adapterClient(connectionString: string) {
@@ -188,11 +191,13 @@ async function load(
       )
     );
     if (new Set(targets).size !== 3) invalid();
-    const stateDb = new Pool({
-      connectionString: plan.state.connectionString,
-      max: 2,
-      connectionTimeoutMillis: 5_000,
-    });
+    const stateDb = withReplicationSqlQueries(
+      new Pool({
+        connectionString: plan.state.connectionString,
+        max: 2,
+        connectionTimeoutMillis: 5_000,
+      })
+    );
     cleanup.push(() => stateDb.end());
     const authenticationState = selectAwsAuthState(
       {

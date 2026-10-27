@@ -226,6 +226,11 @@ export async function loadAwsSamlDeployment(input: {
     )
       invalid();
     const config = parseAwsSamlDeploymentSecrets(secret.value, manifest.evidence.tenantId);
+    if (
+      (manifest.replicationWriter === undefined) !==
+      (config.replicationWriterSecret === undefined)
+    )
+      invalid();
     directory = await mkdtemp(join(await realpath(tmpdir()), 'authrim-aws-startup-'));
     const partPaths: string[] = [];
     for (let index = 0; index < manifest.backup.parts.length; index++) {
@@ -260,6 +265,12 @@ export async function loadAwsSamlDeployment(input: {
       awsLookupReadKeys: config.lookupReadKeys,
     };
     loaded = await (input.loadTenant ?? loadActivatedAwsSamlTenant)(tenantInput);
+    if (manifest.replicationWriter !== undefined) {
+      loaded.runtime.env.AUTHRIM_REPLICATION_WRITER = canonicalRestoreJson(
+        manifest.replicationWriter
+      );
+      loaded.runtime.env.AUTHRIM_REPLICATION_WRITER_SECRET = config.replicationWriterSecret;
+    }
     signal.throwIfAborted();
     await rm(directory, { recursive: true });
     directory = undefined;

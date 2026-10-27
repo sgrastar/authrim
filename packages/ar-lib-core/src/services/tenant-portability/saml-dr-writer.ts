@@ -1,4 +1,5 @@
 import type { ExecutionContext } from '@cloudflare/workers-types';
+import { withReplicationStorageBindings } from '../deployment-replication/write-effects';
 import type { SamlDrWriterInventoryReceipt } from './saml-dr-writer-contract';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
@@ -7,8 +8,13 @@ import {
   type TenantBackupMutationCoverage,
 } from './covered-mutation';
 import type { ControlServiceBinding } from '../control-plane/control-plane-contracts';
+import {
+  hasReplicationWriterConfiguration,
+  runReplicationWriterOperation,
+  type ReplicationWriterEnv,
+} from '../deployment-replication/writer';
 
-export interface SamlDrWriterEnv {
+export interface SamlDrWriterEnv extends ReplicationWriterEnv {
   ENABLE_SAML_DR_EXPORT?: string;
   TENANT_BACKUP_WRAPPING_KEY?: string;
   SAML_DR_MUTATION_CONTROL?: Pick<
@@ -96,8 +102,9 @@ export async function runSamlDrCoveredOperation<
   context: C | undefined,
   operation: (env: E, context: C | undefined) => Promise<T>
 ): Promise<T> {
-  if (env.ENABLE_SAML_DR_EXPORT !== 'true') return operation(env, context);
-  if (!env.SAML_DR_MUTATION_CONTROL) throw new Error('saml_dr_writer_unavailable');
+  const backupEnabled = env.ENABLE_SAML_DR_EXPORT === 'true';
+  if (!backupEnabled && !hasReplicationWriterConfiguration(env)) return operation(env, context);
+  if (backupEnabled && !env.SAML_DR_MUTATION_CONTROL) throw new Error('saml_dr_writer_unavailable');
   const current = ownedOperation.getStore();
   if (current?.active && current.environments.has(env)) {
     const effect = Promise.resolve().then(() => operation(env, trackedContext(context, current)));
@@ -105,46 +112,53 @@ export async function runSamlDrCoveredOperation<
     return effect;
   }
   const coverage: TenantBackupMutationCoverage = { environment: true };
-  return runRequiredTenantBackupCoveredEffect(
-    { CONTROL: env.SAML_DR_MUTATION_CONTROL },
-    coverage,
-    async () => {
-      const covered = withTenantBackupMutationCoverage(env, coverage);
-      const owner: OwnedOperation = {
-        environments: new Set([env, covered]),
-        pending: new Set(),
-        active: true,
-      };
-      return ownedOperation.run(owner, async () => {
-        let result!: T;
-        let failed = false;
-        let failure: unknown;
-        try {
-          result = await operation(covered, trackedContext(context, owner));
-        } catch (error) {
-          failed = true;
-          failure = error;
-        }
-        try {
-          while (owner.pending.size) {
-            const batch = [...owner.pending];
-            const results = await Promise.allSettled(batch);
-            for (let index = 0; index < batch.length; index++) {
-              owner.pending.delete(batch[index]);
-              const observed = results[index];
-              if (observed.status === 'rejected' && !failed) {
-                failed = true;
-                failure = observed.reason;
-              }
+  const runOwned = async () => {
+    const covered = withReplicationStorageBindings(
+      backupEnabled ? withTenantBackupMutationCoverage(env, coverage) : env
+    );
+    const owner: OwnedOperation = {
+      environments: new Set([env, covered]),
+      pending: new Set(),
+      active: true,
+    };
+    return ownedOperation.run(owner, async () => {
+      let result!: T;
+      let failed = false;
+      let failure: unknown;
+      try {
+        result = await operation(covered, trackedContext(context, owner));
+      } catch (error) {
+        failed = true;
+        failure = error;
+      }
+      try {
+        while (owner.pending.size) {
+          const batch = [...owner.pending];
+          const results = await Promise.allSettled(batch);
+          for (let index = 0; index < batch.length; index++) {
+            owner.pending.delete(batch[index]);
+            const observed = results[index];
+            if (observed.status === 'rejected' && !failed) {
+              failed = true;
+              failure = observed.reason;
             }
           }
-          if (failed) throw failure;
-          return result;
-        } finally {
-          owner.active = false;
         }
-      });
-    }
+        if (failed) throw failure;
+        return result;
+      } finally {
+        owner.active = false;
+      }
+    });
+  };
+  return runReplicationWriterOperation(env, () =>
+    backupEnabled
+      ? runRequiredTenantBackupCoveredEffect(
+          { CONTROL: env.SAML_DR_MUTATION_CONTROL },
+          coverage,
+          runOwned
+        )
+      : runOwned()
   );
 }
 
@@ -156,7 +170,8 @@ export async function runSamlDrCoveredFetch<
   context: C | undefined,
   fetch: (env: E | undefined, context: C | undefined) => Promise<Response>
 ): Promise<Response> {
-  if (env?.ENABLE_SAML_DR_EXPORT !== 'true') return fetch(env, context);
+  if (!env || (env.ENABLE_SAML_DR_EXPORT !== 'true' && !hasReplicationWriterConfiguration(env)))
+    return fetch(env, context);
   try {
     return await runSamlDrCoveredOperation(env, context, fetch);
   } catch {

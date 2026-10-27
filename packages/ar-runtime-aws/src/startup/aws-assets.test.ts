@@ -100,13 +100,15 @@ function manifest(): AwsSamlDeploymentManifest {
 
 function fixture(
   destinationUi?: AwsSamlDeploymentManifest['destinationUi'],
-  authState?: AwsSamlDeploymentManifest['authState']
+  authState?: AwsSamlDeploymentManifest['authState'],
+  replicationWriter?: AwsSamlDeploymentManifest['replicationWriter']
 ) {
   const manifestBytes = new TextEncoder().encode(
     canonicalRestoreJson({
       ...manifest(),
       ...(destinationUi === undefined ? {} : { destinationUi }),
       ...(authState === undefined ? {} : { authState }),
+      ...(replicationWriter === undefined ? {} : { replicationWriter }),
     })
   );
   const location: AwsSamlDeploymentLocation = {
@@ -158,6 +160,84 @@ function fixture(
     reader: { getSecret, getObject, close: () => undefined } satisfies AwsAssetReader,
   };
 }
+
+const replicationWriter = {
+  version: 1 as const,
+  endpoint: 'https://authority.example.test/replication/v1/rpc',
+  credentialId: 'aws-writer',
+  pairId: 'pair-a',
+  tenantId: TENANT,
+  deploymentId: 'aws-a',
+  epoch: 2,
+  generationId: UUID_A,
+};
+
+it('pins writer configuration in the manifest and resolves its key only from the pinned secret', async () => {
+  const value = fixture(undefined, undefined, replicationWriter);
+  value.getSecret.mockResolvedValue({
+    arn: value.location.secretArn,
+    versionId: value.location.secretVersionId,
+    value: JSON.stringify({ ...secret, replicationWriterSecret: 'a'.repeat(64) }),
+  });
+  const loadTenant = vi.fn(async (input: LoadActivatedAwsSamlTenantInput) => ({
+    authState: { config: { backend: 'postgresql' as const } },
+    runtime: {
+      tenantId: TENANT,
+      origin: input.evidence.issuer,
+      env: {} as Env,
+      assertReady: async () => undefined,
+    },
+    close: async () => undefined,
+  }));
+  const loaded = await loadAwsSamlDeployment({ ...value, loadTenant });
+  expect(JSON.parse(loaded.runtime.env.AUTHRIM_REPLICATION_WRITER ?? '')).toEqual(
+    replicationWriter
+  );
+  expect(loaded.runtime.env.AUTHRIM_REPLICATION_WRITER_SECRET).toBe('a'.repeat(64));
+  expect(loadTenant.mock.calls[0][0]).not.toHaveProperty('replicationWriterSecret');
+  await loaded.close();
+});
+
+it.each([true, false])(
+  'rejects a partial writer configuration before downloading backup contents',
+  async (hasManifest) => {
+    const value = fixture(undefined, undefined, hasManifest ? replicationWriter : undefined);
+    value.getSecret.mockResolvedValue({
+      arn: value.location.secretArn,
+      versionId: value.location.secretVersionId,
+      value: JSON.stringify({
+        ...secret,
+        ...(hasManifest ? {} : { replicationWriterSecret: 'a'.repeat(64) }),
+      }),
+    });
+    const loadTenant = vi.fn();
+    await expect(loadAwsSamlDeployment({ ...value, loadTenant })).rejects.toThrow(
+      'aws_deployment_load_failed'
+    );
+    expect(loadTenant).not.toHaveBeenCalled();
+    expect(value.getObject).toHaveBeenCalledTimes(1);
+  }
+);
+
+it.each([
+  { ...replicationWriter, tenantId: 'tenant-b' },
+  { ...replicationWriter, generationId: UUID_B },
+  { ...replicationWriter, secret: 'a'.repeat(64) },
+])('rejects another tenant, generation or inline writer key in a manifest', (writer) => {
+  expect(() =>
+    parseAwsSamlDeploymentManifest(JSON.stringify({ ...manifest(), replicationWriter: writer }))
+  ).toThrow('aws_deployment_config_invalid');
+});
+
+it('rejects an invalid writer key without changing legacy secret parsing', () => {
+  expect(parseAwsSamlDeploymentSecrets(JSON.stringify(secret), TENANT)).toEqual(secret);
+  expect(() =>
+    parseAwsSamlDeploymentSecrets(
+      JSON.stringify({ ...secret, replicationWriterSecret: 'short' }),
+      TENANT
+    )
+  ).toThrow('aws_deployment_config_invalid');
+});
 
 it('preserves independent UI omission through the pinned cold-start manifest', async () => {
   const destinationUi: NonNullable<AwsSamlDeploymentManifest['destinationUi']> = {
@@ -379,4 +459,30 @@ it('binds secret account and region to deployment-owned environment', () => {
       parseAwsSamlDeploymentLocation({ ...environment, AUTHRIM_AWS_ISSUER_ORIGIN: issuerOrigin })
     ).toThrow('aws_deployment_config_invalid');
   }
+});
+
+it('pins environment writer child restore independently from the aggregate generation and deployment name', () => {
+  const writer = {
+    version: 2 as const,
+    endpoint: replicationWriter.endpoint,
+    credentialId: replicationWriter.credentialId,
+    pairId: replicationWriter.pairId,
+    environmentId: 'logical-source-environment',
+    deploymentId: replicationWriter.deploymentId,
+    epoch: 2,
+    generationId: 'aggregate-generation',
+    tenantId: replicationWriter.tenantId,
+    restoreId: replicationWriter.generationId,
+  };
+  const value = { ...manifest(), replicationWriter: writer };
+  expect(parseAwsSamlDeploymentManifest(JSON.stringify(value)).replicationWriter).toEqual(writer);
+  expect(() =>
+    parseAwsSamlDeploymentManifest(
+      JSON.stringify({ ...value, replicationWriter: { ...writer, restoreId: 'orphan' } })
+    )
+  ).toThrow();
+  const { tenantId: _tenant, restoreId: _restore, ...broad } = writer;
+  expect(() =>
+    parseAwsSamlDeploymentManifest(JSON.stringify({ ...value, replicationWriter: broad }))
+  ).toThrow();
 });

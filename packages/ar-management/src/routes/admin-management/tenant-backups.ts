@@ -1,5 +1,6 @@
 import { openTenantBackupDownload } from '@authrim/ar-lib-core/services/tenant-portability/published-artifact-reader';
 import { Hono } from 'hono';
+import { readTenantBackupExportReceipt } from '../../tenant-backup-export-receipt';
 import { bodyLimit } from 'hono/body-limit';
 import { createMiddleware } from 'hono/factory';
 import {
@@ -631,6 +632,51 @@ tenantBackupsRouter.post('/:operationId/approve', async (c) => {
     },
     202
   );
+});
+
+tenantBackupsRouter.get('/:operationId/export-receipt', async (c) => {
+  const auth = tenantAuth(c.get('adminAuth'));
+  if (!hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.BACKUPS_EXPORT))
+    return c.json({ error: 'backup_forbidden' }, 403);
+  if (!isFreshAdminHuman(auth, Date.now()))
+    return c.json({ error: 'backup_fresh_auth_required' }, 403);
+  const database = requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-backup');
+  const id = c.req.param('operationId');
+  let intent;
+  try {
+    intent = await new TenantBackupRequestStore(database).load(auth.tenantId, id);
+  } catch {
+    return c.json({ error: 'backup_operation_not_found' }, 404);
+  }
+  if (intent.kind !== 'export') return c.json({ error: 'backup_export_receipt_unavailable' }, 409);
+  if (
+    intent.selection.logs.sensitive &&
+    !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.BACKUPS_SENSITIVE)
+  )
+    return c.json({ error: 'backup_forbidden' }, 403);
+  let receipt;
+  try {
+    receipt = await readTenantBackupExportReceipt({
+      database,
+      tenantId: auth.tenantId,
+      operationId: id,
+      intent,
+      now: Date.now,
+      signal: c.req.raw.signal,
+    });
+  } catch {
+    return c.json({ error: 'backup_export_receipt_unavailable' }, 409);
+  }
+  if (
+    !(await writeAdminAuditLog(c, {
+      action: 'tenant_backup.export_receipt_read',
+      resourceType: 'tenant_backup',
+      resourceId: id,
+      result: 'success',
+    }))
+  )
+    return c.json({ error: 'backup_audit_unavailable' }, 503);
+  return c.json(receipt);
 });
 
 tenantBackupsRouter.get('/:operationId/download', async (c) => {

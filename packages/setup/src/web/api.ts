@@ -1261,7 +1261,9 @@ async function loadSupplementalSecretsForWorkers(options: {
     });
   }
   await ensureSupplementalKeysForWebDeploy(keysDir);
-  const secrets = await loadDeploySecretsFromKeys(keysDir, workers);
+  const secrets = options.config?.features.replicationWriter
+    ? await loadDeploySecretsFromKeys(keysDir, workers, { replicationWriter: true })
+    : await loadDeploySecretsFromKeys(keysDir, workers);
   addProgress(
     `Prepared ${Object.keys(secrets).length} secret value(s) for ${env} Worker deployment.`
   );
@@ -3161,6 +3163,7 @@ export function createApiRoutes(): Hono {
           env,
           rootDir: baseDir,
           dryRun: false,
+          replicationWriter: updatedConfig.features.replicationWriter !== undefined,
           deploymentStrategy: 'auto' as const,
           existingComponents: WORKER_COMPONENTS.filter(
             (component) => lock.workers?.[component] !== undefined
@@ -3469,6 +3472,7 @@ export function createApiRoutes(): Hono {
         const emailDeployOptions = {
           env,
           rootDir: resolve(rootDir),
+          replicationWriter: updatedConfig.features.replicationWriter !== undefined,
           concurrency: 2,
           deploymentStrategy: 'auto' as const,
           existingComponents: WORKER_COMPONENTS.filter(
@@ -4795,7 +4799,8 @@ export function createApiRoutes(): Hono {
           }
           deploymentSecrets = await loadDeploySecretsFromKeys(
             existsSync(keysDir) ? keysDir : undefined,
-            enabledComponents
+            enabledComponents,
+            { replicationWriter: releaseConfig.features.replicationWriter !== undefined }
           );
           const missingControlSecrets = getMissingRequiredDeploySecrets(
             deploymentSecrets,
@@ -5291,6 +5296,7 @@ export function createApiRoutes(): Hono {
           deploymentStrategy: 'auto',
           existingComponents,
           secrets: deploymentSecrets,
+          replicationWriter: releaseConfig.features.replicationWriter !== undefined,
           // The initial deployment initialized Control's key state above and projected it into the
           // lock, so the slots are known here too.
           ...lookupHmacDeployOptions(
@@ -8936,6 +8942,7 @@ export function createApiRoutes(): Hono {
             ])
           ),
           secrets: deploymentSecrets,
+          replicationWriter: config.features.replicationWriter !== undefined,
           ...lookupHmacDeployOptions(
             await resolveDeployLookupHmacState({ lock: lock!, environmentId: env })
           ),
@@ -9816,6 +9823,7 @@ export function createApiRoutes(): Hono {
               ])
             ),
             secrets: deploymentSecrets,
+            replicationWriter: cfg?.features?.replicationWriter !== undefined,
             // A real deploy reads Control's current state; a dry run deploys nothing and must not
             // touch the remote database, so it plans with the lock's copy.
             ...lookupHmacDeployOptions(

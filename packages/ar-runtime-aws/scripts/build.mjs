@@ -15,6 +15,9 @@ const options = {
     'browser-sp': 'src/rehearsal/browser-sp-lambda.ts',
     'dsql-cli': 'src/dsql/cli.ts',
     'runtime-ui-config': 'src/ui/runtime-ui-config.ts',
+    'replication-cli': 'src/replication/cli.ts',
+    'replication-scheduler': 'src/replication/scheduler-cli.ts',
+    'replication-authority': 'src/replication/authority-lambda.ts',
   },
   outdir: 'dist',
   outExtension: { '.js': '.mjs' },
@@ -42,9 +45,12 @@ const apiOnly = await build({
 });
 Object.assign(result.metafile.inputs, apiOnly.metafile.inputs);
 Object.assign(result.metafile.outputs, apiOnly.metafile.outputs);
-if (Object.keys(apiOnly.metafile.outputs['dist/lambda-api.mjs'].inputs).some(
-  (input) => input === 'src/ui/passkey-login.ts'
-)) throw new Error('embedded_login_ui_in_api_only_bundle');
+if (
+  Object.keys(apiOnly.metafile.outputs['dist/lambda-api.mjs'].inputs).some(
+    (input) => input === 'src/ui/passkey-login.ts'
+  )
+)
+  throw new Error('embedded_login_ui_in_api_only_bundle');
 // Production serving entries must never contain maintenance or synthetic rehearsal helpers.
 for (const [outputPath, output] of Object.entries(result.metafile.outputs)) {
   if (!/\/(?:lambda|lambda-api|index)\.mjs$/u.test(outputPath)) continue;
@@ -82,4 +88,11 @@ const storageSource = new URL('../src/storage/', import.meta.url);
 for (const name of await readdir(storageSource)) {
   if (name.endsWith('.sql'))
     await copyFile(new URL(name, storageSource), new URL(name, storageOutput));
+}
+const replicationOutput = new URL('../dist/replication/', import.meta.url);
+await mkdir(replicationOutput, { recursive: true });
+const replicationSource = new URL('../src/replication/', import.meta.url);
+for (const name of await readdir(replicationSource)) {
+  if (name.endsWith('.sql'))
+    await copyFile(new URL(name, replicationSource), new URL(name, replicationOutput));
 }

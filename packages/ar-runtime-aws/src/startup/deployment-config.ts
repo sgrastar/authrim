@@ -3,6 +3,11 @@ import { normalizeAwsAuthStateConfig, type AwsAuthStateConfig } from '../storage
 import type { OpenVerifiedTenantBackupV2Input } from '../import/backup-reader';
 import type { AwsRestoreActivationEvidence } from '../import/restore-coordinator';
 import type { LoadActivatedAwsSamlTenantInput } from './load-activated-tenant';
+import {
+  parseReplicationWriterConfiguration,
+  type ReplicationWriterConfiguration,
+} from '@authrim/ar-lib-core/services/deployment-replication/writer';
+import { assertReplicationSecret } from '@authrim/ar-lib-core/services/deployment-replication/transport';
 
 export interface AwsS3ObjectPin {
   key: string;
@@ -27,6 +32,7 @@ export interface AwsSamlDeploymentManifest {
   environmentName: string;
   destinationUi?: AwsRuntimeUiConfig;
   authState?: AwsAuthStateConfig;
+  replicationWriter?: ReplicationWriterConfiguration;
   spEntityIds: readonly string[];
   allocationScope: LoadActivatedAwsSamlTenantInput['allocationScope'];
 }
@@ -41,6 +47,7 @@ export interface AwsSamlDeploymentSecrets {
   stateDatabaseUrl: string;
   flowHmacSecret: string;
   lookupReadKeys: LoadActivatedAwsSamlTenantInput['awsLookupReadKeys'];
+  replicationWriterSecret?: string;
 }
 
 export interface AwsSamlDeploymentLocation {
@@ -177,7 +184,10 @@ export function parseAwsSamlDeploymentSecrets(
       'stateDatabaseUrl',
       'flowHmacSecret',
       'lookupReadKeys',
+      ...(Object.hasOwn(value, 'replicationWriterSecret') ? ['replicationWriterSecret'] : []),
     ]);
+    if (Object.hasOwn(value, 'replicationWriterSecret'))
+      assertReplicationSecret(value.replicationWriterSecret);
     if (
       value.formatVersion !== 1 ||
       value.tenantId !== expectedTenantId ||
@@ -228,7 +238,20 @@ export function parseAwsSamlDeploymentManifest(raw: string): AwsSamlDeploymentMa
       'allocationScope',
       ...(Object.hasOwn(value, 'destinationUi') ? ['destinationUi'] : []),
       ...(Object.hasOwn(value, 'authState') ? ['authState'] : []),
+      ...(Object.hasOwn(value, 'replicationWriter') ? ['replicationWriter'] : []),
     ]);
+    if (Object.hasOwn(value, 'replicationWriter')) {
+      value.replicationWriter = parseReplicationWriterConfiguration(
+        JSON.stringify(value.replicationWriter)
+      );
+      if (
+        value.replicationWriter.tenantId !== value.evidence?.tenantId ||
+        (value.replicationWriter.version === 1
+          ? value.replicationWriter.generationId !== value.evidence?.restoreId
+          : value.replicationWriter.restoreId !== value.evidence?.restoreId)
+      )
+        invalid();
+    }
     if (Object.hasOwn(value, 'destinationUi'))
       value.destinationUi = normalizeAwsRuntimeUiConfig(value.destinationUi);
     if (Object.hasOwn(value, 'authState'))
