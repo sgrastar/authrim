@@ -28,17 +28,13 @@ export const jaServiceFlows = {
 	'sf.part.activate': '確認して有効にする',
 
 	// The steps of a connection's flow.
-	'sf.group.app': 'アプリ',
-	'sf.group.signin': 'サインイン',
 	'sf.group.receives': 'アプリが受け取る情報',
 	'sf.group.mapping': 'マッピング',
 	'sf.group.consent': '同意',
 	'sf.group.role': 'ロールの割り当て',
 	'sf.group.live': '利用開始',
-	'sf.group.service': 'サービス',
 	'sf.group.response': 'サインイン応答',
 	'sf.group.check': '動作確認',
-	'sf.group.provider': 'プロバイダー',
 	'sf.group.accounts': 'アカウント',
 	'sf.group.additional': '追加入力',
 
@@ -201,7 +197,6 @@ export const jaServiceFlows = {
 		'{partner}側で Authrim を登録できるよう、次の値を渡してください。それぞれにコピーボタンがあります。',
 	'sf.ours.copy': '{label}をコピー',
 	'sf.ours.download': 'Authrim のメタデータをダウンロード',
-	'sf.ours.registered': '{partner}に登録しました',
 	'sf.ours.metadataUrl': 'メタデータのアドレス',
 	'sf.ours.ssoUrl': 'シングルサインオンのアドレス',
 	'sf.ours.sloUrl': 'シングルログアウトのアドレス',

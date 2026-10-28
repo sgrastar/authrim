@@ -1,6 +1,23 @@
-import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
+import { t } from '$lib/i18n/i18n.svelte';
 import type { WizardStep } from '$lib/ui/patterns/WizardSteps.svelte';
 import { consentStatements } from './connection-model';
+import {
+	aboutFields,
+	choices,
+	emptyFlowState,
+	FLOW_PREFIX,
+	includes,
+	isSyncFlow,
+	type AccountField,
+	type AccountFlowDef,
+	type AccountFlowId,
+	type AccountFlowState,
+	type AccountGroup,
+	type AccountPart,
+	type AccountValue,
+	type FlowId
+} from './flow-spec';
+import { SYNC_FLOWS, SYNC_FLOW_IDS, SYNC_PARTS } from './sync-flow-spec';
 
 /**
  * Signing people up and signing them in, as flows of their own. They are not connections
@@ -15,73 +32,20 @@ import { consentStatements } from './connection-model';
  * asked for, and nothing is chosen for the person: a setting counts as done only once someone
  * chose its values. The settings are described as data (`PARTS`), so one form draws all of them.
  */
-export type AccountFlowId = 'registration' | 'login';
-
-export type AccountValue = string | string[];
-
-/** What has been set in one flow: the values by field, and the optional steps that were added. */
-export interface AccountFlowState {
-	values: Record<string, AccountValue>;
-	added: string[];
-}
-
-export function emptyFlowState(): AccountFlowState {
-	return { values: {}, added: [] };
-}
-
-export interface AccountChoice {
-	value: string;
-	label: string;
-}
-
-export interface AccountField {
-	key: string;
-	kind: 'select' | 'checks' | 'text';
-	/** The label of a select, the heading of a group of checkboxes. */
-	label: MessageKey;
-	hint?: MessageKey;
-	/** The choices, in the current language (none for a text field). */
-	options: () => AccountChoice[];
-	/** The setting is not done until this has a value (while it is shown). */
-	required?: boolean;
-	/** Shown only for some values of the fields before it. */
-	showWhen?: (values: Record<string, AccountValue>) => boolean;
-}
-
-export interface AccountPart {
-	id: string;
-	label: MessageKey;
-	lead: MessageKey;
-	/** A fact about how the step behaves that is not a choice. */
-	note?: MessageKey;
-	fields: readonly AccountField[];
-}
-
-export interface AccountGroup {
-	id: string;
-	label: MessageKey;
-	parts: readonly string[];
-	/** Not there at first: added with the flow's "+" and taken away again with its ×. */
-	optional?: boolean;
-}
-
-export interface AccountFlowDef {
-	id: AccountFlowId;
-	title: MessageKey;
-	subtitle: MessageKey;
-	summary: MessageKey;
-	start: { title: MessageKey; detail: MessageKey };
-	end: { title: MessageKey; detail: MessageKey };
-	groups: readonly AccountGroup[];
-}
-
-/** Choices whose texts are the keys `af.<prefix>.<value>`. */
-function choices(prefix: string, values: readonly string[]): () => AccountChoice[] {
-	return () => values.map((value) => ({ value, label: t(`af.${prefix}.${value}` as MessageKey) }));
-}
-
-const includes = (key: string, value: string) => (values: Record<string, AccountValue>) =>
-	Array.isArray(values[key]) && values[key].includes(value);
+export type {
+	AccountChoice,
+	AccountField,
+	AccountFlowDef,
+	AccountFlowId,
+	AccountFlowState,
+	AccountGroup,
+	AccountPart,
+	AccountValue,
+	FlowId,
+	SyncFlowId
+} from './flow-spec';
+export { emptyFlowState, isSyncFlow } from './flow-spec';
+export { SYNC_FLOW_IDS } from './sync-flow-spec';
 
 /** The connections the tenant already has, for "sign in through …" (dummy). */
 const PROVIDERS = () => [
@@ -89,33 +53,13 @@ const PROVIDERS = () => [
 	{ value: 'corporate', label: t('af.provider.corporate') }
 ];
 
-/** The name of a flow and where it is used: what the wizard asks, and the first step of the flow. */
-function aboutFields(prefix: 'reg' | 'login'): AccountField[] {
-	return [
-		{
-			key: `${prefix}.name`,
-			kind: 'text',
-			label: 'af.field.name',
-			options: () => [],
-			required: true
-		},
-		{
-			key: `${prefix}.scope`,
-			kind: 'select',
-			label: 'af.field.scope',
-			options: choices('scope', ['default-ui', 'other-ui']),
-			required: true
-		}
-	];
-}
-
-export const PARTS: Record<string, AccountPart> = {
+const ACCOUNT_PARTS: Record<string, AccountPart> = {
 	'reg-about': {
 		id: 'reg-about',
 		label: 'af.part.about',
 		lead: 'af.lead.about',
 		note: 'af.note.about',
-		fields: aboutFields('reg')
+		fields: aboutFields('registration')
 	},
 	'login-about': {
 		id: 'login-about',
@@ -417,7 +361,10 @@ export const PARTS: Record<string, AccountPart> = {
 	}
 };
 
-export const FLOWS: Record<AccountFlowId, AccountFlowDef> = {
+/** Every setting of every flow, by part id. */
+export const PARTS: Record<string, AccountPart> = { ...ACCOUNT_PARTS, ...SYNC_PARTS };
+
+export const FLOWS: Record<FlowId, AccountFlowDef> = {
 	registration: {
 		id: 'registration',
 		title: 'af.flow.registration.title',
@@ -464,13 +411,17 @@ export const FLOWS: Record<AccountFlowId, AccountFlowDef> = {
 			},
 			{ id: 'finish', label: 'af.group.finish', parts: ['login-session', 'login-return'] }
 		]
-	}
+	},
+	...SYNC_FLOWS
 };
 
+/** The flows that sign people up and in. */
 export const ACCOUNT_FLOW_IDS: readonly AccountFlowId[] = ['registration', 'login'];
+/** Every flow: sign-up and sign-in, then the user sync flows. */
+export const ALL_FLOW_IDS: readonly FlowId[] = [...ACCOUNT_FLOW_IDS, ...SYNC_FLOW_IDS];
 
 /** Every setting of a step of a flow, flat (the flow's own settings, see `aboutPart`, are not one). */
-export function partsOf(flow: AccountFlowId): string[] {
+export function partsOf(flow: FlowId): string[] {
 	return FLOWS[flow].groups.flatMap((group) => group.parts);
 }
 
@@ -483,7 +434,7 @@ export function groupLabel(group: AccountGroup): string {
 }
 
 /** The steps as the flow is now: the fixed ones and the optional ones that were added. */
-export function visibleGroups(flow: AccountFlowId, state: AccountFlowState): AccountGroup[] {
+export function visibleGroups(flow: FlowId, state: AccountFlowState): AccountGroup[] {
 	return FLOWS[flow].groups.filter((group) => !group.optional || state.added.includes(group.id));
 }
 
@@ -502,7 +453,7 @@ export type PartState = 'done' | 'required' | 'todo';
  * A setting is done once every field it needs has a value. Until then it is required, in a step
  * the flow cannot do without, and otherwise just still to do.
  */
-export function partState(partId: string, flow: AccountFlowId, state: AccountFlowState): PartState {
+export function partState(partId: string, flow: FlowId, state: AccountFlowState): PartState {
 	const complete = shownFields(partId, state)
 		.filter((field) => field.required)
 		.every((field) => hasValue(state.values[field.key]));
@@ -513,7 +464,7 @@ export function partState(partId: string, flow: AccountFlowId, state: AccountFlo
 
 export function groupState(
 	group: AccountGroup,
-	flow: AccountFlowId,
+	flow: FlowId,
 	state: AccountFlowState
 ): 'done' | 'partial' | 'todo' | 'required' {
 	const states = group.parts.map((id) => partState(id, flow, state));
@@ -524,7 +475,7 @@ export function groupState(
 
 /** The settings still to be done, required ones first. */
 export function stillToDo(
-	flow: AccountFlowId,
+	flow: FlowId,
 	state: AccountFlowState
 ): { id: string; label: string; state: PartState }[] {
 	// The flow's own settings (name, place) come first: they are not a step of the flow.
@@ -538,7 +489,7 @@ export function stillToDo(
 }
 
 /** The flow can be used once none of its settings is still required. */
-export function isReady(flow: AccountFlowId, state: AccountFlowState): boolean {
+export function isReady(flow: FlowId, state: AccountFlowState): boolean {
 	return stillToDo(flow, state).every((part) => part.state !== 'required');
 }
 
@@ -548,7 +499,7 @@ export interface SummaryRow {
 }
 
 /** What was chosen, field by field, for the overview; a field with no value says so. */
-export function summaryRows(flow: AccountFlowId, state: AccountFlowState): SummaryRow[] {
+export function summaryRows(flow: FlowId, state: AccountFlowState): SummaryRow[] {
 	return visibleGroups(flow, state)
 		.flatMap((group) => group.parts)
 		.flatMap((partId) => shownFields(partId, state))
@@ -563,7 +514,7 @@ export function summaryRows(flow: AccountFlowId, state: AccountFlowState): Summa
 }
 
 /** A flow with every required setting chosen (and, with `full`, the optional steps too). */
-export function sampleState(flow: AccountFlowId, full = false): AccountFlowState {
+export function sampleState(flow: FlowId, full = false): AccountFlowState {
 	const state = emptyFlowState();
 	if (full) state.added = FLOWS[flow].groups.filter((g) => g.optional).map((group) => group.id);
 	const wanted = FLOWS[flow].groups.filter((group) => full || !group.optional);
@@ -584,45 +535,49 @@ export function sampleState(flow: AccountFlowId, full = false): AccountFlowState
 	return state;
 }
 
-const NAME_KEY: Record<AccountFlowId, string> = { registration: 'reg.name', login: 'login.name' };
-const ABOUT_PART: Record<AccountFlowId, string> = {
-	registration: 'reg-about',
-	login: 'login-about'
-};
+const NAME_KEY = Object.fromEntries(
+	Object.entries(FLOW_PREFIX).map(([flow, prefix]) => [flow, `${prefix}.name`])
+) as Record<FlowId, string>;
+const ABOUT_PART = Object.fromEntries(
+	Object.entries(FLOW_PREFIX).map(([flow, prefix]) => [flow, `${prefix}-about`])
+) as Record<FlowId, string>;
 
 /** The setting that holds the flow's name and where it is used. */
-export function aboutPart(flow: AccountFlowId): string {
+export function aboutPart(flow: FlowId): string {
 	return ABOUT_PART[flow];
 }
 
 /** The name the flow goes by; until it has one, what kind of flow it is. */
-export function flowName(flow: AccountFlowId, state: AccountFlowState): string {
+export function flowName(flow: FlowId, state: AccountFlowState): string {
 	const name = state.values[NAME_KEY[flow]];
 	return typeof name === 'string' && name.trim() !== '' ? name : t(FLOWS[flow].title);
 }
 
-/** A flow that has a name and a place and nothing else yet (what the wizard leaves behind). */
-export function aboutState(flow: AccountFlowId, name: string, scope: string): AccountFlowState {
+/**
+ * A flow that has its name and its second setting (where it is used, or the other system) and
+ * nothing else yet: what the wizard leaves behind.
+ */
+export function aboutState(flow: FlowId, name: string, second: string): AccountFlowState {
 	const state = emptyFlowState();
-	const prefix = flow === 'registration' ? 'reg' : 'login';
+	const prefix = FLOW_PREFIX[flow];
 	state.values[`${prefix}.name`] = name;
-	state.values[`${prefix}.scope`] = scope;
+	state.values[`${prefix}.${isSyncFlow(flow) ? 'partner' : 'scope'}`] = second;
 	return state;
 }
 
-/** The wizard's steps for a sign-up or sign-in flow: the two questions, then its name and place. */
-export function accountWizardSteps(flow: AccountFlowId | ''): WizardStep[] {
+/** The wizard's steps for a table-defined flow: the two questions, then its name and the rest. */
+export function accountWizardSteps(flow: FlowId | ''): WizardStep[] {
 	const steps = [
 		{ id: 'where', label: t('sf.part.where') },
 		{ id: 'kind', label: t('sf.part.kind') }
 	];
-	return flow ? [...steps, { id: 'account-about', label: t('af.part.about') }] : steps;
+	return flow ? [...steps, { id: 'account-about', label: partLabel(ABOUT_PART[flow]) }] : steps;
 }
 
 /** Whether the person may leave a step of the wizard for a sign-up or sign-in flow. */
 export function canProceedAccount(
 	stepId: string,
-	flow: AccountFlowId | '',
+	flow: FlowId | '',
 	state: AccountFlowState
 ): boolean {
 	if (stepId === 'kind') return flow !== '';

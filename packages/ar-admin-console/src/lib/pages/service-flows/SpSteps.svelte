@@ -35,7 +35,7 @@
 {#if step === 'sp-import'}
 	<MetadataImport bind:form partner="service" />
 {:else if step === 'sp-share'}
-	<OurDetails items={ourItems} partner="service" bind:shared={form.shared} download />
+	<OurDetails items={ourItems} partner="service" download />
 {:else if step === 'sp-attrs'}
 	<Select
 		label={t('sf.sp.nameIdLabel')}

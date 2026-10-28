@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import Page from '$lib/ui/templates/Page.svelte';
 	import AccountFlowDetail from './AccountFlowDetail.svelte';
-	import { emptyFlowState, sampleState, type AccountFlowId } from './account-flow-model';
+	import { emptyFlowState, sampleState, type FlowId } from './account-flow-model';
 
 	/**
 	 * An account flow on its own page, holding what is set in it, for a story to open part-way:
@@ -11,7 +11,7 @@
 	 * both flows itself.
 	 */
 	interface Props {
-		flow: AccountFlowId;
+		flow: FlowId;
 		filled?: 'none' | 'required' | 'all';
 	}
 

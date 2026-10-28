@@ -14,7 +14,7 @@
 		actions?: Snippet;
 		/** Small context line above the title (e.g. the platform-scope badge). */
 		eyebrow?: Snippet;
-		/** What the page is about, as badges under the title (its kind, whether it is active). */
+		/** What the page is, as badges at the top end of the title row (its kind, its status). */
 		badges?: Snippet;
 		/** The title element, so a page that replaces what was on screen can move focus to it. */
 		titleElement?: HTMLHeadingElement | null;
@@ -37,10 +37,14 @@
 	<div class="page-head__row">
 		<div class="page-head__text">
 			<h1 bind:this={titleElement} tabindex="-1">{title}</h1>
-			{#if badges}<div class="page-head__badges">{@render badges()}</div>{/if}
 			{#if description}<p>{description}</p>{/if}
 		</div>
-		{#if actions}<div class="page-head__actions">{@render actions()}</div>{/if}
+		{#if badges || actions}
+			<div class="page-head__aside">
+				{#if badges}<div class="page-head__badges">{@render badges()}</div>{/if}
+				{#if actions}<div class="page-head__actions">{@render actions()}</div>{/if}
+			</div>
+		{/if}
 	</div>
 </header>
 
@@ -63,17 +67,25 @@
 		color: var(--text-muted);
 	}
 
+	/* The top end of the title row: the page's status, then its actions. One block, so when it
+	   wraps under a long title it still sits at the end and wraps inside itself. */
+	.page-head__aside {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		justify-content: flex-end;
+		gap: 8px 16px;
+		margin-inline-start: auto;
+	}
+
+	/* Level with the first line of the title. */
 	.page-head__badges {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
+		justify-content: flex-end;
 		gap: 6px;
-		margin-top: 12px;
-	}
-
-	/* The description follows the badges with the same room as the badges follow the title. */
-	.page-head__badges + p {
-		margin-top: 12px;
+		min-height: calc(var(--fs-page-title) * 1.35);
 	}
 
 	.page-head__row {
@@ -109,6 +121,5 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		margin-inline-start: auto;
 	}
 </style>

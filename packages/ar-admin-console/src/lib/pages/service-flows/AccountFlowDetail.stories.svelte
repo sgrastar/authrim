@@ -218,3 +218,88 @@
 		await expect(todo.queryByRole('button', { name: 'Name and where it is used' })).toBeNull();
 	}}
 />
+
+<!-- SCIM received cannot do without a mapping, and starts from the other system, so it is not run from here. -->
+<Story
+	name="SCIM received, nothing set"
+	args={{ flow: 'scim-in', filled: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			canvas.getByRole('heading', { name: 'Receive over SCIM', level: 1 })
+		).toBeInTheDocument();
+		// The other system is the flow's own setting, asked on the overview.
+		await expect(canvas.getByRole('textbox', { name: /The other system/ })).toBeRequired();
+		// Mapping is a step from the start (a user cannot come in without one), and required.
+		await expect(inFlow(canvasElement, /^Mapping set.*Required.*Not set yet/)).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: 'Run' })).toBeNull();
+	}}
+/>
+
+<!-- A one-shot run of a CSV import: the file is chosen at each run. A demo, so the result is made up. -->
+<Story
+	name="CSV import, run now"
+	args={{ flow: 'csv', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('heading', { name: 'Run', level: 2 })).toBeInTheDocument();
+		const run = canvas.getByRole('button', { name: 'Run now' });
+		// A file has to be named first.
+		await expect(run).toBeDisabled();
+		await userEvent.type(canvas.getByRole('textbox', { name: 'File name' }), 'users.csv');
+		await expect(run).toBeEnabled();
+		await userEvent.click(run);
+		const result = await canvas.findByRole('region', { name: 'Result' });
+		await expect(within(result).getByText('Processed')).toBeInTheDocument();
+		await expect(canvas.getByText(/no user is changed and no file is read/)).toBeInTheDocument();
+	}}
+/>
+
+<Story
+	name="Sending over SCIM waits for its settings"
+	args={{ flow: 'scim-out', filled: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('button', { name: 'Run now' })).toBeDisabled();
+		await expect(canvas.getByText(/once the required settings are set/)).toBeInTheDocument();
+	}}
+/>
+
+<!-- A different file is a different run: changing the name while it runs drops the result of the old one. -->
+<Story
+	name="Changing the file drops the result"
+	args={{ flow: 'csv', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const name = canvas.getByRole('textbox', { name: 'File name' });
+		await userEvent.type(name, 'users.csv');
+		await userEvent.click(canvas.getByRole('button', { name: 'Run now' }));
+		await userEvent.type(name, '2');
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+		await expect(canvas.queryByRole('region', { name: 'Result' })).toBeNull();
+		await expect(canvas.getByRole('button', { name: 'Run now' })).toBeEnabled();
+	}}
+/>
+
+<!-- Narrowing what is sent asks to what: roles or groups. -->
+<Story
+	name="SCIM sent: narrowing by role"
+	args={{ flow: 'scim-out', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByText('Ready')).toBeInTheDocument();
+		await userEvent.click(inFlow(canvasElement, /^Users to sync/));
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: /Users to send/ }),
+			'byRole'
+		);
+		await expect(await canvas.findByRole('checkbox', { name: 'Admin' })).toBeInTheDocument();
+		// Not ready until it is said which roles.
+		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
+		await expect(canvas.getByText('Disabled')).toBeInTheDocument();
+		await userEvent.click(inFlow(canvasElement, /^Users to sync/));
+		await userEvent.click(canvas.getByRole('checkbox', { name: 'Admin' }));
+		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
+		await expect(canvas.getByText('Ready')).toBeInTheDocument();
+	}}
+/>

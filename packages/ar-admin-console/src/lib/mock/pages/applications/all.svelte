@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/i18n.svelte';
 	import {
-		ACCOUNT_FLOW_IDS,
+		ALL_FLOW_IDS,
+		isSyncFlow,
+		sampleState,
 		aboutState,
 		flowName,
 		FLOWS,
 		isReady,
-		type AccountFlowId,
+		type FlowId,
 		type AccountFlowState
 	} from '$lib/pages/service-flows/account-flow-model';
 	import AccountFlowDetail from '$lib/pages/service-flows/AccountFlowDetail.svelte';
@@ -94,15 +96,31 @@
 		sp: 'SAML',
 		idp: 'SAML'
 	};
-	const FLOW_DATES: Record<AccountFlowId, { created: string; modified: string }> = {
+	const FLOW_DATES: Record<FlowId, { created: string; modified: string }> = {
 		registration: { created: '2026-07-01T00:00:00Z', modified: '2026-10-18T06:25:00Z' },
-		login: { created: '2026-07-01T00:00:00Z', modified: '2026-10-18T06:25:00Z' }
+		login: { created: '2026-07-01T00:00:00Z', modified: '2026-10-18T06:25:00Z' },
+		'scim-in': { created: '2026-08-12T03:10:00Z', modified: '2026-10-22T09:45:00Z' },
+		'scim-out': { created: '2026-09-08T05:50:00Z', modified: '2026-10-26T01:15:00Z' },
+		csv: { created: '2026-09-20T07:30:00Z', modified: '2026-10-27T12:00:00Z' }
 	};
+	/** What the protocol column says for a sync flow; sign-up and sign-in have none of their own. */
+	const SYNC_PROTOCOL = { 'scim-in': 'SCIM', 'scim-out': 'SCIM', csv: 'CSV' } as const;
 
-	/** What has been set in each sign-up and sign-in flow, kept while this page is open. */
-	const flowStates = $state<Record<AccountFlowId, AccountFlowState>>({
+	/** A flow with every required setting chosen, under a name of its own. */
+	function named(flow: FlowId, name: string, second: string): AccountFlowState {
+		const state = sampleState(flow);
+		Object.assign(state.values, aboutState(flow, name, second).values);
+		return state;
+	}
+
+	/** What has been set in each sign-up, sign-in and sync flow, kept while this page is open. */
+	const flowStates = $state<Record<FlowId, AccountFlowState>>({
 		registration: aboutState('registration', 'Standard sign-up', 'default-ui'),
-		login: aboutState('login', 'Standard sign-in', 'default-ui')
+		login: aboutState('login', 'Standard sign-in', 'default-ui'),
+		// Two of the sync flows are set up in full, one is still being set up.
+		'scim-in': named('scim-in', 'HR system provisioning', 'HR system'),
+		'scim-out': aboutState('scim-out', 'Chat provisioning', 'Chat service'),
+		csv: named('csv', 'Monthly HR import', 'HR export')
 	});
 	/** The same for each connection, as if it had been set up in full. */
 	const connectionStates = $state<Record<string, Answers>>(
@@ -133,13 +151,14 @@
 		created: string;
 		modified: string;
 		/** What opening the row shows. */
-		open: { flow: AccountFlowId } | { connection: string };
+		open: { flow: FlowId } | { connection: string };
 	}
 	const rows = $derived<FlowRow[]>([
-		...ACCOUNT_FLOW_IDS.map((id) => ({
+		...ALL_FLOW_IDS.map((id) => ({
 			id,
-			protocol: t(FLOWS[id].title),
-			kind: '—',
+			// Sign-up and sign-in name themselves; a sync flow is SCIM or CSV, inbound or outbound.
+			protocol: isSyncFlow(id) ? SYNC_PROTOCOL[id] : t(FLOWS[id].title),
+			kind: id === 'scim-in' || id === 'scim-out' ? t(`af.kind.${id}`) : '—',
 			name: flowName(id, flowStates[id]),
 			status: isReady(id, flowStates[id]) ? ('ready' as const) : ('setup' as const),
 			...FLOW_DATES[id],

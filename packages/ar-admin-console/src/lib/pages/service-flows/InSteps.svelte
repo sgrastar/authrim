@@ -157,7 +157,7 @@
 	<TextField label={t('sf.row.clientId')} hint={t('sf.in.clientIdHint')} bind:value={op.clientId} />
 	<SecretField label={t('sf.in.clientSecret')} mode="enter" bind:value={op.clientSecret} />
 {:else if step === 'op-share'}
-	<OurDetails items={opOurs} partner="provider" bind:shared={op.shared} />
+	<OurDetails items={opOurs} partner="provider" />
 {:else if step === 'op-attrs'}
 	<Select
 		label={t('sf.in.attrsLabel')}
@@ -183,7 +183,7 @@
 	/>
 	<MetadataImport bind:form={idp} partner="provider" />
 {:else if step === 'idp-share'}
-	<OurDetails items={idpOurs} partner="provider" bind:shared={idp.shared} download />
+	<OurDetails items={idpOurs} partner="provider" download />
 {:else if step === 'idp-attrs'}
 	<Select
 		label={t('sf.in.attrsLabel')}

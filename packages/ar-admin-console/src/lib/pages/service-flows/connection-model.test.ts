@@ -8,6 +8,7 @@ import {
 	entityIdProblem,
 	FLOW,
 	FLOW_GROUPS,
+	GENERAL_PARTS,
 	groupState,
 	httpsUrlProblem,
 	isPristine,
@@ -97,8 +98,9 @@ describe('the flow of a connection', () => {
 
 	it('has every part the wizard asks, and ends with activating', () => {
 		for (const kind of KINDS) {
-			const flow = FLOW[kind];
-			expect(flow.at(-1)).toBe('activate');
+			// The settings that are not a step (what the other side is) are shown at the top.
+			const flow = [...GENERAL_PARTS[kind], ...FLOW[kind]];
+			expect(FLOW[kind].at(-1)).toBe('activate');
 			const direction = KINDS_OF.out.includes(kind) ? 'out' : 'in';
 			for (const id of ids({ direction, kind }).slice(2))
 				expect(flow, `${kind} ${id}`).toContain(id);
@@ -221,7 +223,6 @@ describe('the parts of a flow, after the wizard', () => {
 		expect(partState('rp-redirect', rp)).toBe('required');
 		expect(missingParts(rp)).toEqual(['Redirect URIs']);
 		const sp = sampleAnswers('sp', 'wizard');
-		expect(partState('sp-share', sp)).toBe('todo');
 		// A service cannot work without a mapping (schemas and a set), which the wizard did not ask.
 		expect(missingParts(sp)).toEqual(['Input and output schemas', 'Mapping sets']);
 		// Nothing of a provider was asked, so its details are the first thing still required.
@@ -330,15 +331,13 @@ describe('the steps of a flow', () => {
 
 	it('are as far along as their settings', () => {
 		const a = sampleAnswers('rp', 'wizard');
-		const [app, signin] = FLOW_GROUPS.rp;
-		expect(groupState(app, a)).toBe('required'); // the redirect URIs are missing
-		expect(groupState(signin, a)).toBe('done');
+		// The redirect URIs are missing: that holds the connection back, though it is not a step.
+		expect(partState('rp-redirect', a)).toBe('required');
+		expect(missingParts(a)).toEqual(['Redirect URIs']);
 		a.rp.redirectUris = ['https://portal.example.com/cb'];
-		// What Authrim gives the app is not a step of the flow, so it does not hold the step back.
-		expect(groupState(app, a)).toBe('done');
+		expect(missingParts(a)).toEqual([]);
 		const sp = sampleAnswers('sp', 'wizard');
-		// Its details are in: the step is done. Nothing has been checked yet: the last step is not.
-		expect(groupState(FLOW_GROUPS.sp[0], sp)).toBe('done');
+		// Nothing has been checked yet: the last step is not done.
 		expect(groupState(FLOW_GROUPS.sp.at(-1)!, sp)).toBe('todo');
 	});
 });
@@ -390,10 +389,13 @@ describe('the processing steps of a flow', () => {
 	});
 
 	it('keep the settings an app needs: redirect URIs, sign-in method, and the rest', () => {
-		expect(FLOW.rp).toEqual(
-			expect.arrayContaining(['rp-app', 'rp-redirect', 'rp-signin', 'rp-info'])
-		);
-		expect(FLOW.sp).toEqual(expect.arrayContaining(['sp-import', 'sp-attrs', 'sp-test']));
+		expect(GENERAL_PARTS.rp).toEqual(['rp-app', 'rp-redirect', 'rp-signin']);
+		expect(FLOW.rp).toEqual(expect.arrayContaining(['rp-info']));
+		expect(GENERAL_PARTS.sp).toEqual(['sp-import']);
+		expect(FLOW.sp).toEqual(expect.arrayContaining(['sp-attrs', 'sp-test']));
+		// What the other side is does not belong to the flow.
+		for (const kind of KINDS)
+			for (const id of GENERAL_PARTS[kind]) expect(FLOW[kind], `${kind} ${id}`).not.toContain(id);
 	});
 
 	it('sit before checking and going live, in the order of the earlier mock', () => {
@@ -525,13 +527,11 @@ describe('the sides of a connection', () => {
 		expect(kindRole('op').badge).not.toBe(kindRole('rp').badge);
 	});
 
-	it('gives an app the tenant’s own issuer to register, outside the steps of the flow', () => {
+	it('keeps what Authrim gives the other side outside the steps of the flow', () => {
 		for (const kind of KINDS) {
 			expect(FLOW[kind], kind).not.toContain(SHARE_PART[kind]);
 		}
 		expect(SHARE_PART.rp).toBe('rp-share');
-		expect(partState('rp-share', sampleAnswers('rp', 'wizard'))).toBe('todo');
-		expect(partState('rp-share', sampleAnswers('rp', 'complete'))).toBe('done');
 	});
 });
 
@@ -553,7 +553,7 @@ describe('the words, in another language', () => {
 			'追加するもの',
 			'種類'
 		]);
-		expect(groupLabel(FLOW_GROUPS.rp[0])).toBe('アプリ');
+		expect(groupLabel(FLOW_GROUPS.rp[0])).toBe('新規登録');
 		expect(kindProtocol('sp')).toBe('SAML（SP）');
 		expect(kindRole('op').line).toMatch(/Authrim/);
 		expect(leaveDialog().body).toBe(

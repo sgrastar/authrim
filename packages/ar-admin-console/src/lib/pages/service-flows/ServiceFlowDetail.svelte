@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
+	import { tick } from 'svelte';
 	import FlowCanvas from '$lib/ui/flow/FlowCanvas.svelte';
 	import FlowEdge from '$lib/ui/flow/FlowEdge.svelte';
 	import FlowEndpoint from '$lib/ui/flow/FlowEndpoint.svelte';
 	import FlowScope from '$lib/ui/flow/FlowScope.svelte';
 	import FlowSequence from '$lib/ui/flow/FlowSequence.svelte';
 	import FlowStepGroup from '$lib/ui/flow/FlowStepGroup.svelte';
+	import { revealPanel } from '$lib/ui/flow/reveal-panel';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
 	import Card from '$lib/ui/patterns/Card.svelte';
 	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
@@ -19,6 +21,7 @@
 		canActivate,
 		EXTRA_PARTS,
 		FLOW_GROUPS,
+		GENERAL_PARTS,
 		groupLabel,
 		groupState,
 		KIND_MARK,
@@ -73,6 +76,14 @@
 
 	/** The setting shown on the right; empty is the overview. */
 	let current = $state('');
+	let panel = $state<HTMLElement | null>(null);
+
+	/** Opens a setting on the right, and brings the page up to it if the flow had scrolled away. */
+	async function select(id: string) {
+		current = id;
+		await tick();
+		revealPanel(panel);
+	}
 
 	const GROUP_STATUS: Record<'done' | 'partial' | 'todo' | 'required', MessageKey> = {
 		done: 'sf.status.done',
@@ -115,10 +126,29 @@
 	});
 	const todo = $derived(stillToDo(answers));
 
+	/** The connection's own settings (what the other side is), at the top of its settings. */
+	let general = $state<HTMLElement | null>(null);
+
+	/** A general setting is on the overview; any other setting opens on the right. */
+	function open(id: string) {
+		if (!GENERAL_PARTS[kind].includes(id)) {
+			void select(id);
+			return;
+		}
+		current = '';
+		// Once the overview is back, move to the first field of that setting.
+		queueMicrotask(() =>
+			general
+				?.querySelector<HTMLElement>(`[data-part="${id}"]`)
+				?.querySelector<HTMLElement>('input, select, button')
+				?.focus()
+		);
+	}
+
 	/** A step added with the "+" opens on its first setting. */
 	function add(id: string) {
 		answers.added = [...answers.added, id];
-		current = allGroups.find((group) => group.id === id)?.parts[0] ?? '';
+		void select(allGroups.find((group) => group.id === id)?.parts[0] ?? '');
 	}
 
 	function remove(id: string) {
@@ -193,7 +223,7 @@
 								required: statusOf(part).state === 'required'
 							}))}
 							{current}
-							onselect={(part) => (current = part)}
+							onselect={select}
 							onremove={group.optional ? () => remove(group.id) : undefined}
 							{exiting}
 						/>
@@ -219,7 +249,32 @@
 	</div>
 
 	<div class="detail__side">
-		<section class="detail__panel" aria-label={current ? labelOf(current) : overview}>
+		{#if current === ''}
+			<!-- What the other side is does not belong to the flow: a frame of its own above. -->
+			<div bind:this={general}>
+				<Card title={t('af.general')}>
+					<div class="detail__general">
+						{#each GENERAL_PARTS[kind] as part (part)}
+							<section class="detail__section" data-part={part} aria-labelledby="general-{part}">
+								<h3 class="detail__sub" id="general-{part}">{labelOf(part)}</h3>
+								{#if part.startsWith('rp-')}
+									<RpSteps step={part} bind:form={answers.rp} />
+								{:else if part.startsWith('sp-')}
+									<SpSteps step={part} bind:form={answers.sp} />
+								{:else}
+									<InSteps step={part} bind:op={answers.op} bind:idp={answers.idp} />
+								{/if}
+							</section>
+						{/each}
+					</div>
+				</Card>
+			</div>
+		{/if}
+		<section
+			class="detail__panel"
+			bind:this={panel}
+			aria-label={current ? labelOf(current) : overview}
+		>
 			<PanelHeader title={current ? labelOf(current) : overview}>
 				{#snippet back()}
 					{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
@@ -249,7 +304,7 @@
 												part.state === 'required' ? 'sf.value.required' : 'sf.status.todo'
 											)}</Badge
 										>
-										<Button variant="ghost" size="sm" onclick={() => (current = part.id)}
+										<Button variant="ghost" size="sm" onclick={() => open(part.id)}
 											>{part.label}</Button
 										>
 									</li>
@@ -325,6 +380,12 @@
 		flex-direction: column;
 		gap: var(--space-columns);
 		min-width: 0;
+	}
+
+	.detail__general {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-columns);
 	}
 
 	.detail__share {

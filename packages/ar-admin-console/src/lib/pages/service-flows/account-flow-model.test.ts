@@ -5,7 +5,7 @@ import {
 	aboutPart,
 	aboutState,
 	accountWizardSteps,
-	ACCOUNT_FLOW_IDS,
+	ALL_FLOW_IDS,
 	canProceedAccount,
 	flowName,
 	emptyFlowState,
@@ -45,13 +45,13 @@ describe('account flows', () => {
 			for (const field of part.fields)
 				for (const option of field.options()) expect(option.label, field.key).not.toMatch(/^af\./);
 		}
-		const used = ACCOUNT_FLOW_IDS.flatMap((flow) => [aboutPart(flow), ...partsOf(flow)]);
+		const used = ALL_FLOW_IDS.flatMap((flow) => [aboutPart(flow), ...partsOf(flow)]);
 		expect(new Set(used).size).toBe(used.length);
 		expect(used.sort()).toEqual(Object.keys(PARTS).sort());
 	});
 
 	it('start with nothing set: no setting is done and nothing is chosen for the person', () => {
-		for (const flow of ACCOUNT_FLOW_IDS) {
+		for (const flow of ALL_FLOW_IDS) {
 			const state = emptyFlowState();
 			expect(isReady(flow, state)).toBe(false);
 			for (const part of visibleGroups(flow, state).flatMap((group) => group.parts))
@@ -64,7 +64,7 @@ describe('account flows', () => {
 	});
 
 	it('are ready once every required setting is chosen, without the optional steps', () => {
-		for (const flow of ACCOUNT_FLOW_IDS) {
+		for (const flow of ALL_FLOW_IDS) {
 			const state = sampleState(flow);
 			expect(isReady(flow, state)).toBe(true);
 			expect(stillToDo(flow, state)).toEqual([]);
@@ -172,5 +172,67 @@ describe('account flows', () => {
 		expect(partState('reg-extra-check', 'registration', state)).toBe('done');
 		// Sign-in has no such step.
 		expect(partsOf('login')).not.toContain('reg-extra-check');
+	});
+
+	it('has the sync flows beside sign-up and sign-in, each with its own name and other system', () => {
+		expect(ALL_FLOW_IDS).toEqual(['registration', 'login', 'scim-in', 'scim-out', 'csv']);
+		for (const flow of ['scim-in', 'scim-out', 'csv'] as const) {
+			const state = emptyFlowState();
+			// Asked first: a name and the system on the other side, not "where it is used".
+			expect(partsOf(flow)).not.toContain(aboutPart(flow));
+			expect(PARTS[aboutPart(flow)].fields.map((field) => field.kind)).toEqual(['text', 'text']);
+			expect(canProceedAccount('account-about', flow, state)).toBe(false);
+			state.values[`${aboutPart(flow).split('-')[0]}.name`] = 'A sync';
+			state.values[`${aboutPart(flow).split('-')[0]}.partner`] = 'Somewhere';
+			expect(canProceedAccount('account-about', flow, state)).toBe(true);
+		}
+	});
+
+	it('needs a mapping for SCIM received from the start, and adds it with the + elsewhere', () => {
+		const mapping = (flow: 'scim-in' | 'scim-out' | 'csv') =>
+			FLOWS[flow].groups.find((group) => group.id === 'mapping')!;
+		expect(mapping('scim-in').optional).toBeUndefined();
+		expect(partState('sin-mapping', 'scim-in', emptyFlowState())).toBe('required');
+		expect(mapping('scim-out').optional).toBe(true);
+		expect(mapping('csv').optional).toBe(true);
+		expect(partState('csv-mapping', 'csv', emptyFlowState())).toBe('todo');
+	});
+
+	it('can be run from the overview for CSV and SCIM sent, not for SCIM received', () => {
+		expect(FLOWS.csv.run).toBe('csv');
+		expect(FLOWS['scim-out'].run).toBe('scim-out');
+		expect(FLOWS['scim-in'].run).toBeUndefined();
+	});
+
+	it('are ready once the required settings of a sync flow are chosen', () => {
+		for (const flow of ['scim-in', 'scim-out', 'csv'] as const) {
+			expect(isReady(flow, emptyFlowState())).toBe(false);
+			expect(isReady(flow, sampleState(flow))).toBe(true);
+		}
+	});
+
+	it('steps the wizard through the name of a sync flow like any other', () => {
+		expect(accountWizardSteps('csv').map((step) => step.id)).toEqual([
+			'where',
+			'kind',
+			'account-about'
+		]);
+	});
+
+	it('asks which roles or groups to send when the scope is narrowed', () => {
+		const state = sampleState('scim-out');
+		expect(state.values['sout.scope']).toBe('all');
+		expect(shownFields('sout-scope', state).map((field) => field.key)).toEqual([
+			'sout.scope',
+			'sout.removed'
+		]);
+		state.values['sout.scope'] = 'byRole';
+		// Narrowed but not said to what: the flow is not ready.
+		expect(partState('sout-scope', 'scim-out', state)).toBe('required');
+		expect(isReady('scim-out', state)).toBe(false);
+		state.values['sout.roles'] = ['admin'];
+		expect(partState('sout-scope', 'scim-out', state)).toBe('done');
+		state.values['sout.scope'] = 'byGroup';
+		expect(partState('sout-scope', 'scim-out', state)).toBe('required');
 	});
 });

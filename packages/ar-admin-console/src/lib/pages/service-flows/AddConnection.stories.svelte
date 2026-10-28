@@ -275,12 +275,13 @@
 		await expect(canvas.queryByText('Redirect URIs')).toBeNull();
 		await expect(button(canvas, t('wizard.next'))).toBeDisabled();
 		await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), 'Employee portal');
-		await choose(canvas, /^Single-page app/);
+		await userEvent.selectOptions(canvas.getByRole('combobox', { name: 'App type' }), 'spa');
 		await next(canvas);
 		// A single-page app cannot keep a secret: only “None” is open.
-		await expect(canvas.getByRole('radio', { name: /^None/ })).toBeChecked();
+		const method = canvas.getByRole('combobox', { name: /How the app proves who it is/ });
+		await expect(method).toHaveValue('none');
 		await expect(
-			canvas.getByRole('radio', { name: /^Client secret, in the header/ })
+			within(method).getByRole('option', { name: /^Client secret, in the header/ })
 		).toBeDisabled();
 		// The last step ends in Continue to settings, not Add.
 		await expect(canvas.queryByRole('button', { name: /Add connection/ })).toBeNull();
@@ -293,12 +294,15 @@
 		await expect(title).toBeInTheDocument();
 		// The wizard is gone, so focus goes to the title instead of dropping to the page.
 		await waitFor(() => expect(title).toHaveFocus());
-		await expect(canvas.getByText('Single-page app')).toBeInTheDocument();
-		// A setting is reached from the to-do list, or from the flow on the left.
-		await userEvent.click(button(canvas, 'Redirect URIs'));
+		// What was entered is listed, and the app type is chosen in the general settings above.
 		await expect(
-			canvas.getByRole('heading', { name: 'Redirect URIs', level: 2 })
+			within(canvas.getByRole('heading', { name: 'What you entered' }).parentElement!).getByText(
+				'Single-page app'
+			)
 		).toBeInTheDocument();
+		// The to-do list leads to the setting, which is in the general settings above the overview.
+		await userEvent.click(button(canvas, 'Redirect URIs'));
+		await expect(canvas.getByRole('heading', { name: 'General settings' })).toBeInTheDocument();
 		await userEvent.click(button(canvas, 'Add redirect URI'));
 		await userEvent.type(
 			canvas.getByRole('textbox', { name: /Redirect URIs/ }),
@@ -340,7 +344,8 @@
 			canvas.getByRole('heading', { level: 2, name: 'Your details for them' })
 		).toBeInTheDocument();
 		await expect(canvas.getAllByRole('button', { name: /^Copy / }).length).toBeGreaterThan(2);
-		await userEvent.click(canvas.getByRole('switch', { name: /I have registered these/ }));
+		// Nothing to switch on: the values are copied, and the test shows whether it worked.
+		await expect(canvas.queryByRole('switch')).toBeNull();
 		await userEvent.click(inFlow(canvasElement, /^Test the connection/));
 		await userEvent.click(button(canvas, 'Run the test'));
 		await expect(await canvas.findByRole('list', { name: 'Test results' })).toBeInTheDocument();
@@ -548,6 +553,36 @@
 		await expect(
 			inFlow(canvasElement, /^Methods and sources.*Required.*Not set yet/)
 		).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- Syncing users is the fourth answer, with its own kinds: SCIM received, SCIM sent, a CSV import. -->
+<Story
+	name="Sync users: a CSV import"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await choose(canvas, /^Sync users/);
+		await next(canvas);
+		await expect(canvas.getByRole('radio', { name: /^Receive over SCIM/ })).toBeInTheDocument();
+		await expect(canvas.getByRole('radio', { name: /^Send over SCIM/ })).toBeInTheDocument();
+		await choose(canvas, /^Import a CSV/);
+		await next(canvas);
+		await expect(button(canvas, 'Continue to settings')).toBeDisabled();
+		await userEvent.type(
+			canvas.getByRole('textbox', { name: /Name of the flow/ }),
+			'Monthly import'
+		);
+		await userEvent.type(canvas.getByRole('textbox', { name: /The other system/ }), 'HR export');
+		await waitFor(() => expect(button(canvas, 'Continue to settings')).toBeEnabled());
+		await userEvent.click(button(canvas, 'Continue to settings'));
+		await expect(
+			await canvas.findByRole('heading', { name: 'Monthly import', level: 1 })
+		).toBeInTheDocument();
+		// What is still required is marked in the flow, and the run waits for it.
+		await expect(inFlow(canvasElement, /^File format.*Required.*Not set yet/)).toBeInTheDocument();
+		await expect(canvas.getByRole('button', { name: 'Run now' })).toBeDisabled();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

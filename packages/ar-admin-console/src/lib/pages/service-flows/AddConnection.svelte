@@ -15,7 +15,10 @@
 		canProceedAccount,
 		emptyFlowState,
 		FLOWS,
-		type AccountFlowId,
+		ACCOUNT_FLOW_IDS,
+		isSyncFlow,
+		SYNC_FLOW_IDS,
+		type FlowId,
 		type AccountFlowState
 	} from './account-flow-model';
 	import ServiceFlowDetail from './ServiceFlowDetail.svelte';
@@ -53,7 +56,8 @@
 	 */
 	interface Props {
 		prefill?: ConnectionKind;
-		prefillAccount?: AccountFlowId;
+		/** A sign-up, sign-in or sync flow to open with. */
+		prefillAccount?: FlowId;
 		filled?: 'wizard' | 'complete';
 		step?: number;
 		review?: boolean;
@@ -81,25 +85,35 @@
 		untrack(() => (prefill ? sampleAnswers(prefill, filled) : emptyAnswers()))
 	);
 	/** The sign-up or sign-in flow being added, when that is what was chosen. */
-	let account = $state<{ flow: AccountFlowId | ''; form: AccountFlowState }>(
+	let account = $state<{ flow: FlowId | ''; form: AccountFlowState }>(
 		untrack(() =>
 			prefillAccount
 				? {
 						flow: prefillAccount,
-						form: aboutState(
-							prefillAccount,
-							prefillAccount === 'registration'
-								? 'Partner portal sign-up'
-								: 'Partner portal sign-in',
-							'other-ui'
-						)
+						form: isSyncFlow(prefillAccount)
+							? aboutState(prefillAccount, 'HR system sync', 'HR system')
+							: aboutState(
+									prefillAccount,
+									prefillAccount === 'registration'
+										? 'Partner portal sign-up'
+										: 'Partner portal sign-in',
+									'other-ui'
+								)
 					}
 				: { flow: '', form: emptyFlowState() }
 		)
 	);
-	/** What the first question was answered with: a way of connecting, or a sign-up/sign-in flow. */
-	let where = $state<string>(untrack(() => (prefillAccount ? 'account' : answers.direction)));
-	const forAccount = $derived(where === 'account');
+	/**
+	 * What the first question was answered with: a way of connecting, sign-up and sign-in, or
+	 * syncing users.
+	 */
+	let where = $state<string>(
+		untrack(() =>
+			prefillAccount ? (isSyncFlow(prefillAccount) ? 'sync' : 'account') : answers.direction
+		)
+	);
+	/** The answer is a flow defined by a table (sign-up, sign-in, CSV, SCIM), not a connection. */
+	const forAccount = $derived(where === 'account' || where === 'sync');
 	let current = $state(untrack(() => step));
 	let reviewing = $state(untrack(() => review));
 
@@ -126,9 +140,11 @@
 
 	/** A kind that does not go with the new first answer is dropped. */
 	function chooseWhere(value: string) {
-		if (value === 'account') {
+		if (value === 'account' || value === 'sync') {
 			answers.direction = '';
 			answers.kind = '';
+			// A flow of the other group is dropped, as a kind that does not go is.
+			if (account.flow && isSyncFlow(account.flow) !== (value === 'sync')) account.flow = '';
 			return;
 		}
 		const direction = value as Direction;
@@ -156,13 +172,17 @@
 		{
 			value: 'account',
 			label: t('af.wizard.account.label'),
-			description: t('af.wizard.account.desc'),
-			wide: true
+			description: t('af.wizard.account.desc')
+		},
+		{
+			value: 'sync',
+			label: t('af.wizard.sync.label'),
+			description: t('af.wizard.sync.desc')
 		}
 	]);
 
 	const accountKinds = $derived(
-		(['registration', 'login'] as const).map((flow) => ({
+		(where === 'sync' ? SYNC_FLOW_IDS : ACCOUNT_FLOW_IDS).map((flow) => ({
 			value: flow,
 			label: t(`af.wizard.kind.${flow}.label`),
 			description: t(`af.wizard.kind.${flow}.desc`)
@@ -248,7 +268,7 @@
 				<ChoiceCards
 					label={t('sf.wizard.kindLabel')}
 					hideLabel
-					columns={2}
+					columns={where === 'sync' ? 3 : 2}
 					bind:value={account.flow}
 					options={accountKinds}
 				/>

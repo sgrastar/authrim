@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Title, one-line purpose and the page’s main action. At most one primary button here. The way back (to the list, to the parent) is a BackLink in `back`, above everything at the top start, always drawn with its frame (a quiet surface and outline) so it reads as a control and not as text; what acts or moves on is in `actions`, at the top end. Badges that say what the page is about (its kind, whether it is active) are in `badges`, under the title. Panels and boxes follow the same rule.'
+						'Title, one-line purpose and the page’s main action. At most one primary button here. The way back (to the list, to the parent) is a BackLink in `back`, above everything at the top start, always drawn with its frame (a quiet surface and outline) so it reads as a control and not as text; what acts or moves on is in `actions`, at the top end. Badges that say what the page is (its kind, whether it is active) are in `badges`, at the top end of the title row: a detail page gathers its status at the top right. Panels and boxes follow the same rule.'
 				}
 			}
 		}
@@ -65,21 +65,28 @@
 	{/snippet}
 </Story>
 
-<!-- What the page is, as badges: under the title, not above it. -->
+<!-- What the page is, as badges: at the top end of the title row, level with the title. -->
 <Story
-	name="Badges under the title"
+	name="Badges at the top end"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const title = canvas.getByRole('heading', { level: 1 });
 		const badge = canvas.getByText(sample('flowsTitle'), { selector: '.badge' });
-		await expect(badge.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-			title.getBoundingClientRect().bottom
-		);
+		const t = title.getBoundingClientRect();
+		const b = badge.getBoundingClientRect();
+		// On the title's row, not under it …
+		await expect(b.top).toBeLessThan(t.bottom);
+		// … at the far end, away from the title's text.
+		await expect(b.left).toBeGreaterThan(t.left + 200);
+		// Level with the first line of the title.
+		await expect(Math.abs(b.top + b.height / 2 - (t.top + t.height / 2))).toBeLessThan(10);
 	}}
 >
 	{#snippet template()}
-		<PageHeader title={sample('flowLogin')} description={sample('flowsDesc')}>
-			{#snippet badges()}<Badge>{sample('flowsTitle')}</Badge>{/snippet}
-		</PageHeader>
+		<div style="max-width: 900px">
+			<PageHeader title={sample('flowLogin')} description={sample('flowsDesc')}>
+				{#snippet badges()}<Badge>{sample('flowsTitle')}</Badge>{/snippet}
+			</PageHeader>
+		</div>
 	{/snippet}
 </Story>

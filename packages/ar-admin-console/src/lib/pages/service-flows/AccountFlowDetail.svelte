@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
+	import { tick } from 'svelte';
 	import FlowCanvas from '$lib/ui/flow/FlowCanvas.svelte';
 	import FlowEdge from '$lib/ui/flow/FlowEdge.svelte';
 	import FlowEndpoint from '$lib/ui/flow/FlowEndpoint.svelte';
 	import FlowScope from '$lib/ui/flow/FlowScope.svelte';
 	import FlowSequence from '$lib/ui/flow/FlowSequence.svelte';
 	import FlowStepGroup from '$lib/ui/flow/FlowStepGroup.svelte';
+	import { revealPanel } from '$lib/ui/flow/reveal-panel';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
 	import Card from '$lib/ui/patterns/Card.svelte';
 	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
@@ -21,16 +23,18 @@
 		flowName,
 		groupLabel,
 		groupState,
+		isSyncFlow,
 		isReady,
 		partLabel,
 		partState,
 		stillToDo,
 		summaryRows,
 		visibleGroups,
-		type AccountFlowId,
+		type FlowId,
 		type AccountFlowState,
 		type PartState
 	} from './account-flow-model';
+	import RunNowCard from './RunNowCard.svelte';
 	import AccountFlowStatus from './AccountFlowStatus.svelte';
 	import AccountFlowStep from './AccountFlowStep.svelte';
 
@@ -42,7 +46,7 @@
 	 * added with the flow's "+" and taken away with its ×. Dummy: nothing is saved anywhere.
 	 */
 	interface Props {
-		flow: AccountFlowId;
+		flow: FlowId;
 		form: AccountFlowState;
 		/** Back to the list of flows. */
 		onback?: () => void;
@@ -66,6 +70,14 @@
 
 	/** The setting shown on the right; empty is the overview. */
 	let current = $state('');
+	let panel = $state<HTMLElement | null>(null);
+
+	/** Opens a setting on the right, and brings the page up to it if the flow had scrolled away. */
+	async function select(id: string) {
+		current = id;
+		await tick();
+		revealPanel(panel);
+	}
 
 	const GROUP_STATUS: Record<'done' | 'partial' | 'todo' | 'required', MessageKey> = {
 		done: 'sf.status.done',
@@ -85,7 +97,7 @@
 	/** The flow's own settings are on the overview; any other setting opens on the right. */
 	function open(id: string) {
 		if (id !== aboutPart(flow)) {
-			current = id;
+			void select(id);
 			return;
 		}
 		current = '';
@@ -96,7 +108,7 @@
 	/** A step added with the "+" opens on its first setting. */
 	function add(id: string) {
 		form.added = [...form.added, id];
-		current = def.groups.find((group) => group.id === id)?.parts[0] ?? '';
+		void select(def.groups.find((group) => group.id === id)?.parts[0] ?? '');
 	}
 
 	function remove(id: string) {
@@ -159,7 +171,7 @@
 								required: partState(part, flow, form) === 'required'
 							}))}
 							{current}
-							onselect={(part) => (current = part)}
+							onselect={select}
 							onremove={group.optional ? () => remove(group.id) : undefined}
 							{exiting}
 						/>
@@ -187,7 +199,11 @@
 				</Card>
 			</div>
 		{/if}
-		<section class="detail__panel" aria-label={current ? partLabel(current) : overview}>
+		<section
+			class="detail__panel"
+			bind:this={panel}
+			aria-label={current ? partLabel(current) : overview}
+		>
 			<PanelHeader title={current ? partLabel(current) : overview}>
 				{#snippet back()}
 					{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
@@ -195,7 +211,7 @@
 			</PanelHeader>
 			<div class="detail__body">
 				{#if current === ''}
-					<p class="detail__lead">{t('af.contract.ui')}</p>
+					<p class="detail__lead">{t(isSyncFlow(flow) ? 'af.contract.sync' : 'af.contract.ui')}</p>
 					<section class="detail__section" aria-labelledby="entered">
 						<h3 class="detail__sub" id="entered">{t('sf.detail.entered')}</h3>
 						<DetailList columns={1} ruled>
@@ -230,6 +246,10 @@
 				{/if}
 			</div>
 		</section>
+		{#if current === '' && def.run}
+			<!-- Running it is not a step of the flow: a frame of its own below the overview. -->
+			<RunNowCard kind={def.run} {ready} />
+		{/if}
 	</div>
 </div>
 
