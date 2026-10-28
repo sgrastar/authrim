@@ -140,9 +140,6 @@
 			<span class="muted">{secretless ? t('sf.rp.pkceAlways') : t('sf.rp.pkceRecommended')}</span>
 		</span>
 	</div>
-	{#if form.authMethod !== 'none'}
-		<Callout tone="info">{t('sf.rp.secretOnce')}</Callout>
-	{/if}
 {:else if step === 'rp-info'}
 	<CheckboxGroup
 		title={t('sf.rp.scopesTitle')}

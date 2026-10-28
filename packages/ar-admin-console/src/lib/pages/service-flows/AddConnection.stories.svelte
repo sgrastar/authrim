@@ -264,7 +264,7 @@
 		await choose(canvas, /^Single-page app/);
 		await next(canvas);
 		// A single-page app cannot keep a secret: only “None” is open.
-		await expect(canvas.getByRole('radio', { name: /^None \(public app\)/ })).toBeChecked();
+		await expect(canvas.getByRole('radio', { name: /^None/ })).toBeChecked();
 		await expect(
 			canvas.getByRole('radio', { name: /^Client secret, in the header/ })
 		).toBeDisabled();
