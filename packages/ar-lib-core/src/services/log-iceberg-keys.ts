@@ -21,6 +21,36 @@ function invalid(): never {
   throw new Error('log_iceberg_root_keyring_invalid');
 }
 
+/** JSON.parse has already validated the syntax; visit each string token only once. */
+function assertUniquePropertyNames(value: string): void {
+  const names = new Set<string>();
+  let cursor = 0;
+  while (cursor < value.length) {
+    if (value[cursor] !== '"') {
+      cursor++;
+      continue;
+    }
+    const start = cursor++;
+    while (cursor < value.length) {
+      const character = value[cursor++];
+      if (character === '\\') cursor++;
+      else if (character === '"') break;
+    }
+    const end = cursor;
+    while (
+      value[cursor] === ' ' ||
+      value[cursor] === '\t' ||
+      value[cursor] === '\r' ||
+      value[cursor] === '\n'
+    )
+      cursor++;
+    if (value[cursor] !== ':') continue;
+    const name: unknown = JSON.parse(value.slice(start, end));
+    if (typeof name !== 'string' || names.has(name)) invalid();
+    names.add(name);
+  }
+}
+
 export function parseLogIcebergRootKeyring(value: string): LogIcebergRootKeyring {
   if (
     typeof value !== 'string' ||
@@ -50,10 +80,7 @@ export function parseLogIcebergRootKeyring(value: string): LogIcebergRootKeyring
   if (!entries.length || entries.length > LOG_ICEBERG_ROOT_KEYRING_MAX_VERSIONS) invalid();
   // This fixed schema has only three top-level names and numeric root names.
   // JSON.parse alone would silently accept a repeated version and discard a master.
-  const names = [...value.matchAll(/("(?:[^"\\]|\\.)*")\s*:/gu)].map(
-    (match) => JSON.parse(match[1]) as string
-  );
-  if (new Set(names).size !== names.length) invalid();
+  assertUniquePropertyNames(value);
   const roots: Record<string, string> = {};
   for (const [version, root] of entries) {
     if (

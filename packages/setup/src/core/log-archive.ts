@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, scrypt } from 'node:crypto';
 import {
   assertLogArchiveTableLocations,
   inspectLogArchiveTable,
@@ -326,9 +326,25 @@ async function provisionPipelineResource(
   identity: ProvisioningResourceIdentity,
   body: Record<string, unknown>
 ): Promise<{ id: string; name: string }> {
+  // Sink configuration includes a credential. Keep its immutable resume fingerprint
+  // memory-hard, with a stable resource-specific salt, without storing the credential.
+  const configurationDigest = await new Promise<string>((resolve, reject) => {
+    scrypt(
+      JSON.stringify(body),
+      ['authrim-log-archive-config-v1', options.api.accountId, identity.kind, identity.name].join(
+        '\0'
+      ),
+      32,
+      { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 },
+      (error, key) => {
+        if (error) reject(error);
+        else resolve(key.toString('hex'));
+      }
+    );
+  });
   identity = {
     ...identity,
-    configurationDigest: createHash('sha256').update(JSON.stringify(body)).digest('hex'),
+    configurationDigest,
   };
   const endpoint = `pipelines/v1/${identity.kind}s`;
   const prior = options.checkpoints[`${identity.kind}:${identity.binding}`];

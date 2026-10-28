@@ -407,11 +407,14 @@ describe('log archive setup contract', () => {
     expect(JSON.stringify(result)).not.toContain(tokenWrite);
     expect(JSON.stringify(f.checkpoints)).not.toContain(tokenWrite);
     expect(JSON.stringify(f.checkpoints)).not.toContain(tokenSink);
+    const checkpoints = structuredClone(f.checkpoints);
+    expect(checkpoints['sink:LOG_ARCHIVE_SINK'].configurationDigest).toMatch(/^[a-f0-9]{64}$/u);
     const creates = f.calls.filter((call) => call.method === 'POST').length;
     await expect(provisionLogArchive(f.options)).resolves.toMatchObject({
       ...result,
       activation: { ...result.activation, checkedAt: expect.any(String) },
     });
+    expect(f.checkpoints).toEqual(checkpoints);
     expect(f.calls.filter((call) => call.method === 'POST')).toHaveLength(creates);
     expect(f.prepareScheduledTable).not.toHaveBeenCalled();
   });
