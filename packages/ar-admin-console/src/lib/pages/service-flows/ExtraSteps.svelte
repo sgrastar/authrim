@@ -6,6 +6,7 @@
 	import Select from '$lib/ui/primitives/Select.svelte';
 	import {
 		consentStatements,
+		SIGNUP_FLOWS,
 		schemaOptions,
 		validSchema,
 		type ExtrasForm
@@ -59,7 +60,7 @@
 		hint={t('sf.extra.setHint')}
 		options={[
 			{ value: 'tenant-default', label: t('sf.set.tenantDefault') },
-			{ value: 'library-staff', label: t('sf.set.libraryStaff') },
+			{ value: 'staff', label: t('sf.set.staff') },
 			{ value: 'minimal', label: t('sf.set.minimal') }
 		]}
 	/>
@@ -94,6 +95,18 @@
 			{ value: 'version', label: t('sf.extra.when.version') },
 			{ value: 'always', label: t('sf.extra.when.always') }
 		]}
+	/>
+{:else if step === 'signup-flow'}
+	<p class="lead">
+		{t(outbound ? 'sf.extra.signupLead.out' : 'sf.extra.signupLead.in')}
+	</p>
+	<Select
+		label={t('sf.extra.signupFlow')}
+		placeholder={t('sf.extra.chooseSignup')}
+		hint={t('sf.extra.signupHint')}
+		value={form.signupFlow}
+		onchange={(value) => (form.signupFlow = value)}
+		options={SIGNUP_FLOWS}
 	/>
 {:else if step === 'role'}
 	<p class="lead">

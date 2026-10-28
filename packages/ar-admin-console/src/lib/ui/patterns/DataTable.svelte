@@ -47,6 +47,14 @@
 		bulkActions?: Snippet<[string[]]>;
 		/** Rows holding an unsaved change get the change wash (with SaveScope). */
 		rowChanged?: (row: Row) => boolean;
+		/**
+		 * Opens a row (its detail screen). A click anywhere on the row opens it, and for the
+		 * keyboard and screen readers the first cell holds a real button (visually hidden) named
+		 * by `rowOpenLabel`. A control inside a cell keeps its own click.
+		 */
+		onrowopen?: (row: Row) => void;
+		/** Accessible name of the row's open button ("Open {name}"). */
+		rowOpenLabel?: (row: Row) => string;
 	}
 
 	let {
@@ -62,7 +70,9 @@
 		selected = $bindable([]),
 		rowLabel,
 		bulkActions,
-		rowChanged
+		rowChanged,
+		onrowopen,
+		rowOpenLabel
 	}: Props = $props();
 
 	const keys = $derived(rows.map(rowKey));
@@ -87,6 +97,18 @@
 
 	function setRow(key: string, on: boolean) {
 		selected = on ? [...selected, key] : selected.filter((k) => k !== key);
+	}
+
+	/** A click on the row, but not on a control (or the label of one) inside one of its cells. */
+	function opens(event: MouseEvent, row: Row): void {
+		if (!onrowopen) return;
+		if (
+			(event.target as HTMLElement).closest(
+				'button, a, input, select, textarea, label, [role="switch"]'
+			)
+		)
+			return;
+		onrowopen(row);
 	}
 
 	function ariaSort(column: Column): 'ascending' | 'descending' | 'none' | undefined {
@@ -167,9 +189,12 @@
 		<tbody>
 			{#each rows as row (rowKey(row))}
 				{@const key = rowKey(row)}
+				<!-- The mouse click is a convenience; the keyboard and screen readers use the open button. -->
 				<tr
 					class:is-selected={selectable && selectedSet.has(key)}
 					class:is-changed={rowChanged?.(row) ?? false}
+					class:is-openable={!!onrowopen}
+					onclick={onrowopen ? (event) => opens(event, row) : undefined}
 				>
 					{#if selectable}
 						<td class="data__select">
@@ -182,9 +207,13 @@
 							</Checkbox>
 						</td>
 					{/if}
-					{#each columns as column (column.key)}
+					{#each columns as column, index (column.key)}
 						<td class:end={column.align === 'end'} class:center={column.align === 'center'}
-							>{@render cell(row, column)}</td
+							>{@render cell(row, column)}{#if onrowopen && index === 0}<button
+									type="button"
+									class="sr-only row-open"
+									onclick={() => onrowopen(row)}>{rowOpenLabel?.(row) ?? key}</button
+								>{/if}</td
 						>
 					{/each}
 				</tr>
@@ -294,6 +323,20 @@
 
 	tbody tr:last-child td {
 		border-bottom: 0;
+	}
+
+	tbody tr.is-openable {
+		cursor: pointer;
+	}
+
+	/* The row shows where the keyboard is: its open button is the one that has focus. */
+	tbody tr.is-openable:has(.row-open:focus-visible) {
+		outline: 2px solid var(--primary);
+		outline-offset: -2px;
+	}
+
+	tbody tr.is-openable:has(.row-open:focus-visible) td {
+		background: var(--bg-hover);
 	}
 
 	tbody tr:hover td:not(.data__empty) {

@@ -79,20 +79,17 @@
 		{
 			value: 'verified-email',
 			label: t('sf.link.option.verified-email'),
-			description: t('sf.link.option.verified-email.desc'),
-			icon: 'mail' as const
+			description: t('sf.link.option.verified-email.desc')
 		},
 		{
 			value: 'ask',
 			label: t('sf.link.option.ask'),
-			description: t('sf.link.option.ask.desc'),
-			icon: 'handshake' as const
+			description: t('sf.link.option.ask.desc')
 		},
 		{
 			value: 'new',
 			label: t('sf.link.option.new'),
-			description: t('sf.link.option.new.desc'),
-			icon: 'userPlus' as const
+			description: t('sf.link.option.new.desc')
 		}
 	]);
 
@@ -181,7 +178,7 @@
 	<TextField
 		label={t('sf.row.name')}
 		hint={t('sf.in.nameHint')}
-		placeholder="Campus sign-in"
+		placeholder="Corporate sign-in"
 		bind:value={idp.name}
 	/>
 	<MetadataImport bind:form={idp} partner="provider" />

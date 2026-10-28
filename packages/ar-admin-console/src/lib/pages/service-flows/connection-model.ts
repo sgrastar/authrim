@@ -112,6 +112,12 @@ const CONSENT_STATEMENTS = [
 	{ value: 'marketing', label: 'sf.consent.marketing' }
 ] as const satisfies readonly { value: string; label: MessageKey }[];
 
+/** The sign-up flows the tenant has, for a connection to choose from (dummy; names are not translated). */
+export const SIGNUP_FLOWS: readonly { value: string; label: string }[] = [
+	{ value: 'standard', label: 'Standard sign-up' },
+	{ value: 'partner-portal', label: 'Partner portal sign-up' }
+];
+
 /** The consent statements, in the current language. */
 export function consentStatements(): { value: string; label: string }[] {
 	return CONSENT_STATEMENTS.map((statement) => ({
@@ -137,6 +143,8 @@ export interface ExtrasForm {
 	consentStatements: string[];
 	consentPolicy: string;
 	role: string;
+	/** The sign-up flow people who arrive without an account go through (empty: none chosen). */
+	signupFlow: string;
 }
 
 function emptyImport(): ImportForm {
@@ -163,7 +171,8 @@ export function emptyAnswers(): Answers {
 			additionalFields: [],
 			consentStatements: [],
 			consentPolicy: '',
-			role: ''
+			role: '',
+			signupFlow: ''
 		},
 		rp: {
 			name: '',
@@ -179,7 +188,7 @@ export function emptyAnswers(): Answers {
 		sp: {
 			...emptyImport(),
 			nameIdFormat: 'persistent',
-			attributePreset: 'library',
+			attributePreset: 'standard',
 			minAuth: 'none',
 			consent: false,
 			shared: false,
@@ -236,6 +245,7 @@ const LABELS: Record<string, MessageKey> = {
 	'consent-statements': 'sf.part.consent-statements',
 	'consent-policies': 'sf.part.consent-policies',
 	role: 'sf.part.role',
+	'signup-flow': 'sf.part.signup-flow',
 	activate: 'sf.part.activate'
 };
 
@@ -267,8 +277,9 @@ export interface FlowGroup {
 /** Every step of a connection's flow, with its settings, in the order the flow draws them. */
 export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 	rp: [
-		{ id: 'app', label: 'sf.group.app', parts: ['rp-app', 'rp-redirect', 'rp-share'] },
+		{ id: 'app', label: 'sf.group.app', parts: ['rp-app', 'rp-redirect'] },
 		{ id: 'signin', label: 'sf.group.signin', parts: ['rp-signin'] },
+		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
 		{ id: 'receives', label: 'sf.group.receives', parts: ['rp-info'] },
 		{
 			id: 'mapping',
@@ -286,7 +297,7 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 		{ id: 'live', label: 'sf.group.live', parts: ['activate'] }
 	],
 	sp: [
-		{ id: 'service', label: 'sf.group.service', parts: ['sp-import', 'sp-share'] },
+		{ id: 'service', label: 'sf.group.service', parts: ['sp-import'] },
 		{ id: 'response', label: 'sf.group.response', parts: ['sp-attrs'] },
 		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] },
 		{
@@ -300,8 +311,9 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 		{ id: 'live', label: 'sf.group.live', parts: ['activate'] }
 	],
 	op: [
-		{ id: 'provider', label: 'sf.group.provider', parts: ['op-details', 'op-share'] },
+		{ id: 'provider', label: 'sf.group.provider', parts: ['op-details'] },
 		{ id: 'accounts', label: 'sf.group.accounts', parts: ['op-attrs', 'op-link'] },
+		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
 		{
 			id: 'mapping',
 			label: 'sf.group.mapping',
@@ -320,8 +332,9 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 		{ id: 'live', label: 'sf.group.live', parts: ['activate'] }
 	],
 	idp: [
-		{ id: 'provider', label: 'sf.group.provider', parts: ['idp-import', 'idp-share'] },
+		{ id: 'provider', label: 'sf.group.provider', parts: ['idp-import'] },
 		{ id: 'accounts', label: 'sf.group.accounts', parts: ['idp-attrs', 'idp-link'] },
+		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
 		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] },
 		{ id: 'additional', label: 'sf.group.additional', parts: ['additional'], optional: true },
 		{
@@ -336,6 +349,18 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 	]
 };
 
+/**
+ * What Authrim gives the other side to register on theirs (its issuer and addresses, its
+ * metadata). It is not a step of the flow, so it is not drawn in it: the detail screen shows it
+ * below the overview, as a frame of its own.
+ */
+export const SHARE_PART: Record<ConnectionKind, string> = {
+	rp: 'rp-share',
+	sp: 'sp-share',
+	op: 'op-share',
+	idp: 'idp-share'
+};
+
 /** The name of a step of the flow, in the current language. */
 export function groupLabel(group: FlowGroup): string {
 	return t(group.label);
@@ -348,7 +373,8 @@ export const EXTRA_PARTS: readonly string[] = [
 	'additional',
 	'consent-statements',
 	'consent-policies',
-	'role'
+	'role',
+	'signup-flow'
 ];
 
 /** Every part of a connection's flow, flat. */
@@ -609,6 +635,8 @@ export function partState(stepId: string, a: Answers): PartState {
 			return a.extras.consentPolicy ? 'done' : 'todo';
 		case 'role':
 			return a.extras.role ? 'done' : 'todo';
+		case 'signup-flow':
+			return a.extras.signupFlow ? 'done' : 'todo';
 		case 'activate':
 			return a.active ? 'done' : 'todo';
 		default:
@@ -715,7 +743,8 @@ const NAME_ID_TEXT: Record<string, MessageKey> = {
 };
 const SP_ATTRS_TEXT: Record<string, MessageKey> = {
 	minimal: 'sf.set.minimal',
-	library: 'sf.sp.attrs.library',
+	standard: 'sf.sp.attrs.standard',
+	academic: 'sf.sp.attrs.academic',
 	custom: 'sf.sp.attrs.custom'
 };
 const MIN_AUTH_TEXT: Record<string, MessageKey> = {
@@ -725,7 +754,7 @@ const MIN_AUTH_TEXT: Record<string, MessageKey> = {
 };
 const SET_TEXT: Record<string, MessageKey> = {
 	'tenant-default': 'sf.set.tenantDefault',
-	'library-staff': 'sf.set.libraryStaff',
+	staff: 'sf.set.staff',
 	none: 'sf.set.none',
 	minimal: 'sf.set.minimal'
 };
@@ -818,6 +847,11 @@ export function reviewRows(a: Answers): ReviewRow[] {
 			label: t('sf.group.consent'),
 			value: a.extras.consentStatements.map((id) => consentLabel(id)).join(', ')
 		});
+	if (visibleGroups(a).some((group) => group.id === 'signup'))
+		rows.push({
+			label: t('sf.group.signup'),
+			value: SIGNUP_FLOWS.find((flow) => flow.value === a.extras.signupFlow)?.label ?? ''
+		});
 	if (visibleGroups(a).some((group) => group.id === 'role'))
 		rows.push({ label: t('sf.row.role'), value: choiceText(ROLE_TEXT, a.extras.role) });
 	// A value that was not entered is said so, not left blank.
@@ -838,7 +872,7 @@ export function sampleAnswers(
 	a.direction = KINDS_OF.out.includes(kind) ? 'out' : 'in';
 	a.kind = kind;
 	if (kind === 'rp') {
-		a.rp.name = 'Reading room';
+		a.rp.name = 'Employee portal';
 		if (full) {
 			a.rp.redirectUris = ['https://reading.example.com/callback'];
 			a.rp.shared = true;
@@ -846,7 +880,7 @@ export function sampleAnswers(
 	}
 	if (kind === 'sp') {
 		Object.assign(a.sp, {
-			metadataUrl: 'https://publisher.example/saml/metadata',
+			metadataUrl: 'https://hr.example/saml/metadata',
 			fetched: true
 		});
 		a.sp.shared = full;
@@ -865,8 +899,8 @@ export function sampleAnswers(
 	}
 	if (kind === 'idp') {
 		Object.assign(a.idp, {
-			name: 'Campus sign-in',
-			metadataUrl: 'https://idp.campus.example/saml/metadata',
+			name: 'Corporate sign-in',
+			metadataUrl: 'https://idp.corp.example/saml/metadata',
 			fetched: true
 		});
 		a.idp.shared = full;

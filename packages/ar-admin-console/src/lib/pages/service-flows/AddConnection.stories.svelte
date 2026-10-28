@@ -51,6 +51,20 @@
 	</Page>
 {/snippet}
 
+<!-- The way back to the list is above the heading, as on a connection's detail. -->
+<Story
+	name="Back to the service flows"
+	args={{ oncancel: fn() }}
+	play={async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: 'Service flows' }));
+		// Nothing was entered, so it leaves at once.
+		await expect(args.oncancel).toHaveBeenCalledOnce();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
 <Story
 	name="Where to connect"
 	args={{ oncancel: fn() }}
@@ -235,7 +249,7 @@
 		const canvas = within(canvasElement);
 		await begin(canvas, OUT, /^A service that uses SAML/);
 		const address = canvas.getByRole('textbox', { name: 'Metadata address' });
-		await userEvent.type(address, 'https://publisher.example/saml/metadata');
+		await userEvent.type(address, 'https://hr.example/saml/metadata');
 		await userEvent.click(button(canvas, 'Read the metadata'));
 		// Before the read finishes, the address is changed.
 		await userEvent.type(address, '-2');
@@ -260,7 +274,7 @@
 		// Only a name is wanted; the app type is a card, and the redirect URIs are not asked here.
 		await expect(canvas.queryByText('Redirect URIs')).toBeNull();
 		await expect(button(canvas, t('wizard.next'))).toBeDisabled();
-		await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), 'Reading room');
+		await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), 'Employee portal');
 		await choose(canvas, /^Single-page app/);
 		await next(canvas);
 		// A single-page app cannot keep a secret: only “None” is open.
@@ -275,7 +289,7 @@
 		await expect(
 			await canvas.findByRole('heading', { name: 'Overview', level: 2 })
 		).toBeInTheDocument();
-		const title = canvas.getByRole('heading', { name: 'Reading room', level: 1 });
+		const title = canvas.getByRole('heading', { name: 'Employee portal', level: 1 });
 		await expect(title).toBeInTheDocument();
 		// The wizard is gone, so focus goes to the title instead of dropping to the page.
 		await waitFor(() => expect(title).toHaveFocus());
@@ -307,7 +321,7 @@
 		await begin(canvas, OUT, /^A service that uses SAML/);
 		await userEvent.type(
 			canvas.getByRole('textbox', { name: 'Metadata address' }),
-			'https://publisher.example/saml/metadata'
+			'https://hr.example/saml/metadata'
 		);
 		await expect(button(canvas, t('wizard.next'))).toBeDisabled();
 		await userEvent.click(button(canvas, 'Read the metadata'));
@@ -320,11 +334,11 @@
 		await expect(
 			await canvas.findByRole('heading', { level: 2, name: 'Overview' })
 		).toBeInTheDocument();
+		await expect(canvas.getByRole('heading', { level: 1, name: 'hr.example' })).toBeInTheDocument();
+		// What is left: copy values for the service (a frame below the overview), then run the test.
 		await expect(
-			canvas.getByRole('heading', { level: 1, name: 'publisher.example' })
+			canvas.getByRole('heading', { level: 2, name: 'Your details for them' })
 		).toBeInTheDocument();
-		// What is left is in the flow: copy values for the service, then run the test.
-		await userEvent.click(inFlow(canvasElement, /^Your details for them/));
 		await expect(canvas.getAllByRole('button', { name: /^Copy / }).length).toBeGreaterThan(2);
 		await userEvent.click(canvas.getByRole('switch', { name: /I have registered these/ }));
 		await userEvent.click(inFlow(canvasElement, /^Test the connection/));
@@ -383,7 +397,12 @@
 		// Matching people has a sensible choice already; Authrim gives the provider a redirect address.
 		await userEvent.click(inFlow(canvasElement, /^Matching people/));
 		await expect(canvas.getByRole('radio', { name: /^By verified email/ })).toBeChecked();
-		await userEvent.click(inFlow(canvasElement, /^Your details for them/));
+		// What Authrim gives the provider is below the overview, not a step of the flow.
+		await userEvent.click(
+			within(canvasElement.querySelector<HTMLElement>('.detail__panel')!).getByRole('button', {
+				name: 'Overview'
+			})
+		);
 		await expect(canvas.getByText('Redirect URI')).toBeInTheDocument();
 		// Activating waits for the test.
 		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
@@ -404,10 +423,10 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await begin(canvas, IN, /^A provider that uses SAML/);
-		await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), 'Campus sign-in');
+		await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), 'Corporate sign-in');
 		await userEvent.type(
 			canvas.getByRole('textbox', { name: 'Metadata address' }),
-			'https://idp.campus.example/saml/metadata'
+			'https://idp.corp.example/saml/metadata'
 		);
 		await userEvent.click(button(canvas, 'Read the metadata'));
 		await expect(await canvas.findByText('What was found')).toBeInTheDocument();
@@ -416,7 +435,7 @@
 		await expect(canvas.queryByText('Test the connection')).toBeNull();
 		await userEvent.click(button(canvas, t('sf.wizard.finish')));
 		await expect(
-			await canvas.findByRole('heading', { level: 1, name: 'Campus sign-in' })
+			await canvas.findByRole('heading', { level: 1, name: 'Corporate sign-in' })
 		).toBeInTheDocument();
 		await userEvent.click(inFlow(canvasElement, /^Matching people/));
 		await expect(canvas.getByRole('radio', { name: /^By verified email/ })).toBeChecked();
@@ -451,12 +470,12 @@
 	globals={{ locale: 'ja' }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByRole('heading', { level: 1, name: '接続を追加' })).toBeInTheDocument();
-		await expect(canvas.getAllByText('接続の向き').length).toBeGreaterThan(0);
-		await expect(canvas.getAllByText('接続する相手').length).toBeGreaterThan(0);
 		await expect(
-			canvas.getByText('接続する相手を選ぶと、残りの手順が表示されます。')
+			canvas.getByRole('heading', { level: 1, name: 'サービスフローの追加' })
 		).toBeInTheDocument();
+		await expect(canvas.getAllByText('追加するもの').length).toBeGreaterThan(0);
+		await expect(canvas.getAllByText('種類').length).toBeGreaterThan(0);
+		await expect(canvas.getByText('種類を選ぶと、残りの手順が表示されます。')).toBeInTheDocument();
 		await choose(canvas, /^アプリやサービスが Authrim でサインインする/);
 		await next(canvas);
 		await choose(canvas, /^OpenID Connect を使うアプリ/);
@@ -467,13 +486,68 @@
 		await expect(canvasElement.querySelector('.wizard__context')).toHaveTextContent(
 			'OpenID Connect（RP）'
 		);
-		await userEvent.type(canvas.getByRole('textbox', { name: '名前' }), 'Reading room');
+		await userEvent.type(canvas.getByRole('textbox', { name: '名前' }), 'Employee portal');
 		await next(canvas);
 		await userEvent.click(button(canvas, '設定に進む'));
 		await expect(
 			await canvas.findByRole('heading', { level: 2, name: '概要' })
 		).toBeInTheDocument();
 		await expect(canvas.getByRole('heading', { name: '残りの設定' })).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- Sign-up and sign-in are in the wizard too: the first question has a third answer, and the flow only needs a name and a place to start. -->
+<Story
+	name="Sign-up: name and where it is used"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			canvas.getByRole('heading', { name: 'Add service flow', level: 1 })
+		).toBeInTheDocument();
+		await choose(canvas, /^Sign-up and sign-in/);
+		await next(canvas);
+		await expect(canvas.getByRole('radio', { name: /^Sign-up/ })).toBeInTheDocument();
+		await expect(button(canvas, t('wizard.next'))).toBeDisabled();
+		await choose(canvas, /^Sign-up/);
+		await next(canvas);
+		await expect(
+			canvas.getByText(/With a single login screen, one sign-up flow/)
+		).toBeInTheDocument();
+		// A name and a place are what it cannot start without.
+		await expect(button(canvas, 'Continue to settings')).toBeDisabled();
+		await userEvent.type(
+			canvas.getByRole('textbox', { name: /Name of the flow/ }),
+			'Partner portal'
+		);
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: /Where it is used/ }),
+			'other-ui'
+		);
+		await waitFor(() => expect(button(canvas, 'Continue to settings')).toBeEnabled());
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- It ends where a connection does: on the flow, with what is still required marked. -->
+<Story
+	name="Sign-in: continues to the flow"
+	args={{ prefillAccount: 'login', step: 2 }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(button(canvas, 'Continue to settings'));
+		await expect(
+			await canvas.findByRole('heading', { name: 'Partner portal sign-in', level: 1 })
+		).toBeInTheDocument();
+		// What the wizard asked is done; the rest is required and marked so.
+		await expect(canvas.getByRole('textbox', { name: /Name of the flow/ })).toHaveValue(
+			'Partner portal sign-in'
+		);
+		await expect(
+			inFlow(canvasElement, /^Methods and sources.*Required.*Not set yet/)
+		).toBeInTheDocument();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

@@ -4,12 +4,15 @@
 		label: string;
 		/** Status line, e.g. "Not set". */
 		status: string;
+		/** Marked with the Required badge in front of the status. */
+		required?: boolean;
 	}
 </script>
 
 <script lang="ts">
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Icon from '../icons/Icon.svelte';
+	import RequiredBadge from '../primitives/RequiredBadge.svelte';
 
 	/**
 	 * A step made of parts that are set one by one (Sign-in → "Methods & sources", "Validation
@@ -20,6 +23,8 @@
 		name: string;
 		status: string;
 		state?: 'done' | 'partial' | 'todo' | 'required';
+		/** The step cannot be left unset: marked with the Required badge in front of its status. */
+		required?: boolean;
 		items: readonly FlowSubStep[];
 		/** The part being edited, if it is one of these. */
 		current?: string;
@@ -34,6 +39,7 @@
 		name,
 		status,
 		state = 'todo',
+		required = false,
 		items,
 		current,
 		note,
@@ -56,7 +62,10 @@
 		>
 			<div class="group__heading">
 				<strong id="{uid}-name">{name}</strong>
-				<span class="group__status">{status}</span>
+				<span class="group__status">
+					{#if required}<RequiredBadge />{/if}
+					{status}
+				</span>
 			</div>
 			{#if note}<p class="group__note">{note}</p>{/if}
 			{#each items as item (item.id)}
@@ -68,7 +77,10 @@
 				>
 					<span class="group__text">
 						<span class="group__part-name">{item.label}</span>
-						<span class="group__part-status">{item.status}</span>
+						<span class="group__part-status">
+							{#if item.required}<RequiredBadge />{/if}
+							{item.status}
+						</span>
 					</span>
 					<span class="group__chevron" aria-hidden="true">›</span>
 				</button>
@@ -120,8 +132,8 @@
 
 	.group__heading {
 		display: grid;
-		gap: 1px;
-		padding: 6px 5px 5px;
+		gap: 4px;
+		padding: 8px 6px 6px;
 	}
 
 	.group__heading strong {
@@ -133,6 +145,9 @@
 	}
 
 	.group__status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 		color: var(--text-muted);
 		font-size: var(--fs-overline);
 		line-height: var(--lh-tight);
@@ -150,8 +165,8 @@
 		align-items: center;
 		gap: 6px;
 		width: 100%;
-		min-height: 36px;
-		padding: 4px 8px;
+		min-height: 44px;
+		padding: 7px 8px;
 		border: 0;
 		border-radius: min(4px, var(--radius-xs));
 		background: transparent;
@@ -173,7 +188,7 @@
 		display: grid;
 		flex: 1;
 		min-width: 0;
-		gap: 1px;
+		gap: 4px;
 	}
 
 	.group__part-name {
@@ -183,6 +198,9 @@
 	}
 
 	.group__part-status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 		color: var(--text-muted);
 		font-size: var(--fs-overline);
 		line-height: var(--lh-tight);

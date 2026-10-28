@@ -55,7 +55,8 @@
 		onchange={(value) => (form.attributePreset = value)}
 		options={[
 			{ value: 'minimal', label: t('sf.set.minimal') },
-			{ value: 'library', label: t('sf.sp.attrs.library') },
+			{ value: 'standard', label: t('sf.sp.attrs.standard') },
+			{ value: 'academic', label: t('sf.sp.attrs.academic') },
 			{ value: 'custom', label: t('sf.sp.attrs.custom') }
 		]}
 	/>

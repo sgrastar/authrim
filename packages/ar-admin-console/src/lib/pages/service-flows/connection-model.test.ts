@@ -22,6 +22,8 @@ import {
 	partState,
 	redirectUriProblem,
 	reviewRows,
+	SHARE_PART,
+	SIGNUP_FLOWS,
 	sampleAnswers,
 	schemaOptions,
 	stepsFor,
@@ -146,7 +148,7 @@ describe('when a wizard step lets you go on', () => {
 	it('wants only a name for an app: the redirect URIs come later', () => {
 		const a = emptyAnswers();
 		expect(canProceed('rp-app', a)).toBe(false);
-		a.rp.name = 'Reading room';
+		a.rp.name = 'Employee portal';
 		expect(canProceed('rp-app', a)).toBe(true);
 	});
 
@@ -254,6 +256,30 @@ describe('the parts of a flow, after the wizard', () => {
 	});
 });
 
+describe('the sign-up flow of a connection', () => {
+	it('is an optional step for the kinds that can bring someone without an account', () => {
+		for (const kind of ['rp', 'op', 'idp'] as const) {
+			const group = FLOW_GROUPS[kind].find((candidate) => candidate.id === 'signup');
+			expect(group?.optional, kind).toBe(true);
+			expect(group?.parts).toEqual(['signup-flow']);
+		}
+		expect(FLOW_GROUPS.sp.some((group) => group.id === 'signup')).toBe(false);
+	});
+
+	it('is not there until added, is still to do (not required) once added, and is listed when chosen', () => {
+		for (const kind of ['rp', 'op', 'idp'] as const) {
+			const a = sampleAnswers(kind);
+			expect(visibleGroups(a).some((group) => group.id === 'signup')).toBe(false);
+			a.added = ['signup'];
+			expect(partState('signup-flow', a)).toBe('todo');
+			expect(missingParts(a)).not.toContain(labelOf('signup-flow'));
+			a.extras.signupFlow = SIGNUP_FLOWS[1].value;
+			expect(partState('signup-flow', a)).toBe('done');
+			expect(reviewRows(a).some((row) => row.value === SIGNUP_FLOWS[1].label)).toBe(true);
+		}
+	});
+});
+
 describe('sample answers', () => {
 	it('let every step of the wizard be passed, for every kind', () => {
 		for (const kind of KINDS) {
@@ -274,10 +300,10 @@ describe('sample answers', () => {
 
 describe('names and review', () => {
 	it('name the connection from what was given', () => {
-		expect(nameOf(sampleAnswers('rp'))).toBe('Reading room');
+		expect(nameOf(sampleAnswers('rp'))).toBe('Employee portal');
 		expect(nameOf(sampleAnswers('op'))).toBe('Acme Directory');
-		expect(nameOf(sampleAnswers('idp'))).toBe('Campus sign-in');
-		expect(nameOf(sampleAnswers('sp'))).toBe('publisher.example');
+		expect(nameOf(sampleAnswers('idp'))).toBe('Corporate sign-in');
+		expect(nameOf(sampleAnswers('sp'))).toBe('hr.example');
 		expect(nameOf(emptyAnswers())).toBe('New connection');
 	});
 
@@ -307,14 +333,12 @@ describe('the steps of a flow', () => {
 		const [app, signin] = FLOW_GROUPS.rp;
 		expect(groupState(app, a)).toBe('required'); // the redirect URIs are missing
 		expect(groupState(signin, a)).toBe('done');
-		a.rp.redirectUris = ['https://reading.example.com/cb'];
-		// What Authrim gives the app is still to be registered: part of the way.
-		expect(groupState(app, a)).toBe('partial');
-		a.rp.shared = true;
+		a.rp.redirectUris = ['https://portal.example.com/cb'];
+		// What Authrim gives the app is not a step of the flow, so it does not hold the step back.
 		expect(groupState(app, a)).toBe('done');
 		const sp = sampleAnswers('sp', 'wizard');
-		// Its details are in, what it is given is not yet: part of the way.
-		expect(groupState(FLOW_GROUPS.sp[0], sp)).toBe('partial');
+		// Its details are in: the step is done. Nothing has been checked yet: the last step is not.
+		expect(groupState(FLOW_GROUPS.sp[0], sp)).toBe('done');
 		expect(groupState(FLOW_GROUPS.sp.at(-1)!, sp)).toBe('todo');
 	});
 });
@@ -356,22 +380,20 @@ describe('the processing steps of a flow', () => {
 		expect(ids(sampleAnswers('op'))).not.toContain('mapping');
 	});
 
-	it('are added with the "+": consent, role, and for providers additional input', () => {
+	it('are added with the "+": sign-up, consent, role, and for providers additional input', () => {
 		const optional = (kind: ConnectionKind) =>
 			FLOW_GROUPS[kind].filter((group) => group.optional).map((group) => group.id);
-		expect(optional('rp')).toEqual(['mapping', 'consent', 'role']);
+		expect(optional('rp')).toEqual(['signup', 'mapping', 'consent', 'role']);
 		expect(optional('sp')).toEqual(['consent', 'role']);
-		expect(optional('op')).toEqual(['mapping', 'additional', 'consent', 'role']);
-		expect(optional('idp')).toEqual(['additional', 'consent', 'role']);
+		expect(optional('op')).toEqual(['signup', 'mapping', 'additional', 'consent', 'role']);
+		expect(optional('idp')).toEqual(['signup', 'additional', 'consent', 'role']);
 	});
 
 	it('keep the settings an app needs: redirect URIs, sign-in method, and the rest', () => {
 		expect(FLOW.rp).toEqual(
 			expect.arrayContaining(['rp-app', 'rp-redirect', 'rp-signin', 'rp-info'])
 		);
-		expect(FLOW.sp).toEqual(
-			expect.arrayContaining(['sp-import', 'sp-share', 'sp-attrs', 'sp-test'])
-		);
+		expect(FLOW.sp).toEqual(expect.arrayContaining(['sp-import', 'sp-attrs', 'sp-test']));
 	});
 
 	it('sit before checking and going live, in the order of the earlier mock', () => {
@@ -503,9 +525,11 @@ describe('the sides of a connection', () => {
 		expect(kindRole('op').badge).not.toBe(kindRole('rp').badge);
 	});
 
-	it('gives an app the tenant’s own issuer to register', () => {
-		const rp = FLOW_GROUPS.rp.find((group) => group.id === 'app')!;
-		expect(rp.parts).toContain('rp-share');
+	it('gives an app the tenant’s own issuer to register, outside the steps of the flow', () => {
+		for (const kind of KINDS) {
+			expect(FLOW[kind], kind).not.toContain(SHARE_PART[kind]);
+		}
+		expect(SHARE_PART.rp).toBe('rp-share');
 		expect(partState('rp-share', sampleAnswers('rp', 'wizard'))).toBe('todo');
 		expect(partState('rp-share', sampleAnswers('rp', 'complete'))).toBe('done');
 	});
@@ -526,8 +550,8 @@ describe('the words, in another language', () => {
 	it('reach the wizard steps, the flow, the review and the messages', () => {
 		i18n.set('ja');
 		expect(stepsFor({ direction: '', kind: '' }).map((step) => step.label)).toEqual([
-			'接続の向き',
-			'接続する相手'
+			'追加するもの',
+			'種類'
 		]);
 		expect(groupLabel(FLOW_GROUPS.rp[0])).toBe('アプリ');
 		expect(kindProtocol('sp')).toBe('SAML（SP）');

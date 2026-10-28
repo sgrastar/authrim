@@ -1,10 +1,23 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
+	import BackLink from '$lib/ui/primitives/BackLink.svelte';
 	import ChoiceCards from '$lib/ui/patterns/ChoiceCards.svelte';
 	import ConfirmDialog from '$lib/ui/patterns/ConfirmDialog.svelte';
 	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
 	import Wizard from '$lib/ui/patterns/Wizard.svelte';
+	import AccountFlowDetail from './AccountFlowDetail.svelte';
+	import AccountFlowStep from './AccountFlowStep.svelte';
+	import {
+		aboutPart,
+		aboutState,
+		accountWizardSteps,
+		canProceedAccount,
+		emptyFlowState,
+		FLOWS,
+		type AccountFlowId,
+		type AccountFlowState
+	} from './account-flow-model';
 	import ServiceFlowDetail from './ServiceFlowDetail.svelte';
 	import {
 		canProceed,
@@ -24,21 +37,23 @@
 	import SpSteps from './SpSteps.svelte';
 
 	/**
-	 * "Add connection" in Service flows: the one place a new app, service or provider starts.
-	 * It first asks where to connect (which way, then what), then only what that kind cannot
-	 * start without. "Continue to settings" ends the wizard and opens the connection's service
+	 * "Add service flow": the one place a new app, service or provider, or a sign-up or sign-in
+	 * flow, starts. It first asks what to add (a connection one way or the other, or how people
+	 * sign up and in), then which kind, then only what that kind cannot start without (a sign-up
+	 * or sign-in flow: its name and where it is used). "Continue to settings" ends the wizard and opens the connection's service
 	 * flow, where every other setting is reached from the flow. Everything here is dummy: nothing
 	 * is sent anywhere, and the words are copy for the mock.
 	 *
 	 * For a story or the mock app to open part-way, `prefill` fills the answers of a kind
-	 * (`filled`: only what the wizard asks, or everything), `step` picks the wizard step and
-	 * `review` opens the service flow directly.
+	 * (`filled`: only what the wizard asks, or everything), `prefillAccount` those of a sign-up or
+	 * sign-in flow, `step` picks the wizard step and `review` opens the service flow directly.
 	 *
 	 * Leaving the wizard with answers in it costs them: Cancel asks first, and `dirty` tells the
 	 * page when it should do the same for any other way out (a link, a closed tab; see LeaveGuard).
 	 */
 	interface Props {
 		prefill?: ConnectionKind;
+		prefillAccount?: AccountFlowId;
 		filled?: 'wizard' | 'complete';
 		step?: number;
 		review?: boolean;
@@ -52,6 +67,7 @@
 
 	let {
 		prefill,
+		prefillAccount,
 		filled = 'wizard',
 		step = 0,
 		review = false,
@@ -64,30 +80,65 @@
 	let answers = $state<Answers>(
 		untrack(() => (prefill ? sampleAnswers(prefill, filled) : emptyAnswers()))
 	);
+	/** The sign-up or sign-in flow being added, when that is what was chosen. */
+	let account = $state<{ flow: AccountFlowId | ''; form: AccountFlowState }>(
+		untrack(() =>
+			prefillAccount
+				? {
+						flow: prefillAccount,
+						form: aboutState(
+							prefillAccount,
+							prefillAccount === 'registration'
+								? 'Partner portal sign-up'
+								: 'Partner portal sign-in',
+							'other-ui'
+						)
+					}
+				: { flow: '', form: emptyFlowState() }
+		)
+	);
+	/** What the first question was answered with: a way of connecting, or a sign-up/sign-in flow. */
+	let where = $state<string>(untrack(() => (prefillAccount ? 'account' : answers.direction)));
+	const forAccount = $derived(where === 'account');
 	let current = $state(untrack(() => step));
 	let reviewing = $state(untrack(() => review));
 
-	const steps = $derived(stepsFor(answers));
+	const steps = $derived(forAccount ? accountWizardSteps(account.flow) : stepsFor(answers));
 	/** Both questions are answered, so the rest of the steps are known. */
 	const chosen = $derived(
-		!!answers.direction && !!answers.kind && KINDS_OF[answers.direction].includes(answers.kind)
+		forAccount
+			? account.flow !== ''
+			: !!answers.direction && !!answers.kind && KINDS_OF[answers.direction].includes(answers.kind)
 	);
+	/** Nothing has been entered yet: leaving costs nothing. */
+	const pristine = $derived(!forAccount && isPristine(answers));
 
 	let asking = $state(false);
 	$effect(() => {
-		dirty = !reviewing && !isPristine(answers);
+		dirty = !reviewing && !pristine;
 	});
 
 	function cancel() {
-		if (isPristine(answers)) oncancel?.();
+		if (pristine) oncancel?.();
 		else asking = true;
 	}
 	const stepId = $derived(steps[Math.min(current, steps.length - 1)].id);
 
-	/** A kind that does not go with the new direction is dropped. */
-	function chooseDirection(value: string) {
+	/** A kind that does not go with the new first answer is dropped. */
+	function chooseWhere(value: string) {
+		if (value === 'account') {
+			answers.direction = '';
+			answers.kind = '';
+			return;
+		}
 		const direction = value as Direction;
+		answers.direction = direction;
 		if (answers.kind && !KINDS_OF[direction].includes(answers.kind)) answers.kind = '';
+	}
+
+	function canNext(id: string): boolean {
+		if (id === 'where') return where !== '';
+		return forAccount ? canProceedAccount(id, account.flow, account.form) : canProceed(id, answers);
 	}
 
 	// Built when shown, so a change of language reaches the cards too.
@@ -95,44 +146,52 @@
 		{
 			value: 'out',
 			label: t('sf.wizard.out.label'),
-			description: t('sf.wizard.out.desc'),
-			icon: 'arrowOut' as const
+			description: t('sf.wizard.out.desc')
 		},
 		{
 			value: 'in',
 			label: t('sf.wizard.in.label'),
-			description: t('sf.wizard.in.desc'),
-			icon: 'arrowIn' as const
+			description: t('sf.wizard.in.desc')
+		},
+		{
+			value: 'account',
+			label: t('af.wizard.account.label'),
+			description: t('af.wizard.account.desc'),
+			wide: true
 		}
 	]);
+
+	const accountKinds = $derived(
+		(['registration', 'login'] as const).map((flow) => ({
+			value: flow,
+			label: t(`af.wizard.kind.${flow}.label`),
+			description: t(`af.wizard.kind.${flow}.desc`)
+		}))
+	);
 
 	const kinds = $derived({
 		rp: {
 			value: 'rp',
 			label: t('sf.wizard.kind.rp.label'),
 			description: t('sf.wizard.kind.rp.desc'),
-			icon: 'app' as const,
 			badge: 'RP'
 		},
 		sp: {
 			value: 'sp',
 			label: t('sf.wizard.kind.sp.label'),
 			description: t('sf.wizard.kind.sp.desc'),
-			icon: 'handshake' as const,
 			badge: 'SP'
 		},
 		op: {
 			value: 'op',
 			label: t('sf.wizard.kind.op.label'),
 			description: t('sf.wizard.kind.op.desc'),
-			icon: 'key' as const,
 			badge: 'OP'
 		},
 		idp: {
 			value: 'idp',
 			label: t('sf.wizard.kind.idp.label'),
 			description: t('sf.wizard.kind.idp.desc'),
-			icon: 'building' as const,
 			badge: 'IdP'
 		}
 	});
@@ -140,16 +199,36 @@
 	const leave = $derived(leaveDialog());
 </script>
 
-{#if reviewing}
+{#snippet backToList()}
+	<!-- The same way out as Cancel: it asks first when something has been entered. -->
+	<BackLink onclick={cancel}>{t('sf.detail.back')}</BackLink>
+{/snippet}
+
+{#if reviewing && forAccount && account.flow}
+	<AccountFlowDetail
+		flow={account.flow}
+		bind:form={account.form}
+		onback={ondone}
+		focusTitle={!review}
+	/>
+{:else if reviewing}
 	<ServiceFlowDetail bind:answers onback={ondone} focusTitle={!review} />
 {:else}
-	<PageHeader title={t('sf.wizard.title')} description={t('sf.wizard.description')} />
+	<PageHeader
+		title={t('sf.wizard.title')}
+		description={t('sf.wizard.description')}
+		back={oncancel ? backToList : undefined}
+	/>
 	<Wizard
 		{steps}
 		bind:current
-		canNext={canProceed(stepId, answers)}
+		canNext={canNext(stepId)}
 		stepsNote={chosen ? undefined : t('sf.wizard.stepsNote')}
-		context={chosen && current >= 2 ? kindProtocol(answers.kind as ConnectionKind) : undefined}
+		context={chosen && current >= 2
+			? forAccount && account.flow
+				? t(FLOWS[account.flow].title)
+				: kindProtocol(answers.kind as ConnectionKind)
+			: undefined}
 		final={chosen ? undefined : false}
 		finishLabel={t('sf.wizard.finish')}
 		onfinish={() => (reviewing = true)}
@@ -161,10 +240,20 @@
 					label={t('sf.wizard.whereLabel')}
 					hideLabel
 					columns={2}
-					bind:value={answers.direction}
-					onchange={chooseDirection}
+					bind:value={where}
+					onchange={chooseWhere}
 					options={directions}
 				/>
+			{:else if stepInfo.id === 'kind' && forAccount}
+				<ChoiceCards
+					label={t('sf.wizard.kindLabel')}
+					hideLabel
+					columns={2}
+					bind:value={account.flow}
+					options={accountKinds}
+				/>
+			{:else if stepInfo.id === 'account-about' && account.flow}
+				<AccountFlowStep part={aboutPart(account.flow)} bind:form={account.form} />
 			{:else if stepInfo.id === 'kind'}
 				<ChoiceCards
 					label={t('sf.wizard.kindLabel')}

@@ -128,7 +128,9 @@
 		isolation: isolate;
 		position: sticky;
 		top: calc(var(--header-h) + var(--subheader-h) + var(--shell-inset));
-		height: calc(100vh - var(--header-h) - var(--subheader-h) - var(--shell-inset) * 2);
+		height: calc(
+			100vh - var(--header-h) - var(--subheader-h) - var(--banner-h, 0px) - var(--shell-inset) * 2
+		);
 		overflow-y: auto;
 		border-inline-end: 1px solid var(--border);
 		border-radius: var(--shell-radius);

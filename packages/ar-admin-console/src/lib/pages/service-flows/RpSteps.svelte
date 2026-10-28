@@ -49,20 +49,17 @@
 			{
 				value: 'web',
 				label: t(APP_TYPES.web),
-				description: t('sf.appType.web.desc'),
-				icon: 'globe'
+				description: t('sf.appType.web.desc')
 			},
 			{
 				value: 'spa',
 				label: t(APP_TYPES.spa),
-				description: t('sf.appType.spa.desc'),
-				icon: 'app'
+				description: t('sf.appType.spa.desc')
 			},
 			{
 				value: 'native',
 				label: t(APP_TYPES.native),
-				description: t('sf.appType.native.desc'),
-				icon: 'deviceMobile'
+				description: t('sf.appType.native.desc')
 			}
 		]}
 	/>
@@ -104,28 +101,24 @@
 				value: 'client_secret_basic',
 				label: t('sf.rp.auth.basic'),
 				description: t('sf.rp.auth.basic.desc'),
-				icon: 'key',
 				disabled: secretless
 			},
 			{
 				value: 'client_secret_post',
 				label: t('sf.rp.auth.post'),
 				description: t('sf.rp.auth.post.desc'),
-				icon: 'key',
 				disabled: secretless
 			},
 			{
 				value: 'private_key_jwt',
 				label: t('sf.rp.auth.jwt'),
 				description: t('sf.rp.auth.jwt.desc'),
-				icon: 'fingerprint',
 				disabled: secretless
 			},
 			{
 				value: 'none',
 				label: t('sf.rp.auth.none'),
 				description: t('sf.rp.auth.none.desc'),
-				icon: 'lock',
 				disabled: !secretless
 			}
 		]}
@@ -167,7 +160,7 @@
 		hint={t('sf.rp.userInfoHint')}
 		options={[
 			{ value: 'tenant-default', label: t('sf.set.tenantDefault') },
-			{ value: 'library-staff', label: t('sf.set.libraryStaff') },
+			{ value: 'staff', label: t('sf.set.staff') },
 			{ value: 'none', label: t('sf.set.none') }
 		]}
 	/>

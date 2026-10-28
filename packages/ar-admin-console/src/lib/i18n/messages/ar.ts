@@ -3,12 +3,14 @@ import { arSettings } from './settings/ar';
 import { arCompliance } from './compliance/ar';
 import { arMappingConsole } from './mapping-console/ar';
 import { arServiceFlows } from './service-flows/ar';
+import { arAccountFlows } from './account-flows/ar';
 
 export const ar = {
 	...arSettings,
 	...arCompliance,
 	...arMappingConsole,
 	...arServiceFlows,
+	...arAccountFlows,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',

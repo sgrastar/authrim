@@ -45,7 +45,7 @@
 		const entered = within(
 			canvas.getByRole('heading', { name: 'What you entered' }).parentElement!
 		);
-		await expect(entered.getByText('Reading room')).toBeInTheDocument();
+		await expect(entered.getByText('Employee portal')).toBeInTheDocument();
 		// The redirect URIs and the mapping set are both unset: nothing is filled in on its own.
 		await expect(entered.getAllByText('Not set')).toHaveLength(2);
 		// What is still to do, as a list that leads to each setting.
@@ -59,7 +59,9 @@
 		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
 		await expect(canvas.getByRole('heading', { name: 'Overview', level: 2 })).toBeInTheDocument();
 		// Settings sit inside the steps of the flow, with how far each has got.
-		await expect(inFlow(canvasElement, /^Redirect URIs.*Required — not set/)).toBeInTheDocument();
+		await expect(
+			inFlow(canvasElement, /^Redirect URIs.*Required.*Not set yet/)
+		).toBeInTheDocument();
 		await expect(inFlow(canvasElement, /^Sign-in method.*Configured/)).toBeInTheDocument();
 		// Not ready: activating says what is missing and waits.
 		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
@@ -145,7 +147,8 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.queryByRole('button', { name: /^Consent statements/ })).toBeNull();
-		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
+		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[1]);
+		// The first "+" offers the sign-up flow (see the story below); the next one the processing steps.
 		// An app can have a mapping, consent and a role assignment; it has none of them to start with.
 		await expect(await canvas.findByRole('button', { name: 'Mapping' })).toBeInTheDocument();
 		await expect(canvas.getByRole('button', { name: 'Role assignment' })).toBeInTheDocument();
@@ -176,6 +179,34 @@
 	{#snippet template(args)}{@render frame(args)}{/snippet}
 </Story>
 
+<!-- A connection does not define a sign-up: it chooses one of the tenant's sign-up flows. -->
+<Story
+	name="Choosing a sign-up flow for an app"
+	args={{ prefill: 'rp', filled: 'complete', review: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.queryByRole('button', { name: /^Sign-up flow to use/ })).toBeNull();
+		await userEvent.click(canvas.getAllByRole('button', { name: t('flow.add') })[0]);
+		await userEvent.click(await canvas.findByRole('button', { name: 'Sign-up' }));
+		await expect(
+			await canvas.findByRole('heading', { name: 'Sign-up flow to use', level: 2 })
+		).toBeInTheDocument();
+		// Added but not chosen: still to do, not required, so the app can still go live.
+		await expect(inFlow(canvasElement, /^Sign-up flow to use.*Not set yet/)).toBeInTheDocument();
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: 'Sign-up flow' }),
+			'partner-portal'
+		);
+		await waitFor(() =>
+			expect(inFlow(canvasElement, /^Sign-up flow to use.*Configured/)).toBeInTheDocument()
+		);
+		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
+		await expect(canvas.getByText('Partner portal sign-up')).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
 <!-- A service and a SAML provider cannot work without a mapping: it is there from the start and stays. -->
 <Story
 	name="A service has its mapping from the start"
@@ -184,9 +215,9 @@
 		const canvas = within(canvasElement);
 		// Nothing about the mapping is preselected: it works with what is chosen, and only that.
 		await expect(
-			inFlow(canvasElement, /^Input and output schemas.*Required — not set/)
+			inFlow(canvasElement, /^Input and output schemas.*Required.*Not set yet/)
 		).toBeInTheDocument();
-		await expect(inFlow(canvasElement, /^Mapping sets.*Required — not set/)).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^Mapping sets.*Required.*Not set yet/)).toBeInTheDocument();
 		await expect(
 			canvas.queryByRole('button', { name: t('flow.remove', { name: 'Mapping' }) })
 		).toBeNull();
@@ -275,7 +306,12 @@
 	args={{ prefill: 'rp', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(inFlow(canvasElement, /^Authrim’s details for the app/));
+		// It is not a step of the flow: a frame of its own below the overview.
+		await expect(
+			within(canvasElement.querySelector<HTMLElement>('.detail__flow')!).queryByRole('button', {
+				name: /^Authrim’s details for the app/
+			})
+		).toBeNull();
 		await expect(
 			await canvas.findByRole('heading', { name: 'Authrim’s details for the app', level: 2 })
 		).toBeInTheDocument();
@@ -283,14 +319,9 @@
 		await expect(canvas.getByText(/cannot be changed here/)).toBeInTheDocument();
 		// Nothing to type: the issuer is shown, to be copied.
 		await expect(canvas.getByRole('button', { name: 'Copy Issuer' })).toBeInTheDocument();
-		await userEvent.click(
-			canvas.getByRole('switch', { name: /I have registered these with the app/ })
-		);
-		await waitFor(() =>
-			expect(
-				inFlow(canvasElement, /^Authrim’s details for the app.*Configured/)
-			).toBeInTheDocument()
-		);
+		const registered = canvas.getByRole('switch', { name: /I have registered these with the app/ });
+		await userEvent.click(registered);
+		await waitFor(() => expect(registered).toBeChecked());
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -328,7 +359,7 @@
 		await expect(canvas.getByText('下書き')).toBeInTheDocument();
 		// The steps of the flow and their settings, with how far each has got.
 		await expect(canvas.getByText('サインイン応答')).toBeInTheDocument();
-		await expect(inFlow(canvasElement, /^マッピングセット.*必須・未設定/)).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^マッピングセット.*必須.*未設定/)).toBeInTheDocument();
 		await userEvent.click(inFlow(canvasElement, /^入力と出力のスキーマ/));
 		await expect(canvas.getByRole('combobox', { name: '入力スキーマ' })).toBeInTheDocument();
 	}}

@@ -3,12 +3,14 @@ import { enSettings } from './settings/en';
 import { enCompliance } from './compliance/en';
 import { enMappingConsole } from './mapping-console/en';
 import { enServiceFlows } from './service-flows/en';
+import { enAccountFlows } from './account-flows/en';
 
 export const en = {
 	...enSettings,
 	...enCompliance,
 	...enMappingConsole,
 	...enServiceFlows,
+	...enAccountFlows,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',

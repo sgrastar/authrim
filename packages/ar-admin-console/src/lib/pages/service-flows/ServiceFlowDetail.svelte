@@ -7,6 +7,7 @@
 	import FlowSequence from '$lib/ui/flow/FlowSequence.svelte';
 	import FlowStepGroup from '$lib/ui/flow/FlowStepGroup.svelte';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
+	import Card from '$lib/ui/patterns/Card.svelte';
 	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
 	import DetailList from '$lib/ui/patterns/DetailList.svelte';
 	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
@@ -27,6 +28,7 @@
 		nameOf,
 		partState,
 		reviewRows,
+		SHARE_PART,
 		stillToDo,
 		visibleGroups,
 		type Answers,
@@ -75,12 +77,12 @@
 		done: 'sf.status.done',
 		partial: 'sf.status.partial',
 		todo: 'sf.status.todo',
-		required: 'sf.status.required'
+		required: 'sf.status.todo'
 	};
 
 	const STATUS: Record<PartState, MessageKey> = {
 		done: 'sf.status.done',
-		required: 'sf.status.required',
+		required: 'sf.status.todo',
 		todo: 'sf.status.todo'
 	};
 
@@ -126,7 +128,7 @@
 </script>
 
 {#snippet backToList()}
-	<BackLink onclick={onback}>{t('sf.detail.allConnections')}</BackLink>
+	<BackLink onclick={onback}>{t('sf.detail.back')}</BackLink>
 {/snippet}
 
 <PageHeader
@@ -135,7 +137,7 @@
 	back={onback ? backToList : undefined}
 	bind:titleElement
 >
-	{#snippet eyebrow()}
+	{#snippet badges()}
 		<Badge>{KIND_MARK[kind]}</Badge>
 		<Badge tone="info">{role.badge}</Badge>
 		<Badge tone={answers.active ? 'success' : 'warning'} dot
@@ -182,10 +184,12 @@
 							name={groupLabel(group)}
 							status={t(GROUP_STATUS[state])}
 							{state}
+							required={state === 'required'}
 							items={group.parts.map((part) => ({
 								id: part,
 								label: labelOf(part),
-								status: statusOf(part).text
+								status: statusOf(part).text,
+								required: statusOf(part).state === 'required'
 							}))}
 							{current}
 							onselect={(part) => (current = part)}
@@ -213,72 +217,90 @@
 		</FlowCanvas>
 	</div>
 
-	<section class="detail__panel" aria-label={current ? labelOf(current) : overview}>
-		<div class="detail__head">
-			{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
-			<h2 class="detail__title">{current ? labelOf(current) : overview}</h2>
-		</div>
-		<div class="detail__body">
-			{#if current === ''}
-				{#if answers.active}
-					<Callout tone="info">{t('sf.detail.active')}</Callout>
-				{/if}
-				<section class="detail__section" aria-labelledby="entered">
-					<h3 class="detail__sub" id="entered">{t('sf.detail.entered')}</h3>
-					<DetailList columns={1} ruled>
-						{#each reviewRows(answers) as row (row.label)}
-							<DetailItem label={row.label}>{row.value}</DetailItem>
-						{/each}
-					</DetailList>
-				</section>
-				<section class="detail__section" aria-labelledby="todo">
-					<h3 class="detail__sub" id="todo">{t('sf.detail.todo')}</h3>
-					{#if todo.length > 0}
-						<ul class="todo">
-							{#each todo as part (part.id)}
-								<li>
-									<Badge tone={part.state === 'required' ? 'warning' : 'neutral'} dot
-										>{t(part.state === 'required' ? 'sf.value.required' : 'sf.status.todo')}</Badge
-									>
-									<Button variant="ghost" size="sm" onclick={() => (current = part.id)}
-										>{part.label}</Button
-									>
-								</li>
-							{/each}
-						</ul>
-					{:else}
-						<Callout tone="info">{t('sf.detail.allSet', { step: labelOf('activate') })}</Callout>
+	<div class="detail__side">
+		<section class="detail__panel" aria-label={current ? labelOf(current) : overview}>
+			<div class="detail__head">
+				{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
+				<h2 class="detail__title">{current ? labelOf(current) : overview}</h2>
+			</div>
+			<div class="detail__body">
+				{#if current === ''}
+					{#if answers.active}
+						<Callout tone="info">{t('sf.detail.active')}</Callout>
 					{/if}
-				</section>
-			{:else if current === 'activate'}
-				{#if missing.length > 0}
-					<Callout tone="warning"
-						>{t('sf.detail.stillRequired', { list: missing.join(', ') })}</Callout
-					>
-				{:else if !canActivate(answers)}
-					<Callout tone="info">{t('sf.detail.testFirst')}</Callout>
-				{/if}
-				<p class="detail__lead">{t('sf.detail.enteredOnOverview')}</p>
-				{#if answers.active}
-					<Callout tone="info">{t('sf.detail.active')}</Callout>
-				{:else}
-					<div>
-						<Button disabled={!canActivate(answers)} onclick={() => (answers.active = true)}
-							>{t('sf.detail.activate')}</Button
+					<section class="detail__section" aria-labelledby="entered">
+						<h3 class="detail__sub" id="entered">{t('sf.detail.entered')}</h3>
+						<DetailList columns={1} ruled>
+							{#each reviewRows(answers) as row (row.label)}
+								<DetailItem label={row.label}>{row.value}</DetailItem>
+							{/each}
+						</DetailList>
+					</section>
+					<section class="detail__section" aria-labelledby="todo">
+						<h3 class="detail__sub" id="todo">{t('sf.detail.todo')}</h3>
+						{#if todo.length > 0}
+							<ul class="todo">
+								{#each todo as part (part.id)}
+									<li>
+										<Badge tone={part.state === 'required' ? 'warning' : 'neutral'} dot
+											>{t(
+												part.state === 'required' ? 'sf.value.required' : 'sf.status.todo'
+											)}</Badge
+										>
+										<Button variant="ghost" size="sm" onclick={() => (current = part.id)}
+											>{part.label}</Button
+										>
+									</li>
+								{/each}
+							</ul>
+						{:else}
+							<Callout tone="info">{t('sf.detail.allSet', { step: labelOf('activate') })}</Callout>
+						{/if}
+					</section>
+				{:else if current === 'activate'}
+					{#if missing.length > 0}
+						<Callout tone="warning"
+							>{t('sf.detail.stillRequired', { list: missing.join(', ') })}</Callout
 						>
-					</div>
+					{:else if !canActivate(answers)}
+						<Callout tone="info">{t('sf.detail.testFirst')}</Callout>
+					{/if}
+					<p class="detail__lead">{t('sf.detail.enteredOnOverview')}</p>
+					{#if answers.active}
+						<Callout tone="info">{t('sf.detail.active')}</Callout>
+					{:else}
+						<div>
+							<Button disabled={!canActivate(answers)} onclick={() => (answers.active = true)}
+								>{t('sf.detail.activate')}</Button
+							>
+						</div>
+					{/if}
+				{:else if EXTRA_PARTS.includes(current)}
+					<ExtraSteps step={current} bind:form={answers.extras} outbound={!incoming} />
+				{:else if current.startsWith('rp-')}
+					<RpSteps step={current} bind:form={answers.rp} />
+				{:else if current.startsWith('sp-')}
+					<SpSteps step={current} bind:form={answers.sp} />
+				{:else}
+					<InSteps step={current} bind:op={answers.op} bind:idp={answers.idp} />
 				{/if}
-			{:else if EXTRA_PARTS.includes(current)}
-				<ExtraSteps step={current} bind:form={answers.extras} outbound={!incoming} />
-			{:else if current.startsWith('rp-')}
-				<RpSteps step={current} bind:form={answers.rp} />
-			{:else if current.startsWith('sp-')}
-				<SpSteps step={current} bind:form={answers.sp} />
-			{:else}
-				<InSteps step={current} bind:op={answers.op} bind:idp={answers.idp} />
-			{/if}
-		</div>
-	</section>
+			</div>
+		</section>
+		{#if current === ''}
+			<!-- What Authrim gives the other side is not a step of the flow: a frame of its own below. -->
+			<Card title={labelOf(SHARE_PART[kind])}>
+				<div class="detail__share">
+					{#if kind === 'rp'}
+						<RpSteps step={SHARE_PART.rp} bind:form={answers.rp} />
+					{:else if kind === 'sp'}
+						<SpSteps step={SHARE_PART.sp} bind:form={answers.sp} />
+					{:else}
+						<InSteps step={SHARE_PART[kind]} bind:op={answers.op} bind:idp={answers.idp} />
+					{/if}
+				</div>
+			</Card>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -293,6 +315,20 @@
 		.detail {
 			grid-template-columns: minmax(0, 1fr);
 		}
+	}
+
+	/* The frames of the right-hand side, one above the other. */
+	.detail__side {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-columns);
+		min-width: 0;
+	}
+
+	.detail__share {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-field);
 	}
 
 	.detail__panel {

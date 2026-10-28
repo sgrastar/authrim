@@ -5,8 +5,8 @@
 import type { jaServiceFlows } from './ja';
 
 export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
-	'sf.part.where': 'Where to connect',
-	'sf.part.kind': 'What to connect',
+	'sf.part.where': 'What to add',
+	'sf.part.kind': 'Kind',
 	'sf.part.rp-app': 'App details',
 	'sf.part.rp-redirect': 'Redirect URIs',
 	'sf.part.rp-signin': 'Sign-in method',
@@ -128,12 +128,13 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.schema.standardPlusCustom': 'Standard plus custom claims',
 	'sf.schema.providerStandard': 'The provider’s standard claims or attributes',
 
-	'sf.wizard.title': 'Add connection',
-	'sf.wizard.description': 'Connect an app, a service or a provider to this tenant.',
-	'sf.wizard.stepsNote': 'More steps appear once you choose what to connect.',
+	'sf.wizard.title': 'Add service flow',
+	'sf.wizard.description':
+		'Add a connection to an app, a service or a provider, or a flow for signing people up and in.',
+	'sf.wizard.stepsNote': 'More steps appear once you choose the kind.',
 	'sf.wizard.finish': 'Continue to settings',
-	'sf.wizard.whereLabel': 'Where do you want to connect?',
-	'sf.wizard.kindLabel': 'What do you want to connect?',
+	'sf.wizard.whereLabel': 'What do you want to add?',
+	'sf.wizard.kindLabel': 'Which kind?',
 	'sf.wizard.out.label': 'Let an app or service sign in through Authrim',
 	'sf.wizard.out.desc':
 		'Authrim is the identity provider (IdP, or OP for OpenID Connect). An app or a service sends its people here to sign in.',
@@ -145,7 +146,7 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 		'A web, single-page or native app. It gets a client ID and sends people to Authrim to sign in.',
 	'sf.wizard.kind.sp.label': 'A service that uses SAML',
 	'sf.wizard.kind.sp.desc':
-		'A publisher or another service that takes a SAML sign-in. You exchange metadata with it.',
+		'A SaaS product, an internal business system or a partner’s service that takes a SAML sign-in. You exchange metadata with it.',
 	'sf.wizard.kind.op.label': 'A provider that uses OpenID Connect',
 	'sf.wizard.kind.op.desc':
 		'A directory or sign-in service with an issuer address. You register Authrim there and get a client ID.',
@@ -156,7 +157,6 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.status.done': 'Configured',
 	'sf.status.partial': 'Partly set',
 	'sf.status.todo': 'Not set yet',
-	'sf.status.required': 'Required — not set',
 	'sf.status.active': 'Active',
 	'sf.status.notActive': 'Not active',
 	'sf.status.draft': 'Draft',
@@ -164,7 +164,7 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.blurb.sp': 'A service that signs in through Authrim (SAML)',
 	'sf.blurb.op': 'A provider people sign in through (OpenID Connect)',
 	'sf.blurb.idp': 'A provider people sign in through (SAML)',
-	'sf.detail.allConnections': 'All connections',
+	'sf.detail.back': 'Service flows',
 	'sf.detail.signIn': 'Sign in',
 	'sf.detail.signInPage': 'Sign-in page',
 	'sf.detail.peopleChoose': 'People choose “{name}”',
@@ -248,7 +248,7 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 
 	'sf.set.choose': 'Choose a mapping set',
 	'sf.set.tenantDefault': 'Follow the tenant default',
-	'sf.set.libraryStaff': 'Library staff set',
+	'sf.set.staff': 'Employee set',
 	'sf.set.none': 'No additional mapping',
 	'sf.set.minimal': 'Minimal: the identifier only',
 
@@ -260,8 +260,9 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.sp.nameId.email': 'Email address',
 	'sf.sp.nameId.unspecified': 'Unspecified',
 	'sf.sp.attrsLabel': 'Attributes sent',
-	'sf.sp.attrs.library': 'Library standard: affiliation and entitlement',
-	'sf.sp.attrs.custom': 'Custom (start from a copy of Library standard)',
+	'sf.sp.attrs.standard': 'Standard: name, email, affiliation and role',
+	'sf.sp.attrs.academic': 'Academic: affiliation and entitlement (eduPerson)',
+	'sf.sp.attrs.custom': 'Custom (start from a copy of Standard)',
 	'sf.sp.minAuth.none': 'No requirement',
 	'sf.sp.minAuth.password': 'Password',
 	'sf.sp.minAuth.aal2': 'Two factors (AAL2)',
@@ -325,9 +326,23 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.extra.role.admin': 'Administrator',
 	'sf.extra.roleNote': 'Told apart from deciding in advance who may be assigned a role.',
 
+	'sf.group.signup': 'Sign-up',
+	'sf.part.signup-flow': 'Sign-up flow to use',
+	'sf.extra.signupLead.out':
+		'Choose the sign-up flow for people who arrive from this app without an account.',
+	'sf.extra.signupLead.in':
+		'Choose the sign-up flow for people who sign in through this provider and have no account yet.',
+	'sf.extra.signupFlow': 'Sign-up flow',
+	'sf.extra.chooseSignup': 'Choose a sign-up flow',
+	'sf.extra.signupHint': 'Sign-up flows are created with Add service flow.',
 	'sf.mock.title': 'Service flows',
-	'sf.mock.description': 'What is connected to this tenant.',
-	'sf.mock.connections': 'Connections',
+	'sf.mock.description': 'The service flows of this tenant.',
+	'sf.mock.connections': 'All service flows',
+	'sf.mock.col.protocol': 'Protocol',
+	'sf.mock.col.name': 'Name',
+	'sf.mock.col.created': 'Created',
+	'sf.mock.col.modified': 'Modified',
+	'sf.mock.open': 'Open {name}',
 	'sf.mock.col.kind': 'Kind',
 	'sf.mock.col.status': 'Status',
 	'sf.mock.status.active': 'active',

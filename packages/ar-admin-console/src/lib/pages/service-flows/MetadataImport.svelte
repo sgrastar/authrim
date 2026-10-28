@@ -97,9 +97,9 @@
 	value={form.importMode}
 	onchange={(value) => (form.importMode = value as ImportMode)}
 	options={[
-		{ value: 'url', label: t('sf.ours.metadataUrl'), icon: 'link' },
-		{ value: 'file', label: t('sf.import.mode.file'), icon: 'upload' },
-		{ value: 'manual', label: t('sf.import.mode.manual'), icon: 'pencil' }
+		{ value: 'url', label: t('sf.ours.metadataUrl') },
+		{ value: 'file', label: t('sf.import.mode.file') },
+		{ value: 'manual', label: t('sf.import.mode.manual') }
 	]}
 />
 {#if form.importMode === 'url'}
