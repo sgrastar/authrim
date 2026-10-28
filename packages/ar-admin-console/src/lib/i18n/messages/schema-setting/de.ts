@@ -55,7 +55,6 @@ export const deSchemaSetting: Record<keyof typeof jaSchemaSetting, string> = {
 	'ss.empty.filtered': 'Kein Attribut passt.',
 	'ss.create.title': 'Attribut hinzufügen',
 	'ss.create.submit': 'Hinzufügen',
-	'ss.create.failed': 'Das Attribut konnte nicht hinzugefügt werden.',
 	'ss.field.key': 'Attributschlüssel',
 	'ss.field.keyHint':
 		'snake_case, beginnend mit einem Kleinbuchstaben, bis zu 64 Zeichen. Reservierte Namen sind nicht erlaubt. Um ihn später zu ändern, benennen Sie ihn um.',

@@ -20,7 +20,6 @@ export const enTenantGeneral: Record<keyof typeof jaTenantGeneral, string> = {
 	'tg.profiles.desc': 'The profiles that apply to this tenant.',
 	'tg.profile.audit': 'Audit',
 	'tg.profile.residency': 'Data residency',
-	'tg.profile.backend': 'Where profiles are kept',
 	'tg.profile.inherited': 'Environment default',
 	'tg.profile.own': 'Set for this tenant',
 	'tg.profiles.error': 'The profiles could not be read ({reason}).',

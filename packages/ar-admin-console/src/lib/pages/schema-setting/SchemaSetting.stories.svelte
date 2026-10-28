@@ -16,7 +16,7 @@
 			docs: {
 				description: {
 					component:
-						'Access → Attribute schema: every attribute a person can have, the base ones (the OIDC standard, added from a preset) and the tenant’s own, in one list. The list is **one table**, sorted by key to begin with, **up to 250 rows a page** (the API gives 100 at once, so a page is put together from several calls), with **sortable headers** (the API has no sort, so it orders the rows of the page), **kind (base / custom), PII and required / optional as badges in columns of their own**. There are no selectable rows: the API has no bulk operation, and a delete runs through every person\u2019s stored values, so each attribute is changed on its own page. The attribute\u2019s own page is a box of independent settings, so its rows are **ruled** (a line between them, as in the settings pages). A row opens the attribute: its settings (confirmed with Save, sending only what changed), where it is relied on, its history, and the two actions that move or remove people’s saved values, changing the key and deleting. Built on `/api/admin/custom-claims/*`; the stories use an in-memory API.'
+						'Access → Attribute schema: every attribute a person can have, the base ones (the OIDC standard, added from a preset) and the tenant’s own, in one list. The list is **one table**, sorted by key to begin with, **up to 250 rows a page** (the API gives 100 at once, so a page is put together from several calls), with **sortable headers** (the API has no sort, so the page sorts the rows itself, and only when all of them are on the page), **kind (base / custom), PII and required / optional as badges in columns of their own**. There are no selectable rows: the API has no bulk operation, and a delete runs through every person\u2019s stored values, so each attribute is changed on its own page. The attribute\u2019s own page is a box of independent settings, so its rows are **ruled** (a line between them, as in the settings pages). A row opens the attribute: its settings (confirmed with Save, sending only what changed), where it is relied on, its history, and the two actions that move or remove people’s saved values, changing the key and deleting. Built on `/api/admin/custom-claims/*`; the stories use an in-memory API.'
 				}
 			}
 		}
@@ -523,6 +523,34 @@
 		// Another column sorts by itself.
 		await userEvent.click(canvas.getByRole('button', { name: new RegExp(t('ss.col.label')) }));
 		await waitFor(() => expect(firstKey()).toContain('Badge expires on'));
+	}}
+>
+	{#snippet template()}
+		<SchemaSetting client={createFakeSchemaSetting()} tenantId={TENANT} access={EDITOR} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Filter by state"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await seen(canvas, 'locker_code');
+		// "On" is what the status badge says of an attribute at rest: one that failed, or is being
+		// renamed, shows that instead and is not in it.
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('ss.filter.status') }),
+			t('ss.status.active')
+		);
+		await waitFor(() => expect(canvas.queryAllByText('locker_code')).toHaveLength(0));
+		await expect(canvas.queryAllByText('legacy_ref')).toHaveLength(0);
+		await seen(canvas, 'employee_id');
+		// Off shows the one that is off, and still not the ones being worked on.
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: t('ss.filter.status') }),
+			t('ss.status.inactive')
+		);
+		await waitFor(() => expect(canvas.queryAllByText('employee_id')).toHaveLength(0));
+		await seen(canvas, 'badge_expiry');
 	}}
 >
 	{#snippet template()}

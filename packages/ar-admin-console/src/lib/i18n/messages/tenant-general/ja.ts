@@ -21,7 +21,6 @@ export const jaTenantGeneral = {
 	'tg.profiles.desc': 'このテナントに適用されているプロファイルです。',
 	'tg.profile.audit': '監査',
 	'tg.profile.residency': 'データ所在',
-	'tg.profile.backend': 'プロファイルの保存先',
 	'tg.profile.inherited': '環境の既定',
 	'tg.profile.own': 'このテナントで指定',
 	'tg.profiles.error': 'プロファイルを読み込めませんでした（{reason}）。',

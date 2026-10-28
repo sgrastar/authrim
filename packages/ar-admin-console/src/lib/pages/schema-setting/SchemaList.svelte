@@ -96,9 +96,13 @@
 						isPii: pii === 'all' ? undefined : pii === 'yes',
 						isActive: status === 'active' ? true : status === 'inactive' ? false : undefined,
 						status:
-							status !== 'all' && status !== 'active' && status !== 'inactive'
-								? (status as OperationStatus)
-								: undefined,
+							// "On" and "off" are what the status badge says of an attribute at rest: one
+							// being worked on or failed shows that instead, so it is not in them.
+							status === 'active' || status === 'inactive'
+								? 'active'
+								: status !== 'all'
+									? (status as OperationStatus)
+									: undefined,
 						isSystem: origin === 'all' ? undefined : origin === 'system'
 					},
 					{ page, size: PAGE_SIZE }
@@ -134,15 +138,18 @@
 		page = 1;
 	}
 
+	/** Every attribute is on this page: only then is a sort of the rows the sort of the list. */
+	const allLoaded = $derived((result?.total ?? 0) <= PAGE_SIZE);
+
 	const columns = $derived([
-		{ key: 'key', label: t('ss.col.key'), width: '17%', sortable: true },
-		{ key: 'label', label: t('ss.col.label'), sortable: true },
-		{ key: 'origin', label: t('ss.col.origin'), width: '90px', sortable: true },
-		{ key: 'type', label: t('ss.col.type'), width: '100px', sortable: true },
-		{ key: 'pii', label: t('ss.col.pii'), width: '70px', sortable: true },
-		{ key: 'cardinality', label: t('ss.col.cardinality'), width: '112px', sortable: true },
-		{ key: 'required', label: t('ss.col.required'), width: '100px', sortable: true },
-		{ key: 'status', label: t('ss.col.status'), width: '160px', sortable: true }
+		{ key: 'key', label: t('ss.col.key'), width: '17%', sortable: allLoaded },
+		{ key: 'label', label: t('ss.col.label'), sortable: allLoaded },
+		{ key: 'origin', label: t('ss.col.origin'), width: '90px', sortable: allLoaded },
+		{ key: 'type', label: t('ss.col.type'), width: '100px', sortable: allLoaded },
+		{ key: 'pii', label: t('ss.col.pii'), width: '70px', sortable: allLoaded },
+		{ key: 'cardinality', label: t('ss.col.cardinality'), width: '112px', sortable: allLoaded },
+		{ key: 'required', label: t('ss.col.required'), width: '100px', sortable: allLoaded },
+		{ key: 'status', label: t('ss.col.status'), width: '160px', sortable: allLoaded }
 	]);
 
 	/** What a column sorts by: words as the admin reads them, flags as 0 / 1. */
@@ -167,8 +174,12 @@
 		}
 	}
 
-	/** The page's rows, sorted here: the API has no sort, so it covers the rows of this page. */
-	const rows = $derived(sortRows(result?.schemas ?? [], sort, sortValue, i18n.locale));
+	/** The rows, sorted here (the API has no sort), when all of them are on this page. */
+	const rows = $derived(
+		allLoaded
+			? sortRows(result?.schemas ?? [], sort, sortValue, i18n.locale)
+			: (result?.schemas ?? [])
+	);
 
 	function created(schema: Schema) {
 		adding = false;

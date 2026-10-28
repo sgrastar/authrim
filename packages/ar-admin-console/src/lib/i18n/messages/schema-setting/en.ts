@@ -53,7 +53,6 @@ export const enSchemaSetting: Record<keyof typeof jaSchemaSetting, string> = {
 	'ss.empty.filtered': 'No attribute matches.',
 	'ss.create.title': 'Add attribute',
 	'ss.create.submit': 'Add',
-	'ss.create.failed': 'Could not add the attribute.',
 	'ss.field.key': 'Attribute key',
 	'ss.field.keyHint':
 		'snake_case starting with a lower-case letter, up to 64 characters. Reserved names cannot be used. To change it later, rename it.',

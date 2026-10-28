@@ -54,7 +54,6 @@ export const jaSchemaSetting = {
 	'ss.empty.filtered': '条件に合う属性がありません。',
 	'ss.create.title': '属性を追加',
 	'ss.create.submit': '追加',
-	'ss.create.failed': '属性を追加できませんでした。',
 	'ss.field.key': '属性のキー',
 	'ss.field.keyHint':
 		'英小文字で始まる snake_case、64 文字まで。予約済みの名前は使えません。作成後に変えるには、名称変更を使います。',

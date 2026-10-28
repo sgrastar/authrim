@@ -80,6 +80,7 @@
 		<RowStack ruled>
 			<FieldRow label={t('ss.field.key')} plain align="text">
 				<span class="key">
+					<span class="sr-only">{t('ss.field.key')}: </span>
 					<code>{schema.fieldKey}</code>
 					{#if canWrite && settled && !schema.isSystem}
 						<Button size="sm" variant="secondary" disabled={draft.dirty} onclick={onrename}
@@ -119,7 +120,9 @@
 				]}
 			/>
 			<FieldRow label={t('ss.col.pii')} info={t('ss.locked.pii')} plain align="text">
-				{t(schema.isPii ? 'ss.pii.yes' : 'ss.pii.no')}
+				<span class="sr-only">{t('ss.col.pii')}: </span>{t(
+					schema.isPii ? 'ss.pii.yes' : 'ss.pii.no'
+				)}
 			</FieldRow>
 			<CheckRow
 				label={t('ss.col.required')}

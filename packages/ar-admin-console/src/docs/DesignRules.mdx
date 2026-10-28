@@ -315,7 +315,7 @@ actual weights (400, 500, 600, 700); line heights from `--lh-*`, sharing three v
 - A list's columns that people look things up by are **sortable** (`sortable`, bound `sort`): the
   key and name, the kind, the type, the flags and the status. The list begins sorted by its key
   (ascending); a click on another column sorts by that, a second click reverses. Sorting is on the page's rows
-  (`sortRows`) when the API has no sort of its own, and the page's description says so.
+  (`sortRows`) only when the API has no sort of its own **and every row is on the page**: a sort of one page of several is not the sort of the list, so the headers are not sortable then.
 - A list whose rows can be acted on together has **selectable rows** (`DataTable` `selectable`):
   a checkbox column, and the page's bulk actions in the bar that shows while rows are selected.
   Only with write access; read-only, the checkbox column is not there.
