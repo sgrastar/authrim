@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/i18n.svelte';
 	import { ApiError } from '$lib/api/api-error';
-	import type { Components, TenantInfo, TenantInfoClient } from '$lib/api/tenant-info';
+	import { isWebUrl, type TenantInfo, type TenantInfoClient } from '$lib/api/tenant-info';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
 	import Card from '$lib/ui/patterns/Card.svelte';
 	import CopyButton from '$lib/ui/primitives/CopyButton.svelte';
@@ -10,13 +10,14 @@
 	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
 	import Badge from '$lib/ui/primitives/Badge.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
+	import AddressValue from './AddressValue.svelte';
 	import EndpointList from './EndpointList.svelte';
 
 	/**
-	 * What the tenant is: its name, its issuer, which parts of Authrim this environment runs, the
-	 * addresses of the screens, the profiles that apply, and the endpoints it gives out. All of it
-	 * is read; none is set here (the addresses follow from the environment and the tenant's
-	 * domain).
+	 * What the tenant is: its name, its issuer, the addresses of the screens, the endpoints it
+	 * gives out, and at the end the audit and data-residency profiles that apply. All of it is
+	 * read; none is set here (the addresses follow from the environment and the tenant's domain).
+	 * An address a person can open is a link that opens in a new tab, beside its copy button.
 	 */
 	interface Props {
 		client: TenantInfoClient;
@@ -60,22 +61,38 @@
 		void load();
 	});
 
-	const PARTS: { key: keyof Components; label: 'loginUi' | 'adminUi' | 'saml' | 'async' | 'vc' }[] =
-		[
-			{ key: 'loginUi', label: 'loginUi' },
-			{ key: 'adminUi', label: 'adminUi' },
-			{ key: 'saml', label: 'saml' },
-			{ key: 'async', label: 'async' },
-			{ key: 'vc', label: 'vc' }
-		];
-
 	const addresses = (read: TenantInfo) => [
-		{ id: 'login', label: t('tg.url.login'), url: read.loginUrl },
-		{ id: 'loginBase', label: t('tg.url.loginBase'), url: read.loginBaseUrl },
-		{ id: 'sharedLogin', label: t('tg.url.sharedLogin'), url: read.sharedLoginUrl },
-		{ id: 'discover', label: t('tg.url.discover'), url: read.discoverUrl },
-		{ id: 'admin', label: t('tg.url.admin'), url: read.adminUrl },
-		{ id: 'api', label: t('tg.url.api'), url: read.apiUrl }
+		{
+			id: 'login',
+			label: t('tg.url.login'),
+			url: read.loginUrl,
+			openable: isWebUrl(read.loginUrl)
+		},
+		{
+			id: 'loginBase',
+			label: t('tg.url.loginBase'),
+			url: read.loginBaseUrl,
+			openable: isWebUrl(read.loginBaseUrl)
+		},
+		{
+			id: 'sharedLogin',
+			label: t('tg.url.sharedLogin'),
+			url: read.sharedLoginUrl,
+			openable: isWebUrl(read.sharedLoginUrl)
+		},
+		{
+			id: 'discover',
+			label: t('tg.url.discover'),
+			url: read.discoverUrl,
+			openable: isWebUrl(read.discoverUrl)
+		},
+		{
+			id: 'admin',
+			label: t('tg.url.admin'),
+			url: read.adminUrl,
+			openable: isWebUrl(read.adminUrl)
+		},
+		{ id: 'api', label: t('tg.url.api'), url: read.apiUrl, openable: isWebUrl(read.apiUrl) }
 	];
 </script>
 
@@ -111,7 +128,7 @@
 				{/snippet}
 			</DetailItem>
 			<DetailItem label={t('tg.tenant.issuer')}>
-				<code>{info.issuer}</code>
+				<AddressValue url={info.issuer} openable />
 				<span class="hint">{t('tg.tenant.issuerHint')}</span>
 				{#snippet end()}
 					<CopyButton
@@ -129,7 +146,7 @@
 			{#each addresses(info) as address (address.id)}
 				{#if address.url}
 					<DetailItem label={address.label}>
-						<code>{address.url}</code>
+						<AddressValue url={address.url} openable={address.openable} />
 						{#snippet end()}
 							<CopyButton
 								variant="icon"
@@ -147,18 +164,7 @@
 		</DetailList>
 	</Card>
 
-	<Card title={t('tg.parts.title')} description={t('tg.parts.desc')}>
-		<DetailList ruled>
-			{#each PARTS as part (part.key)}
-				{@const running = info.components[part.key]}
-				<DetailItem label={t(`tg.part.${part.label}`)}>
-					<Badge tone={running ? 'success' : 'neutral'} dot
-						>{t(running ? 'tg.part.on' : 'tg.part.off')}</Badge
-					>
-				</DetailItem>
-			{/each}
-		</DetailList>
-	</Card>
+	<EndpointList groups={info.endpoints} />
 
 	<Card title={t('tg.profiles.title')} description={t('tg.profiles.desc')}>
 		{#if info.profiles}
@@ -176,13 +182,12 @@
 			>
 		{/if}
 	</Card>
-
-	<EndpointList groups={info.endpoints} />
 {/if}
 
 <style>
 	code {
-		font-size: var(--fs-small);
+		font-family: var(--font-mono);
+		font-size: var(--fs-body);
 		overflow-wrap: anywhere;
 	}
 

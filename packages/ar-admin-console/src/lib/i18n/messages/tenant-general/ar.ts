@@ -11,15 +11,6 @@ export const arTenantGeneral: Record<keyof typeof jaTenantGeneral, string> = {
 	'tg.tenant.issuer': 'Issuer',
 	'tg.tenant.issuerHint':
 		'The address of this tenant. Tokens carry it as iss, and apps read the tenant’s configuration from it.',
-	'tg.parts.title': 'Parts running in this environment',
-	'tg.parts.desc': 'Decided by the environment’s configuration. They cannot be changed here.',
-	'tg.part.loginUi': 'Sign-in screens',
-	'tg.part.adminUi': 'Admin console',
-	'tg.part.saml': 'SAML',
-	'tg.part.async': 'Background jobs',
-	'tg.part.vc': 'Verifiable credentials (VC)',
-	'tg.part.on': 'Running',
-	'tg.part.off': 'Not running',
 	'tg.urls.title': 'Addresses',
 	'tg.urls.desc': 'The screens people open, and the API.',
 	'tg.url.login': 'Sign-in for this tenant',
@@ -91,5 +82,7 @@ export const arTenantGeneral: Record<keyof typeof jaTenantGeneral, string> = {
 	'tg.forbidden': 'You do not have permission to view this tenant’s information.',
 	'tg.notFound': 'This tenant was not found.',
 	'tg.unavailable':
-		'The settings could not be read, so the addresses cannot be shown. Try again in a moment.'
+		'The settings could not be read, so the addresses cannot be shown. Try again in a moment.',
+	'tg.page': 'General',
+	'tg.page.desc': 'The name of this tenant and the addresses you give to apps and partners.'
 };

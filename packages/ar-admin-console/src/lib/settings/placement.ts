@@ -148,25 +148,6 @@ export const STAYING_SIGNED_IN: SettingsPageDef = {
 	]
 };
 
-/**
- * Settings → General: the tenant's logo. The page also shows what the tenant is called and the
- * addresses it is reached at (read-only, from the tenant info API), which are not settings.
- */
-export const TENANT_GENERAL: SettingsPageDef = {
-	id: 'general',
-	nav: 'settings/general',
-	title: 'set.page.general',
-	description: 'set.page.general.desc',
-	sections: [
-		{
-			id: 'branding',
-			title: 'set.section.branding',
-			description: 'set.section.branding.desc',
-			settings: [{ key: 'tenant.logo_uri', depth: 'primary' }]
-		}
-	]
-};
-
 /** Settings → Signing keys: how the tenant signs ID tokens, and whether apps may choose. */
 export const SIGNING_KEYS: SettingsPageDef = {
 	id: 'signing-keys',
@@ -362,6 +343,5 @@ export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
 	PROTECTION,
 	ENTERPRISE_SAML,
 	SIGNING_KEYS,
-	APP_DEFAULTS,
-	TENANT_GENERAL
+	APP_DEFAULTS
 ];

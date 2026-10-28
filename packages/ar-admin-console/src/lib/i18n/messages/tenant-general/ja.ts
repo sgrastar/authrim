@@ -8,15 +8,6 @@ export const jaTenantGeneral = {
 	'tg.tenant.issuer': '発行者（issuer）',
 	'tg.tenant.issuerHint':
 		'このテナントのアドレスです。トークンの iss に入り、アプリはここから設定を読み込みます。',
-	'tg.parts.title': 'この環境で動いている機能',
-	'tg.parts.desc': '環境の設定で決まります。ここでは変えられません。',
-	'tg.part.loginUi': 'ログイン画面',
-	'tg.part.adminUi': '管理画面',
-	'tg.part.saml': 'SAML',
-	'tg.part.async': '非同期処理',
-	'tg.part.vc': '検証可能な資格情報（VC）',
-	'tg.part.on': '動いている',
-	'tg.part.off': '止めている',
 	'tg.urls.title': '画面のアドレス',
 	'tg.urls.desc': '人が開く画面と API のアドレスです。',
 	'tg.url.login': 'このテナントのログイン',
@@ -88,5 +79,7 @@ export const jaTenantGeneral = {
 	'tg.forbidden': 'このテナントの基本情報を見る権限がありません。',
 	'tg.notFound': 'このテナントは見つかりません。',
 	'tg.unavailable':
-		'設定を読み込めないため、アドレスを表示できません。しばらくしてから再試行してください。'
+		'設定を読み込めないため、アドレスを表示できません。しばらくしてから再試行してください。',
+	'tg.page': '基本情報',
+	'tg.page.desc': 'このテナントの名前と、アプリや連携先に伝えるアドレスの一覧です。'
 } as const;

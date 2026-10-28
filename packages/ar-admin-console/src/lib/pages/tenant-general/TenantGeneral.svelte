@@ -1,28 +1,23 @@
 <script lang="ts">
-	import type { AdminAccess } from '$lib/access/access';
-	import type { SettingsClient } from '$lib/api/settings';
 	import type { TenantInfoClient } from '$lib/api/tenant-info';
-	import { TENANT_GENERAL } from '$lib/settings/placement';
-	import SettingsPage from '$lib/settings/SettingsPage.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
+	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
+	import Page from '$lib/ui/templates/Page.svelte';
 	import TenantInfoPanel from './TenantInfoPanel.svelte';
 
 	/**
-	 * Settings → General. The logo is a setting (a placement, SettingsPage); what the tenant is
-	 * called and the addresses it gives out are read from the tenant info API and shown after it.
+	 * Settings → General: what the tenant is called and the addresses it gives out, read from the
+	 * tenant info API. Nothing is set here (the logo is a setting of Customization → Branding).
 	 */
 	interface Props {
-		client: SettingsClient;
 		info: TenantInfoClient;
 		tenantId: string;
-		/** Who is looking; the signed-in admin unless given (Storybook). */
-		access?: AdminAccess;
 	}
 
-	let { client, info, tenantId, access }: Props = $props();
+	let { info, tenantId }: Props = $props();
 </script>
 
-<SettingsPage page={TENANT_GENERAL} {client} target={{ level: 'tenant', tenantId }} {access}>
-	{#snippet after()}
-		<TenantInfoPanel client={info} {tenantId} />
-	{/snippet}
-</SettingsPage>
+<Page>
+	<PageHeader title={t('tg.page')} description={t('tg.page.desc')} />
+	<TenantInfoPanel client={info} {tenantId} />
+</Page>

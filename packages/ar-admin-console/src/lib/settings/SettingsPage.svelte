@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack, type Snippet } from 'svelte';
+	import { untrack } from 'svelte';
 	import type { CategoryName } from '@authrim/ar-lib-core/types/settings/catalog';
 	import { settingsLevel, widest, type AccessLevel, type AdminAccess } from '$lib/access/access';
 	import { adminAccess } from '$lib/access/admin-access.svelte';
@@ -61,11 +61,9 @@
 		target: SettingsTarget;
 		/** Who is looking; the signed-in admin unless given (Storybook). */
 		access?: AdminAccess;
-		/** More of the page, after its settings: what is not a setting (read-only facts). */
-		after?: Snippet;
 	}
 
-	let { page, client, target, access, after }: Props = $props();
+	let { page, client, target, access }: Props = $props();
 
 	const who = $derived(access ?? adminAccess.current);
 	const categories = $derived(categoriesOf(page));
@@ -296,7 +294,6 @@
 			onchoose={(choice) => conflict?.resolve(choice)}
 		/>
 	{/if}
-	{@render after?.()}
 </Page>
 
 <!-- A section's settings as table rows: a ruled list when the admin may only look, form rows

@@ -29,6 +29,8 @@ export interface Endpoint {
 	/** The API's own name for it (`token`, `idp_metadata`…). */
 	id: string;
 	url: string;
+	/** A page or a document a person can open in the browser as it is. */
+	openable: boolean;
 }
 
 export interface EndpointGroup {
@@ -103,6 +105,24 @@ function choice(value: unknown): ProfileChoice {
 /** The endpoints of one group, without the entries that are only kept for older callers. */
 const DEPRECATED = new Set(['saml.metadata']);
 
+/**
+ * The endpoints that show something when opened in the browser: the discovery documents and the
+ * metadata files. The others answer only to a request with a body, a token or a parameter (the
+ * token endpoint, the Admin API, WebFinger without `resource`), so they are copied, not opened.
+ */
+const OPENABLE = new Set([
+	'well_known.openid_configuration',
+	'well_known.oauth_authorization_server',
+	'well_known.jwks',
+	'saml.idp_metadata',
+	'saml.sp_metadata',
+	'vc.credential_issuer_metadata'
+]);
+
+/** An address that may be linked to: http or https only, never another scheme. */
+export const isWebUrl = (value: string | null | undefined): value is string =>
+	typeof value === 'string' && /^https?:\/\//i.test(value);
+
 export function tenantInfoFromRow(row: Row): TenantInfo {
 	const components = record(row.components);
 	const profiles = row.runtime_profiles ? record(row.runtime_profiles) : null;
@@ -136,7 +156,11 @@ export function tenantInfoFromRow(row: Row): TenantInfo {
 			id,
 			endpoints: Object.entries(record(row[id]))
 				.filter(([name, url]) => typeof url === 'string' && !DEPRECATED.has(`${id}.${name}`))
-				.map(([name, url]) => ({ id: name, url: url as string }))
+				.map(([name, url]) => ({
+					id: name,
+					url: url as string,
+					openable: OPENABLE.has(`${id}.${name}`) && isWebUrl(url as string)
+				}))
 		})).filter((group) => group.endpoints.length > 0)
 	};
 }

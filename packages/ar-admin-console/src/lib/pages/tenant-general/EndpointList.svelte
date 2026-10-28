@@ -5,10 +5,12 @@
 	import CopyButton from '$lib/ui/primitives/CopyButton.svelte';
 	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
 	import DetailList from '$lib/ui/patterns/DetailList.svelte';
+	import AddressValue from './AddressValue.svelte';
 
 	/**
 	 * The addresses the tenant gives to apps and partners, by protocol: each with what it is for
-	 * and a copy button. A name this console has no words for is shown as the API names it.
+	 * and a copy button, and a link (in a new tab) for the ones a browser can open. A name this
+	 * console has no words for is shown as the API names it.
 	 */
 	interface Props {
 		groups: EndpointGroup[];
@@ -36,7 +38,7 @@
 			<DetailList ruled>
 				{#each group.endpoints as endpoint (endpoint.id)}
 					<DetailItem label={nameOf(group.id, endpoint.id)}>
-						<code>{endpoint.url}</code>
+						<AddressValue url={endpoint.url} openable={endpoint.openable} />
 						{#snippet end()}
 							<CopyButton
 								variant="icon"
@@ -68,10 +70,5 @@
 		margin: 4px 0 0;
 		color: var(--text-secondary);
 		font-size: var(--fs-small);
-	}
-
-	code {
-		font-size: var(--fs-small);
-		overflow-wrap: anywhere;
 	}
 </style>

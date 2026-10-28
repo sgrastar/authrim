@@ -466,6 +466,7 @@ place('users/support', 'Approvals', {
 
 place('customization/branding', 'Brand', {
 	primary: [
+		'tenant.logo_uri',
 		'login-ui.brand_name',
 		'login-ui.logo_url',
 		'login-ui.logo_display',

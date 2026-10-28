@@ -335,12 +335,5 @@ export const jaSettings = {
 	'persona.support.desc':
 		'利用者の手助け（ロックの解除、サインアウト）だけを行います。設定は見えません。',
 	'persona.viewer': '閲覧担当（限定）',
-	'persona.viewer.desc': '利用者・アプリ・設定を見るだけで、変更はできません。',
-	'set.page.general': '基本情報',
-	'set.page.general.desc':
-		'このテナントの名前と、アプリや連携先に伝えるアドレス。ロゴもここで設定します。',
-	'set.section.branding': 'ロゴ',
-	'set.section.branding.desc': 'ログイン画面や同意画面などに表示するテナントのロゴ。',
-	'set.k.tenant.logo_uri': 'ロゴの URL',
-	'set.k.tenant.logo_uri.desc': 'ロゴ画像のアドレスです。https で公開されている画像を指定します。'
+	'persona.viewer.desc': '利用者・アプリ・設定を見るだけで、変更はできません。'
 } as const;

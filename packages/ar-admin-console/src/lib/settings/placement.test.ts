@@ -164,9 +164,8 @@ describe('where settings live', () => {
 			expect([...placed, ...drafted], key).not.toContain(key);
 			expect(NOT_APPLIED.has(key), key).toBe(false);
 		}
-		// The rest of the Tenant section stays: the logo, now on the General page
-		expect(placed).toContain('tenant.logo_uri');
-		expect(drafted).not.toContain('tenant.logo_uri');
+		// The rest of the Tenant section stays: the logo, with the other branding settings
+		expect(drafted).toContain('tenant.logo_uri');
 		expect(Object.keys(ALL_CATEGORY_META.client.settings).sort()).toEqual([
 			'client.app_login_enabled',
 			'client.sso_enabled'

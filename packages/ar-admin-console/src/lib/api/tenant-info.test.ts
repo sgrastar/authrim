@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFakeTenantInfo, wireRow } from './fake/tenant-info-fake';
 import { ApiError } from './api-error';
-import { httpTenantInfo, tenantInfoFromRow } from './tenant-info';
+import { httpTenantInfo, isWebUrl, tenantInfoFromRow } from './tenant-info';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -43,6 +43,35 @@ describe('tenant info from the wire', () => {
 			'acs',
 			'slo'
 		]);
+	});
+
+	it('marks what a browser can open, and nothing else', () => {
+		const flat = Object.fromEntries(
+			info.endpoints.flatMap((group) =>
+				group.endpoints.map((endpoint) => [`${group.id}.${endpoint.id}`, endpoint.openable])
+			)
+		);
+		expect(flat['well_known.openid_configuration']).toBe(true);
+		expect(flat['well_known.jwks']).toBe(true);
+		expect(flat['saml.idp_metadata']).toBe(true);
+		expect(flat['vc.credential_issuer_metadata']).toBe(true);
+		// Needs a parameter, a body or a token.
+		expect(flat['well_known.webfinger']).toBe(false);
+		expect(flat['oidc.token']).toBe(false);
+		expect(flat['admin_api.users']).toBe(false);
+		expect(flat['scim.users']).toBe(false);
+	});
+
+	it('links only to http and https addresses', () => {
+		expect(isWebUrl('https://a.example/x')).toBe(true);
+		expect(isWebUrl('http://localhost:8787')).toBe(true);
+		expect(isWebUrl('javascript:alert(1)')).toBe(false);
+		expect(isWebUrl('data:text/html,x')).toBe(false);
+		expect(isWebUrl(null)).toBe(false);
+		const row = wireRow();
+		(row.well_known as Record<string, string>).jwks = 'javascript:alert(1)';
+		const bad = tenantInfoFromRow(row);
+		expect(bad.endpoints[0].endpoints.find((e) => e.id === 'jwks')!.openable).toBe(false);
 	});
 
 	it('keeps an address that is not set as none, and a profile that could not be read as an error', () => {
