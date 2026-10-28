@@ -135,14 +135,14 @@
 	}
 
 	const columns = $derived([
-		{ key: 'key', label: t('ss.col.key'), width: '20%', sortable: true },
+		{ key: 'key', label: t('ss.col.key'), width: '17%', sortable: true },
 		{ key: 'label', label: t('ss.col.label'), sortable: true },
 		{ key: 'origin', label: t('ss.col.origin'), width: '90px', sortable: true },
 		{ key: 'type', label: t('ss.col.type'), width: '100px', sortable: true },
 		{ key: 'pii', label: t('ss.col.pii'), width: '70px', sortable: true },
-		{ key: 'cardinality', label: t('ss.col.cardinality'), width: '90px', sortable: true },
-		{ key: 'required', label: t('ss.col.required'), width: '80px', sortable: true },
-		{ key: 'status', label: t('ss.col.status'), width: '110px', sortable: true }
+		{ key: 'cardinality', label: t('ss.col.cardinality'), width: '112px', sortable: true },
+		{ key: 'required', label: t('ss.col.required'), width: '100px', sortable: true },
+		{ key: 'status', label: t('ss.col.status'), width: '160px', sortable: true }
 	]);
 
 	/** What a column sorts by: words as the admin reads them, flags as 0 / 1. */
