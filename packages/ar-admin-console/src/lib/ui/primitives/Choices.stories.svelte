@@ -20,7 +20,7 @@
 			docs: {
 				description: {
 					component:
-						'Use **RadioGroup** for up to five visible choices, **Select** for longer lists, and **SegmentedControl** for short view or time switches. In a settings card, place the group in a **FieldRow**. Keep the short MFA consequences below each option because they distinguish the choices; put optional detail in an `info` tip. Use **SelectMenu** when a choice needs an icon or badge.'
+						'Use **RadioGroup** for up to five visible choices, **Select** for longer lists, and **SegmentedControl** for short view or time switches. In a settings card, place the group in a **FieldRow**. Keep the short MFA consequences below each option because they distinguish the choices; put optional detail in an `info` tip. Use **SelectMenu** when a choice needs an icon or badge. When each option needs a sentence to tell it apart and the choice is a question in itself (where to connect, what kind of app), use **ChoiceCards** (Patterns).'
 				}
 			}
 		}

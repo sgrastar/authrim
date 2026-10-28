@@ -2,6 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { sample } from '../stories/sample';
 	import ThemeMatrix from '../stories/ThemeMatrix.svelte';
+	import BackLink from './BackLink.svelte';
 	import Badge from './Badge.svelte';
 	import Button from './Button.svelte';
 	import Checkbox from './Checkbox.svelte';
@@ -22,6 +23,7 @@
 				<Button>{sample('cancel')}</Button>
 				<Button variant="danger">{sample('delete')}</Button>
 			</div>
+			<BackLink>{sample('allFlows')}</BackLink>
 			<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">
 				<Toggle label={sample('enableFlow')} checked />
 				<Checkbox checked>{sample('passkey')}</Checkbox>
