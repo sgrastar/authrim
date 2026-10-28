@@ -24,6 +24,8 @@
 
 	const inFlow = (root: HTMLElement, name: RegExp | string) =>
 		within(root.querySelector<HTMLElement>('.detail__flow')!).getByRole('button', { name });
+	/** The page header, where the connection's own status is (the flow shows its steps' too). */
+	const inHeader = (root: HTMLElement) => within(root.querySelector<HTMLElement>('.page-head')!);
 	/** The panel on the right, where the back-to-overview button is. */
 	const inPanel = (root: HTMLElement) => within(root.querySelector<HTMLElement>('.detail__panel')!);
 </script>
@@ -345,12 +347,16 @@
 		const canvas = within(canvasElement);
 		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
 		await userEvent.click(canvas.getByRole('button', { name: 'Activate' }));
-		await expect(await canvas.findByText('Active', { selector: '.badge' })).toBeInTheDocument();
+		await expect(
+			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
+		).toBeInTheDocument();
 		await userEvent.click(inFlow(canvasElement, /^Mapping sets/));
 		await userEvent.selectOptions(canvas.getByRole('combobox', { name: 'Mapping set' }), '');
 		// The set is gone, so the connection is a draft again and has to be activated once more.
-		await expect(await canvas.findByText('Draft', { selector: '.badge' })).toBeInTheDocument();
-		await expect(canvas.queryByText('Active', { selector: '.badge' })).toBeNull();
+		await expect(
+			await inHeader(canvasElement).findByText('Draft', { selector: '.badge' })
+		).toBeInTheDocument();
+		await expect(inHeader(canvasElement).queryByText('Active', { selector: '.badge' })).toBeNull();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -386,7 +392,9 @@
 		await expect(inFlow(canvasElement, /^Test the connection.*Configured/)).toBeInTheDocument();
 		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
 		await userEvent.click(canvas.getByRole('button', { name: 'Activate' }));
-		await expect(await canvas.findByText('Active', { selector: '.badge' })).toBeInTheDocument();
+		await expect(
+			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
+		).toBeInTheDocument();
 		// The provider's details are at the top of the settings: back on the overview they are there.
 		await userEvent.click(inFlow(canvasElement, 'Overview'));
 		const issuer = canvas.getByRole('textbox', { name: 'Issuer address' });
@@ -397,7 +405,66 @@
 		// The new provider has not been tested, however well the old one did.
 		await expect(inFlow(canvasElement, /^Test the connection.*Not set yet/)).toBeInTheDocument();
 		// And it is a draft again until it has been tested and activated once more.
-		await expect(await canvas.findByText('Draft', { selector: '.badge' })).toBeInTheDocument();
+		await expect(
+			await inHeader(canvasElement).findByText('Draft', { selector: '.badge' })
+		).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- Discard puts back what was saved, tested and in service, not a connection that looks edited. -->
+<Story
+	name="Discard keeps a tested connection in service"
+	args={{ prefill: 'op', filled: 'complete', review: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const bar = () => canvasElement.querySelector<HTMLElement>('.save-bar')!;
+		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
+		await userEvent.click(canvas.getByRole('button', { name: 'Activate' }));
+		await expect(
+			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
+		).toBeInTheDocument();
+		await userEvent.click(inFlow(canvasElement, 'Overview'));
+		// An edit of the provider's address takes it out of service in the draft, and raises the bar.
+		const issuer = canvas.getByRole('textbox', { name: 'Issuer address' });
+		await userEvent.clear(issuer);
+		await userEvent.type(issuer, 'https://login.other.example');
+		await waitFor(() => expect(bar()).toHaveClass('is-shown'));
+		await expect(
+			await inHeader(canvasElement).findByText('Draft', { selector: '.badge' })
+		).toBeInTheDocument();
+		// Discard: back to what was saved, and nothing is left to save.
+		await userEvent.click(within(bar()).getByRole('button', { name: 'Discard changes' }));
+		await waitFor(() => expect(bar()).not.toHaveClass('is-shown'));
+		await expect(
+			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
+		).toBeInTheDocument();
+		await expect(canvas.getByRole('textbox', { name: 'Issuer address' })).toHaveValue(
+			'https://login.acme.example'
+		);
+		await expect(inFlow(canvasElement, /^Test the connection.*Configured/)).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- With changes still unsaved, activating waits for Save: only what is saved goes into service. -->
+<Story
+	name="Activating waits for Save"
+	args={{ prefill: 'rp', filled: 'complete', review: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getAllByRole('button', { name: 'Add redirect URI' })[0]);
+		await userEvent.type(
+			canvas.getAllByRole('textbox', { name: /Redirect URIs/ }).at(-1)!,
+			'https://portal.example.com/second'
+		);
+		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
+		await expect(canvas.getByText(/Save your changes before activating/)).toBeInTheDocument();
+		await expect(canvas.getByRole('button', { name: 'Activate' })).toBeDisabled();
+		await userEvent.click(canvas.getByRole('button', { name: 'Save changes' }));
+		await waitFor(() => expect(canvas.getByRole('button', { name: 'Activate' })).toBeEnabled());
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

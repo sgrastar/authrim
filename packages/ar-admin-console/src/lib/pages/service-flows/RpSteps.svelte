@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import CheckboxGroup from '$lib/ui/patterns/CheckboxGroup.svelte';
+	import CheckboxRow from '$lib/ui/patterns/CheckboxRow.svelte';
 	import ListField from '$lib/ui/patterns/ListField.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
-	import Toggle from '$lib/ui/primitives/Toggle.svelte';
+	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
+	import TextRow from '$lib/ui/patterns/TextRow.svelte';
+	import ToggleRow from '$lib/ui/patterns/ToggleRow.svelte';
 	import OurDetails from './OurDetails.svelte';
 	import {
 		APP_TYPES,
@@ -57,8 +57,8 @@
 </script>
 
 {#if step === 'rp-app'}
-	<TextField label={t('sf.row.name')} hint={t('sf.rp.nameHint')} bind:value={form.name} />
-	<Select
+	<TextRow label={t('sf.row.name')} hint={t('sf.rp.nameHint')} bind:value={form.name} />
+	<SelectRow
 		label={t('sf.row.appType')}
 		value={form.appType}
 		onchange={chooseAppType}
@@ -96,7 +96,7 @@
 		bind:values={form.redirectUris}
 	/>
 {:else if step === 'rp-signin'}
-	<Select
+	<SelectRow
 		label={t('sf.rp.authLabel')}
 		value={form.authMethod}
 		onchange={(value) => (form.authMethod = value)}
@@ -111,16 +111,15 @@
 	{#if secretless}
 		<Callout tone="info">{t('sf.rp.pkceOnly')}</Callout>
 	{/if}
-	<div class="row">
-		<Toggle label={t('sf.rp.requirePkce')} bind:checked={form.pkce} disabled={secretless} />
-		<span>
-			<strong>{t('sf.rp.requirePkce')}</strong>
-			<span class="muted">{secretless ? t('sf.rp.pkceAlways') : t('sf.rp.pkceRecommended')}</span>
-		</span>
-	</div>
+	<ToggleRow
+		label={t('sf.rp.requirePkce')}
+		description={secretless ? t('sf.rp.pkceAlways') : t('sf.rp.pkceRecommended')}
+		bind:checked={form.pkce}
+		disabled={secretless}
+	/>
 {:else if step === 'rp-info'}
-	<CheckboxGroup
-		title={t('sf.rp.scopesTitle')}
+	<CheckboxRow
+		label={t('sf.rp.scopesTitle')}
 		bind:selected={form.scopes}
 		options={[
 			{ value: 'openid', label: 'openid', description: t('sf.rp.scope.openid') },
@@ -137,7 +136,7 @@
 		{@const [before, after] = t('sf.rp.openidRequired').split('{scope}')}
 		<Callout tone="warning" live>{before}<code>openid</code>{after}</Callout>
 	{/if}
-	<Select
+	<SelectRow
 		label={t('sf.rp.userInfo')}
 		placeholder={t('sf.set.choose')}
 		value={form.mappingSet}
@@ -150,22 +149,3 @@
 		]}
 	/>
 {/if}
-
-<style>
-	.row {
-		display: flex;
-		gap: var(--space-grid);
-		align-items: flex-start;
-	}
-
-	.row > span {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.muted {
-		color: var(--text-muted);
-		font-size: var(--fs-small);
-	}
-</style>

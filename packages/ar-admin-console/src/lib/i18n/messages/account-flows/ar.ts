@@ -21,7 +21,7 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.flow.ui': 'Login UI or your own UI',
 	'af.scope': 'What Authrim does',
 
-	'af.status.ready': 'Ready',
+	'af.status.ready': 'Active',
 	'af.status.disabled': 'Disabled',
 	'af.status.notReady': 'Being set up',
 	'af.hint.checksRequired': 'Choose at least one.',
@@ -31,7 +31,7 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.about': 'Name this flow and say where it is used.',
 	'af.note.about':
 		'With a single login screen, one sign-up flow and one sign-in flow are enough. Add another when you build a separate login screen. To sign people up differently for an app or a provider, add a flow and choose it from that connection’s flow.',
-	'af.field.name': 'Name of the flow',
+	'af.field.name': 'Service flow name',
 	'af.field.scope': 'Where it is used',
 	'af.scope.default-ui': 'The standard login screen',
 	'af.scope.other-ui': 'A separate login screen (including your own UI)',
@@ -188,7 +188,7 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.sout-timing': 'Decide when changes are sent, and what happens when sending fails.',
 	'af.lead.csv-format': 'Decide the format of the file that is read in.',
 	'af.lead.csv-match': 'Decide how a row is matched with an existing user, and how it updates one.',
-	'af.field.partner': 'The other system',
+	'af.field.partner': 'Name of the other system',
 	'af.field.mappingSet': 'Mapping set',
 	'af.field.role': 'Role',
 	'af.field.matchKey': 'Field used to find the user',
@@ -240,8 +240,7 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.onExisting.skip': 'Leave it as it is',
 	'af.onExisting.fill': 'Fill only the empty fields',
 	'af.wizard.sync.label': 'Sync users (CSV and SCIM)',
-	'af.wizard.sync.desc':
-		'Bring users in from a CSV file or over SCIM, or send them to another system.',
+	'af.wizard.sync.desc': 'Bring users in from a CSV file or over SCIM.',
 	'af.wizard.kind.scim-in.label': 'Receive over SCIM',
 	'af.wizard.kind.scim-in.desc':
 		'Receive users created, updated or removed by an HR system or another system over SCIM.',
@@ -250,6 +249,7 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 		'Send changes to Authrim’s users to another system that supports SCIM.',
 	'af.wizard.kind.csv.label': 'Import a CSV',
 	'af.wizard.kind.csv.desc': 'Create or update users from the rows of a CSV file.',
+	'af.kind.csv': 'Inbound',
 	'af.kind.scim-in': 'Inbound',
 	'af.kind.scim-out': 'Outbound',
 	'af.run.title': 'Run',
@@ -268,7 +268,6 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.run.skipped': 'Skipped',
 	'af.run.demo': 'A demo: no user is changed and no file is read.',
 
-	'af.contract.sync': 'The contract for what Authrim does between itself and the other system.',
 	'af.field.sout.roles': 'Roles to send',
 	'af.field.sout.groups': 'Groups to send',
 	'af.syncGroup.engineering': 'Engineering',

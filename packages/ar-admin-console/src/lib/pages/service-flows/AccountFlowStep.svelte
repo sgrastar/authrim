@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import CheckboxGroup from '$lib/ui/patterns/CheckboxGroup.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
+	import CheckboxRow from '$lib/ui/patterns/CheckboxRow.svelte';
+	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
+	import TextRow from '$lib/ui/patterns/TextRow.svelte';
 	import { PARTS, shownFields, type AccountFlowState } from './account-flow-model';
 
 	/**
@@ -30,7 +30,7 @@
 <p class="lead">{t(def.lead)}</p>
 {#each fields as field (field.key)}
 	{#if field.kind === 'text'}
-		<TextField
+		<TextRow
 			label={t(field.label)}
 			required={field.required}
 			bind:value={
@@ -40,7 +40,7 @@
 			}
 		/>
 	{:else if field.kind === 'select'}
-		<Select
+		<SelectRow
 			label={t(field.label)}
 			placeholder={t('af.choose')}
 			required={field.required}
@@ -50,12 +50,13 @@
 			options={field.options()}
 		/>
 	{:else}
-		<CheckboxGroup
-			title={t(field.label)}
+		<CheckboxRow
+			label={t(field.label)}
+			required={field.required}
+			hint={field.required ? t('af.hint.checksRequired') : undefined}
 			bind:selected={() => chosen(field.key), (values) => (form.values[field.key] = values)}
 			options={field.options()}
 		/>
-		{#if field.required}<p class="checks-hint">{t('af.hint.checksRequired')}</p>{/if}
 	{/if}
 {/each}
 {#if def.note}
@@ -66,12 +67,5 @@
 	.lead {
 		margin: 0;
 		color: var(--text-secondary);
-	}
-
-	/* Under a group of checkboxes: what is needed of the group as a whole. */
-	.checks-hint {
-		margin: calc(-1 * var(--space-related)) 0 0;
-		color: var(--text-muted);
-		font-size: var(--fs-caption);
 	}
 </style>

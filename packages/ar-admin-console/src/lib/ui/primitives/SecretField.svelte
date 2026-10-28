@@ -24,6 +24,8 @@
 	 */
 	interface Props {
 		label: string;
+		/** Keep the label for screen readers only (a row beside it shows the name). */
+		hideLabel?: boolean;
 		value?: string;
 		mode?: 'show' | 'enter';
 		/** show: the value cannot be shown again after this. */
@@ -42,6 +44,7 @@
 
 	let {
 		label,
+		hideLabel = false,
 		value = $bindable(''),
 		mode = 'enter',
 		once = false,
@@ -95,9 +98,11 @@
 	{/snippet}
 	<!-- A label only where there is a field to label; otherwise the text names the group. -->
 	{#if mode === 'show' || editing}
-		<label class="secret__label" for="{uid}-input" id="{uid}-label">{@render title()}</label>
+		<label class="secret__label" class:sr-only={hideLabel} for="{uid}-input" id="{uid}-label"
+			>{@render title()}</label
+		>
 	{:else}
-		<span class="secret__label" id="{uid}-label">{@render title()}</span>
+		<span class="secret__label" class:sr-only={hideLabel} id="{uid}-label">{@render title()}</span>
 	{/if}
 
 	{#if mode === 'show'}

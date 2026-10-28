@@ -5,7 +5,7 @@
 	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
 	import DetailList from '$lib/ui/patterns/DetailList.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
+	import TextRow from '$lib/ui/patterns/TextRow.svelte';
 
 	/**
 	 * A one-shot run of a sync flow from its overview: a CSV import (a file is chosen at each run,
@@ -66,7 +66,7 @@
 	<div class="run">
 		<p class="lead">{t(kind === 'csv' ? 'af.run.lead.csv' : 'af.run.lead.scim-out')}</p>
 		{#if kind === 'csv'}
-			<TextField
+			<TextRow
 				label={t('af.run.fileName')}
 				placeholder="users.csv"
 				bind:value={file}

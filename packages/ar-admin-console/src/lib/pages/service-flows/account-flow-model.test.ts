@@ -9,6 +9,7 @@ import {
 	canProceedAccount,
 	flowName,
 	emptyFlowState,
+	type FlowId,
 	FLOWS,
 	isReady,
 	PARTS,
@@ -45,7 +46,11 @@ describe('account flows', () => {
 			for (const field of part.fields)
 				for (const option of field.options()) expect(option.label, field.key).not.toMatch(/^af\./);
 		}
-		const used = ALL_FLOW_IDS.flatMap((flow) => [aboutPart(flow), ...partsOf(flow)]);
+		// Every flow that is defined, offered or not.
+		const used = (Object.keys(FLOWS) as FlowId[]).flatMap((flow) => [
+			aboutPart(flow),
+			...partsOf(flow)
+		]);
 		expect(new Set(used).size).toBe(used.length);
 		expect(used.sort()).toEqual(Object.keys(PARTS).sort());
 	});
@@ -175,7 +180,9 @@ describe('account flows', () => {
 	});
 
 	it('has the sync flows beside sign-up and sign-in, each with its own name and other system', () => {
-		expect(ALL_FLOW_IDS).toEqual(['registration', 'login', 'scim-in', 'scim-out', 'csv']);
+		// SCIM sent is defined but not offered yet.
+		expect(ALL_FLOW_IDS).toEqual(['registration', 'login', 'scim-in', 'csv']);
+		expect(Object.keys(FLOWS)).toContain('scim-out');
 		for (const flow of ['scim-in', 'scim-out', 'csv'] as const) {
 			const state = emptyFlowState();
 			// Asked first: a name and the system on the other side, not "where it is used".

@@ -70,7 +70,7 @@ export const jaServiceFlows = {
 
 	// What the overview lists back.
 	'sf.row.kind': '種類',
-	'sf.row.name': '名前',
+	'sf.row.name': '名称',
 	'sf.row.appType': 'アプリの種類',
 	'sf.row.clientAuth': 'クライアント認証',
 	'sf.row.pkce': 'PKCE',
@@ -154,8 +154,8 @@ export const jaServiceFlows = {
 	'sf.wizard.kind.idp.desc': '企業や大学の ID プロバイダー。SAML のメタデータを交換します。',
 
 	// A connection's service flow.
-	'sf.status.done': '設定済み',
-	'sf.status.partial': '一部設定済み',
+	'sf.status.done': '設定済',
+	'sf.status.partial': '一部設定済',
 	'sf.status.todo': '未設定',
 	'sf.status.active': '有効',
 	'sf.status.notActive': '無効',
@@ -244,7 +244,7 @@ export const jaServiceFlows = {
 	'sf.rp.pkceRecommended': 'すべてのアプリで推奨します。',
 	'sf.rp.scopesTitle': 'アプリが求めてよい情報',
 	'sf.rp.scope.openid': '必須: 利用者をサインインさせます。',
-	'sf.rp.scope.profile': '名前と基本的なプロフィール。',
+	'sf.rp.scope.profile': '氏名と基本的なプロフィール。',
 	'sf.rp.scope.email': 'メールアドレスと、それが確認済みかどうか。',
 	'sf.rp.scope.offline': '利用者が離れた後もサインインを保ちます。',
 	'sf.rp.openidRequired': 'OpenID Connect のアプリは {scope} を求める必要があります。',
@@ -292,7 +292,7 @@ export const jaServiceFlows = {
 	'sf.in.attrsHint.op': 'プロバイダーのどのクレームを利用者のアカウントに取り込むかです。',
 	'sf.in.attrsHint.idp': 'プロバイダーのどの属性を利用者のアカウントに取り込むかです。',
 	'sf.in.attrs.minimal': '最小: プロバイダーの識別子のみ',
-	'sf.in.attrs.standard': '標準: 名前とメールアドレス',
+	'sf.in.attrs.standard': '標準: 氏名とメールアドレス',
 	'sf.in.attrs.custom': 'カスタム（標準をコピーして始める）',
 	'sf.in.testLead':
 		'テスト用の利用者でプロバイダーからサインインし、Authrim が受け取る内容を確かめます。アカウントは作成されません。',
@@ -304,7 +304,7 @@ export const jaServiceFlows = {
 	'sf.idp.certNote': 'プロバイダーの証明書はあと {days} 日で期限が切れます。',
 
 	// The processing steps (mapping, additional input, consent, role).
-	'sf.extra.schemasLead': 'それぞれの側にある属性の名前、型、必須項目です。',
+	'sf.extra.schemasLead': 'それぞれの側にある属性の名称、型、必須項目です。',
 	'sf.extra.inputSchema': '入力スキーマ',
 	'sf.extra.outputSchema': '出力スキーマ',
 	'sf.extra.chooseSchema': 'スキーマを選択',
@@ -346,6 +346,11 @@ export const jaServiceFlows = {
 	'sf.extra.signupFlow': '新規登録のフロー',
 	'sf.extra.chooseSignup': '新規登録のフローを選ぶ',
 	'sf.extra.signupHint': '新規登録のフローは、サービスフローの追加で作ります。',
+	'sf.detail.saveFirst': '変更を保存してから、有効にしてください。',
+	'sf.unsaved.title': '保存していない変更があります',
+	'sf.unsaved.body': 'このまま戻ると、変更は失われます。',
+	'sf.unsaved.confirm': '変更を破棄して戻る',
+	'sf.unsaved.keep': '編集を続ける',
 	'sf.mock.title': 'サービスフロー',
 	'sf.mock.description': 'このテナントのサービスフローの一覧です。',
 	'sf.mock.connections': 'すべてのサービスフロー',

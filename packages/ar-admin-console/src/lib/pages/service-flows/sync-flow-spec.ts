@@ -18,7 +18,11 @@ import {
  * the start (a user cannot be brought in without one), elsewhere it is added with the "+".
  */
 
-export const SYNC_FLOW_IDS: readonly SyncFlowId[] = ['scim-in', 'scim-out', 'csv'];
+/**
+ * The sync flows offered: SCIM received and a CSV import. SCIM sent is defined below, for when it
+ * is supported, but is not offered yet (not in the wizard, not in the list).
+ */
+export const SYNC_FLOW_IDS: readonly SyncFlowId[] = ['scim-in', 'csv'];
 
 const select = (
 	key: string,

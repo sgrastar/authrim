@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import FlowCanvas from '$lib/ui/flow/FlowCanvas.svelte';
 	import FlowEdge from '$lib/ui/flow/FlowEdge.svelte';
 	import FlowEndpoint from '$lib/ui/flow/FlowEndpoint.svelte';
@@ -16,7 +16,10 @@
 	import PanelHeader from '$lib/ui/patterns/PanelHeader.svelte';
 	import Badge from '$lib/ui/primitives/Badge.svelte';
 	import BackLink from '$lib/ui/primitives/BackLink.svelte';
+	import RequiredBadge from '$lib/ui/primitives/RequiredBadge.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
+	import { copyValue, Draft } from '$lib/ui/save/draft.svelte';
+	import SaveScope from '$lib/ui/save/SaveScope.svelte';
 	import {
 		canActivate,
 		EXTRA_PARTS,
@@ -43,6 +46,7 @@
 	import InSteps from './InSteps.svelte';
 	import RpSteps from './RpSteps.svelte';
 	import SpSteps from './SpSteps.svelte';
+	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte';
 
 	/**
 	 * A connection's service flow: the screen the wizard hands over to. The wizard only helped with
@@ -63,16 +67,30 @@
 
 	let { answers = $bindable(), onback, focusTitle = false }: Props = $props();
 
+	// What is on screen is a draft of the connection; `answers` (the saved one) changes only with
+	// Save. "Activate" is not a setting but an action, so it takes effect at once (see below).
+	const draft = new Draft<Answers>(untrack(() => answers));
+	function save() {
+		answers = copyValue(draft.value);
+	}
+
+	let asking = $state(false);
+	/** Going back in place asks first when there are unsaved changes. */
+	function goBack() {
+		if (draft.dirty) asking = true;
+		else onback?.();
+	}
+
 	let titleElement = $state<HTMLHeadingElement | null>(null);
 	$effect(() => {
 		if (focusTitle) titleElement?.focus();
 	});
 
-	const kind = $derived(answers.kind as ConnectionKind);
+	const kind = $derived(draft.value.kind as ConnectionKind);
 	const allGroups = $derived(FLOW_GROUPS[kind]);
-	const groups = $derived(visibleGroups(answers));
+	const groups = $derived(visibleGroups(draft.value));
 	const incoming = $derived(KINDS_OF.in.includes(kind));
-	const name = $derived(nameOf(answers));
+	const name = $derived(nameOf(draft.value));
 
 	/** The setting shown on the right; empty is the overview. */
 	let current = $state('');
@@ -85,13 +103,6 @@
 		revealPanel(panel);
 	}
 
-	const GROUP_STATUS: Record<'done' | 'partial' | 'todo' | 'required', MessageKey> = {
-		done: 'sf.status.done',
-		partial: 'sf.status.partial',
-		todo: 'sf.status.todo',
-		required: 'sf.status.todo'
-	};
-
 	const STATUS: Record<PartState, MessageKey> = {
 		done: 'sf.status.done',
 		required: 'sf.status.todo',
@@ -99,7 +110,7 @@
 	};
 
 	function statusOf(id: string): { text: string; state: PartState } {
-		const state = partState(id, answers);
+		const state = partState(id, draft.value);
 		if (id === 'activate')
 			return { text: t(state === 'done' ? 'sf.status.active' : 'sf.status.notActive'), state };
 		return { text: t(STATUS[state]), state };
@@ -116,15 +127,15 @@
 	const role = $derived(kindRole(kind));
 	const overview = $derived(t('sf.detail.overview'));
 
-	const missing = $derived(missingParts(answers));
+	const missing = $derived(missingParts(draft.value));
 
 	// Undoing something required (a mapping set put back to none), or a passed test no longer
 	// holding (another provider, other credentials), takes the connection out of service until it
 	// is activated again, instead of leaving it marked Active.
 	$effect(() => {
-		if (answers.active && !canActivate(answers)) answers.active = false;
+		if (draft.value.active && !canActivate(draft.value)) draft.value.active = false;
 	});
-	const todo = $derived(stillToDo(answers));
+	const todo = $derived(stillToDo(draft.value));
 
 	/** The connection's own settings (what the other side is), at the top of its settings. */
 	let general = $state<HTMLElement | null>(null);
@@ -145,220 +156,257 @@
 		);
 	}
 
+	/** Putting the connection into service is an action, not an edit: it needs no Save. */
+	function activate() {
+		// Only what is saved is put into service: with changes still unsaved, Save comes first.
+		if (draft.dirty) return;
+		draft.value.active = true;
+		draft.saved.active = true;
+		answers.active = true;
+	}
+
 	/** A step added with the "+" opens on its first setting. */
 	function add(id: string) {
-		answers.added = [...answers.added, id];
+		draft.value.added = [...draft.value.added, id];
 		void select(allGroups.find((group) => group.id === id)?.parts[0] ?? '');
 	}
 
 	function remove(id: string) {
 		const group = allGroups.find((candidate) => candidate.id === id);
-		answers.added = answers.added.filter((other) => other !== id);
+		draft.value.added = draft.value.added.filter((other) => other !== id);
 		if (group?.parts.includes(current)) current = '';
 	}
 </script>
 
 {#snippet backToList()}
-	<BackLink onclick={onback}>{t('sf.detail.back')}</BackLink>
+	<BackLink onclick={goBack}>{t('sf.detail.back')}</BackLink>
 {/snippet}
 
-<PageHeader
-	title={name}
-	description={blurb}
-	back={onback ? backToList : undefined}
-	bind:titleElement
->
-	{#snippet badges()}
-		<Badge>{KIND_MARK[kind]}</Badge>
-		<Badge tone="info">{role.badge}</Badge>
-		<Badge tone={answers.active ? 'success' : 'warning'} dot
-			>{t(answers.active ? 'sf.status.active' : 'sf.status.draft')}</Badge
-		>
-	{/snippet}
-</PageHeader>
+<SaveScope {draft} onsave={save}>
+	<PageHeader
+		title={name}
+		description={blurb}
+		back={onback ? backToList : undefined}
+		bind:titleElement
+	>
+		{#snippet badges()}
+			<Badge>{KIND_MARK[kind]}</Badge>
+			<Badge tone="info">{role.badge}</Badge>
+			<Badge tone={draft.value.active ? 'success' : 'warning'} dot
+				>{t(draft.value.active ? 'sf.status.active' : 'sf.status.draft')}</Badge
+			>
+		{/snippet}
+	</PageHeader>
 
-<div class="detail">
-	<div class="detail__flow">
-		<FlowCanvas label={name} heading={t('sf.detail.signIn')} detail={role.line}>
-			{#if incoming}
-				<FlowEndpoint
-					kind="authrim"
-					title={t('sf.detail.signInPage')}
-					detail={t('sf.detail.peopleChoose', { name })}
-				/>
-			{:else}
-				<FlowEndpoint
-					title={name}
-					detail={blurb}
-					actionLabel={overview}
-					onselect={() => (current = '')}
-				/>
+	<div class="detail">
+		<div class="detail__flow">
+			<FlowCanvas label={name} heading={t('sf.detail.signIn')} detail={role.line}>
+				{#if incoming}
+					<FlowEndpoint
+						kind="authrim"
+						title={t('sf.detail.signInPage')}
+						detail={t('sf.detail.peopleChoose', { name })}
+					/>
+				{:else}
+					<FlowEndpoint
+						title={name}
+						detail={blurb}
+						actionLabel={overview}
+						onselect={() => (current = '')}
+					/>
+				{/if}
+				<FlowEdge length={24} tip={false} />
+				<FlowScope label={t('sf.detail.authrimDoes')}>
+					<FlowSequence
+						order={allGroups.map((group) => group.id)}
+						visible={groups.map((group) => group.id)}
+						lead={36}
+						trail={6}
+						menuTitle={name}
+						option={(id) => {
+							const group = allGroups.find((candidate) => candidate.id === id);
+							return { id, label: group ? groupLabel(group) : id };
+						}}
+						onadd={add}
+					>
+						{#snippet step(id, { exiting })}
+							{@const group = allGroups.find((candidate) => candidate.id === id)!}
+							{@const state = groupState(group, draft.value)}
+							<FlowStepGroup
+								name={groupLabel(group)}
+								{state}
+								items={group.parts.map((part) => ({
+									id: part,
+									label: labelOf(part),
+									status: statusOf(part).text,
+									required: statusOf(part).state === 'required',
+									state: statusOf(part).state
+								}))}
+								{current}
+								onselect={select}
+								onremove={group.optional ? () => remove(group.id) : undefined}
+								{exiting}
+							/>
+						{/snippet}
+					</FlowSequence>
+				</FlowScope>
+				<FlowEdge length={14} />
+				{#if incoming}
+					<FlowEndpoint
+						title={name}
+						detail={blurb}
+						actionLabel={overview}
+						onselect={() => (current = '')}
+					/>
+				{:else}
+					<FlowEndpoint
+						kind="authrim"
+						title={t('sf.detail.yourUsers')}
+						detail={t('sf.detail.whoSignsIn')}
+					/>
+				{/if}
+			</FlowCanvas>
+		</div>
+
+		<div class="detail__side">
+			{#if current === ''}
+				<!-- What the other side is does not belong to the flow: a frame of its own above. -->
+				<div bind:this={general}>
+					<Card title={t('af.general')}>
+						<div class="detail__general">
+							{#key draft.value}
+								{#each GENERAL_PARTS[kind] as part (part)}
+									<section
+										class="detail__section"
+										data-part={part}
+										aria-labelledby="general-{part}"
+									>
+										<h3 class="detail__sub" id="general-{part}">{labelOf(part)}</h3>
+										{#if part.startsWith('rp-')}
+											<RpSteps step={part} bind:form={draft.value.rp} />
+										{:else if part.startsWith('sp-')}
+											<SpSteps step={part} bind:form={draft.value.sp} />
+										{:else}
+											<InSteps step={part} bind:op={draft.value.op} bind:idp={draft.value.idp} />
+										{/if}
+									</section>
+								{/each}
+							{/key}
+						</div>
+					</Card>
+				</div>
 			{/if}
-			<FlowEdge length={24} tip={false} />
-			<FlowScope label={t('sf.detail.authrimDoes')}>
-				<FlowSequence
-					order={allGroups.map((group) => group.id)}
-					visible={groups.map((group) => group.id)}
-					lead={36}
-					trail={6}
-					menuTitle={name}
-					option={(id) => {
-						const group = allGroups.find((candidate) => candidate.id === id);
-						return { id, label: group ? groupLabel(group) : id };
-					}}
-					onadd={add}
-				>
-					{#snippet step(id, { exiting })}
-						{@const group = allGroups.find((candidate) => candidate.id === id)!}
-						{@const state = groupState(group, answers)}
-						<FlowStepGroup
-							name={groupLabel(group)}
-							status={t(GROUP_STATUS[state])}
-							{state}
-							required={state === 'required'}
-							items={group.parts.map((part) => ({
-								id: part,
-								label: labelOf(part),
-								status: statusOf(part).text,
-								required: statusOf(part).state === 'required'
-							}))}
-							{current}
-							onselect={select}
-							onremove={group.optional ? () => remove(group.id) : undefined}
-							{exiting}
-						/>
+			<section
+				class="detail__panel"
+				bind:this={panel}
+				aria-label={current ? labelOf(current) : overview}
+			>
+				<PanelHeader title={current ? labelOf(current) : overview}>
+					{#snippet back()}
+						{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
 					{/snippet}
-				</FlowSequence>
-			</FlowScope>
-			<FlowEdge length={14} />
-			{#if incoming}
-				<FlowEndpoint
-					title={name}
-					detail={blurb}
-					actionLabel={overview}
-					onselect={() => (current = '')}
-				/>
-			{:else}
-				<FlowEndpoint
-					kind="authrim"
-					title={t('sf.detail.yourUsers')}
-					detail={t('sf.detail.whoSignsIn')}
-				/>
-			{/if}
-		</FlowCanvas>
-	</div>
-
-	<div class="detail__side">
-		{#if current === ''}
-			<!-- What the other side is does not belong to the flow: a frame of its own above. -->
-			<div bind:this={general}>
-				<Card title={t('af.general')}>
-					<div class="detail__general">
-						{#each GENERAL_PARTS[kind] as part (part)}
-							<section class="detail__section" data-part={part} aria-labelledby="general-{part}">
-								<h3 class="detail__sub" id="general-{part}">{labelOf(part)}</h3>
-								{#if part.startsWith('rp-')}
-									<RpSteps step={part} bind:form={answers.rp} />
-								{:else if part.startsWith('sp-')}
-									<SpSteps step={part} bind:form={answers.sp} />
+				</PanelHeader>
+				<div class="detail__body">
+					{#key draft.value}
+						{#if current === ''}
+							{#if draft.value.active}
+								<Callout tone="info">{t('sf.detail.active')}</Callout>
+							{/if}
+							<section class="detail__section" aria-labelledby="entered">
+								<h3 class="detail__sub" id="entered">{t('sf.detail.entered')}</h3>
+								<DetailList columns={1} ruled>
+									{#each reviewRows(draft.value) as row (row.label)}
+										<DetailItem label={row.label}>{row.value}</DetailItem>
+									{/each}
+								</DetailList>
+							</section>
+							<section class="detail__section" aria-labelledby="todo">
+								<h3 class="detail__sub" id="todo">{t('sf.detail.todo')}</h3>
+								{#if todo.length > 0}
+									<ul class="todo">
+										{#each todo as part (part.id)}
+											<li>
+												{#if part.state === 'required'}<RequiredBadge />{:else}<Badge
+														tone="neutral"
+														dot>{t('sf.status.todo')}</Badge
+													>{/if}
+												<Button variant="ghost" size="sm" onclick={() => open(part.id)}
+													>{part.label}</Button
+												>
+											</li>
+										{/each}
+									</ul>
 								{:else}
-									<InSteps step={part} bind:op={answers.op} bind:idp={answers.idp} />
+									<Callout tone="info"
+										>{t('sf.detail.allSet', { step: labelOf('activate') })}</Callout
+									>
 								{/if}
 							</section>
-						{/each}
+						{:else if current === 'activate'}
+							{#if missing.length > 0}
+								<Callout tone="warning"
+									>{t('sf.detail.stillRequired', { list: missing.join(', ') })}</Callout
+								>
+							{:else if !canActivate(draft.value)}
+								<Callout tone="info">{t('sf.detail.testFirst')}</Callout>
+							{:else if draft.dirty}
+								<Callout tone="info">{t('sf.detail.saveFirst')}</Callout>
+							{/if}
+							<p class="detail__lead">{t('sf.detail.enteredOnOverview')}</p>
+							{#if draft.value.active}
+								<Callout tone="info">{t('sf.detail.active')}</Callout>
+							{:else}
+								<div>
+									<Button disabled={!canActivate(draft.value) || draft.dirty} onclick={activate}
+										>{t('sf.detail.activate')}</Button
+									>
+								</div>
+							{/if}
+						{:else if EXTRA_PARTS.includes(current)}
+							<ExtraSteps step={current} bind:form={draft.value.extras} outbound={!incoming} />
+						{:else if current.startsWith('rp-')}
+							<RpSteps step={current} bind:form={draft.value.rp} />
+						{:else if current.startsWith('sp-')}
+							<SpSteps step={current} bind:form={draft.value.sp} />
+						{:else}
+							<InSteps step={current} bind:op={draft.value.op} bind:idp={draft.value.idp} />
+						{/if}
+					{/key}
+				</div>
+			</section>
+			{#if current === ''}
+				<!-- What Authrim gives the other side is not a step of the flow: a frame of its own below. -->
+				<Card title={labelOf(SHARE_PART[kind])}>
+					<div class="detail__share">
+						{#key draft.value}
+							{#if kind === 'rp'}
+								<RpSteps step={SHARE_PART.rp} bind:form={draft.value.rp} />
+							{:else if kind === 'sp'}
+								<SpSteps step={SHARE_PART.sp} bind:form={draft.value.sp} />
+							{:else}
+								<InSteps
+									step={SHARE_PART[kind]}
+									bind:op={draft.value.op}
+									bind:idp={draft.value.idp}
+								/>
+							{/if}
+						{/key}
 					</div>
 				</Card>
-			</div>
-		{/if}
-		<section
-			class="detail__panel"
-			bind:this={panel}
-			aria-label={current ? labelOf(current) : overview}
-		>
-			<PanelHeader title={current ? labelOf(current) : overview}>
-				{#snippet back()}
-					{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
-				{/snippet}
-			</PanelHeader>
-			<div class="detail__body">
-				{#if current === ''}
-					{#if answers.active}
-						<Callout tone="info">{t('sf.detail.active')}</Callout>
-					{/if}
-					<section class="detail__section" aria-labelledby="entered">
-						<h3 class="detail__sub" id="entered">{t('sf.detail.entered')}</h3>
-						<DetailList columns={1} ruled>
-							{#each reviewRows(answers) as row (row.label)}
-								<DetailItem label={row.label}>{row.value}</DetailItem>
-							{/each}
-						</DetailList>
-					</section>
-					<section class="detail__section" aria-labelledby="todo">
-						<h3 class="detail__sub" id="todo">{t('sf.detail.todo')}</h3>
-						{#if todo.length > 0}
-							<ul class="todo">
-								{#each todo as part (part.id)}
-									<li>
-										<Badge tone={part.state === 'required' ? 'warning' : 'neutral'} dot
-											>{t(
-												part.state === 'required' ? 'sf.value.required' : 'sf.status.todo'
-											)}</Badge
-										>
-										<Button variant="ghost" size="sm" onclick={() => open(part.id)}
-											>{part.label}</Button
-										>
-									</li>
-								{/each}
-							</ul>
-						{:else}
-							<Callout tone="info">{t('sf.detail.allSet', { step: labelOf('activate') })}</Callout>
-						{/if}
-					</section>
-				{:else if current === 'activate'}
-					{#if missing.length > 0}
-						<Callout tone="warning"
-							>{t('sf.detail.stillRequired', { list: missing.join(', ') })}</Callout
-						>
-					{:else if !canActivate(answers)}
-						<Callout tone="info">{t('sf.detail.testFirst')}</Callout>
-					{/if}
-					<p class="detail__lead">{t('sf.detail.enteredOnOverview')}</p>
-					{#if answers.active}
-						<Callout tone="info">{t('sf.detail.active')}</Callout>
-					{:else}
-						<div>
-							<Button disabled={!canActivate(answers)} onclick={() => (answers.active = true)}
-								>{t('sf.detail.activate')}</Button
-							>
-						</div>
-					{/if}
-				{:else if EXTRA_PARTS.includes(current)}
-					<ExtraSteps step={current} bind:form={answers.extras} outbound={!incoming} />
-				{:else if current.startsWith('rp-')}
-					<RpSteps step={current} bind:form={answers.rp} />
-				{:else if current.startsWith('sp-')}
-					<SpSteps step={current} bind:form={answers.sp} />
-				{:else}
-					<InSteps step={current} bind:op={answers.op} bind:idp={answers.idp} />
-				{/if}
-			</div>
-		</section>
-		{#if current === ''}
-			<!-- What Authrim gives the other side is not a step of the flow: a frame of its own below. -->
-			<Card title={labelOf(SHARE_PART[kind])}>
-				<div class="detail__share">
-					{#if kind === 'rp'}
-						<RpSteps step={SHARE_PART.rp} bind:form={answers.rp} />
-					{:else if kind === 'sp'}
-						<SpSteps step={SHARE_PART.sp} bind:form={answers.sp} />
-					{:else}
-						<InSteps step={SHARE_PART[kind]} bind:op={answers.op} bind:idp={answers.idp} />
-					{/if}
-				</div>
-			</Card>
-		{/if}
+			{/if}
+		</div>
 	</div>
-</div>
+</SaveScope>
+
+<UnsavedChangesDialog
+	open={asking}
+	onleave={() => {
+		asking = false;
+		draft.discard();
+		onback?.();
+	}}
+	onstay={() => (asking = false)}
+/>
 
 <style>
 	.detail {
@@ -386,6 +434,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-columns);
+	}
+
+	/* The rows of a form are a field-gap apart, as in the wizard and in a panel. */
+	.detail__general .detail__section {
+		gap: var(--space-field);
 	}
 
 	.detail__share {

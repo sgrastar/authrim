@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import FlowCanvas from '$lib/ui/flow/FlowCanvas.svelte';
 	import FlowEdge from '$lib/ui/flow/FlowEdge.svelte';
 	import FlowEndpoint from '$lib/ui/flow/FlowEndpoint.svelte';
@@ -16,7 +16,10 @@
 	import PanelHeader from '$lib/ui/patterns/PanelHeader.svelte';
 	import Badge from '$lib/ui/primitives/Badge.svelte';
 	import BackLink from '$lib/ui/primitives/BackLink.svelte';
+	import RequiredBadge from '$lib/ui/primitives/RequiredBadge.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
+	import { copyValue, Draft } from '$lib/ui/save/draft.svelte';
+	import SaveScope from '$lib/ui/save/SaveScope.svelte';
 	import {
 		aboutPart,
 		FLOWS,
@@ -35,6 +38,7 @@
 		type PartState
 	} from './account-flow-model';
 	import RunNowCard from './RunNowCard.svelte';
+	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte';
 	import AccountFlowStatus from './AccountFlowStatus.svelte';
 	import AccountFlowStep from './AccountFlowStep.svelte';
 
@@ -56,16 +60,29 @@
 
 	let { flow, form = $bindable(), onback, focusTitle = false }: Props = $props();
 
+	// What is on screen is a draft of the flow; `form` (the saved flow) changes only with Save.
+	const draft = new Draft<AccountFlowState>(untrack(() => form));
+	function save() {
+		form = copyValue(draft.value);
+	}
+
+	let asking = $state(false);
+	/** Going back in place asks first when there are unsaved changes. */
+	function goBack() {
+		if (draft.dirty) asking = true;
+		else onback?.();
+	}
+
 	let titleElement = $state<HTMLHeadingElement | null>(null);
 	$effect(() => {
 		if (focusTitle) titleElement?.focus();
 	});
 
 	const def = $derived(FLOWS[flow]);
-	const groups = $derived(visibleGroups(flow, form));
-	const name = $derived(flowName(flow, form));
-	const ready = $derived(isReady(flow, form));
-	const todo = $derived(stillToDo(flow, form));
+	const groups = $derived(visibleGroups(flow, draft.value));
+	const name = $derived(flowName(flow, draft.value));
+	const ready = $derived(isReady(flow, draft.value));
+	const todo = $derived(stillToDo(flow, draft.value));
 	const overview = $derived(t('sf.detail.overview'));
 
 	/** The setting shown on the right; empty is the overview. */
@@ -79,12 +96,6 @@
 		revealPanel(panel);
 	}
 
-	const GROUP_STATUS: Record<'done' | 'partial' | 'todo' | 'required', MessageKey> = {
-		done: 'sf.status.done',
-		partial: 'sf.status.partial',
-		todo: 'sf.status.todo',
-		required: 'sf.status.todo'
-	};
 	const STATUS: Record<PartState, MessageKey> = {
 		done: 'sf.status.done',
 		required: 'sf.status.todo',
@@ -107,151 +118,161 @@
 
 	/** A step added with the "+" opens on its first setting. */
 	function add(id: string) {
-		form.added = [...form.added, id];
+		draft.value.added = [...draft.value.added, id];
 		void select(def.groups.find((group) => group.id === id)?.parts[0] ?? '');
 	}
 
 	function remove(id: string) {
 		const group = def.groups.find((candidate) => candidate.id === id);
-		form.added = form.added.filter((other) => other !== id);
+		draft.value.added = draft.value.added.filter((other) => other !== id);
 		if (group?.parts.includes(current)) current = '';
 	}
 </script>
 
 {#snippet backToList()}
-	<BackLink onclick={onback}>{t('sf.detail.back')}</BackLink>
+	<BackLink onclick={goBack}>{t('sf.detail.back')}</BackLink>
 {/snippet}
 
-<PageHeader
-	title={name}
-	description={t(def.summary)}
-	back={onback ? backToList : undefined}
-	bind:titleElement
->
-	{#snippet badges()}
-		<Badge tone="info">{t(def.title)}</Badge>
-		<AccountFlowStatus {ready} />
-	{/snippet}
-</PageHeader>
+<SaveScope {draft} onsave={save}>
+	<PageHeader
+		title={name}
+		description={t(def.summary)}
+		back={onback ? backToList : undefined}
+		bind:titleElement
+	>
+		{#snippet badges()}
+			<Badge tone="info">{t(def.title)}</Badge>
+			<AccountFlowStatus {ready} />
+		{/snippet}
+	</PageHeader>
 
-<div class="detail">
-	<div class="detail__flow">
-		<FlowCanvas label={name} heading={t(def.title)} detail={t(def.subtitle)}>
-			<FlowEndpoint
-				title={t(def.start.title)}
-				detail={t(def.start.detail)}
-				actionLabel={overview}
-				onselect={() => (current = '')}
-			/>
-			<FlowEdge length={24} tip={false} />
-			<FlowScope label={t('af.scope')}>
-				<FlowSequence
-					order={def.groups.map((group) => group.id)}
-					visible={groups.map((group) => group.id)}
-					lead={36}
-					trail={6}
-					menuTitle={name}
-					option={(id) => {
-						const group = def.groups.find((candidate) => candidate.id === id);
-						return { id, label: group ? groupLabel(group) : id };
-					}}
-					onadd={add}
-				>
-					{#snippet step(id, { exiting })}
-						{@const group = def.groups.find((candidate) => candidate.id === id)!}
-						<FlowStepGroup
-							name={groupLabel(group)}
-							status={t(GROUP_STATUS[groupState(group, flow, form)])}
-							state={groupState(group, flow, form)}
-							required={groupState(group, flow, form) === 'required'}
-							items={group.parts.map((part) => ({
-								id: part,
-								label: partLabel(part),
-								status: t(STATUS[partState(part, flow, form)]),
-								required: partState(part, flow, form) === 'required'
-							}))}
-							{current}
-							onselect={select}
-							onremove={group.optional ? () => remove(group.id) : undefined}
-							{exiting}
-						/>
+	<div class="detail">
+		<div class="detail__flow">
+			<FlowCanvas label={name} heading={t(def.title)} detail={t(def.subtitle)}>
+				<FlowEndpoint
+					title={t(def.start.title)}
+					detail={t(def.start.detail)}
+					actionLabel={overview}
+					onselect={() => (current = '')}
+				/>
+				<FlowEdge length={24} tip={false} />
+				<FlowScope label={t('af.scope')}>
+					<FlowSequence
+						order={def.groups.map((group) => group.id)}
+						visible={groups.map((group) => group.id)}
+						lead={36}
+						trail={6}
+						menuTitle={name}
+						option={(id) => {
+							const group = def.groups.find((candidate) => candidate.id === id);
+							return { id, label: group ? groupLabel(group) : id };
+						}}
+						onadd={add}
+					>
+						{#snippet step(id, { exiting })}
+							{@const group = def.groups.find((candidate) => candidate.id === id)!}
+							<FlowStepGroup
+								name={groupLabel(group)}
+								state={groupState(group, flow, draft.value)}
+								items={group.parts.map((part) => ({
+									id: part,
+									label: partLabel(part),
+									status: t(STATUS[partState(part, flow, draft.value)]),
+									required: partState(part, flow, draft.value) === 'required',
+									state: partState(part, flow, draft.value)
+								}))}
+								{current}
+								onselect={select}
+								onremove={group.optional ? () => remove(group.id) : undefined}
+								{exiting}
+							/>
+						{/snippet}
+					</FlowSequence>
+				</FlowScope>
+				<FlowEdge length={14} />
+				<FlowEndpoint
+					title={t(def.end.title)}
+					detail={t(def.end.detail)}
+					actionLabel={overview}
+					onselect={() => (current = '')}
+				/>
+			</FlowCanvas>
+		</div>
+
+		<div class="detail__side">
+			{#if current === ''}
+				<!-- The flow's own settings are not part of the overview: a frame of their own above it. -->
+				<div bind:this={general}>
+					<Card title={t('af.general')}>
+						<div class="detail__general">
+							<AccountFlowStep part={aboutPart(flow)} bind:form={draft.value} />
+						</div>
+					</Card>
+				</div>
+			{/if}
+			<section
+				class="detail__panel"
+				bind:this={panel}
+				aria-label={current ? partLabel(current) : overview}
+			>
+				<PanelHeader title={current ? partLabel(current) : overview}>
+					{#snippet back()}
+						{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
 					{/snippet}
-				</FlowSequence>
-			</FlowScope>
-			<FlowEdge length={14} />
-			<FlowEndpoint
-				title={t(def.end.title)}
-				detail={t(def.end.detail)}
-				actionLabel={overview}
-				onselect={() => (current = '')}
-			/>
-		</FlowCanvas>
-	</div>
-
-	<div class="detail__side">
-		{#if current === ''}
-			<!-- The flow's own settings are not part of the overview: a frame of their own above it. -->
-			<div bind:this={general}>
-				<Card title={t('af.general')}>
-					<div class="detail__general">
-						<AccountFlowStep part={aboutPart(flow)} bind:form />
-					</div>
-				</Card>
-			</div>
-		{/if}
-		<section
-			class="detail__panel"
-			bind:this={panel}
-			aria-label={current ? partLabel(current) : overview}
-		>
-			<PanelHeader title={current ? partLabel(current) : overview}>
-				{#snippet back()}
-					{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
-				{/snippet}
-			</PanelHeader>
-			<div class="detail__body">
-				{#if current === ''}
-					<p class="detail__lead">{t(isSyncFlow(flow) ? 'af.contract.sync' : 'af.contract.ui')}</p>
-					<section class="detail__section" aria-labelledby="entered">
-						<h3 class="detail__sub" id="entered">{t('sf.detail.entered')}</h3>
-						<DetailList columns={1} ruled>
-							{#each summaryRows(flow, form) as row, index (index)}
-								<DetailItem label={row.label}>{row.value}</DetailItem>
-							{/each}
-						</DetailList>
-					</section>
-					<section class="detail__section" aria-labelledby="todo">
-						<h3 class="detail__sub" id="todo">{t('sf.detail.todo')}</h3>
-						{#if todo.length > 0}
-							<ul class="todo">
-								{#each todo as part (part.id)}
-									<li>
-										<Badge tone={part.state === 'required' ? 'warning' : 'neutral'} dot
-											>{t(
-												part.state === 'required' ? 'sf.value.required' : 'sf.status.todo'
-											)}</Badge
-										>
-										<Button variant="ghost" size="sm" onclick={() => open(part.id)}
-											>{part.label}</Button
-										>
-									</li>
+				</PanelHeader>
+				<div class="detail__body">
+					{#if current === ''}
+						{#if !isSyncFlow(flow)}<p class="detail__lead">{t('af.contract.ui')}</p>{/if}
+						<section class="detail__section" aria-labelledby="entered">
+							<h3 class="detail__sub" id="entered">{t('sf.detail.entered')}</h3>
+							<DetailList columns={1} ruled>
+								{#each summaryRows(flow, draft.value) as row, index (index)}
+									<DetailItem label={row.label}>{row.value}</DetailItem>
 								{/each}
-							</ul>
-						{:else}
-							<Callout tone="info">{t('af.allSet')}</Callout>
-						{/if}
-					</section>
-				{:else}
-					<AccountFlowStep part={current} bind:form />
-				{/if}
-			</div>
-		</section>
-		{#if current === '' && def.run}
-			<!-- Running it is not a step of the flow: a frame of its own below the overview. -->
-			<RunNowCard kind={def.run} {ready} />
-		{/if}
+							</DetailList>
+						</section>
+						<section class="detail__section" aria-labelledby="todo">
+							<h3 class="detail__sub" id="todo">{t('sf.detail.todo')}</h3>
+							{#if todo.length > 0}
+								<ul class="todo">
+									{#each todo as part (part.id)}
+										<li>
+											{#if part.state === 'required'}<RequiredBadge />{:else}<Badge
+													tone="neutral"
+													dot>{t('sf.status.todo')}</Badge
+												>{/if}
+											<Button variant="ghost" size="sm" onclick={() => open(part.id)}
+												>{part.label}</Button
+											>
+										</li>
+									{/each}
+								</ul>
+							{:else}
+								<Callout tone="info">{t('af.allSet')}</Callout>
+							{/if}
+						</section>
+					{:else}
+						<AccountFlowStep part={current} bind:form={draft.value} />
+					{/if}
+				</div>
+			</section>
+			{#if current === '' && def.run}
+				<!-- Running it is not a step of the flow: a frame of its own below the overview. -->
+				<RunNowCard kind={def.run} {ready} />
+			{/if}
+		</div>
 	</div>
-</div>
+</SaveScope>
+
+<UnsavedChangesDialog
+	open={asking}
+	onleave={() => {
+		asking = false;
+		draft.discard();
+		onback?.();
+	}}
+	onstay={() => (asking = false)}
+/>
 
 <style>
 	.detail {

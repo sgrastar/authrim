@@ -158,7 +158,9 @@
 			id,
 			// Sign-up and sign-in name themselves; a sync flow is SCIM or CSV, inbound or outbound.
 			protocol: isSyncFlow(id) ? SYNC_PROTOCOL[id] : t(FLOWS[id].title),
-			kind: id === 'scim-in' || id === 'scim-out' ? t(`af.kind.${id}`) : '—',
+			// Sign-up and sign-in have no other side; the others go in (received) or out (sent). CSV
+			// only comes in so far: nothing is sent or downloaded.
+			kind: isSyncFlow(id) ? t(`af.kind.${id}`) : '—',
 			name: flowName(id, flowStates[id]),
 			status: isReady(id, flowStates[id]) ? ('ready' as const) : ('setup' as const),
 			...FLOW_DATES[id],

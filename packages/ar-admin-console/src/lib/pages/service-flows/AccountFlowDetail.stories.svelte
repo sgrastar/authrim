@@ -38,7 +38,7 @@
 		await expect(canvas.getByRole('heading', { name: 'General settings' })).toBeInTheDocument();
 		// The flow's own settings are at the top of the overview, not a step of the flow: a name
 		// and a place, both required.
-		await expect(canvas.getByRole('textbox', { name: /Name of the flow/ })).toBeRequired();
+		await expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toBeRequired();
 		await expect(canvas.getByRole('combobox', { name: /Where it is used/ })).toBeRequired();
 		await expect(
 			within(canvasElement.querySelector<HTMLElement>('.detail__flow')!).queryByRole('button', {
@@ -87,7 +87,7 @@
 	args={{ flow: 'registration', filled: 'required' }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByText('Ready')).toBeInTheDocument();
+		await expect(canvas.getByText('Active')).toBeInTheDocument();
 		await expect(canvas.getByText('Everything required is set.')).toBeInTheDocument();
 	}}
 ></Story>
@@ -97,7 +97,7 @@
 	args={{ flow: 'login', filled: 'required' }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByText('Ready')).toBeInTheDocument();
+		await expect(canvas.getByText('Active')).toBeInTheDocument();
 	}}
 ></Story>
 
@@ -114,7 +114,7 @@
 		).toBeInTheDocument();
 		await expect(inFlow(canvasElement, /^Consent policy.*Not set yet/)).toBeInTheDocument();
 		// Added but not set: still ready, and the step is listed as still to do.
-		await expect(canvas.getByText('Ready')).toBeInTheDocument();
+		await expect(canvas.getByText('Active')).toBeInTheDocument();
 		await userEvent.click(canvas.getByRole('checkbox', { name: 'Terms of use (v3)' }));
 		await waitFor(() =>
 			expect(inFlow(canvasElement, /^Consent statements.*Configured/)).toBeInTheDocument()
@@ -156,7 +156,7 @@
 			expect(inFlow(canvasElement, /^When to verify more.*Configured/)).toBeInTheDocument()
 		);
 		// Optional: the flow was ready before and still is.
-		await expect(canvas.getByText('Ready')).toBeInTheDocument();
+		await expect(canvas.getByText('Active')).toBeInTheDocument();
 	}}
 />
 
@@ -201,10 +201,10 @@
 		const todo = within(canvas.getByRole('heading', { name: 'Still to do' }).parentElement!);
 		await userEvent.click(todo.getByRole('button', { name: 'Name and where it is used' }));
 		await waitFor(() =>
-			expect(canvas.getByRole('textbox', { name: /Name of the flow/ })).toHaveFocus()
+			expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toHaveFocus()
 		);
 		await userEvent.type(
-			canvas.getByRole('textbox', { name: /Name of the flow/ }),
+			canvas.getByRole('textbox', { name: /Service flow name/ }),
 			'Partner portal'
 		);
 		await userEvent.selectOptions(
@@ -229,7 +229,7 @@
 			canvas.getByRole('heading', { name: 'Receive over SCIM', level: 1 })
 		).toBeInTheDocument();
 		// The other system is the flow's own setting, asked on the overview.
-		await expect(canvas.getByRole('textbox', { name: /The other system/ })).toBeRequired();
+		await expect(canvas.getByRole('textbox', { name: /Name of the other system/ })).toBeRequired();
 		// Mapping is a step from the start (a user cannot come in without one), and required.
 		await expect(inFlow(canvasElement, /^Mapping set.*Required.*Not set yet/)).toBeInTheDocument();
 		await expect(canvas.queryByRole('heading', { name: 'Run' })).toBeNull();
@@ -287,7 +287,7 @@
 	args={{ flow: 'scim-out', filled: 'required' }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByText('Ready')).toBeInTheDocument();
+		await expect(canvas.getByText('Active')).toBeInTheDocument();
 		await userEvent.click(inFlow(canvasElement, /^Users to sync/));
 		await userEvent.selectOptions(
 			canvas.getByRole('combobox', { name: /Users to send/ }),
@@ -300,6 +300,29 @@
 		await userEvent.click(inFlow(canvasElement, /^Users to sync/));
 		await userEvent.click(canvas.getByRole('checkbox', { name: 'Admin' }));
 		await userEvent.click(inPanel(canvasElement).getByRole('button', { name: 'Overview' }));
-		await expect(canvas.getByText('Ready')).toBeInTheDocument();
+		await expect(canvas.getByText('Active')).toBeInTheDocument();
+	}}
+/>
+
+<!-- The settings are a draft: the save bar rises once something is changed, and Discard takes it back. -->
+<Story
+	name="Changes are saved with the save bar"
+	args={{ flow: 'login', filled: 'required' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const bar = () => canvasElement.querySelector<HTMLElement>('.save-bar')!;
+		await expect(bar()).not.toHaveClass('is-shown');
+		const place = () => canvas.getByRole('combobox', { name: /Where it is used/ });
+		await userEvent.selectOptions(place(), 'other-ui');
+		await waitFor(() => expect(bar()).toHaveClass('is-shown'));
+		// Discard puts back what was saved.
+		await userEvent.click(within(bar()).getByRole('button', { name: t('common.discard') }));
+		await waitFor(() => expect(bar()).not.toHaveClass('is-shown'));
+		await expect(place()).toHaveValue('default-ui');
+		// Save keeps it, and the bar sinks again.
+		await userEvent.selectOptions(place(), 'other-ui');
+		await userEvent.click(within(bar()).getByRole('button', { name: t('common.save') }));
+		await waitFor(() => expect(bar()).not.toHaveClass('is-shown'));
+		await expect(place()).toHaveValue('other-ui');
 	}}
 />

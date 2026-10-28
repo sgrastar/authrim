@@ -24,16 +24,34 @@
 		 * (`field`, default) or a line of text or a checkbox (`text`).
 		 */
 		align?: 'field' | 'text';
+		/** The setting must be set: a red "*" after the name (the control itself is `required`). */
+		required?: boolean;
+		/**
+		 * No dividing lines and no padding: for a row among other fields of a form, where the
+		 * form's own spacing separates them, and not a table of settings.
+		 */
+		plain?: boolean;
 		/** The control, with its own label hidden (`hideLabel`). */
 		children: Snippet;
 	}
 
-	let { label, info, infoId, badges, align = 'field', children }: Props = $props();
+	let {
+		label,
+		info,
+		infoId,
+		badges,
+		align = 'field',
+		required = false,
+		plain = false,
+		children
+	}: Props = $props();
 </script>
 
-<div class="field-row" class:field-row--text={align === 'text'}>
+<div class="field-row" class:field-row--text={align === 'text'} class:field-row--plain={plain}>
 	<div class="field-row__name">
-		<span class="field-row__label" aria-hidden="true">{label}</span>
+		<span class="field-row__label" aria-hidden="true"
+			>{label}{#if required}<span class="field-row__req">*</span>{/if}</span
+		>
 		{#if info}
 			<InfoTip label="{t('common.moreInfo')}: {label}" text={info} id={infoId} />
 		{/if}
@@ -49,6 +67,18 @@
 		grid-template-columns: var(--row-name-col, minmax(0, 2fr)) minmax(0, 3fr);
 		gap: 8px var(--space-columns);
 		padding-block: 16px;
+	}
+
+	/* Among other fields of a form: no lines, no padding of its own. */
+	.field-row.field-row--plain,
+	.field-row.field-row--plain:not(:first-child) {
+		padding-block: 0;
+		border-top: 0;
+	}
+
+	.field-row__req {
+		margin-inline-start: 3px;
+		color: var(--danger);
 	}
 
 	.field-row:first-child {

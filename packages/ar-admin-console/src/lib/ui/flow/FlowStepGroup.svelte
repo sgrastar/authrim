@@ -6,25 +6,25 @@
 		status: string;
 		/** Marked with the Required badge in front of the status. */
 		required?: boolean;
+		/** How far it has got: the status is then a badge (neutral when done, warning when not). */
+		state?: 'done' | 'partial' | 'todo' | 'required';
 	}
 </script>
 
 <script lang="ts">
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Icon from '../icons/Icon.svelte';
+	import Badge from '../primitives/Badge.svelte';
 	import RequiredBadge from '../primitives/RequiredBadge.svelte';
 
 	/**
 	 * A step made of parts that are set one by one (Sign-in → "Methods & sources", "Validation
-	 * rules"). The heading names the step and its overall status; each part opens on its own.
+	 * rules"). The heading names the step (a sub-heading, no status of its own); each part shows how far it has got and opens on its own.
 	 * Removable like FlowStep unless required.
 	 */
 	interface Props {
 		name: string;
-		status: string;
 		state?: 'done' | 'partial' | 'todo' | 'required';
-		/** The step cannot be left unset: marked with the Required badge in front of its status. */
-		required?: boolean;
 		items: readonly FlowSubStep[];
 		/** The part being edited, if it is one of these. */
 		current?: string;
@@ -37,9 +37,7 @@
 
 	let {
 		name,
-		status,
 		state = 'todo',
-		required = false,
 		items,
 		current,
 		note,
@@ -62,10 +60,6 @@
 		>
 			<div class="group__heading">
 				<strong id="{uid}-name">{name}</strong>
-				<span class="group__status">
-					{#if required}<RequiredBadge />{/if}
-					{status}
-				</span>
 			</div>
 			{#if note}<p class="group__note">{note}</p>{/if}
 			{#each items as item (item.id)}
@@ -78,8 +72,14 @@
 					<span class="group__text">
 						<span class="group__part-name">{item.label}</span>
 						<span class="group__part-status">
-							{#if item.required}<RequiredBadge />{/if}
-							{item.status}
+							{#if item.required}<RequiredBadge size="sm" />{/if}
+							{#if item.state}
+								<Badge tone={item.state === 'done' ? 'neutral' : 'warning'} size="sm"
+									>{item.status}</Badge
+								>
+							{:else}
+								{item.status}
+							{/if}
 						</span>
 					</span>
 					<span class="group__chevron" aria-hidden="true">›</span>
@@ -139,18 +139,9 @@
 	.group__heading strong {
 		color: var(--text-primary);
 		font-size: var(--fs-caption);
-		font-weight: var(--fw-name);
+		font-weight: var(--fw-semibold);
 		line-height: var(--lh-tight);
 		overflow-wrap: anywhere;
-	}
-
-	.group__status {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		color: var(--text-muted);
-		font-size: var(--fs-overline);
-		line-height: var(--lh-tight);
 	}
 
 	.group__note {

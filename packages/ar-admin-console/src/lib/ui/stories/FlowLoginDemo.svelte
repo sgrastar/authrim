@@ -59,7 +59,6 @@
 				{@const key = id as StepId}
 				<FlowStepGroup
 					name={sample(NAME[key])}
-					status={REQUIRED.has(key) ? sample('stRequired') : sample('stTodo')}
 					state={REQUIRED.has(key) ? 'required' : 'todo'}
 					items={PARTS[key].map(([part, label]) => ({
 						id: part,

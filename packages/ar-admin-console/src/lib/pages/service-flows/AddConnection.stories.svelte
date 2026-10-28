@@ -310,6 +310,8 @@
 		);
 		// Now the connection can be activated.
 		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
+		// Only what is saved is put into service: Save, then activate.
+		await userEvent.click(button(canvas, 'Save changes'));
 		await waitFor(() => expect(button(canvas, 'Activate')).toBeEnabled());
 		await userEvent.click(button(canvas, 'Activate'));
 		await expect(await canvas.findByText(/This connection is active/)).toBeInTheDocument();
@@ -365,6 +367,9 @@
 			'tenant-default'
 		);
 		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
+		// Only what is saved is put into service: Save, then activate.
+		await userEvent.click(button(canvas, 'Save changes'));
+		await waitFor(() => expect(button(canvas, 'Activate')).toBeEnabled());
 		await userEvent.click(button(canvas, 'Activate'));
 		await expect(await canvas.findByText(/This connection is active/)).toBeInTheDocument();
 	}}
@@ -416,6 +421,9 @@
 		await userEvent.click(button(canvas, 'Run the test'));
 		await expect(await canvas.findByRole('list', { name: 'Test results' })).toBeInTheDocument();
 		await userEvent.click(inFlow(canvasElement, /^Review and activate/));
+		// Only what is saved is put into service: Save, then activate.
+		await userEvent.click(button(canvas, 'Save changes'));
+		await waitFor(() => expect(button(canvas, 'Activate')).toBeEnabled());
 		await userEvent.click(button(canvas, 'Activate'));
 		await expect(await canvas.findByText(/This connection is active/)).toBeInTheDocument();
 	}}
@@ -491,7 +499,7 @@
 		await expect(canvasElement.querySelector('.wizard__context')).toHaveTextContent(
 			'OpenID Connect（RP）'
 		);
-		await userEvent.type(canvas.getByRole('textbox', { name: '名前' }), 'Employee portal');
+		await userEvent.type(canvas.getByRole('textbox', { name: '名称' }), 'Employee portal');
 		await next(canvas);
 		await userEvent.click(button(canvas, '設定に進む'));
 		await expect(
@@ -523,7 +531,7 @@
 		// A name and a place are what it cannot start without.
 		await expect(button(canvas, 'Continue to settings')).toBeDisabled();
 		await userEvent.type(
-			canvas.getByRole('textbox', { name: /Name of the flow/ }),
+			canvas.getByRole('textbox', { name: /Service flow name/ }),
 			'Partner portal'
 		);
 		await userEvent.selectOptions(
@@ -547,7 +555,7 @@
 			await canvas.findByRole('heading', { name: 'Partner portal sign-in', level: 1 })
 		).toBeInTheDocument();
 		// What the wizard asked is done; the rest is required and marked so.
-		await expect(canvas.getByRole('textbox', { name: /Name of the flow/ })).toHaveValue(
+		await expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toHaveValue(
 			'Partner portal sign-in'
 		);
 		await expect(
@@ -566,15 +574,19 @@
 		await choose(canvas, /^Sync users/);
 		await next(canvas);
 		await expect(canvas.getByRole('radio', { name: /^Receive over SCIM/ })).toBeInTheDocument();
-		await expect(canvas.getByRole('radio', { name: /^Send over SCIM/ })).toBeInTheDocument();
+		// Sending over SCIM is defined but not offered yet.
+		await expect(canvas.queryByRole('radio', { name: /^Send over SCIM/ })).toBeNull();
 		await choose(canvas, /^Import a CSV/);
 		await next(canvas);
 		await expect(button(canvas, 'Continue to settings')).toBeDisabled();
 		await userEvent.type(
-			canvas.getByRole('textbox', { name: /Name of the flow/ }),
+			canvas.getByRole('textbox', { name: /Service flow name/ }),
 			'Monthly import'
 		);
-		await userEvent.type(canvas.getByRole('textbox', { name: /The other system/ }), 'HR export');
+		await userEvent.type(
+			canvas.getByRole('textbox', { name: /Name of the other system/ }),
+			'HR export'
+		);
 		await waitFor(() => expect(button(canvas, 'Continue to settings')).toBeEnabled());
 		await userEvent.click(button(canvas, 'Continue to settings'));
 		await expect(
@@ -583,6 +595,36 @@
 		// What is still required is marked in the flow, and the run waits for it.
 		await expect(inFlow(canvasElement, /^File format.*Required.*Not set yet/)).toBeInTheDocument();
 		await expect(canvas.getByRole('button', { name: 'Run now' })).toBeDisabled();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- No save bar in the wizard: nothing is saved until "Continue to settings". On the flow it rises with the first change. -->
+<Story
+	name="Save bar: not in the wizard, asks before going back"
+	args={{ prefillAccount: 'login', step: 2, ondone: fn() }}
+	play={async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		await expect(canvasElement.querySelector('.save-bar')).toBeNull();
+		await userEvent.click(button(canvas, t('sf.wizard.finish')));
+		const bar = () => canvasElement.querySelector<HTMLElement>('.save-bar')!;
+		await waitFor(() => expect(bar()).not.toBeNull());
+		await expect(bar()).not.toHaveClass('is-shown');
+		// A change raises the bar; going back then asks first.
+		await userEvent.type(canvas.getByRole('textbox', { name: /Service flow name/ }), ' 2');
+		await waitFor(() => expect(bar()).toHaveClass('is-shown'));
+		await userEvent.click(canvas.getByRole('button', { name: 'Service flows' }));
+		const dialog = await within(document.body).findByRole('dialog');
+		await expect(within(dialog).getByText('You have unsaved changes')).toBeInTheDocument();
+		await userEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+		await waitFor(() => expect(within(document.body).queryByRole('dialog')).toBeNull());
+		await expect(args.ondone).not.toHaveBeenCalled();
+		await userEvent.click(canvas.getByRole('button', { name: 'Service flows' }));
+		await userEvent.click(
+			await within(document.body).findByRole('button', { name: 'Discard and go back' })
+		);
+		await expect(args.ondone).toHaveBeenCalledOnce();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
