@@ -775,8 +775,8 @@ const SAMPLES = {
 		'Initiales Zugriffstoken',
 		'رمز الوصول الأولي'
 	],
-	stDone: ['設定済み', 'Configured', 'Konfiguriert', 'مهيأ'],
-	stPartial: ['一部設定済み', 'Partly configured', 'Teilweise konfiguriert', 'مهيأ جزئيًا'],
+	stDone: ['設定済', 'Configured', 'Konfiguriert', 'مهيأ'],
+	stPartial: ['一部設定済', 'Partly configured', 'Teilweise konfiguriert', 'مهيأ جزئيًا'],
 	stTodo: ['未設定', 'Not set', 'Nicht festgelegt', 'غير مهيأ'],
 	stRequired: [
 		'必須・未設定',

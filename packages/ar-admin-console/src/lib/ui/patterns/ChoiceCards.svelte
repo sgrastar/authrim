@@ -10,6 +10,8 @@
 		/** A short mark beside the name ("Later", "Beta"). */
 		badge?: string;
 		disabled?: boolean;
+		/** Takes a whole row of the grid (a choice that stands apart from the others). */
+		wide?: boolean;
 	}
 </script>
 
@@ -56,7 +58,12 @@
 	<legend class="cards__label" class:sr-only={hideLabel}>{label}</legend>
 	<div class="cards__grid" style:--cards-columns={columns}>
 		{#each options as option (option.value)}
-			<label class="card" class:is-selected={value === option.value} class:is-off={option.disabled}>
+			<label
+				class="card"
+				class:is-selected={value === option.value}
+				class:is-off={option.disabled}
+				class:is-wide={option.wide}
+			>
 				<input
 					class="sr-only"
 					type="radio"
@@ -126,6 +133,10 @@
 		background: var(--bg-card);
 		color: var(--text-primary);
 		cursor: pointer;
+	}
+
+	.card.is-wide {
+		grid-column: 1 / -1;
 	}
 
 	.card:hover {

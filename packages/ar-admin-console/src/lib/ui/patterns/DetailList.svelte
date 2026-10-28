@@ -84,6 +84,13 @@
 		font-weight: var(--fw-semibold);
 	}
 
+	/* A row with a control at its end (a copy button): the value fills the row and the control
+	   stays at the end edge, instead of wrapping under a long value. */
+	.details > :global(.detail dd.has-end) {
+		flex-wrap: nowrap;
+		justify-content: space-between;
+	}
+
 	/* Columns: facts side by side, each a small stack. */
 	.details--cols {
 		--gap-x: var(--space-columns);

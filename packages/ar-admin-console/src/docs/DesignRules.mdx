@@ -45,10 +45,16 @@ scroll inside it when needed. Its content edge stays in place when the left nav 
 - What leads **back** — to the list, to the overview, to the parent — is a `BackLink` at the **top
   start**, above the heading it leaves. Page header has a `back` slot for it; a panel or box
   puts it above its own title.
+- The room under the back link is the same in a page header and in a panel header
+  (`PanelHeader`): `--space-back`, 12px.
+- The back link **always shows its frame** (a quiet surface and an outline, what a ghost button
+  only gets on hover), so it reads as a control and not as a caption. It lines up with the heading
+  by its frame, not by its arrow.
 - What **acts or moves on** — create, save, activate — sits at the **top end**, in the header's
   `actions`.
-- A header therefore reads, top to bottom: the way back, the context line, the title, with the
-  action beside the title.
+- A header therefore reads, top to bottom: the way back, the context line, the title and the
+  description. The **status** of a detail page (its kind, whether it is active) is gathered at the
+  **top right**, as badges at the end of the title row (`badges`), in front of the actions.
 
 ## Tone and emphasis
 
@@ -224,11 +230,27 @@ actual weights (400, 500, 600, 700); line heights from `--lh-*`, sharing three v
 - A field the admin must fill: a red `*` after its label (`required` on the field). Screen
   readers hear it from the field itself.
 - An item that is required as a property, in a list or a row (an attribute a destination
-  needs, a claim that must be sent): **RequiredBadge**, after the item's name and its type
-  badge. Outlined, the height of the other badges, no colour: being required is not a status
-  or a problem.
+  needs, a claim that must be sent, a step of a flow still to be set): **RequiredBadge**, after
+  the item's name and its type badge. Tinted in the warning colour, with no dot in front (a dot
+  is for a status), the height of the other badges. The same badge everywhere something is
+  required: in the flow diagram, in the lists of what is still to do, in item lists.
 - A required item still empty is a problem, and is shown as one: the warning sign with its
   reason, not a louder badge.
+
+## Form rows
+
+- **A setting whose value is short is a row**: its name on the start side, the control on the end
+  side (the same two columns as the settings pages, `FieldRow`). This holds for every short
+  control: a dropdown (`SelectRow`), a short text field (`TextRow`), a few checkboxes
+  (`CheckboxRow`), an on/off switch (`ToggleRow`).
+- A value that is **long** keeps the control full width with its label above: an address list,
+  a pasted document, a block of metadata, a table of values.
+- A required setting has a red `*` after its name (never a badge: see Required). The name is
+  shown by the row and read with the control; the control keeps it as its own, hidden, label.
+- Rows in a form are a field gap apart (`--space-field`, 16px), without dividing lines. A table of
+  settings, where the lines are wanted, uses `FieldRow` itself.
+- On a narrow screen the name moves above the control.
+- A switch always has a line saying what **on** means. The setting's name again is not one.
 
 ## Choosing a field
 

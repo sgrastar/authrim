@@ -1,12 +1,11 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import CheckboxGroup from '$lib/ui/patterns/CheckboxGroup.svelte';
-	import ChoiceCards from '$lib/ui/patterns/ChoiceCards.svelte';
+	import CheckboxRow from '$lib/ui/patterns/CheckboxRow.svelte';
 	import ListField from '$lib/ui/patterns/ListField.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
-	import Toggle from '$lib/ui/primitives/Toggle.svelte';
+	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
+	import TextRow from '$lib/ui/patterns/TextRow.svelte';
+	import ToggleRow from '$lib/ui/patterns/ToggleRow.svelte';
 	import OurDetails from './OurDetails.svelte';
 	import {
 		APP_TYPES,
@@ -31,6 +30,25 @@
 
 	const secretless = $derived(form.appType !== 'web');
 
+	/** What the chosen way of proving itself means, under the dropdown. */
+	const AUTH_DESCRIPTION: Record<string, MessageKey> = {
+		client_secret_basic: 'sf.rp.auth.basic.desc',
+		client_secret_post: 'sf.rp.auth.post.desc',
+		private_key_jwt: 'sf.rp.auth.jwt.desc',
+		none: 'sf.rp.auth.none.desc'
+	};
+	const authDescription = $derived(
+		form.authMethod in AUTH_DESCRIPTION ? t(AUTH_DESCRIPTION[form.authMethod]) : undefined
+	);
+
+	/** What the chosen kind of app means, under the dropdown. */
+	const APP_TYPE_DESCRIPTION: Record<AppType, MessageKey> = {
+		web: 'sf.appType.web.desc',
+		spa: 'sf.appType.spa.desc',
+		native: 'sf.appType.native.desc'
+	};
+	const appTypeDescription = $derived(t(APP_TYPE_DESCRIPTION[form.appType]));
+
 	function chooseAppType(value: string) {
 		const appType = value as AppType;
 		form.appType = appType;
@@ -39,31 +57,16 @@
 </script>
 
 {#if step === 'rp-app'}
-	<TextField label={t('sf.row.name')} hint={t('sf.rp.nameHint')} bind:value={form.name} />
-	<ChoiceCards
+	<TextRow label={t('sf.row.name')} hint={t('sf.rp.nameHint')} bind:value={form.name} />
+	<SelectRow
 		label={t('sf.row.appType')}
-		columns={3}
 		value={form.appType}
 		onchange={chooseAppType}
+		hint={appTypeDescription}
 		options={[
-			{
-				value: 'web',
-				label: t(APP_TYPES.web),
-				description: t('sf.appType.web.desc'),
-				icon: 'globe'
-			},
-			{
-				value: 'spa',
-				label: t(APP_TYPES.spa),
-				description: t('sf.appType.spa.desc'),
-				icon: 'app'
-			},
-			{
-				value: 'native',
-				label: t(APP_TYPES.native),
-				description: t('sf.appType.native.desc'),
-				icon: 'deviceMobile'
-			}
+			{ value: 'web', label: t(APP_TYPES.web) },
+			{ value: 'spa', label: t(APP_TYPES.spa) },
+			{ value: 'native', label: t(APP_TYPES.native) }
 		]}
 	/>
 {:else if step === 'rp-share'}
@@ -79,7 +82,6 @@
 			{ label: t('sf.ours.keys'), value: `${TENANT_ISSUER}/jwks` }
 		]}
 		partner="app"
-		bind:shared={form.shared}
 		note={t('sf.rp.issuerNote')}
 	/>
 {:else if step === 'rp-redirect'}
@@ -94,55 +96,30 @@
 		bind:values={form.redirectUris}
 	/>
 {:else if step === 'rp-signin'}
-	<ChoiceCards
+	<SelectRow
 		label={t('sf.rp.authLabel')}
-		columns={2}
 		value={form.authMethod}
 		onchange={(value) => (form.authMethod = value)}
+		hint={authDescription}
 		options={[
-			{
-				value: 'client_secret_basic',
-				label: t('sf.rp.auth.basic'),
-				description: t('sf.rp.auth.basic.desc'),
-				icon: 'key',
-				disabled: secretless
-			},
-			{
-				value: 'client_secret_post',
-				label: t('sf.rp.auth.post'),
-				description: t('sf.rp.auth.post.desc'),
-				icon: 'key',
-				disabled: secretless
-			},
-			{
-				value: 'private_key_jwt',
-				label: t('sf.rp.auth.jwt'),
-				description: t('sf.rp.auth.jwt.desc'),
-				icon: 'fingerprint',
-				disabled: secretless
-			},
-			{
-				value: 'none',
-				label: t('sf.rp.auth.none'),
-				description: t('sf.rp.auth.none.desc'),
-				icon: 'lock',
-				disabled: !secretless
-			}
+			{ value: 'client_secret_basic', label: t('sf.rp.auth.basic'), disabled: secretless },
+			{ value: 'client_secret_post', label: t('sf.rp.auth.post'), disabled: secretless },
+			{ value: 'private_key_jwt', label: t('sf.rp.auth.jwt'), disabled: secretless },
+			{ value: 'none', label: t('sf.rp.auth.none'), disabled: !secretless }
 		]}
 	/>
 	{#if secretless}
 		<Callout tone="info">{t('sf.rp.pkceOnly')}</Callout>
 	{/if}
-	<div class="row">
-		<Toggle label={t('sf.rp.requirePkce')} bind:checked={form.pkce} disabled={secretless} />
-		<span>
-			<strong>{t('sf.rp.requirePkce')}</strong>
-			<span class="muted">{secretless ? t('sf.rp.pkceAlways') : t('sf.rp.pkceRecommended')}</span>
-		</span>
-	</div>
+	<ToggleRow
+		label={t('sf.rp.requirePkce')}
+		description={secretless ? t('sf.rp.pkceAlways') : t('sf.rp.pkceRecommended')}
+		bind:checked={form.pkce}
+		disabled={secretless}
+	/>
 {:else if step === 'rp-info'}
-	<CheckboxGroup
-		title={t('sf.rp.scopesTitle')}
+	<CheckboxRow
+		label={t('sf.rp.scopesTitle')}
 		bind:selected={form.scopes}
 		options={[
 			{ value: 'openid', label: 'openid', description: t('sf.rp.scope.openid') },
@@ -159,7 +136,7 @@
 		{@const [before, after] = t('sf.rp.openidRequired').split('{scope}')}
 		<Callout tone="warning" live>{before}<code>openid</code>{after}</Callout>
 	{/if}
-	<Select
+	<SelectRow
 		label={t('sf.rp.userInfo')}
 		placeholder={t('sf.set.choose')}
 		value={form.mappingSet}
@@ -167,27 +144,8 @@
 		hint={t('sf.rp.userInfoHint')}
 		options={[
 			{ value: 'tenant-default', label: t('sf.set.tenantDefault') },
-			{ value: 'library-staff', label: t('sf.set.libraryStaff') },
+			{ value: 'staff', label: t('sf.set.staff') },
 			{ value: 'none', label: t('sf.set.none') }
 		]}
 	/>
 {/if}
-
-<style>
-	.row {
-		display: flex;
-		gap: var(--space-grid);
-		align-items: flex-start;
-	}
-
-	.row > span {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.muted {
-		color: var(--text-muted);
-		font-size: var(--fs-small);
-	}
-</style>

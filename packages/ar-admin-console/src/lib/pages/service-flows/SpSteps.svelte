@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/i18n.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import Toggle from '$lib/ui/primitives/Toggle.svelte';
+	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
+	import ToggleRow from '$lib/ui/patterns/ToggleRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
 	import type { SpForm } from './connection-model';
 	import MetadataImport from './MetadataImport.svelte';
@@ -35,9 +35,9 @@
 {#if step === 'sp-import'}
 	<MetadataImport bind:form partner="service" />
 {:else if step === 'sp-share'}
-	<OurDetails items={ourItems} partner="service" bind:shared={form.shared} download />
+	<OurDetails items={ourItems} partner="service" download />
 {:else if step === 'sp-attrs'}
-	<Select
+	<SelectRow
 		label={t('sf.sp.nameIdLabel')}
 		value={form.nameIdFormat}
 		onchange={(value) => (form.nameIdFormat = value)}
@@ -49,17 +49,18 @@
 			{ value: 'unspecified', label: t('sf.sp.nameId.unspecified') }
 		]}
 	/>
-	<Select
+	<SelectRow
 		label={t('sf.sp.attrsLabel')}
 		value={form.attributePreset}
 		onchange={(value) => (form.attributePreset = value)}
 		options={[
 			{ value: 'minimal', label: t('sf.set.minimal') },
-			{ value: 'library', label: t('sf.sp.attrs.library') },
+			{ value: 'standard', label: t('sf.sp.attrs.standard') },
+			{ value: 'academic', label: t('sf.sp.attrs.academic') },
 			{ value: 'custom', label: t('sf.sp.attrs.custom') }
 		]}
 	/>
-	<Select
+	<SelectRow
 		label={t('sf.row.minAuth')}
 		value={form.minAuth}
 		onchange={(value) => (form.minAuth = value)}
@@ -69,10 +70,11 @@
 			{ value: 'aal2', label: t('sf.sp.minAuth.aal2') }
 		]}
 	/>
-	<div class="row">
-		<Toggle label={t('sf.sp.consent')} bind:checked={form.consent} />
-		<span>{t('sf.sp.consent')}</span>
-	</div>
+	<ToggleRow
+		label={t('sf.row.askConsent')}
+		description={t('sf.sp.consent')}
+		bind:checked={form.consent}
+	/>
 {:else if step === 'sp-test'}
 	<ConnectionTest
 		lead={t('sf.sp.testLead')}
@@ -81,11 +83,3 @@
 		bind:tested={form.tested}
 	/>
 {/if}
-
-<style>
-	.row {
-		display: flex;
-		gap: var(--space-grid);
-		align-items: center;
-	}
-</style>

@@ -4,21 +4,26 @@
 		label: string;
 		/** Status line, e.g. "Not set". */
 		status: string;
+		/** Marked with the Required badge in front of the status. */
+		required?: boolean;
+		/** How far it has got: the status is then a badge (neutral when done, warning when not). */
+		state?: 'done' | 'partial' | 'todo' | 'required';
 	}
 </script>
 
 <script lang="ts">
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Icon from '../icons/Icon.svelte';
+	import Badge from '../primitives/Badge.svelte';
+	import RequiredBadge from '../primitives/RequiredBadge.svelte';
 
 	/**
 	 * A step made of parts that are set one by one (Sign-in → "Methods & sources", "Validation
-	 * rules"). The heading names the step and its overall status; each part opens on its own.
+	 * rules"). The heading names the step (a sub-heading, no status of its own); each part shows how far it has got and opens on its own.
 	 * Removable like FlowStep unless required.
 	 */
 	interface Props {
 		name: string;
-		status: string;
 		state?: 'done' | 'partial' | 'todo' | 'required';
 		items: readonly FlowSubStep[];
 		/** The part being edited, if it is one of these. */
@@ -32,7 +37,6 @@
 
 	let {
 		name,
-		status,
 		state = 'todo',
 		items,
 		current,
@@ -56,7 +60,6 @@
 		>
 			<div class="group__heading">
 				<strong id="{uid}-name">{name}</strong>
-				<span class="group__status">{status}</span>
 			</div>
 			{#if note}<p class="group__note">{note}</p>{/if}
 			{#each items as item (item.id)}
@@ -68,7 +71,16 @@
 				>
 					<span class="group__text">
 						<span class="group__part-name">{item.label}</span>
-						<span class="group__part-status">{item.status}</span>
+						<span class="group__part-status">
+							{#if item.required}<RequiredBadge size="sm" />{/if}
+							{#if item.state}
+								<Badge tone={item.state === 'done' ? 'neutral' : 'warning'} size="sm"
+									>{item.status}</Badge
+								>
+							{:else}
+								{item.status}
+							{/if}
+						</span>
 					</span>
 					<span class="group__chevron" aria-hidden="true">›</span>
 				</button>
@@ -120,22 +132,16 @@
 
 	.group__heading {
 		display: grid;
-		gap: 1px;
-		padding: 6px 5px 5px;
+		gap: 4px;
+		padding: 8px 6px 6px;
 	}
 
 	.group__heading strong {
 		color: var(--text-primary);
 		font-size: var(--fs-caption);
-		font-weight: var(--fw-name);
+		font-weight: var(--fw-semibold);
 		line-height: var(--lh-tight);
 		overflow-wrap: anywhere;
-	}
-
-	.group__status {
-		color: var(--text-muted);
-		font-size: var(--fs-overline);
-		line-height: var(--lh-tight);
 	}
 
 	.group__note {
@@ -150,8 +156,8 @@
 		align-items: center;
 		gap: 6px;
 		width: 100%;
-		min-height: 36px;
-		padding: 4px 8px;
+		min-height: 44px;
+		padding: 7px 8px;
 		border: 0;
 		border-radius: min(4px, var(--radius-xs));
 		background: transparent;
@@ -173,7 +179,7 @@
 		display: grid;
 		flex: 1;
 		min-width: 0;
-		gap: 1px;
+		gap: 4px;
 	}
 
 	.group__part-name {
@@ -183,6 +189,9 @@
 	}
 
 	.group__part-status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 		color: var(--text-muted);
 		font-size: var(--fs-overline);
 		line-height: var(--lh-tight);

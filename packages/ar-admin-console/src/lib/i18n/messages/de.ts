@@ -3,12 +3,14 @@ import { deSettings } from './settings/de';
 import { deCompliance } from './compliance/de';
 import { deMappingConsole } from './mapping-console/de';
 import { deServiceFlows } from './service-flows/de';
+import { deAccountFlows } from './account-flows/de';
 
 export const de = {
 	...deSettings,
 	...deCompliance,
 	...deMappingConsole,
 	...deServiceFlows,
+	...deAccountFlows,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

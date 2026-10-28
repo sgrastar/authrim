@@ -85,6 +85,13 @@
 	<title>Mock — Authrim</title>
 </svelte:head>
 
+{#snippet banner()}
+	<p class="mock__note" role="note">
+		<strong>Mock</strong>
+		Not connected to any API. Everything on these pages is sample data.
+	</p>
+{/snippet}
+
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div
 	class="mock"
@@ -105,11 +112,8 @@
 		{standalone}
 		{notifications}
 		ondismiss={(id) => (dismissed = [...dismissed, id])}
+		{banner}
 	>
-		<p class="mock__note" role="note">
-			<strong>Mock</strong>
-			Not connected to any API. Everything on these pages is sample data.
-		</p>
 		{#key consolePath}
 			{#if !known}
 				<Page>

@@ -5,8 +5,8 @@
  */
 export const jaServiceFlows = {
 	// The parts of a connection's flow (and the wizard's steps).
-	'sf.part.where': '接続の向き',
-	'sf.part.kind': '接続する相手',
+	'sf.part.where': '追加するもの',
+	'sf.part.kind': '種類',
 	'sf.part.rp-app': 'アプリの情報',
 	'sf.part.rp-redirect': 'リダイレクト URI',
 	'sf.part.rp-signin': 'サインイン方法',
@@ -28,17 +28,13 @@ export const jaServiceFlows = {
 	'sf.part.activate': '確認して有効にする',
 
 	// The steps of a connection's flow.
-	'sf.group.app': 'アプリ',
-	'sf.group.signin': 'サインイン',
 	'sf.group.receives': 'アプリが受け取る情報',
 	'sf.group.mapping': 'マッピング',
 	'sf.group.consent': '同意',
 	'sf.group.role': 'ロールの割り当て',
 	'sf.group.live': '利用開始',
-	'sf.group.service': 'サービス',
 	'sf.group.response': 'サインイン応答',
 	'sf.group.check': '動作確認',
-	'sf.group.provider': 'プロバイダー',
 	'sf.group.accounts': 'アカウント',
 	'sf.group.additional': '追加入力',
 
@@ -74,7 +70,7 @@ export const jaServiceFlows = {
 
 	// What the overview lists back.
 	'sf.row.kind': '種類',
-	'sf.row.name': '名前',
+	'sf.row.name': '名称',
 	'sf.row.appType': 'アプリの種類',
 	'sf.row.clientAuth': 'クライアント認証',
 	'sf.row.pkce': 'PKCE',
@@ -132,12 +128,13 @@ export const jaServiceFlows = {
 	'sf.schema.providerStandard': 'プロバイダーの標準のクレームまたは属性',
 
 	// The wizard.
-	'sf.wizard.title': '接続を追加',
-	'sf.wizard.description': 'このテナントにアプリ、サービス、プロバイダーを接続します。',
-	'sf.wizard.stepsNote': '接続する相手を選ぶと、残りの手順が表示されます。',
+	'sf.wizard.title': 'サービスフローの追加',
+	'sf.wizard.description':
+		'アプリ、サービス、プロバイダーとの接続や、利用者の登録とログインの流れを追加します。',
+	'sf.wizard.stepsNote': '種類を選ぶと、残りの手順が表示されます。',
 	'sf.wizard.finish': '設定に進む',
-	'sf.wizard.whereLabel': 'どちらの向きで接続しますか？',
-	'sf.wizard.kindLabel': '何を接続しますか？',
+	'sf.wizard.whereLabel': '何を追加しますか？',
+	'sf.wizard.kindLabel': 'どの種類ですか？',
 	'sf.wizard.out.label': 'アプリやサービスが Authrim でサインインする',
 	'sf.wizard.out.desc':
 		'Authrim が IdP（OpenID Connect では OP）になります。アプリやサービスは、利用者をここに送ってサインインさせます。',
@@ -149,7 +146,7 @@ export const jaServiceFlows = {
 		'Web、シングルページ、ネイティブのアプリ。クライアント ID を受け取り、利用者を Authrim に送ってサインインさせます。',
 	'sf.wizard.kind.sp.label': 'SAML を使うサービス',
 	'sf.wizard.kind.sp.desc':
-		'出版社など、SAML でのサインインを受け付けるサービス。メタデータを交換します。',
+		'SaaS や社内の業務システム、取引先のサービスなど、SAML でのサインインを受け付けるサービス。メタデータを交換します。',
 	'sf.wizard.kind.op.label': 'OpenID Connect を使うプロバイダー',
 	'sf.wizard.kind.op.desc':
 		'Issuer のアドレスを持つディレクトリやサインインサービス。そこに Authrim を登録して、クライアント ID を受け取ります。',
@@ -157,10 +154,9 @@ export const jaServiceFlows = {
 	'sf.wizard.kind.idp.desc': '企業や大学の ID プロバイダー。SAML のメタデータを交換します。',
 
 	// A connection's service flow.
-	'sf.status.done': '設定済み',
-	'sf.status.partial': '一部設定済み',
+	'sf.status.done': '設定済',
+	'sf.status.partial': '一部設定済',
 	'sf.status.todo': '未設定',
-	'sf.status.required': '必須・未設定',
 	'sf.status.active': '有効',
 	'sf.status.notActive': '無効',
 	'sf.status.draft': '下書き',
@@ -168,7 +164,7 @@ export const jaServiceFlows = {
 	'sf.blurb.sp': 'Authrim でサインインするサービス（SAML）',
 	'sf.blurb.op': '利用者がサインインに使うプロバイダー（OpenID Connect）',
 	'sf.blurb.idp': '利用者がサインインに使うプロバイダー（SAML）',
-	'sf.detail.allConnections': 'すべての接続',
+	'sf.detail.back': 'サービスフロー',
 	'sf.detail.signIn': 'サインイン',
 	'sf.detail.signInPage': 'サインイン画面',
 	'sf.detail.peopleChoose': '利用者が「{name}」を選びます',
@@ -201,7 +197,6 @@ export const jaServiceFlows = {
 		'{partner}側で Authrim を登録できるよう、次の値を渡してください。それぞれにコピーボタンがあります。',
 	'sf.ours.copy': '{label}をコピー',
 	'sf.ours.download': 'Authrim のメタデータをダウンロード',
-	'sf.ours.registered': '{partner}に登録しました',
 	'sf.ours.metadataUrl': 'メタデータのアドレス',
 	'sf.ours.ssoUrl': 'シングルサインオンのアドレス',
 	'sf.ours.sloUrl': 'シングルログアウトのアドレス',
@@ -249,7 +244,7 @@ export const jaServiceFlows = {
 	'sf.rp.pkceRecommended': 'すべてのアプリで推奨します。',
 	'sf.rp.scopesTitle': 'アプリが求めてよい情報',
 	'sf.rp.scope.openid': '必須: 利用者をサインインさせます。',
-	'sf.rp.scope.profile': '名前と基本的なプロフィール。',
+	'sf.rp.scope.profile': '氏名と基本的なプロフィール。',
 	'sf.rp.scope.email': 'メールアドレスと、それが確認済みかどうか。',
 	'sf.rp.scope.offline': '利用者が離れた後もサインインを保ちます。',
 	'sf.rp.openidRequired': 'OpenID Connect のアプリは {scope} を求める必要があります。',
@@ -260,7 +255,7 @@ export const jaServiceFlows = {
 	// Mapping sets offered (dummy).
 	'sf.set.choose': 'マッピングセットを選択',
 	'sf.set.tenantDefault': 'テナントの既定に従う',
-	'sf.set.libraryStaff': '図書館職員用のセット',
+	'sf.set.staff': '従業員用のセット',
 	'sf.set.none': '追加のマッピングなし',
 	'sf.set.minimal': '最小: 識別子のみ',
 
@@ -273,8 +268,9 @@ export const jaServiceFlows = {
 	'sf.sp.nameId.email': 'メールアドレス',
 	'sf.sp.nameId.unspecified': '指定なし',
 	'sf.sp.attrsLabel': '送る属性',
-	'sf.sp.attrs.library': '図書館の標準: 所属と利用資格',
-	'sf.sp.attrs.custom': 'カスタム（図書館の標準をコピーして始める）',
+	'sf.sp.attrs.standard': '標準: 氏名、メールアドレス、所属、ロール',
+	'sf.sp.attrs.academic': '学術系: 所属と利用資格（eduPerson）',
+	'sf.sp.attrs.custom': 'カスタム（標準をコピーして始める）',
 	'sf.sp.minAuth.none': '求めない',
 	'sf.sp.minAuth.password': 'パスワード',
 	'sf.sp.minAuth.aal2': '2 要素（AAL2）',
@@ -296,7 +292,7 @@ export const jaServiceFlows = {
 	'sf.in.attrsHint.op': 'プロバイダーのどのクレームを利用者のアカウントに取り込むかです。',
 	'sf.in.attrsHint.idp': 'プロバイダーのどの属性を利用者のアカウントに取り込むかです。',
 	'sf.in.attrs.minimal': '最小: プロバイダーの識別子のみ',
-	'sf.in.attrs.standard': '標準: 名前とメールアドレス',
+	'sf.in.attrs.standard': '標準: 氏名とメールアドレス',
 	'sf.in.attrs.custom': 'カスタム（標準をコピーして始める）',
 	'sf.in.testLead':
 		'テスト用の利用者でプロバイダーからサインインし、Authrim が受け取る内容を確かめます。アカウントは作成されません。',
@@ -308,7 +304,7 @@ export const jaServiceFlows = {
 	'sf.idp.certNote': 'プロバイダーの証明書はあと {days} 日で期限が切れます。',
 
 	// The processing steps (mapping, additional input, consent, role).
-	'sf.extra.schemasLead': 'それぞれの側にある属性の名前、型、必須項目です。',
+	'sf.extra.schemasLead': 'それぞれの側にある属性の名称、型、必須項目です。',
 	'sf.extra.inputSchema': '入力スキーマ',
 	'sf.extra.outputSchema': '出力スキーマ',
 	'sf.extra.chooseSchema': 'スキーマを選択',
@@ -341,9 +337,28 @@ export const jaServiceFlows = {
 	'sf.extra.roleNote': '誰にロールを割り当ててよいかを事前に決める設定とは別のものです。',
 
 	// The dev mock pages (sample rows stay sample data).
+	'sf.group.signup': '新規登録',
+	'sf.part.signup-flow': '登録に使うフロー',
+	'sf.extra.signupLead.out':
+		'アカウントのない人がこのアプリから来たときに、どの新規登録のフローで登録するかを選びます。',
+	'sf.extra.signupLead.in':
+		'このプロバイダーでサインインした人にアカウントがないとき、どの新規登録のフローで登録するかを選びます。',
+	'sf.extra.signupFlow': '新規登録のフロー',
+	'sf.extra.chooseSignup': '新規登録のフローを選ぶ',
+	'sf.extra.signupHint': '新規登録のフローは、サービスフローの追加で作ります。',
+	'sf.detail.saveFirst': '変更を保存してから、有効にしてください。',
+	'sf.unsaved.title': '保存していない変更があります',
+	'sf.unsaved.body': 'このまま戻ると、変更は失われます。',
+	'sf.unsaved.confirm': '変更を破棄して戻る',
+	'sf.unsaved.keep': '編集を続ける',
 	'sf.mock.title': 'サービスフロー',
-	'sf.mock.description': 'このテナントに接続しているものの一覧です。',
-	'sf.mock.connections': '接続',
+	'sf.mock.description': 'このテナントのサービスフローの一覧です。',
+	'sf.mock.connections': 'すべてのサービスフロー',
+	'sf.mock.col.protocol': 'プロトコル',
+	'sf.mock.col.name': '名称',
+	'sf.mock.col.created': '作成日時',
+	'sf.mock.col.modified': '変更日時',
+	'sf.mock.open': '{name}を開く',
 	'sf.mock.col.kind': '種類',
 	'sf.mock.col.status': '状態',
 	'sf.mock.status.active': '有効',

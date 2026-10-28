@@ -21,7 +21,7 @@
 			docs: {
 				description: {
 					component:
-						'Every small label on an item, told apart by how heavy it looks:\n\n- **Badge** — a status (tinted): enabled / disabled in lists; the other tones for what needs attention; `changed` for “changed, not saved yet”.\n- **TypeBadge** — a data type or short fact (filled, quiet, left to right): `string`, `boolean`.\n- **RequiredBadge** — required as a property of an item in a list (outlined, no colour). A form field the admin must fill uses a red “*” on its label instead.\n- **CountBadge** — how many things wait, next to a navigation entry (the danger colour: it asks for action).\n\nOrder after a name: type, then required, then status.'
+						'Every small label on an item, told apart by how heavy it looks:\n\n- **Badge** — a status (tinted): enabled / disabled in lists; the other tones for what needs attention; `changed` for “changed, not saved yet”.\n- **TypeBadge** — a data type or short fact (filled, quiet, left to right): `string`, `boolean`.\n- **RequiredBadge** — required as a property of an item in a list or a step of a flow (tinted in the warning colour, no dot). A form field the admin must fill uses a red “*” on its label instead.\n- **CountBadge** — how many things wait, next to a navigation entry (the danger colour: it asks for action).\n\nOrder after a name: type, then required, then status.'
 				}
 			}
 		}

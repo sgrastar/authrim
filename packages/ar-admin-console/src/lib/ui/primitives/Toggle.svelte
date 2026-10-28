@@ -11,6 +11,8 @@
 		disabled?: boolean;
 		/** `sm`: in a dense row or a small card. */
 		size?: 'md' | 'sm';
+		/** ID of text that explains what the switch does, read with it. */
+		describedBy?: string;
 		onchange?: (checked: boolean) => void;
 	}
 
@@ -19,6 +21,7 @@
 		label,
 		disabled = false,
 		size = 'md',
+		describedBy,
 		onchange
 	}: Props = $props();
 
@@ -37,6 +40,7 @@
 	role="switch"
 	aria-checked={checked}
 	aria-label={label}
+	aria-describedby={describedBy}
 	disabled={disabled || busy()}
 	onclick={toggle}
 >

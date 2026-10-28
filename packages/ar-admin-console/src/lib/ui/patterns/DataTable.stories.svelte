@@ -10,6 +10,7 @@
 	import EmptyState from './EmptyState.svelte';
 	import SelectableTableDemo from '../stories/SelectableTableDemo.svelte';
 	import SortableTableDemo from '../stories/SortableTableDemo.svelte';
+	import OpeningRowDemo from '../stories/OpeningRowDemo.svelte';
 	import MethodMatrixDemo from '../stories/MethodMatrixDemo.svelte';
 	import DateTime from '../time/DateTime.svelte';
 	import CellText from './CellText.svelte';
@@ -27,7 +28,7 @@
 			docs: {
 				description: {
 					component:
-						'Tabular list with fixed column widths (so grouped tables line up) and a hidden caption for screen readers. On phones it scrolls sideways instead of collapsing columns. Place it in a `flush` Card.\n\n**Sorting:** mark columns `sortable` and bind `sort`; the header shows the direction and sets `aria-sort`. Sort on the client with `sortRows()` or pass the state to the API.\n\n**Selection:** `selectable` adds a checkbox column and binds `selected` (row keys). The header checkbox selects or clears the visible rows (mixed state when some are selected); while rows are selected a bar offers select all, clear selection and the page’s bulk actions.\n\n**Rows with more than one line:** `CellText` puts a name, a short description and optionally a link in one cell — for rows whose name alone does not say what they are.\n\n**Checkboxes in cells:** a matrix of choices confirmed with Save (checkboxes, not switches — switches mean it applies at once). Centre those columns (`align` = `center`), give each box a full accessible name (“Passkey — Sign-up”), and mark cells that do not apply with `NotApplicable` rather than a disabled box.'
+						'Tabular list with fixed column widths (so grouped tables line up) and a hidden caption for screen readers. On phones it scrolls sideways instead of collapsing columns. Place it in a `flush` Card.\n\n**Sorting:** mark columns `sortable` and bind `sort`; the header shows the direction and sets `aria-sort`. Sort on the client with `sortRows()` or pass the state to the API.\n\n**Opening a row:** `onrowopen` makes the whole row open its detail: a click anywhere on it, or Tab to the row and Enter or Space. A button or link inside a cell keeps its own click. Name the row with `rowOpenLabel`; do not also put a link on the name.\n\n**Selection:** `selectable` adds a checkbox column and binds `selected` (row keys). The header checkbox selects or clears the visible rows (mixed state when some are selected); while rows are selected a bar offers select all, clear selection and the page’s bulk actions.\n\n**Rows with more than one line:** `CellText` puts a name, a short description and optionally a link in one cell — for rows whose name alone does not say what they are.\n\n**Checkboxes in cells:** a matrix of choices confirmed with Save (checkboxes, not switches — switches mean it applies at once). Centre those columns (`align` = `center`), give each box a full accessible name (“Passkey — Sign-up”), and mark cells that do not apply with `NotApplicable` rather than a disabled box.'
 				}
 			}
 		}
@@ -68,6 +69,32 @@
 				{/snippet}
 			</DataTable>
 		</Card>
+	{/snippet}
+</Story>
+
+<Story
+	name="Opening a row"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The row is opened by a click anywhere on it …
+		await userEvent.click(within(canvas.getByText('flowSlack').closest('tr')!).getByText('SCIM'));
+		await expect(canvas.getByText('Opened flowSlack')).toBeInTheDocument();
+		// … and, for the keyboard and screen readers, by a real button in its first cell.
+		const open = canvas.getByRole('button', { name: 'Open flowLogin' });
+		open.focus();
+		await userEvent.keyboard('{Enter}');
+		await expect(canvas.getByText('Opened flowLogin')).toBeInTheDocument();
+		// A button inside a cell does its own thing and does not open the row.
+		await userEvent.click(canvas.getByRole('button', { name: 'Check flowVc' }));
+		await expect(canvas.getByText('Checked flowVc')).toBeInTheDocument();
+		await expect(canvas.queryByText('Opened flowVc')).toBeNull();
+		// Neither does the label of a control in a cell.
+		await userEvent.click(canvas.getByText('Flag flowVc'));
+		await expect(canvas.queryByText('Opened flowVc')).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<OpeningRowDemo />
 	{/snippet}
 </Story>
 

@@ -30,6 +30,12 @@
 		/** Shown in the header's notification area; leave out for a header without one. */
 		notifications?: readonly ShellNotification[];
 		ondismiss?: (id: string) => void;
+		/**
+		 * A full-width strip attached under the header categories, above the left nav and the page
+		 * (the mock app's "sample data" note). It sits outside the page area, so a theme that
+		 * insets the page (Frosted) does not pull it away from the categories.
+		 */
+		banner?: Snippet;
 		children: Snippet;
 	}
 
@@ -43,10 +49,13 @@
 		standalone = false,
 		notifications,
 		ondismiss,
+		banner,
 		children
 	}: Props = $props();
 
 	let drawerOpen = $state(false);
+	/** Height of the banner, if there is one: the left nav and the page leave room for it. */
+	let bannerHeight = $state(0);
 
 	const entries = $derived(topNavEntries(location.kind, t));
 	const rows = $derived(
@@ -56,7 +65,7 @@
 	const color = $derived(areaColor(location));
 </script>
 
-<div class="app" data-scope-kind={location.kind}>
+<div class="app" data-scope-kind={location.kind} style:--banner-h="{bannerHeight}px">
 	<a class="skip" href="#content">{t('app.skip')}</a>
 	<Header
 		{scopes}
@@ -74,6 +83,7 @@
 		{entries}
 		activeId={standalone ? '' : location.top.id}
 	/>
+	{#if banner}<div class="banner" bind:clientHeight={bannerHeight}>{@render banner()}</div>{/if}
 	<div class="split" class:split--full={rows.length === 0}>
 		<SubNav
 			label={t(location.area.label)}
@@ -123,7 +133,7 @@
 		grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
 		gap: var(--shell-inset);
 		align-items: start;
-		min-height: calc(100vh - var(--header-h) - var(--subheader-h));
+		min-height: calc(100vh - var(--header-h) - var(--subheader-h) - var(--banner-h, 0px));
 		padding: var(--shell-inset);
 	}
 

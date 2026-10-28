@@ -3,12 +3,13 @@
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
 	import ChoiceCards from '$lib/ui/patterns/ChoiceCards.svelte';
+	import FieldRow from '$lib/ui/patterns/FieldRow.svelte';
 	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
 	import DetailList from '$lib/ui/patterns/DetailList.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
 	import SecretField from '$lib/ui/primitives/SecretField.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
+	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
+	import TextRow from '$lib/ui/patterns/TextRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
 	import { httpsUrlProblem, type IdpForm, type LinkRule, type OpForm } from './connection-model';
 	import MetadataImport from './MetadataImport.svelte';
@@ -79,20 +80,17 @@
 		{
 			value: 'verified-email',
 			label: t('sf.link.option.verified-email'),
-			description: t('sf.link.option.verified-email.desc'),
-			icon: 'mail' as const
+			description: t('sf.link.option.verified-email.desc')
 		},
 		{
 			value: 'ask',
 			label: t('sf.link.option.ask'),
-			description: t('sf.link.option.ask.desc'),
-			icon: 'handshake' as const
+			description: t('sf.link.option.ask.desc')
 		},
 		{
 			value: 'new',
 			label: t('sf.link.option.new'),
-			description: t('sf.link.option.new.desc'),
-			icon: 'userPlus' as const
+			description: t('sf.link.option.new.desc')
 		}
 	]);
 
@@ -127,13 +125,13 @@
 {/snippet}
 
 {#if step === 'op-details'}
-	<TextField
+	<TextRow
 		label={t('sf.row.name')}
 		hint={t('sf.in.nameHint')}
 		placeholder="Acme Directory"
 		bind:value={op.name}
 	/>
-	<TextField
+	<TextRow
 		label={t('sf.in.issuer')}
 		placeholder="https://login.provider.example"
 		hint={t('sf.in.issuerHint')}
@@ -157,12 +155,19 @@
 			</DetailList>
 		</Callout>
 	{/if}
-	<TextField label={t('sf.row.clientId')} hint={t('sf.in.clientIdHint')} bind:value={op.clientId} />
-	<SecretField label={t('sf.in.clientSecret')} mode="enter" bind:value={op.clientSecret} />
+	<TextRow label={t('sf.row.clientId')} hint={t('sf.in.clientIdHint')} bind:value={op.clientId} />
+	<FieldRow label={t('sf.in.clientSecret')} plain>
+		<SecretField
+			label={t('sf.in.clientSecret')}
+			mode="enter"
+			hideLabel
+			bind:value={op.clientSecret}
+		/>
+	</FieldRow>
 {:else if step === 'op-share'}
-	<OurDetails items={opOurs} partner="provider" bind:shared={op.shared} />
+	<OurDetails items={opOurs} partner="provider" />
 {:else if step === 'op-attrs'}
-	<Select
+	<SelectRow
 		label={t('sf.in.attrsLabel')}
 		value={op.attributePreset}
 		onchange={(value) => (op.attributePreset = value)}
@@ -178,17 +183,17 @@
 		bind:tested={op.tested}
 	/>
 {:else if step === 'idp-import'}
-	<TextField
+	<TextRow
 		label={t('sf.row.name')}
 		hint={t('sf.in.nameHint')}
-		placeholder="Campus sign-in"
+		placeholder="Corporate sign-in"
 		bind:value={idp.name}
 	/>
 	<MetadataImport bind:form={idp} partner="provider" />
 {:else if step === 'idp-share'}
-	<OurDetails items={idpOurs} partner="provider" bind:shared={idp.shared} download />
+	<OurDetails items={idpOurs} partner="provider" download />
 {:else if step === 'idp-attrs'}
-	<Select
+	<SelectRow
 		label={t('sf.in.attrsLabel')}
 		value={idp.attributePreset}
 		onchange={(value) => (idp.attributePreset = value)}

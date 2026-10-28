@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/i18n.svelte';
 	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import CheckboxGroup from '$lib/ui/patterns/CheckboxGroup.svelte';
+	import CheckboxRow from '$lib/ui/patterns/CheckboxRow.svelte';
 	import ListField from '$lib/ui/patterns/ListField.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
+	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
 	import {
 		consentStatements,
+		SIGNUP_FLOWS,
 		schemaOptions,
 		validSchema,
 		type ExtrasForm
@@ -34,7 +35,7 @@
 
 {#if step === 'mapping-schemas'}
 	<p class="lead">{t('sf.extra.schemasLead')}</p>
-	<Select
+	<SelectRow
 		label={t('sf.extra.inputSchema')}
 		placeholder={t('sf.extra.chooseSchema')}
 		hint={t('sf.extra.noMapping')}
@@ -42,7 +43,7 @@
 		onchange={(value) => (form.inputSchema = value)}
 		options={options.inputs}
 	/>
-	<Select
+	<SelectRow
 		label={t('sf.extra.outputSchema')}
 		placeholder={t('sf.extra.chooseSchema')}
 		value={output}
@@ -51,7 +52,7 @@
 	/>
 {:else if step === 'mapping-sets'}
 	<p class="lead">{t('sf.extra.setsLead')}</p>
-	<Select
+	<SelectRow
 		label={t('sf.row.mappingSet')}
 		placeholder={t('sf.set.choose')}
 		value={form.mappingSet}
@@ -59,7 +60,7 @@
 		hint={t('sf.extra.setHint')}
 		options={[
 			{ value: 'tenant-default', label: t('sf.set.tenantDefault') },
-			{ value: 'library-staff', label: t('sf.set.libraryStaff') },
+			{ value: 'staff', label: t('sf.set.staff') },
 			{ value: 'minimal', label: t('sf.set.minimal') }
 		]}
 	/>
@@ -77,14 +78,14 @@
 	/>
 {:else if step === 'consent-statements'}
 	<p class="lead">{t('sf.extra.statementsLead')}</p>
-	<CheckboxGroup
-		title={t('sf.extra.statementsTitle')}
+	<CheckboxRow
+		label={t('sf.extra.statementsTitle')}
 		bind:selected={form.consentStatements}
 		options={consentStatements()}
 	/>
 {:else if step === 'consent-policies'}
 	<p class="lead">{t('sf.extra.policiesLead')}</p>
-	<Select
+	<SelectRow
 		label={t('sf.extra.whenLabel')}
 		placeholder={t('sf.extra.chooseWhen')}
 		value={form.consentPolicy}
@@ -95,11 +96,23 @@
 			{ value: 'always', label: t('sf.extra.when.always') }
 		]}
 	/>
+{:else if step === 'signup-flow'}
+	<p class="lead">
+		{t(outbound ? 'sf.extra.signupLead.out' : 'sf.extra.signupLead.in')}
+	</p>
+	<SelectRow
+		label={t('sf.extra.signupFlow')}
+		placeholder={t('sf.extra.chooseSignup')}
+		hint={t('sf.extra.signupHint')}
+		value={form.signupFlow}
+		onchange={(value) => (form.signupFlow = value)}
+		options={SIGNUP_FLOWS}
+	/>
 {:else if step === 'role'}
 	<p class="lead">
 		{t(outbound ? 'sf.extra.roleLead.out' : 'sf.extra.roleLead.in')}
 	</p>
-	<Select
+	<SelectRow
 		label={t('sf.extra.roleLabel')}
 		placeholder={t('sf.extra.chooseRole')}
 		value={form.role}
