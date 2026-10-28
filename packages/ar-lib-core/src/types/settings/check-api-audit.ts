@@ -46,9 +46,9 @@ export const CHECK_API_AUDIT_SETTINGS_META: Record<keyof CheckApiAuditSettings, 
   'audit.check_api_enabled': {
     key: 'audit.check_api_enabled',
     type: 'boolean',
-    default: false,
+    default: true,
     envKey: 'ENABLE_CHECK_API_AUDIT',
-    // As the Check API read it: only 'true' turns it on.
+    // An explicit env override retains the legacy exact 'true' interpretation.
     envBoolean: 'exactly-true',
     label: 'Enable Audit Logging',
     description: 'Enable permission check audit logging',
@@ -118,7 +118,7 @@ export const CHECK_API_AUDIT_CATEGORY_META: CategoryMeta = {
  * Default Check API Audit settings values
  */
 export const CHECK_API_AUDIT_DEFAULTS: CheckApiAuditSettings = {
-  'audit.check_api_enabled': false,
+  'audit.check_api_enabled': true,
   'audit.check_api_mode': 'waitUntil',
   'audit.check_api_log_allow': 'sample',
   'audit.check_api_sample_rate': 0.01,

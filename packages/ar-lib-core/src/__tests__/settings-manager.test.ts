@@ -26,7 +26,10 @@ import {
   type SettingsAuditEvent,
 } from '../utils/settings-manager';
 import { OAUTH_CATEGORY_META } from '../types/settings/oauth';
-import { CHECK_API_AUDIT_CATEGORY_META } from '../types/settings/check-api-audit';
+import {
+  CHECK_API_AUDIT_CATEGORY_META,
+  CHECK_API_AUDIT_DEFAULTS,
+} from '../types/settings/check-api-audit';
 import { CREDENTIALS_CATEGORY_META } from '../types/settings/credentials';
 import { RATE_LIMIT_CATEGORY_META } from '../types/settings/rate-limit';
 
@@ -1118,7 +1121,21 @@ describe('SettingsManager', () => {
       for (const raw of ['FALSE', '0', 'no', 'true', '']) expect(await read(raw), raw).toBe(true);
     });
 
-    it("reads only the exact string 'true' as on for the Check API audit switch", async () => {
+    it('enables Check API auditing with the default sampling and retention when unset', async () => {
+      const manager = createSettingsManager({ env: {}, kv: createMockKV(), cacheTTL: 0 });
+      manager.registerCategory(CHECK_API_AUDIT_CATEGORY_META);
+      const { values } = await manager.getAll('check-api-audit', { type: 'platform' });
+      expect(values).toEqual({
+        'audit.check_api_enabled': true,
+        'audit.check_api_mode': 'waitUntil',
+        'audit.check_api_log_allow': 'sample',
+        'audit.check_api_sample_rate': 0.01,
+        'audit.check_api_retention_days': 90,
+      });
+      expect(values).toEqual(CHECK_API_AUDIT_DEFAULTS);
+    });
+
+    it("reads only the exact string 'true' as on for an explicit Check API audit env override", async () => {
       const read = async (raw: string) => {
         const m = createSettingsManager({
           env: { ENABLE_CHECK_API_AUDIT: raw },
