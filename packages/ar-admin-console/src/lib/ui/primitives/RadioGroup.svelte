@@ -16,8 +16,9 @@
 	import InfoTip from './InfoTip.svelte';
 	/**
 	 * One choice from a short list where every option should stay visible (up to ~5). Longer
-	 * lists use Select; compact toolbars use SegmentedControl. Native radios, so arrow keys move
-	 * the selection.
+	 * lists use Select; compact toolbars use SegmentedControl; options that each need a sentence
+	 * and are the question itself use ChoiceCards. Native radios, so arrow keys move the
+	 * selection.
 	 */
 	interface Props {
 		label: string;

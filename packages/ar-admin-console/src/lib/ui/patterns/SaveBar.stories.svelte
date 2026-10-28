@@ -1,6 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { fn } from 'storybook/test';
+	import { expect, fn, within } from 'storybook/test';
+	import { t } from '$lib/i18n/i18n.svelte';
 	import SaveBar from './SaveBar.svelte';
 
 	const { Story } = defineMeta({
@@ -19,6 +20,31 @@
 	});
 </script>
 
-<Story name="Unsaved changes" />
+<Story
+	name="Unsaved changes"
+	play={async ({ canvasElement }) => {
+		// Save is the action to take, and its frame pulses slowly.
+		const save = within(canvasElement).getByRole('button', { name: t('common.save') });
+		await expect(getComputedStyle(save).animationName).toContain('btn-attention');
+	}}
+/>
 
-<Story name="Saving" args={{ saving: true }} />
+<Story
+	name="Saving"
+	args={{ saving: true }}
+	play={async ({ canvasElement }) => {
+		// Running: nothing to press, so nothing to draw the eye to.
+		const save = within(canvasElement).getByRole('button', { name: t('common.saving') });
+		await expect(getComputedStyle(save).animationName).toBe('none');
+	}}
+/>
+
+<Story
+	name="A field cannot be saved"
+	args={{ invalid: true }}
+	play={async ({ canvasElement }) => {
+		// The bar is asking for a fix first: Save does not pulse.
+		const save = within(canvasElement).getByRole('button', { name: t('common.save') });
+		await expect(getComputedStyle(save).animationName).toBe('none');
+	}}
+/>

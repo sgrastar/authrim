@@ -4,6 +4,7 @@ import {
 	apiProxy,
 	buildProxyHeaders,
 	clearBffAdminAccessTokenCacheForTests,
+	devMockOnly,
 	readBoundedProxyBody,
 	securityHeaders
 } from './hooks.server';
@@ -83,6 +84,52 @@ describe('buildProxyHeaders', () => {
 		expect(headers.get('X-Forwarded-Host')).toBe('multi-tenant.authrim.com');
 		expect(headers.get('X-Authrim-Admin-UI-Api-Mode')).toBe('cross-site-proxy-bff');
 		expect(headers.get('Cookie')).toBe('authrim_admin_session=session-123');
+	});
+});
+
+describe('devMockOnly', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	const run = (path: string) => {
+		const resolve = vi.fn(async () => new Response('page'));
+		const event = { url: new URL(`https://admin.example${path}`) } as never;
+		return { resolve, response: devMockOnly({ event, resolve } as never) };
+	};
+
+	it('answers 404 for the mock app outside the dev server', async () => {
+		vi.stubEnv('DEV', false);
+		for (const path of [
+			'/mock',
+			'/mock/',
+			'/mock/users/all',
+			'/mock/platform?persona=viewer',
+			// The router decodes the path before it matches a route.
+			'/%6dock',
+			'/m%6fck/users/all',
+			'/%6Dock/%75sers/all'
+		]) {
+			const { resolve, response } = run(path);
+			expect((await response).status).toBe(404);
+			expect(resolve).not.toHaveBeenCalled();
+		}
+	});
+
+	it('leaves other paths, and look-alikes, alone outside the dev server', async () => {
+		vi.stubEnv('DEV', false);
+		for (const path of ['/admin/users/all', '/mockery', '/api/mock', '/%zz']) {
+			const { resolve, response } = run(path);
+			expect(await (await response).text()).toBe('page');
+			expect(resolve).toHaveBeenCalledTimes(1);
+		}
+	});
+
+	it('serves the mock app in the dev server', async () => {
+		vi.stubEnv('DEV', true);
+		const { resolve, response } = run('/mock/users/all');
+		expect((await response).status).toBe(200);
+		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 });
 

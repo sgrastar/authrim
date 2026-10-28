@@ -2,11 +2,13 @@ import type { Messages } from './ja';
 import { arSettings } from './settings/ar';
 import { arCompliance } from './compliance/ar';
 import { arMappingConsole } from './mapping-console/ar';
+import { arServiceFlows } from './service-flows/ar';
 
 export const ar = {
 	...arSettings,
 	...arCompliance,
 	...arMappingConsole,
+	...arServiceFlows,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -195,6 +197,13 @@ export const ar = {
 	'common.save': 'حفظ التغييرات',
 	'common.cancel': 'إلغاء',
 	'common.close': 'إغلاق',
+	'wizard.steps': 'الخطوات',
+	'wizard.stepOf': 'الخطوة {current} من {total}',
+	'wizard.back': 'السابق',
+	'wizard.next': 'التالي',
+	'wizard.finish': 'إنهاء',
+	'wizard.stepDone': 'تم',
+	'wizard.stepCurrent': 'الخطوة الحالية',
 
 	/* --- console --- */
 	'app.skip': 'انتقل إلى المحتوى',

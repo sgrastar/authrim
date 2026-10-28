@@ -1,6 +1,7 @@
 import { jaSettings } from './settings/ja';
 import { jaCompliance } from './compliance/ja';
 import { jaMappingConsole } from './mapping-console/ja';
+import { jaServiceFlows } from './service-flows/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -10,6 +11,7 @@ export const ja = {
 	...jaSettings,
 	...jaCompliance,
 	...jaMappingConsole,
+	...jaServiceFlows,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
@@ -198,6 +200,13 @@ export const ja = {
 	'common.save': '変更を保存',
 	'common.cancel': 'キャンセル',
 	'common.close': '閉じる',
+	'wizard.steps': '手順',
+	'wizard.stepOf': 'ステップ {current} / {total}',
+	'wizard.back': '戻る',
+	'wizard.next': '次へ',
+	'wizard.finish': '完了',
+	'wizard.stepDone': '済み',
+	'wizard.stepCurrent': '現在の手順',
 
 	/* --- console --- */
 	'app.skip': '本文へ移動',

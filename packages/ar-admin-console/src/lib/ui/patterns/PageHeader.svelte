@@ -1,23 +1,39 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
+	/**
+	 * Where things go: what leads back (to the list, to the parent) is a BackLink in `back`, above
+	 * everything at the top start; what acts or moves on is in `actions`, at the top end.
+	 */
 	interface Props {
 		title: string;
 		description?: string;
-		/** Right-aligned primary actions (create, invite). At most one primary button. */
+		/** The way back, at the top start, above the context line and the title. */
+		back?: Snippet;
+		/** End-aligned primary actions (create, invite). At most one primary button. */
 		actions?: Snippet;
 		/** Small context line above the title (e.g. the platform-scope badge). */
 		eyebrow?: Snippet;
+		/** The title element, so a page that replaces what was on screen can move focus to it. */
+		titleElement?: HTMLHeadingElement | null;
 	}
 
-	let { title, description, actions, eyebrow }: Props = $props();
+	let {
+		title,
+		description,
+		back,
+		actions,
+		eyebrow,
+		titleElement = $bindable(null)
+	}: Props = $props();
 </script>
 
 <header class="page-head">
+	{#if back}<div class="page-head__back">{@render back()}</div>{/if}
 	{#if eyebrow}<div class="page-head__eyebrow">{@render eyebrow()}</div>{/if}
 	<div class="page-head__row">
 		<div class="page-head__text">
-			<h1>{title}</h1>
+			<h1 bind:this={titleElement} tabindex="-1">{title}</h1>
 			{#if description}<p>{description}</p>{/if}
 		</div>
 		{#if actions}<div class="page-head__actions">{@render actions()}</div>{/if}
@@ -27,6 +43,11 @@
 <style>
 	.page-head {
 		margin-bottom: var(--space-page-header);
+	}
+
+	.page-head__back {
+		display: flex;
+		margin-bottom: 8px;
 	}
 
 	.page-head__eyebrow {
@@ -52,6 +73,8 @@
 
 	h1 {
 		margin: 0;
+		/* Focused by the page that replaces the one before; it is not a control. */
+		outline: none;
 		font-size: var(--fs-page-title);
 		font-weight: var(--heading-weight);
 		letter-spacing: var(--heading-tracking);
