@@ -206,6 +206,11 @@ paths:
       tags:
         - Check
       summary: Run an authorization check.
+      description: >-
+        Permission-check auditing is enabled by default when the Check API is enabled.
+        Denied decisions are selected for logging, while allowed decisions are sampled at 1%
+        by default. Audit logging can be explicitly disabled through platform settings or
+        the ENABLE_CHECK_API_AUDIT environment override. Saved platform settings take precedence.
       requestBody:
         $ref: '#/components/requestBodies/CheckApi'
       responses:
@@ -218,6 +223,11 @@ paths:
       tags:
         - Check
       summary: Run authorization checks in batch.
+      description: >-
+        Permission-check auditing is enabled by default when the Check API is enabled.
+        Denied decisions are selected for logging, while allowed decisions are sampled at 1%
+        by default. Audit logging can be explicitly disabled through platform settings or
+        the ENABLE_CHECK_API_AUDIT environment override. Saved platform settings take precedence.
       requestBody:
         $ref: '#/components/requestBodies/BatchCheckApi'
       responses:

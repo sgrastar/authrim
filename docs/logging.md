@@ -178,6 +178,16 @@ fail explicitly when it cannot be completed. Enabling row archiving or changing 
 separate configuration action. These guarantees do not change the lifecycle of older per-event
 archive copies or external sinks.
 
+## Permission Check Audit (Access Trace)
+
+Permission-check audit records (Access Trace) are enabled by default when the Check API is
+enabled. Denied decisions are selected for logging and allowed decisions are sampled at 1%;
+the default retention is 90 days. This does not enable the Check API itself. An explicit
+`audit.check_api_enabled: false` platform setting or `ENABLE_CHECK_API_AUDIT=false` environment
+override disables recording; saved platform settings take precedence over the environment.
+The default `waitUntil` mode records asynchronously, and recording failures do not fail the
+authorization request.
+
 ## Diagnostic and Sensitive Detail
 
 Diagnostic logging is designed to preserve operational evidence without putting sensitive data into
