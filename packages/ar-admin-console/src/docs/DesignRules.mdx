@@ -37,7 +37,10 @@ See _Patterns → Save scope_ and _Save model (toggle vs save)_.
 
 Every page uses one start-aligned frame, at most 1100px wide, for settings, forms, lists,
 tables and dashboards. Cards fill that frame; a page or card does not choose a wider or
-content-sized width. The frame shrinks to fit a smaller viewport, and wide data tables
+content-sized width. The one exception is a page with a flow diagram beside its settings (a
+service flow's page, `Page` `withFlow`): it hides the left nav and so starts at the screen's edge,
+and its frame is wider by the nav's width (`--sidebar-w`, 252px). Its right edge is then where
+every other page's frame ends, and the badges in the title row line up from page to page. The frame shrinks to fit a smaller viewport, and wide data tables
 scroll inside it when needed. Its content edge stays in place when the left nav changes.
 
 ## Back and forward

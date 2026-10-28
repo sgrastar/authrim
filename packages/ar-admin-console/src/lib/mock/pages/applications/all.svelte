@@ -194,7 +194,7 @@
 
 <LeaveGuard {dirty} />
 
-<Page>
+<Page withFlow={opened !== null}>
 	{#if opened && 'flow' in opened}
 		<AccountFlowDetail
 			flow={opened.flow}

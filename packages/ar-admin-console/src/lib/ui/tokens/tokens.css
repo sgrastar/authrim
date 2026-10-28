@@ -20,7 +20,7 @@
 
 	/* --- Flow diagram ---
 	   Node width and side gutter decide the canvas width and where edges run. */
-	--flow-node-w: 250px;
+	--flow-node-w: 300px;
 	--flow-gutter: 24px;
 	--flow-canvas-w: calc(var(--flow-node-w) + var(--flow-gutter) * 2);
 
