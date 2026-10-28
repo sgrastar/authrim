@@ -311,7 +311,7 @@
 	.tabs__count {
 		min-width: 18px;
 		padding: 0 5px;
-		border-radius: var(--radius-pill);
+		border-radius: var(--radius-round);
 		background: var(--bg-hover);
 		color: var(--text-secondary);
 		font-size: var(--fs-small);

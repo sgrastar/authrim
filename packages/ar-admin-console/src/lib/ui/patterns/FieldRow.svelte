@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import InfoTip from '../primitives/InfoTip.svelte';
+	import { useRowStack } from './row-stack';
 
 	/**
 	 * One field of a settings form laid out as a table row: its name on the start side (what it
@@ -45,9 +46,13 @@
 		plain = false,
 		children
 	}: Props = $props();
+
+	// In a ruled RowStack a plain row takes the lines and the space of a row of settings.
+	const stack = useRowStack();
+	const plainNow = $derived(plain && !stack?.ruled);
 </script>
 
-<div class="field-row" class:field-row--text={align === 'text'} class:field-row--plain={plain}>
+<div class="field-row" class:field-row--text={align === 'text'} class:field-row--plain={plainNow}>
 	<div class="field-row__name">
 		<span class="field-row__label" aria-hidden="true"
 			>{label}{#if required}<span class="field-row__req">*</span>{/if}</span

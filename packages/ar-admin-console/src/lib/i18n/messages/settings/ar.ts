@@ -328,5 +328,14 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'persona.support': 'الدعم (محدود)',
 	'persona.support.desc': 'يساعد المستخدمين فقط (إلغاء القفل، تسجيل الخروج). لا يرى الإعدادات.',
 	'persona.viewer': 'مشاهد (محدود)',
-	'persona.viewer.desc': 'يرى المستخدمين والتطبيقات والإعدادات، ولا يغيّر شيئاً.'
+	'persona.viewer.desc': 'يرى المستخدمين والتطبيقات والإعدادات، ولا يغيّر شيئاً.',
+	'set.page.general': 'General',
+	'set.page.general.desc':
+		'The name of this tenant and the addresses you give to apps and partners. The logo is set here too.',
+	'set.section.branding': 'Logo',
+	'set.section.branding.desc':
+		'The tenant’s logo, shown on the sign-in screen, the consent screen and the like.',
+	'set.k.tenant.logo_uri': 'Logo URL',
+	'set.k.tenant.logo_uri.desc':
+		'The address of the logo image. Use an image that is public over https.'
 };

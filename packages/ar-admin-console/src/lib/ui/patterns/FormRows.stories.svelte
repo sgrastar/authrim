@@ -3,8 +3,12 @@
 	import { expect, userEvent, within } from 'storybook/test';
 	import { sample } from '../stories/sample';
 	import CheckboxRow from './CheckboxRow.svelte';
+	import CheckRow from './CheckRow.svelte';
+	import Card from './Card.svelte';
 	import FieldRow from './FieldRow.svelte';
+	import RowStack from './RowStack.svelte';
 	import SelectRow from './SelectRow.svelte';
+	import TextAreaRow from './TextAreaRow.svelte';
 	import TextRow from './TextRow.svelte';
 	import ToggleRow from './ToggleRow.svelte';
 
@@ -16,7 +20,7 @@
 			docs: {
 				description: {
 					component:
-						'**A setting whose value is short is a row: its name on the start side, the control on the end side.** The same two columns as the settings pages (`FieldRow`), so a form reads the same wherever it is.\n\n- `SelectRow` — a dropdown.\n- `TextRow` — a short text field: a name, an ID, a code.\n- `CheckboxRow` — a few checkboxes, one under another.\n- `ToggleRow` — an on/off switch, with a line saying what *on* means.\n\nA value that is long keeps the control full width with its label above (an address list, a pasted document, a block of metadata, a table). A required setting has a red “*” after its name. The name is shown by the row and read with the control, which keeps it as its own label (hidden). On a narrow screen the name moves above the control.\n\nRows sit one under another in a form; the form’s own spacing separates them, with no dividing lines (a table of settings, which has lines, is `FieldRow` as it is).'
+						'**A setting whose value is short is a row: its name on the start side, the control on the end side.** The same two columns as the settings pages (`FieldRow`), so a form reads the same wherever it is.\n\n- `SelectRow` — a dropdown.\n- `TextRow` — a short text field: a name, an ID, a code.\n- `TextAreaRow` — a few lines of text (a description, a note): as wide as the other controls and three lines tall.\n- `CheckboxRow` — a few checkboxes, one under another.\n- `CheckRow` — one checkbox, for a yes / no confirmed with Save or a dialog’s button.\n- `ToggleRow` — an on/off switch that takes effect at once, with a line saying what *on* means.\n\nA value that is long keeps the control full width with its label above (a pasted document, a block of JSON or metadata, a table); a few lines of text is a row.\n\n**What a setting means goes behind a “?” beside its name (`info`), not in a line under the control.** What a person needs in order to fill it in correctly (a format, a limit) or to decide (what cannot be undone) stays visible under the field as its hint. A switch keeps its line saying what *on* means. A required setting has a red “*” after its name. The name is shown by the row and read with the control, which keeps it as its own label (hidden). On a narrow screen the name moves above the control.\n\nRows sit one under another in a form; the form’s own spacing separates them, with no dividing lines (a table of settings, which has lines, is `FieldRow` as it is).\n\n**Rows in a box:** put them in a `RowStack`, which keeps them a field gap (`--space-field`, 16px) apart. For a box of independent settings saved with the page, use `<RowStack ruled>`: a line between the rows, each with its own vertical space, as in the settings pages. A page never spaces rows itself, and never with a token that does not exist: an undefined one collapses to nothing and the rows touch.'
 				}
 			}
 		}
@@ -122,6 +126,27 @@
 	{/snippet}
 </Story>
 
+<Story
+	name="Check row"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const box = canvas.getByRole('checkbox', { name: /^Treat as personal data/ });
+		await userEvent.click(box);
+		await expect(box).toBeChecked();
+		await expect(canvas.getByText('Kept apart. Fixed after creation.')).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<div style="max-width: 720px">
+			<CheckRow
+				label="Personal data"
+				text="Treat as personal data"
+				description="Kept apart. Fixed after creation."
+			/>
+		</div>
+	{/snippet}
+</Story>
+
 <Story name="Toggle row">
 	{#snippet template()}
 		<div style="max-width: 720px">
@@ -146,6 +171,96 @@
 	{#snippet template()}
 		<div style="width: 360px">
 			<TextRow label="Code" />
+		</div>
+	{/snippet}
+</Story>
+
+<!-- Rows in a box: a RowStack keeps them a field gap apart, so they never touch. -->
+<Story
+	name="Rows in a box"
+	play={async ({ canvasElement }) => {
+		const rows = [...canvasElement.querySelectorAll<HTMLElement>('.field-row')];
+		await expect(rows.length).toBe(4);
+		for (let i = 1; i < rows.length; i++) {
+			const gap = rows[i].getBoundingClientRect().top - rows[i - 1].getBoundingClientRect().bottom;
+			await expect(Math.round(gap)).toBe(16);
+		}
+	}}
+>
+	{#snippet template()}
+		<div style="max-width: 720px">
+			<Card title="Identity">
+				<RowStack>
+					<TextRow label="Key" />
+					<TextRow label="Label" required />
+					<SelectRow label="Type" options={choices()} />
+					<CheckRow
+						label="Required"
+						text="Make it required"
+						description="A line saying what it does."
+					/>
+				</RowStack>
+			</Card>
+		</div>
+	{/snippet}
+</Story>
+
+<!-- A box of independent settings: lines between the rows, as in the settings pages. -->
+<Story
+	name="Rows in a box, ruled"
+	play={async ({ canvasElement }) => {
+		const rows = [...canvasElement.querySelectorAll<HTMLElement>('.field-row')];
+		await expect(rows.length).toBe(4);
+		await expect(getComputedStyle(rows[0]).borderTopWidth).toBe('0px');
+		for (const row of rows.slice(1)) {
+			await expect(getComputedStyle(row).borderTopWidth).toBe('1px');
+			await expect(getComputedStyle(row).paddingTop).toBe('16px');
+		}
+	}}
+>
+	{#snippet template()}
+		<div style="max-width: 720px">
+			<Card title="Identity">
+				<RowStack ruled>
+					<TextRow label="Key" />
+					<TextRow label="Label" required />
+					<SelectRow label="Type" options={choices()} />
+					<CheckRow
+						label="Required"
+						text="Make it required"
+						description="A line saying what it does."
+					/>
+				</RowStack>
+			</Card>
+		</div>
+	{/snippet}
+</Story>
+
+<!-- A few lines of text is a row: as wide as the other controls, three lines tall. -->
+<Story
+	name="Text area row"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const area = canvas.getByRole('textbox', { name: 'Description' });
+		const text = canvas.getByRole('textbox', { name: 'Code' });
+		await expect(area).toHaveAttribute('rows', '3');
+		// Starts and ends where the other controls do.
+		await expect(Math.round(area.getBoundingClientRect().left)).toBe(
+			Math.round(text.getBoundingClientRect().left)
+		);
+		await expect(Math.round(area.getBoundingClientRect().right)).toBe(
+			Math.round(text.getBoundingClientRect().right)
+		);
+		// What it means is behind the "?" beside its name.
+		await expect(canvas.getByRole('button', { name: /Description/ })).toBeVisible();
+	}}
+>
+	{#snippet template()}
+		<div style="max-width: 720px">
+			<RowStack>
+				<TextRow label="Code" />
+				<TextAreaRow label="Description" info="Shown to admins in the list; people never see it." />
+			</RowStack>
 		</div>
 	{/snippet}
 </Story>

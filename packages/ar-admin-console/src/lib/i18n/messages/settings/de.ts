@@ -343,5 +343,14 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'persona.support': 'Support (eingeschränkt)',
 	'persona.support.desc': 'Hilft nur Benutzern (entsperren, abmelden). Sieht keine Einstellungen.',
 	'persona.viewer': 'Lesezugriff (eingeschränkt)',
-	'persona.viewer.desc': 'Sieht Benutzer, Apps und Einstellungen und ändert nichts.'
+	'persona.viewer.desc': 'Sieht Benutzer, Apps und Einstellungen und ändert nichts.',
+	'set.page.general': 'General',
+	'set.page.general.desc':
+		'The name of this tenant and the addresses you give to apps and partners. The logo is set here too.',
+	'set.section.branding': 'Logo',
+	'set.section.branding.desc':
+		'The tenant’s logo, shown on the sign-in screen, the consent screen and the like.',
+	'set.k.tenant.logo_uri': 'Logo URL',
+	'set.k.tenant.logo_uri.desc':
+		'The address of the logo image. Use an image that is public over https.'
 };

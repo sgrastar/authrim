@@ -335,5 +335,14 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'persona.support': 'Support (limited)',
 	'persona.support.desc': 'Only helps users (unlocking, signing out). Does not see settings.',
 	'persona.viewer': 'Viewer (limited)',
-	'persona.viewer.desc': 'Sees users, apps and settings, and changes nothing.'
+	'persona.viewer.desc': 'Sees users, apps and settings, and changes nothing.',
+	'set.page.general': 'General',
+	'set.page.general.desc':
+		'The name of this tenant and the addresses you give to apps and partners. The logo is set here too.',
+	'set.section.branding': 'Logo',
+	'set.section.branding.desc':
+		'The tenant’s logo, shown on the sign-in screen, the consent screen and the like.',
+	'set.k.tenant.logo_uri': 'Logo URL',
+	'set.k.tenant.logo_uri.desc':
+		'The address of the logo image. Use an image that is public over https.'
 };
