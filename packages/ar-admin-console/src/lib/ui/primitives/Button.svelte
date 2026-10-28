@@ -22,6 +22,12 @@
 		loading?: boolean;
 		/** Stretch to the container width (auth pages, narrow layouts). */
 		block?: boolean;
+		/**
+		 * The one action to take now (Next when the step is complete, Save when there is something
+		 * to save): the frame pulses slowly. At most one on screen; it stops while the button is
+		 * disabled or running, and holds still for people who ask for less motion.
+		 */
+		attention?: boolean;
 		children: Snippet;
 	}
 
@@ -34,6 +40,7 @@
 		external = false,
 		loading = false,
 		block = false,
+		attention = false,
 		type = 'button',
 		disabled,
 		children,
@@ -44,6 +51,7 @@
 	const scopeBusy = useBusy();
 	/** Disabled by the page, or by a busy scope around it (the loading button excepted). */
 	const off = $derived(!!disabled || (scopeBusy() && !loading));
+	const pulsing = $derived(attention && !off && !loading);
 
 	function click(event: MouseEvent & { currentTarget: EventTarget & HTMLButtonElement }) {
 		if (loading) {
@@ -72,6 +80,7 @@
 	<a
 		class="btn btn--{variant} btn--{size}"
 		class:btn--block={block}
+		class:btn--attention={pulsing}
 		{href}
 		target={external ? '_blank' : undefined}
 		rel={external ? 'noopener noreferrer' : undefined}
@@ -82,6 +91,7 @@
 	<button
 		class="btn btn--{variant} btn--{size}"
 		class:btn--block={block}
+		class:btn--attention={pulsing}
 		{type}
 		{...rest}
 		disabled={off}
@@ -185,6 +195,24 @@
 		animation: btn-spin 0.9s linear infinite;
 	}
 
+	/* The frame breathes between its own colour and the main colour, with a soft ring. */
+	.btn--attention {
+		animation: btn-attention 2.8s ease-in-out infinite;
+	}
+
+	@keyframes btn-attention {
+		0%,
+		100% {
+			border-color: var(--border);
+			box-shadow: 0 0 0 0 transparent;
+		}
+
+		50% {
+			border-color: var(--primary);
+			box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 32%, transparent);
+		}
+	}
+
 	@keyframes btn-spin {
 		to {
 			transform: rotate(360deg);
@@ -194,6 +222,13 @@
 	@media (prefers-reduced-motion: reduce) {
 		.btn__spin {
 			animation-duration: 2.4s;
+		}
+
+		/* No movement: the frame just stays marked. */
+		.btn--attention {
+			animation: none;
+			border-color: var(--primary);
+			box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 32%, transparent);
 		}
 	}
 </style>

@@ -13,6 +13,7 @@
 	import DataTable from '$lib/ui/patterns/DataTable.svelte';
 	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
 	import Badge from '$lib/ui/primitives/Badge.svelte';
+	import BackLink from '$lib/ui/primitives/BackLink.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
 	import SegmentedControl from '$lib/ui/primitives/SegmentedControl.svelte';
 	import TextField from '$lib/ui/primitives/TextField.svelte';
@@ -222,9 +223,7 @@
 
 <div class="detail">
 	<div>
-		<Button variant="ghost" size="sm" icon="arrowBack" onclick={() => onclose(changed)}>
-			{t('cmp.review.back')}
-		</Button>
+		<BackLink onclick={() => onclose(changed)}>{t('cmp.review.back')}</BackLink>
 	</div>
 
 	{#if error}

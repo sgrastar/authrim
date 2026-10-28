@@ -133,6 +133,7 @@ const SAMPLES = {
 		'اضبط تدفقات تسجيل الدخول والتكامل لكل اتصال.'
 	],
 	newFlow: ['新しいフロー', 'New flow', 'Neuer Ablauf', 'تدفق جديد'],
+	allFlows: ['すべてのフロー', 'All flows', 'Alle Abläufe', 'كل التدفقات'],
 	colFlow: ['フロー', 'Flow', 'Ablauf', 'التدفق'],
 	colProtocol: ['プロトコル', 'Protocol', 'Protokoll', 'البروتوكول'],
 	colStatus: ['状態', 'Status', 'Status', 'الحالة'],

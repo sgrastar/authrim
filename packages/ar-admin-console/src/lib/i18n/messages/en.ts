@@ -2,11 +2,13 @@ import type { Messages } from './ja';
 import { enSettings } from './settings/en';
 import { enCompliance } from './compliance/en';
 import { enMappingConsole } from './mapping-console/en';
+import { enServiceFlows } from './service-flows/en';
 
 export const en = {
 	...enSettings,
 	...enCompliance,
 	...enMappingConsole,
+	...enServiceFlows,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -195,6 +197,13 @@ export const en = {
 	'common.save': 'Save changes',
 	'common.cancel': 'Cancel',
 	'common.close': 'Close',
+	'wizard.steps': 'Steps',
+	'wizard.stepOf': 'Step {current} of {total}',
+	'wizard.back': 'Back',
+	'wizard.next': 'Next',
+	'wizard.finish': 'Finish',
+	'wizard.stepDone': 'Done',
+	'wizard.stepCurrent': 'Current step',
 
 	/* --- console --- */
 	'app.skip': 'Skip to content',

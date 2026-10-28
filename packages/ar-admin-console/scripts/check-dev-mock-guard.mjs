@@ -63,6 +63,27 @@ await assertNeedlesAbsent({
 	label: 'Admin UI production server output'
 });
 
+// The whole-console mock (src/lib/mock) is a dev-server tool: neither the server nor the client
+// bundle of a production build may carry it.
+const productionBuildOutputs = [
+	join(packageRoot, '.svelte-kit/output'),
+	join(packageRoot, '.svelte-kit/cloudflare')
+];
+for (const dir of productionBuildOutputs) {
+	if (
+		!(await stat(dir).then(
+			(info) => info.isDirectory(),
+			() => false
+		))
+	)
+		continue;
+	await assertNeedlesAbsent({
+		dir,
+		needles: ['__AUTHRIM_ADMIN_UI_MOCK_APP_SENTINEL__'],
+		label: `Admin UI production build (${dir.replace(packageRoot + '/', '')})`
+	});
+}
+
 await assertNeedlesAbsent({
 	dir: managementSource,
 	needles: forbiddenWorkerNeedles,

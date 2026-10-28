@@ -1088,4 +1088,37 @@ const csrfProtection: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-export const handle = sequence(httpsRedirect, apiProxy, securityHeaders, csrfProtection);
+/**
+ * The whole-console mock (/mock, src/lib/mock) exists in the dev server only. Its route renders in
+ * the browser (ssr = false), so a route-level 404 would arrive after a 200 shell; answer 404 here.
+ */
+function isMockRequest(event: RequestEvent): boolean {
+	// The router matches the decoded path (/%6dock is /mock), so the check has to as well.
+	let path = event.url.pathname;
+	try {
+		path = decodeURIComponent(path);
+	} catch {
+		// A malformed escape never matches a route.
+	}
+	return (
+		path === '/mock' ||
+		path.startsWith('/mock/') ||
+		(event.route?.id ?? '') === '/mock' ||
+		(event.route?.id ?? '').startsWith('/mock/')
+	);
+}
+
+export const devMockOnly: Handle = async ({ event, resolve }) => {
+	if (!import.meta.env.DEV && isMockRequest(event)) {
+		return new Response('Not found', { status: 404, headers: { 'cache-control': 'no-store' } });
+	}
+	return resolve(event);
+};
+
+export const handle = sequence(
+	devMockOnly,
+	httpsRedirect,
+	apiProxy,
+	securityHeaders,
+	csrfProtection
+);

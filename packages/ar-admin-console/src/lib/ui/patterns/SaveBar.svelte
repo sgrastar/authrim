@@ -77,7 +77,7 @@
 			</p>
 			<div class="save-bar__actions">
 				<Button variant="ghost" disabled={saving} onclick={ondiscard}>{t('common.discard')}</Button>
-				<Button variant="primary" loading={saving} onclick={onsave}>
+				<Button variant="primary" attention={!invalid} loading={saving} onclick={onsave}>
 					{saving ? t('common.saving') : t('common.save')}
 				</Button>
 			</div>

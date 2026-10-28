@@ -40,6 +40,16 @@ tables and dashboards. Cards fill that frame; a page or card does not choose a w
 content-sized width. The frame shrinks to fit a smaller viewport, and wide data tables
 scroll inside it when needed. Its content edge stays in place when the left nav changes.
 
+## Back and forward
+
+- What leads **back** — to the list, to the overview, to the parent — is a `BackLink` at the **top
+  start**, above the heading it leaves. Page header has a `back` slot for it; a panel or box
+  puts it above its own title.
+- What **acts or moves on** — create, save, activate — sits at the **top end**, in the header's
+  `actions`.
+- A header therefore reads, top to bottom: the way back, the context line, the title, with the
+  action beside the title.
+
 ## Tone and emphasis
 
 - No coloured stripe on the start edge of a box (toasts, notes, cards, list items, the current

@@ -2,11 +2,13 @@ import type { Messages } from './ja';
 import { deSettings } from './settings/de';
 import { deCompliance } from './compliance/de';
 import { deMappingConsole } from './mapping-console/de';
+import { deServiceFlows } from './service-flows/de';
 
 export const de = {
 	...deSettings,
 	...deCompliance,
 	...deMappingConsole,
+	...deServiceFlows,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
@@ -196,6 +198,13 @@ export const de = {
 	'common.save': 'Änderungen speichern',
 	'common.cancel': 'Abbrechen',
 	'common.close': 'Schließen',
+	'wizard.steps': 'Schritte',
+	'wizard.stepOf': 'Schritt {current} von {total}',
+	'wizard.back': 'Zurück',
+	'wizard.next': 'Weiter',
+	'wizard.finish': 'Fertigstellen',
+	'wizard.stepDone': 'Erledigt',
+	'wizard.stepCurrent': 'Aktueller Schritt',
 
 	/* --- console --- */
 	'app.skip': 'Zum Inhalt springen',
