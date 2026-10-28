@@ -110,6 +110,7 @@
 	--space-columns: 24px; /* form columns inside a box */
 	--space-field: 16px; /* fields and settings inside a box, one below the other */
 	--space-related: 8px; /* a control and what belongs to it, buttons in a group */
+	--space-back: 12px; /* under a back link, before the title it leaves (page header, panel header) */
 	--box-pad: 16px; /* box sides, and top and bottom of a box body */
 	--box-head-pad-y: 12px; /* box header, setting and danger rows */
 	--box-foot-pad-y: 12px; /* box footer */

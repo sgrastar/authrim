@@ -51,7 +51,7 @@
 
 	.page-head__back {
 		display: flex;
-		margin-bottom: 8px;
+		margin-bottom: var(--space-back);
 	}
 
 	.page-head__eyebrow {

@@ -11,6 +11,7 @@
 	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
 	import DetailList from '$lib/ui/patterns/DetailList.svelte';
 	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
+	import PanelHeader from '$lib/ui/patterns/PanelHeader.svelte';
 	import Badge from '$lib/ui/primitives/Badge.svelte';
 	import BackLink from '$lib/ui/primitives/BackLink.svelte';
 	import Button from '$lib/ui/primitives/Button.svelte';
@@ -187,10 +188,11 @@
 			</div>
 		{/if}
 		<section class="detail__panel" aria-label={current ? partLabel(current) : overview}>
-			<div class="detail__head">
-				{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
-				<h2 class="detail__title">{current ? partLabel(current) : overview}</h2>
-			</div>
+			<PanelHeader title={current ? partLabel(current) : overview}>
+				{#snippet back()}
+					{#if current}<BackLink onclick={() => (current = '')}>{overview}</BackLink>{/if}
+				{/snippet}
+			</PanelHeader>
 			<div class="detail__body">
 				{#if current === ''}
 					<p class="detail__lead">{t('af.contract.ui')}</p>
@@ -264,22 +266,6 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-panel);
 		background: var(--bg-card);
-	}
-
-	/* The way back above the title, as in a page header. */
-	.detail__head {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-related);
-		align-items: flex-start;
-		padding: 16px 24px 0;
-	}
-
-	.detail__title {
-		margin: 0;
-		font-size: var(--fs-title);
-		font-weight: var(--fw-semibold);
-		line-height: var(--lh-tight);
 	}
 
 	.detail__body {
