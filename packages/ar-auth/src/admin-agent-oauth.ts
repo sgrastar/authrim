@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import type { Context } from 'hono';
 import {
   AdminAgentAccessRepository,
@@ -200,7 +201,8 @@ async function resolveAdminAgentClient(
       const tenantId = getTenantIdFromContext(c);
       const now = Date.now();
       const repository = new AdminAgentAccessRepository(
-        requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-cimd-change')
+        requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-cimd-change'),
+        createCloudflareAdminAgentAuditWriter(c.env)
       );
       await repository.suspendForClientMetadataChange({
         tenantId,
@@ -434,7 +436,8 @@ async function resolveAdminAgentAuthorizationContext(
     return oauthError(c, 'unauthorized_client', 'Client is not authorized for Agent access');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-authorization')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-authorization'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.findActiveGrantForDelegatorClient(
     tenantId,

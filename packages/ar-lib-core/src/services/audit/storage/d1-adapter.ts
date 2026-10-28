@@ -66,72 +66,8 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
     return this.writeEventLogBatch([entry]);
   }
 
-  async writeEventLogBatch(entries: EventLogEntry[]): Promise<AuditWriteResult> {
-    if (entries.length === 0) {
-      return {
-        success: true,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: 0,
-      };
-    }
-
-    const startTime = Date.now();
-
-    try {
-      const stmt = this.db.prepare(`
-        INSERT INTO event_log (
-          id, tenant_id, event_type, event_category, result, severity,
-          error_code, error_message, anonymized_user_id, client_id,
-          session_id, request_id, duration_ms, details_r2_key, details_json,
-          retention_until, created_at
-        )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT EXISTS (
-          SELECT 1 FROM event_log WHERE id = ?
-        )
-      `);
-
-      const batch = entries.map((e) =>
-        stmt.bind(
-          e.id,
-          e.tenantId,
-          e.eventType,
-          e.eventCategory,
-          e.result,
-          e.severity,
-          e.errorCode ?? null,
-          e.errorMessage ?? null,
-          e.anonymizedUserId ?? null,
-          e.clientId ?? null,
-          e.sessionId ?? null,
-          e.requestId ?? null,
-          e.durationMs ?? null,
-          e.detailsR2Key ?? null,
-          e.detailsJson ?? null,
-          e.retentionUntil ?? null,
-          e.createdAt,
-          e.id
-        )
-      );
-
-      await this.db.batch(batch);
-
-      return {
-        success: true,
-        entriesWritten: entries.length,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-        errorMessage: String(error),
-      };
-    }
+  async writeEventLogBatch(_entries: EventLogEntry[]): Promise<AuditWriteResult> {
+    throw new Error('audit_primary_storage_retired_use_configured_iceberg_mode');
   }
 
   // ---------------------------------------------------------------------------
@@ -142,72 +78,8 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
     return this.writePIILogBatch([entry]);
   }
 
-  async writePIILogBatch(entries: PIILogEntry[]): Promise<AuditWriteResult> {
-    if (entries.length === 0) {
-      return {
-        success: true,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: 0,
-      };
-    }
-
-    const startTime = Date.now();
-
-    try {
-      const stmt = this.db.prepare(`
-        INSERT INTO pii_log (
-          id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
-          values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
-          actor_user_id, actor_type, request_id, legal_basis, consent_reference,
-          retention_until, created_at
-        )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT EXISTS (
-          SELECT 1 FROM pii_log WHERE id = ?
-        )
-      `);
-
-      const batch = entries.map((e) =>
-        stmt.bind(
-          e.id,
-          e.tenantId,
-          e.userId,
-          e.anonymizedUserId,
-          e.changeType,
-          e.affectedFields,
-          e.valuesR2Key ?? null,
-          e.valuesEncrypted ?? null,
-          e.encryptionKeyId,
-          e.encryptionIv,
-          e.actorUserId ?? null,
-          e.actorType,
-          e.requestId ?? null,
-          e.legalBasis ?? null,
-          e.consentReference ?? null,
-          e.retentionUntil,
-          e.createdAt,
-          e.id
-        )
-      );
-
-      await this.db.batch(batch);
-
-      return {
-        success: true,
-        entriesWritten: entries.length,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-        errorMessage: String(error),
-      };
-    }
+  async writePIILogBatch(_entries: PIILogEntry[]): Promise<AuditWriteResult> {
+    throw new Error('audit_primary_storage_retired_use_configured_iceberg_mode');
   }
 
   // ---------------------------------------------------------------------------

@@ -594,16 +594,10 @@ place('monitoring/diagnostics', 'Diagnostic logging', {
 		'diagnostic-logging.storage_mode.by_client',
 		'diagnostic-logging.retention_days',
 		'diagnostic-logging.sdk_ingest_enabled',
-		'diagnostic-logging.merged_output_enabled',
-		'diagnostic-logging.r2_output_enabled'
+		'diagnostic-logging.merged_output_enabled'
 	],
 	search: [
-		'diagnostic-logging.r2_bucket_binding',
-		'diagnostic-logging.r2_path_prefix',
 		'diagnostic-logging.output_format',
-		'diagnostic-logging.buffer_strategy',
-		'diagnostic-logging.batch_size',
-		'diagnostic-logging.batch_interval_ms',
 		'diagnostic-logging.token_hash_prefix_length',
 		'diagnostic-logging.http_safe_headers',
 		'diagnostic-logging.http_body_schema_aware'

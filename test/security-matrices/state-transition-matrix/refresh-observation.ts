@@ -6,6 +6,10 @@
  */
 import { createSecurityMatrixEnv, type SecurityMatrixEnvKit } from '../fixtures/env';
 import { CallLedger } from '../fixtures/call-ledger';
+import {
+  installSecurityMatrixLogStorage,
+  canonicalAuditPersistCount,
+} from '../fixtures/log-iceberg';
 import { frozenNowMs } from '../fixtures/deterministic-clock';
 import { MemoryDurableObjectStorage } from '../fixtures/durable-storage';
 import { RefreshTokenRotator } from '../../../packages/ar-lib-core/src/durable-objects/RefreshTokenRotator';
@@ -54,15 +58,21 @@ export function normalizeError(error: unknown): string | null {
     return message;
   }
   if (error === undefined) return null;
-  return String(error);
+  if (error === null) return 'null';
+  if (typeof error === 'string') return error;
+  if (
+    typeof error === 'number' ||
+    typeof error === 'bigint' ||
+    typeof error === 'boolean' ||
+    typeof error === 'symbol'
+  )
+    return String(error);
+  return Object.prototype.toString.call(error);
 }
 
+/** Canonical encrypted staging is committed and authenticated before this witness is emitted. */
 export function eventLogInsertCount(ledger: CallLedger): number {
-  return ledger
-    .all()
-    .filter(
-      (entry) => entry.kind === 'd1.execute' && entry.target.includes('INSERT INTO event_log')
-    ).length;
+  return canonicalAuditPersistCount(ledger);
 }
 
 export interface SeededRefresh {
@@ -86,10 +96,10 @@ export async function seedRefreshRow(
   ledger: CallLedger,
   entry: StateCase
 ): Promise<SeededRefresh> {
+  await installSecurityMatrixLogStorage(kit, ledger);
   const d = entry.dimensions;
   const familyState = String(d.familyState);
   const storageOutcome = String(d.storageOutcome);
-  const sequence = String(d.sequence);
   const storage = new StateTransitionStorage(
     new MemoryDurableObjectStorage(ledger, 'rotator'),
     ledger
@@ -193,9 +203,7 @@ export async function prepareRefreshSequence(
     requestedScope: undefined,
   });
   await seeded.drain();
-  const stored = (await seeded.storage.get('f:user-001')) as
-    | { version: number; last_jti: string }
-    | undefined;
+  const stored = await seeded.storage.get<{ version: number; last_jti: string }>('f:user-001');
   if (!stored) {
     throw new Error('refresh first rotate did not persist the family');
   }
@@ -476,7 +484,7 @@ export function corruptRefreshObservationDomain(
       corrupted.secretLeak = !corrupted.secretLeak;
       break;
     default:
-      throw new Error(`Unknown refresh domain ${domain}`);
+      throw new Error(`Unknown refresh domain ${String(domain)}`);
   }
   return corrupted;
 }

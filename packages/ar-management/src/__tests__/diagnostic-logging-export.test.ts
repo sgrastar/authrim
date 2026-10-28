@@ -1,10 +1,42 @@
+import type {
+  AuthDecisionLogEntry,
+  DiagnosticLogEntry,
+} from '@authrim/ar-lib-core/services/diagnostic/types';
 import { describe, expect, it, vi } from 'vitest';
-import { applyPrivacyModeToEntry, buildDiagnosticLogPath, type Env } from '@authrim/ar-lib-core';
+import { applyPrivacyModeToEntry, type Env } from '@authrim/ar-lib-core';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    createDiagnosticLogR2Adapter: (env: { DIAGNOSTIC_LOGS?: { store: Map<string, string> } }) => ({
+      query: async (options: {
+        tenantId: string;
+        startTime?: number;
+        endTime?: number;
+        limit?: number;
+      }) => {
+        const entries = [...(env.DIAGNOSTIC_LOGS?.store.values() ?? [])]
+          .flatMap((value) =>
+            value
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => JSON.parse(line) as DiagnosticLogEntry)
+          )
+          .filter(
+            (entry) =>
+              entry.tenantId === options.tenantId &&
+              (options.startTime === undefined || entry.timestamp >= options.startTime) &&
+              (options.endTime === undefined || entry.timestamp < options.endTime)
+          );
+        return {
+          entries: entries.slice(0, options.limit ?? 100),
+          totalCount: entries.length,
+          hasMore: entries.length > (options.limit ?? 100),
+          consistency: 'eventual',
+        };
+      },
+    }),
     adminAuthMiddleware: vi.fn(
       () =>
         async (c: { set?: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
@@ -20,6 +52,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import exportLogsApp from '../routes/diagnostic-logging/export-logs';
+
+// The export tests supply already-decoded canonical records; the adapter's provider reader has its own tests.
+async function buildDiagnosticLogPath(options: {
+  chunkId: string;
+  [key: string]: unknown;
+}): Promise<string> {
+  return options.chunkId;
+}
 
 class MockR2ObjectBody {
   constructor(private readonly value: string) {}
@@ -356,7 +396,7 @@ describe('Diagnostic Logs Export API', () => {
       seconds: number,
       source: 'server' | 'sdk',
       clientId?: string
-    ) {
+    ): AuthDecisionLogEntry {
       return {
         id,
         diagnosticSessionId: session,
@@ -670,7 +710,7 @@ describe('Diagnostic Logs Export API', () => {
           expect(text, rawValue).not.toContain(rawValue);
         }
         // identifiers are not part of the export entry, but the entry is still returned
-        expect(JSON.parse(text).logs).toHaveLength(1);
+        expect((JSON.parse(text) as { logs: unknown[] }).logs).toHaveLength(1);
       }
     );
 
@@ -733,7 +773,7 @@ describe('Diagnostic Logs Export API', () => {
       flow: string,
       seconds: number,
       clientId?: string
-    ) {
+    ): AuthDecisionLogEntry {
       return {
         id,
         diagnosticSessionId: session,
@@ -750,12 +790,15 @@ describe('Diagnostic Logs Export API', () => {
     }
 
     /** What ingest and the logger store: the entry after the privacy pass. */
-    async function written(raw: object, tokenHashPrefixLength?: number) {
-      return applyPrivacyModeToEntry({ ...raw, storageMode: 'masked' } as never, {
-        mode: 'masked',
-        secret: 'otp-secret:tenant-1',
-        tokenHashPrefixLength,
-      });
+    async function written(raw: AuthDecisionLogEntry, tokenHashPrefixLength?: number) {
+      return applyPrivacyModeToEntry(
+        { ...raw, storageMode: 'masked' },
+        {
+          mode: 'masked',
+          secret: 'otp-secret:tenant-1',
+          tokenHashPrefixLength,
+        }
+      );
     }
 
     async function put(
@@ -782,7 +825,7 @@ describe('Diagnostic Logs Export API', () => {
         createEnv(bucket, kv)
       );
       expect(response.status).toBe(200);
-      const body = (await response.json()) as { logs: Array<Record<string, any>> };
+      const body = (await response.json()) as { logs: Array<{ details: { reason: string } }> };
       return body.logs.map((log) => log.details.reason);
     }
 
@@ -791,8 +834,8 @@ describe('Diagnostic Logs Export API', () => {
       const stored = await written(
         logEntry('dotted', 'run-2026.10.16-001', 'flow-v1.2.3', 1, 'rp-client')
       );
-      expect((stored as any).diagnosticSessionId).toBe('run-2026.10.16-001');
-      expect((stored as any).flowId).toBe('flow-v1.2.3');
+      expect(stored.diagnosticSessionId).toBe('run-2026.10.16-001');
+      expect(stored.flowId).toBe('flow-v1.2.3');
       await put(bucket, 'rp-client', 'chk_dotted', [
         stored,
         await written(logEntry('other', 'run-2026.10.16-002', 'flow-other', 2, 'rp-client')),
@@ -805,8 +848,8 @@ describe('Diagnostic Logs Export API', () => {
     it('finds an id that is stored as a fingerprint by its original value', async () => {
       const bucket = new MockR2Bucket();
       const stored = await written(logEntry('long', LONG_SESSION, LONG_FLOW, 1, 'rp-client'));
-      expect((stored as any).diagnosticSessionId).toMatch(/^sha256:[0-9a-f]{12}$/);
-      expect((stored as any).flowId).toMatch(/^sha256:[0-9a-f]{12}$/);
+      expect(stored.diagnosticSessionId).toMatch(/^sha256:[0-9a-f]{12}$/);
+      expect(stored.flowId).toMatch(/^sha256:[0-9a-f]{12}$/);
       await put(bucket, 'rp-client', 'chk_long', [
         stored,
         await written(logEntry('other', 'session-other', 'flow-other', 2, 'rp-client')),
@@ -841,8 +884,9 @@ describe('Diagnostic Logs Export API', () => {
           logEntry('sdk-n', LONG_SESSION, LONG_FLOW, 1, 'rp-client'),
           length
         );
-        const fingerprint = (stored as any).diagnosticSessionId as string;
-        const flowFingerprint = (stored as any).flowId as string;
+        const fingerprint = stored.diagnosticSessionId;
+        const flowFingerprint = stored.flowId;
+        if (!fingerprint || !flowFingerprint) throw new Error('Missing identifier fingerprint');
         expect(fingerprint).toMatch(new RegExp(`^sha256:[0-9a-f]{${length}}$`));
         await put(bucket, 'rp-client', 'chk_n_sdk', [stored]);
         await put(bucket, undefined, 'chk_n_server', [

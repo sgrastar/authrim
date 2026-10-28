@@ -1,3 +1,4 @@
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { createRequire } from 'node:module';
 import { readdirSync, readFileSync } from 'node:fs';
 import { Hono } from 'hono';
@@ -92,6 +93,7 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
   DatabaseSync: new (filename: string) => SqliteDatabase;
 };
 const opened: SqliteDatabase[] = [];
+const openedArchives: Array<() => void> = [];
 
 function database(family: 'core' | 'pii') {
   const db = new DatabaseSync(':memory:');
@@ -194,6 +196,8 @@ async function fixture(
   const core = database('core');
   const account = database('core');
   const pii = database('pii');
+  const archive = await logProducerFixture('scheduled', { tenantId: TENANT });
+  openedArchives.push(archive.close);
   const now = Math.floor(Date.now() / 1000);
   core.db
     .prepare(
@@ -252,6 +256,7 @@ async function fixture(
   };
   const challengeStore = challenges(core.db);
   const env = {
+    ...archive.env,
     TEST_CORE: core.adapter,
     TEST_ACCOUNT: account.adapter,
     TEST_PII: pii.adapter,
@@ -306,10 +311,10 @@ async function fixture(
   const flush = async () => {
     while (tasks.length) await Promise.all(tasks.splice(0));
   };
-  const records = () =>
-    core.db
-      .prepare("SELECT * FROM flow_audit_events WHERE event_type='flow.sign_in_attempt.failed'")
-      .all();
+  const records = async () =>
+    (await archive.rows('core.flow_audit_events', TENANT)).filter(
+      (row) => row.event_type === 'flow.sign_in_attempt.failed'
+    );
   const begin = async () => {
     const response = await request(
       `/auth/external/corp/callback?state=${STATE}&code=fixture-code`,
@@ -345,6 +350,7 @@ async function fixture(
   return {
     core,
     account,
+    archive,
     env,
     stateId,
     challengeStore,
@@ -363,9 +369,10 @@ async function fixture(
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => {
   for (const db of opened.splice(0)) db.close();
+  for (const close of openedArchives.splice(0)) close();
 });
 
-describe('federated attempts with real state, encryption, SQL records and HMAC', () => {
+describe('federated attempts with real state, canonical encrypted records and HMAC', () => {
   it('roundtrips state into pending and deduplicates concurrent terminal status polls and replay', async () => {
     const t = await fixture();
     const started = await t.begin();
@@ -374,14 +381,14 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
     expect(started.cookie).toBeDefined();
     expect((await t.poll(started.token!, started.cookie)).status).toBe(202);
     await t.flush();
-    expect(t.records()).toEqual([]);
+    expect(await t.records()).toEqual([]);
     t.setStatus('failed');
     const responses = await Promise.all(
       Array.from({ length: 4 }, () => t.poll(started.token!, started.cookie))
     );
     expect(responses.some((response) => response.status === 409)).toBe(true);
     await t.flush();
-    const rows = t.records();
+    const rows = await t.records();
     expect(rows).toHaveLength(1);
     const keys = loadInvestigationSubjectHmacKeysFromEnv({
       INVESTIGATION_SUBJECT_HMAC_KEYRING: KEYRING,
@@ -394,7 +401,7 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
     expect((await t.poll(started.token!, started.cookie)).status).toBe(400);
     await t.resume(started.token!, started.cookie);
     await t.flush();
-    expect(t.records()).toHaveLength(1);
+    expect(await t.records()).toHaveLength(1);
     for (const marker of [started.token!, STATE, 'user-a', 'fixture@example.test', t.stateId])
       expect(JSON.stringify(rows)).not.toContain(marker);
   }, 20_000);
@@ -407,11 +414,14 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
     expect(response.status).toBe(403);
     expect(response.headers.get('location')).toBeNull();
     await t.flush();
-    expect(t.records()).toHaveLength(1);
-    expect(t.records()[0]).toMatchObject({ reason_code: 'account_unavailable', user_id: null });
+    expect(await t.records()).toHaveLength(1);
+    expect((await t.records())[0]).toMatchObject({
+      reason_code: 'account_unavailable',
+      user_id: null,
+    });
     await t.resume(started.token!, started.cookie);
     await t.flush();
-    expect(t.records()).toHaveLength(1);
+    expect(await t.records()).toHaveLength(1);
   }, 20_000);
 
   it('does not record a concurrent resume that loses challenge consumption', async () => {
@@ -440,7 +450,7 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
     expect(redirects.filter((url) => url.searchParams.has('code'))).toHaveLength(1);
     expect(responses.every((response) => response.status === 302)).toBe(true);
     await t.flush();
-    expect(t.records()).toEqual([]);
+    expect(await t.records()).toEqual([]);
   }, 20_000);
 
   it('records the non-provisioning callback runtime-user absence without changing USER_INACTIVE', async () => {
@@ -466,8 +476,8 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
     const keys = loadInvestigationSubjectHmacKeysFromEnv({
       INVESTIGATION_SUBJECT_HMAC_KEYRING: KEYRING,
     });
-    expect(t.records()).toHaveLength(1);
-    expect(t.records()[0]).toMatchObject({
+    expect(await t.records()).toHaveLength(1);
+    expect((await t.records())[0]).toMatchObject({
       reason_code: 'account_unavailable',
       user_id: null,
       subject_hash: await computeInvestigationSubjectHash(keys!.writeKey, TENANT, 'user-a'),
@@ -480,7 +490,7 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
     );
     expect(replay.status).toBe(302);
     await t.flush();
-    expect(t.records()).toHaveLength(1);
+    expect(await t.records()).toHaveLength(1);
   }, 20_000);
 
   it('deduplicates resume failures before consume without changing their redirect response', async () => {
@@ -494,9 +504,9 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
     ]);
     expect(responses.every((response) => response.status === 302)).toBe(true);
     await t.flush();
-    expect(t.records()).toHaveLength(1);
-    expect(t.records()[0].reason_code).toBe('service_unavailable');
-    expect(JSON.stringify(t.records())).not.toContain('fixture-private-db-error');
+    expect(await t.records()).toHaveLength(1);
+    expect((await t.records())[0].reason_code).toBe('service_unavailable');
+    expect(JSON.stringify(await t.records())).not.toContain('fixture-private-db-error');
   }, 20_000);
 
   it('does not record malformed, foreign-tenant, unbound or pending continuations', async () => {
@@ -507,7 +517,7 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
     expect((await t.poll('invalid', started.cookie)).status).toBe(400);
     await t.resume(started.token!, started.cookie);
     await t.flush();
-    expect(t.records()).toEqual([]);
+    expect(await t.records()).toEqual([]);
   }, 20_000);
 
   it.each([{ flow: false }, { interactionTenant: 'tenant-b' }])(
@@ -518,7 +528,7 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
       t.setStatus('failed');
       expect((await t.poll(started.token!, started.cookie)).status).toBe(409);
       await t.flush();
-      expect(t.records()).toEqual([]);
+      expect(await t.records()).toEqual([]);
     },
     20_000
   );
@@ -531,8 +541,8 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
       t.setStatus('failed');
       expect((await t.poll(started.token!, started.cookie)).status).toBe(409);
       await t.flush();
-      expect(t.records()).toHaveLength(1);
-      expect(t.records()[0].subject_hash).toBeNull();
+      expect(await t.records()).toHaveLength(1);
+      expect((await t.records())[0].subject_hash).toBeNull();
     },
     20_000
   );
@@ -540,12 +550,24 @@ describe('federated attempts with real state, encryption, SQL records and HMAC',
   it('keeps a failed-status response when the best-effort recording SQL fails', async () => {
     const t = await fixture();
     const started = await t.begin();
-    t.core.db.exec(`CREATE TRIGGER reject_record_fixture BEFORE INSERT ON flow_audit_events
+    const commit = vi.spyOn(t.archive.adminAdapter, 'batch');
+    t.archive.adminDb
+      .exec(`CREATE TRIGGER reject_record_fixture BEFORE INSERT ON log_iceberg_records
       BEGIN SELECT RAISE(ABORT,'fixture-private-record-error'); END`);
     t.setStatus('failed');
     expect((await t.poll(started.token!, started.cookie)).status).toBe(409);
     await t.flush();
-    expect(t.records()).toEqual([]);
+    expect(await t.records()).toEqual([]);
+    expect(
+      commit.mock.calls.some(([statements]) =>
+        statements.some((statement) => statement.sql.includes('INSERT INTO log_iceberg_records'))
+      )
+    ).toBe(true);
+    expect(
+      t.archive.adminDb
+        .prepare('SELECT state FROM log_sign_in_attempt_receipts WHERE tenant_id=?')
+        .get(TENANT)?.state
+    ).toBe('reserved');
     expect(JSON.stringify(mocks.logger.warn.mock.calls)).not.toContain(
       'fixture-private-record-error'
     );

@@ -34,6 +34,8 @@ import { scheduleAdminAuditLog } from './admin-shared';
 import { readCoreSubjectStatus, readRecentSignInAttempts } from './investigation-subject-status';
 import { accountStoreHolding } from './rbac-account-stores';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
+import { createLogReadAdapter, logCoverageHeaders } from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 
 /** How the operator reached the subject. Recorded with every read. */
 export type InvestigationEntryPoint = 'user_id';
@@ -164,9 +166,24 @@ export async function adminInvestigationSubjectStatusHandler(c: Context<{ Bindin
       audit('failure', 'not_found');
       return errorResponse(c, 404);
     }
-    // Attempts are recorded with their Flow interaction, in the tenant's own Core database.
+    const attemptLogs = createLogReadAdapter({
+      env: c.env,
+      tenantId: subject.tenantId,
+      dataset: 'core.flow_audit_events',
+      timestamp: { column: 'created_at', unit: 'seconds' },
+      columns: [
+        'id',
+        'tenant_id',
+        'created_at',
+        'method',
+        'reason_code',
+        'event_type',
+        'subject_hash',
+      ],
+      onCoverage: logCoverageHeaders(c),
+    });
     const recentAttempts = await readRecentSignInAttempts(
-      createAuthContextFromHono(c, subject.tenantId).coreAdapter,
+      attemptLogs.adapter,
       investigationKeys(c),
       subject.tenantId,
       subject.userId
@@ -178,6 +195,7 @@ export async function adminInvestigationSubjectStatusHandler(c: Context<{ Bindin
         source: 'core',
         ...status,
         recent_attempts: recentAttempts,
+        ...(attemptLogs.coverage() ? { log_coverage: attemptLogs.coverage() } : {}),
       },
       200,
       { 'Cache-Control': 'no-store' }
@@ -195,6 +213,6 @@ export async function adminInvestigationSubjectStatusHandler(c: Context<{ Bindin
     } catch {
       // A failed audit write must not replace the response.
     }
-    return errorResponse(c, 500);
+    return logQueryErrorResponse(c, error) ?? errorResponse(c, 500);
   }
 }

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import {
   ALL_CATEGORY_META,
   adminAuthMiddleware,
@@ -132,7 +133,9 @@ async function setup(env: Record<string, unknown> = {}, options: { realD1?: bool
   directory.exec("UPDATE tenants SET lifecycle_state = 'deleted' WHERE id = 'tenant-gone'");
   const settings = kv();
 
+  const { DB_ADMIN: _loggingAdmin, ...loggingEnv } = logging.env;
   const envExtras: Record<string, unknown> = {
+    ...loggingEnv,
     DB: sqliteAdapter(directory),
     SETTINGS: settings.namespace,
     AUTHRIM_CONFIG: settings.namespace,
@@ -314,7 +317,10 @@ const audits = (action: string) =>
     .mock.calls.filter(([, name]) => name === action)
     .map(([, , , resourceId, metadata]) => ({ resourceId, metadata }));
 
-beforeEach(() => {
+let logging: Awaited<ReturnType<typeof logProducerFixture>>;
+afterEach(() => logging?.close());
+beforeEach(async () => {
+  logging = await logProducerFixture('scheduled');
   vi.mocked(createAuditLogFromContext).mockClear();
   vi.mocked(setRunnerExternalGate).mockClear();
   vi.mocked(runTenantBackupCoveredMutation).mockClear();

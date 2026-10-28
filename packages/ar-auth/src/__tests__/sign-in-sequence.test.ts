@@ -1,3 +1,4 @@
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 /**
  * The sign-in sequence the Login UI runs, through the real handlers.
  *
@@ -29,7 +30,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Hono } from 'hono';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   insertDestinationFieldConsentRecord,
   insertFlowConsentRecords,
@@ -38,6 +39,7 @@ import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { ChallengeStore } from '../../../ar-lib-core/dist/durable-objects/ChallengeStore';
 import { renderPortableMigrationSql } from '../../../ar-lib-core/dist/migrations/sql-portability';
 
+let logFixture: Awaited<ReturnType<typeof logProducerFixture>>;
 const TENANT = 'default';
 const ORIGIN = 'https://app.example.com';
 const CLIENT_ID = 'web-client';
@@ -244,9 +246,6 @@ function createCoreDatabase(): DatabaseAdapter {
       return row;
     },
     execute: async (sql: string, params?: unknown[]) => {
-      if (world.failAudit && sql.includes('INSERT INTO flow_audit_events')) {
-        throw new Error('audit store unavailable');
-      }
       const result = {
         success: true,
         rowsAffected: Number(db.prepare(sql).run(...bind(params)).changes),
@@ -281,6 +280,7 @@ type Json = Record<string, unknown>;
 
 function createEnv(): Env {
   return {
+    ...logFixture.env,
     ISSUER_URL: 'https://issuer.example.com',
     OTP_HMAC_SECRET: 'otp-test-secret',
     ALLOWED_ORIGINS: ORIGIN,
@@ -844,7 +844,14 @@ describe('sign-in sequences through the real handlers', () => {
     directHandlers = await import('../direct-auth');
   }, 30_000);
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    logFixture = await logProducerFixture('scheduled', { tenantId: TENANT, separateAdmin: true });
+    const writer = logFixture.env.LOG_ARCHIVE_WRITER!,
+      write = writer.writeRecords.bind(writer);
+    writer.writeRecords = async (...args) => {
+      if (world.failAudit) throw new Error('audit store unavailable');
+      return write(...args);
+    };
     world.db = createCoreDatabase();
     world.challenges = new ChallengeStore(memoryDurableObjectState() as never, {} as never);
     world.sessionStore = createSessionStore();
@@ -853,6 +860,8 @@ describe('sign-in sequences through the real handlers', () => {
     world.afterStatement = undefined;
     runtimeHandlers.clearLoginRuntimeFlowVersionCacheForTests();
   });
+
+  afterEach(() => logFixture.close());
 
   const browserWith = (sessionId?: string) => {
     const browser = new Browser(runtimeHandlers, directHandlers);
@@ -2269,10 +2278,7 @@ describe('sign-in sequences through the real handlers', () => {
       expect(done.final?.json.completed).toBe(true);
       expect(done.continuation).toBeDefined();
       // The audit did fail (and only that did).
-      const events = (await (world.db as DatabaseAdapter).query(
-        'SELECT event_type FROM flow_audit_events WHERE interaction_id = ?',
-        [interaction.id]
-      )) as Array<{ event_type: string }>;
+      const events = await logFixture.rows('core.flow_audit_events');
       expect(events.map((event) => event.event_type)).not.toContain('flow.interaction.completed');
     });
   });
@@ -2301,10 +2307,7 @@ describe('sign-in sequences through the real handlers', () => {
       store.getChallengeRpc = read;
 
       expect(failed.final?.status).toBe(503);
-      const events = (await (world.db as DatabaseAdapter).query(
-        'SELECT event_type FROM flow_audit_events WHERE interaction_id = ?',
-        [interaction.id]
-      )) as Array<{ event_type: string }>;
+      const events = await logFixture.rows('core.flow_audit_events');
       expect(events.map((event) => event.event_type)).not.toContain('flow.interaction.completed');
       expect(await challengeIsUsedUp(challengeId)).toBe(false);
 
@@ -2316,9 +2319,19 @@ describe('sign-in sequences through the real handlers', () => {
 
   describe('failed sign-in attempts', () => {
     const attempts = () =>
-      (world.db as DatabaseAdapter).query<Record<string, unknown>>(
-        `SELECT interaction_id, user_id, method, reason_code, subject_hash, inquiry_number
-           FROM flow_audit_events WHERE event_type = 'flow.sign_in_attempt.failed'`
+      logFixture.rows('core.flow_audit_events').then((rows) =>
+        rows
+          .filter((row) => row.event_type === 'flow.sign_in_attempt.failed')
+          .map(
+            ({ interaction_id, user_id, method, reason_code, subject_hash, inquiry_number }) => ({
+              interaction_id,
+              user_id,
+              method,
+              reason_code,
+              subject_hash,
+              inquiry_number,
+            })
+          )
       );
 
     /** Starts an interaction and sends a code tied to `runtimeInteractionId`. */
@@ -2377,7 +2390,7 @@ describe('sign-in sequences through the real handlers', () => {
             TENANT,
             'user_existing'
           ),
-          inquiry_number: expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{10}$/u),
+          inquiry_number: expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
         },
       ]);
     });

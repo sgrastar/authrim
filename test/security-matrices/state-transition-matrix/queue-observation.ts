@@ -8,6 +8,11 @@
  * This helper module is intentionally not collected as a test.
  */
 import { createSecurityMatrixEnv, type SecurityMatrixEnvKit } from '../fixtures/env';
+import { installSecurityMatrixLogStorage } from '../fixtures/log-iceberg';
+import { emitLogIcebergRow } from '../../../packages/ar-lib-core/src/services/log-iceberg-emitter';
+import { deriveTenantKeyFromTenantId } from '../../../packages/ar-lib-logging/src/tenant-key';
+import type { DatabaseAdapter } from '../../../packages/ar-lib-core/src/db/adapter';
+import { MemoryR2Bucket } from '../fixtures/r2';
 import { CallLedger } from '../fixtures/call-ledger';
 import { advanceFrozenClockByMs } from '../fixtures/deterministic-clock';
 import {
@@ -67,13 +72,9 @@ export function makeQueueEnv(
   const d = entry.dimensions;
   const env = kit.env as unknown as Record<string, unknown>;
   const bindingState = String(d.bindingState);
-  env.DB = new D1DatabaseLike(kit.coreAdapter, true, ledger) as unknown as typeof env.DB;
-  env.DB_PII = new D1DatabaseLike(kit.piiAdapter, true, ledger) as unknown as typeof env.DB_PII;
-  env.DB_ADMIN = new D1DatabaseLike(
-    kit.adminAdapter,
-    true,
-    ledger
-  ) as unknown as typeof env.DB_ADMIN;
+  env.DB = new D1DatabaseLike(kit.coreAdapter, true, ledger);
+  env.DB_PII = new D1DatabaseLike(kit.piiAdapter, true, ledger);
+  env.DB_ADMIN = new D1DatabaseLike(kit.adminAdapter, true, ledger);
   env.OBJECT_ENCRYPTION_ROOT_KEY = canary;
   env.OBJECT_ENCRYPTION_KEY_VERSION = '1';
   // The archive/diagnostic/sensitive buckets record put metadata so the secret-leak
@@ -86,7 +87,7 @@ export function makeQueueEnv(
     canary
   );
   env.SENSITIVE_DETAILS = wrapRecordingBucket(
-    kit.env.SENSITIVE_DETAILS,
+    kit.env.SENSITIVE_DETAILS ?? new MemoryR2Bucket(ledger, 'sensitive_details'),
     ledger,
     'SENSITIVE_DETAILS',
     canary
@@ -101,7 +102,7 @@ export function makeQueueEnv(
   }
   const dlqArchive = String(d.dlqArchive);
   if (dlqArchive === 'missing') {
-    env.AUDIT_ARCHIVE = undefined;
+    env.SENSITIVE_DETAILS = undefined;
   }
   if (bindingState === 'throws') {
     const throwingBucket = {
@@ -129,6 +130,7 @@ export function makeQueueEnv(
   if (dlqArchive === 'throws') {
     const throwingBucket = {
       put: async () => {
+        ledger.record('binding-operation', 'SENSITIVE_DETAILS.put:throws');
         throw new Error('r2 put failed deterministically');
       },
       get: async () => null,
@@ -142,7 +144,7 @@ export function makeQueueEnv(
         throw new Error('unsupported');
       },
     };
-    env.AUDIT_ARCHIVE = throwingBucket;
+    env.SENSITIVE_DETAILS = throwingBucket;
   }
   const captured = createCapturingLogger(ledger);
   return { env, logger: captured };
@@ -164,9 +166,12 @@ function wrapRecordingBucket(
     return bucket;
   }
   const put = delegate.put as (key: string, value: unknown, options?: unknown) => Promise<unknown>;
-  const wrapper = Object.create(Object.getPrototypeOf(delegate)) as Record<string, unknown>;
+  const prototype: unknown = Object.getPrototypeOf(delegate);
+  const wrapper = Object.create(
+    prototype === null || typeof prototype === 'object' ? prototype : null
+  ) as Record<string, unknown>;
   for (const key of Object.keys(delegate)) {
-    wrapper[key] = (delegate as Record<string, unknown>)[key];
+    wrapper[key] = delegate[key];
   }
   wrapper.put = async (key: string, value: unknown, options?: unknown): Promise<unknown> => {
     const optionsRecord = (options ?? {}) as Record<string, unknown>;
@@ -174,7 +179,14 @@ function wrapRecordingBucket(
     let bodySnippet: string | null = null;
     let fullBody: string | null = null;
     try {
-      const bodyText = typeof value === 'string' ? value : JSON.stringify(value);
+      const bodyText =
+        typeof value === 'string'
+          ? value
+          : value instanceof ArrayBuffer
+            ? new TextDecoder().decode(value)
+            : ArrayBuffer.isView(value)
+              ? new TextDecoder().decode(value)
+              : JSON.stringify(value);
       fullBody = bodyText;
       bodySnippet = bodyText ? bodyText.slice(0, 300) : null;
     } catch {
@@ -228,13 +240,19 @@ export function auditMessageBody(
   if (payloadFamily === 'unknown-audit') {
     body.type = 'bogus_unknown_type';
   }
-  if (payloadFamily === 'fanout') {
+  if (payloadFamily !== 'unknown-audit') {
     body.fanout = {
       auditProfileId: 'builtin:audit:standard',
-      archives: [{ type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'logs/v1' }],
-      sinks: [],
+      archives: [],
+      sinks: [
+        {
+          type: 'http',
+          destinationId: 'matrix-http',
+          url: 'https://webhook.invalid.example/hooks',
+        },
+      ],
       archiveFailureMode: 'gate_cleanup',
-      sinkFailureMode: 'best_effort',
+      sinkFailureMode: 'retry_until_ttl',
     };
   }
   return body;
@@ -253,22 +271,24 @@ export function loggingMessageBody(
   const tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
   const base = {
     payload_type:
-      payloadFamily === 'chunk-write'
-        ? 'chunk_write'
-        : payloadFamily === 'delivery-fanout'
-          ? 'delivery_fanout'
-          : payloadFamily === 'http-sink-batch'
-            ? 'http_sink_batch'
-            : payloadFamily === 'dlq-replay'
-              ? 'dlq_replay'
-              : 'rewrap_chunk',
+      payloadFamily === 'iceberg-ingest'
+        ? 'iceberg_ingest'
+        : payloadFamily === 'legacy-chunk-write'
+          ? 'chunk_write'
+          : payloadFamily === 'delivery-fanout'
+            ? 'delivery_fanout'
+            : payloadFamily === 'http-sink-batch'
+              ? 'http_sink_batch'
+              : payloadFamily === 'dlq-replay'
+                ? 'dlq_replay'
+                : 'rewrap_chunk',
     schema_version: schema === 'future' ? 99 : 1,
     payload_id: `qpl_${id}`,
     tenant_key: tenantKey,
     lane,
     created_at: 1700000000,
   };
-  if (payloadFamily === 'chunk-write') {
+  if (payloadFamily === 'iceberg-ingest' || payloadFamily === 'legacy-chunk-write') {
     return {
       ...base,
       log_type: 'audit',
@@ -369,7 +389,66 @@ export async function runQueueRow(
   const canary = queueCanarySecret(entry.id);
   const ids = options?.messageIds ?? batchIds(entry);
   const allMessages: MessageFake<Record<string, unknown>>[] = [];
+  const storage =
+    consumer === 'logging-delivery' && d.payloadFamily === 'iceberg-ingest'
+      ? await installSecurityMatrixLogStorage(kit, ledger, { mode: 'pipeline', rootKeyHex: canary })
+      : null;
+  const preparedBodies = new Map<string, Record<string, unknown>>();
+  if (storage) {
+    const tenantId = d.tenant === 'foreign' ? 'foreign' : 'default';
+    for (const id of ids) {
+      await emitLogIcebergRow(storage.env, {
+        tenantId,
+        sourceDataset: 'core.event_log',
+        logType: 'audit',
+        row: {
+          id,
+          tenant_id: tenantId,
+          event_type: 'login',
+          event_category: 'authn',
+          result: 'success',
+          severity: 'info',
+          created_at: FROZEN_NOW,
+        },
+        eventAt: FROZEN_NOW * 1000,
+        expiresAt: (FROZEN_NOW + 86400) * 1000,
+      });
+      const body = storage.queueMessages.at(-1);
+      if (!body || typeof body !== 'object' || Array.isArray(body))
+        throw new Error('matrix_ingest_ref_not_prepared');
+      preparedBodies.set(id, body as Record<string, unknown>);
+    }
+    // Only consumer effects belong to this observation, not producer preparation.
+    ledger.reset();
+  }
   const { env, logger } = makeQueueEnv(kit, entry, ledger, canary);
+  if (storage) {
+    const actual = env as Record<string, unknown>;
+    if (d.bindingState === 'present') {
+      actual.DB = recordingLogDatabase(storage.adapter, ledger);
+      actual.DB_ADMIN = recordingLogDatabase(storage.adminAdapter, ledger);
+    }
+    const archive = wrapRecordingBucket(storage.env.LOG_ARCHIVE, ledger, 'LOG_ARCHIVE', canary);
+    actual.LOG_ARCHIVE =
+      d.bindingState === 'missing' || d.dlqArchive === 'missing'
+        ? undefined
+        : d.bindingState === 'throws' || d.dlqArchive === 'throws'
+          ? {
+              get: async () => {
+                ledger.record('binding-operation', 'LOG_ARCHIVE.get:throws');
+                throw new Error('matrix_retry_payload_read_failed');
+              },
+            }
+          : archive;
+    actual.LOG_ARCHIVE_STREAM = {
+      send: async (records: Record<string, unknown>[]) => {
+        const stream = storage.env.LOG_ARCHIVE_STREAM;
+        if (!stream) throw new Error('matrix_stream_missing');
+        await stream.send(records);
+        ledger.record('queue.send', 'iceberg-stream', records);
+      },
+    };
+  }
 
   const buildMessages = (): MessageFake<Record<string, unknown>>[] => {
     const messages = ids.map((id, index) => {
@@ -383,7 +462,10 @@ export async function runQueueRow(
             : { foo: 'not-a-valid-envelope' };
         return new MessageFake({ id, body: failingBody, attempts }, ledger);
       }
-      return new MessageFake({ id, body: messageBody(entry, id, canary), attempts }, ledger);
+      return new MessageFake(
+        { id, body: preparedBodies.get(id) ?? messageBody(entry, id, canary), attempts },
+        ledger
+      );
     });
     return options?.messageOrder === 'reverse' ? messages.reverse() : messages;
   };
@@ -402,8 +484,62 @@ export async function runQueueRow(
     allMessages.push(...second);
     await deliverOnce(kit, ledger, entry, env, logger, canary, attempts + 1, second);
   }
+  if (storage) {
+    const tenantId = d.tenant === 'foreign' ? 'foreign' : 'default';
+    const tenantKey = await deriveTenantKeyFromTenantId(tenantId);
+    for (const body of preparedBodies.values()) {
+      const row = storage.adminDb
+        .prepare('SELECT tenant_id,state FROM log_iceberg_outbox WHERE id=?')
+        .get(body.id);
+      const messageAcked = allMessages.some(
+        (message) => message.body === body && message.ackCalls > 0
+      );
+      if (!row || row.tenant_id !== tenantId || (row.state === 'ingested') !== messageAcked)
+        throw new Error('matrix_ingest_durable_disposition_mismatch');
+    }
+    for (const record of storage.streamRecords) {
+      if (
+        record.tenant_key !== tenantKey ||
+        record.source_dataset !== 'core.event_log' ||
+        !ids.includes(record.event_id)
+      )
+        throw new Error('matrix_ingest_stream_tenant_or_identity_changed');
+      if ('row' in record || 'tenant_id' in record || 'event_type' in record)
+        throw new Error('matrix_ingest_plaintext_body_sent');
+    }
+    if (
+      storage.db.prepare('SELECT COUNT(*) AS n FROM event_log').get()?.n !== 0 ||
+      ledger
+        .ofKind('d1.execute')
+        .some((event) => /INSERT INTO (?:event_log|pii_log)\b/i.test(event.target))
+    )
+      throw new Error('matrix_ingest_legacy_primary_write');
+    if (storage.adminDb.prepare('SELECT COUNT(*) AS n FROM log_iceberg_records').get()?.n !== 0)
+      throw new Error('matrix_pipeline_query_body_written_to_database');
+  }
   void options;
   return { messages: allMessages, logger };
+}
+
+/** Record real SQL without replacing its rowsAffected/transaction semantics. */
+function recordingLogDatabase(adapter: DatabaseAdapter, ledger: CallLedger): DatabaseAdapter {
+  return {
+    ...adapter,
+    queryOne: async <T>(
+      sql: string,
+      params?: unknown[],
+      options?: Parameters<DatabaseAdapter['queryOne']>[2]
+    ) => {
+      const result = await adapter.queryOne<T>(sql, params, options);
+      ledger.record('d1.queryOne', sql, { params, found: result !== null });
+      return result;
+    },
+    execute: async (sql, params = []) => {
+      ledger.record('d1.execute', sql);
+      ledger.record('d1.execute', `params:${sql}`, { params });
+      return adapter.execute(sql, params);
+    },
+  };
 }
 
 function d1InsertIdentity(sql: string, params: unknown[]): string | null {
@@ -431,8 +567,8 @@ function d1InsertIdentity(sql: string, params: unknown[]): string | null {
  * Count durable write CALLS (every d1.execute INSERT/UPDATE + every r2.put) and UNIQUE
  * durable effects (distinct INSERT identities + distinct R2 object keys). The D1 params
  * are captured by the params-recording D1DatabaseLike so INSERT identities include the
- * bound values: an idempotent event_log INSERT keeps the same identity across
- * redeliveries, while a clock-derived chunk/dlq id yields a new identity each time.
+ * bound values: stable metadata identities and Stream record IDs are compared across redeliveries.
+ * A duplicate must not create another Stream write or another durable receipt identity.
  */
 function countDurableEffects(ledger: CallLedger): { writeCalls: number; uniqueEffects: number } {
   const identities = new Set<string>();
@@ -453,6 +589,11 @@ function countDurableEffects(ledger: CallLedger): { writeCalls: number; uniqueEf
         if (identity) identities.add(identity);
       }
     }
+    if (entry.kind === 'queue.send' && entry.target === 'iceberg-stream') {
+      writeCalls += 1;
+      for (const record of entry.detail as Record<string, unknown>[])
+        identities.add(`iceberg:${String(record.tenant_key)}:${String(record.event_id)}`);
+    }
     if (entry.kind === 'r2.put') {
       writeCalls += 1;
       identities.add(`r2:${entry.target}`);
@@ -471,6 +612,13 @@ export async function buildQueueObservation(
   const effective = effectiveMessageDispositions(ledger, ids);
   const calls = messageCallCounts(ledger, ids);
   const { writeCalls, uniqueEffects } = countDurableEffects(ledger);
+  const streamRecord = ledger
+    .all()
+    .find((e) => e.kind === 'queue.send' && e.target === 'iceberg-stream');
+  const streamTenantKey = (streamRecord?.detail as Record<string, unknown>[] | undefined)?.[0]
+    ?.tenant_key;
+  const defaultTenantKey = await deriveTenantKeyFromTenantId('default');
+  const foreignTenantKey = await deriveTenantKeyFromTenantId('foreign');
   const decision: QueueDecision = {
     acked: ids.filter((id) => effective[id].acked),
     retried: ids.filter((id) => effective[id].retried),
@@ -479,6 +627,8 @@ export async function buildQueueObservation(
     effective: Object.fromEntries(ids.map((id) => [id, calls[id].effective ?? 'retry'])),
     writeCalls,
     uniqueEffects,
+    sinkSendCalls: ledger.ofKind('queue.send').filter((event) => event.target !== 'iceberg-stream')
+      .length,
     dlqSaved: ledger
       .all()
       .some(
@@ -486,6 +636,8 @@ export async function buildQueueObservation(
           e.kind === 'r2.put' && (e.target.includes('dlq/') || e.target.includes('/unsupported/'))
       ),
     tenantKey: (() => {
+      if (streamTenantKey === defaultTenantKey) return 'default';
+      if (streamTenantKey === foreignTenantKey) return 'foreign';
       const serialized = ledger
         .all()
         .filter((e) => e.kind === 'r2.put')
@@ -577,11 +729,11 @@ export function scanForSecretLeak(
     if (entry.kind === 'audit' && entry.target.startsWith('log:')) {
       surfaces.push(`log:${entry.target}:${JSON.stringify(entry.detail ?? {})}`);
     }
+    if (entry.kind === 'queue.send') surfaces.push(`queue:${JSON.stringify(entry.detail)}`);
     if (entry.target.startsWith('params:')) {
       surfaces.push(`d1:${entry.target}:${JSON.stringify(entry.detail ?? {})}`);
     }
     if (entry.kind === 'event' && entry.target.startsWith('r2meta:')) {
-      const key = String((entry.detail as { key?: unknown } | undefined)?.key ?? '');
       const canaryPresent =
         (entry.detail as { canaryPresent?: unknown } | undefined)?.canaryPresent === true;
       if (canaryPresent) {
@@ -685,7 +837,7 @@ export function corruptQueueObservationDomain(
       corrupted.secretLeak = !corrupted.secretLeak;
       break;
     default:
-      throw new Error(`Unknown queue domain ${domain}`);
+      throw new Error('Unknown queue observation domain');
   }
   return corrupted;
 }

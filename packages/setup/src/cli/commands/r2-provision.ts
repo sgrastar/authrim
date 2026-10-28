@@ -90,7 +90,9 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
       config,
     });
   }
-  const requiredBuckets = getRequiredR2Buckets(env);
+  const requiredBuckets = getRequiredR2Buckets(env, {
+    logArchiveBucketName: config.logging?.archive.bucketName,
+  });
   const missingBuckets = requiredBuckets.filter((bucket) => !lock.r2?.[bucket.binding]?.name);
   const legacyBuckets = requiredBuckets.filter((bucket) => {
     const recorded = lock.r2?.[bucket.binding];
@@ -314,6 +316,7 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
       await saveLockFile(resourceBaseLock, lockPath);
     }
     const provisionedBuckets = await provisionR2Buckets(env, {
+      logArchiveBucketName: config.logging?.archive.bucketName,
       existing: resourceBaseLock.r2,
       onProgress: (message) => console.log(chalk.gray(message)),
     });

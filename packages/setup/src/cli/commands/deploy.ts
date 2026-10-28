@@ -1,3 +1,7 @@
+import {
+  waitForLogArchiveReadiness,
+  prepareLogArchiveReadinessAttempt,
+} from '../../core/log-archive-readiness.js';
 /**
  * Deploy Command
  *
@@ -2049,7 +2053,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       deploymentSecrets = await loadDeploySecretsFromKeys(
         existsSync(keysDir) ? keysDir : undefined,
         componentsToDeply,
-        { replicationWriter: config.features.replicationWriter !== undefined }
+        { rootDir, env, replicationWriter: config.features.replicationWriter !== undefined }
       );
       deploymentSecrets = { ...deploymentSecrets, ...promptedDirectControlSecrets };
     }
@@ -2116,6 +2120,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               })),
               ...getRequiredR2Buckets(env, {
                 includeFeatureBuckets: config.features.r2?.enabled === true,
+                logArchiveBucketName: config.logging?.archive.bucketName,
               }),
             ].map((bucket) => [bucket.name, bucket] as const)
           ).values(),
@@ -4256,6 +4261,57 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       !(await cleanupEphemeralSetupMachineAccess())
     ) {
       abortLockedDeployment('setup_machine_access_cleanup_failed');
+    }
+
+    if (
+      !options.dryRun &&
+      summary.failedCount === 0 &&
+      bootstrapSuccess &&
+      uiWorkersSuccess &&
+      config.logging?.archive
+    ) {
+      let owned = currentLock.logArchive;
+      const signing = currentLock.controlKeyState?.smokeRpc;
+      if (!owned || !signing || !deploymentApiBaseUrl)
+        throw new Error('log_archive_readiness_identity_required');
+      const attempt = prepareLogArchiveReadinessAttempt(
+        config.logging.archive,
+        owned,
+        currentLock.workers
+      );
+      owned = {
+        ...owned,
+        activation: { ...owned.activation, pendingRuntimeProbe: attempt, runtimeProof: undefined },
+      };
+      currentLock = { ...currentLock, logArchive: owned };
+      await saveLockFile(currentLock, lockPath);
+      console.log(
+        chalk.gray('Verifying the Worker log write/read path through the owned Iceberg table...')
+      );
+      const runtimeProof = await waitForLogArchiveReadiness({
+        apiBaseUrl: deploymentApiBaseUrl,
+        environmentId: env,
+        keysDir: getResolvedKeysDir(),
+        activeSlot: signing.activeSlot,
+        activeKeyId: signing.activeKeyId,
+        archive: config.logging.archive,
+        owned,
+        attempt,
+        onProgress: (message) => console.log(chalk.gray(message)),
+      });
+      currentLock = {
+        ...currentLock,
+        logArchive: {
+          ...owned,
+          activation: { ...owned.activation, runtimeProof, pendingRuntimeProbe: undefined },
+        },
+      };
+      await saveLockFile(currentLock, lockPath);
+      console.log(
+        chalk.gray(
+          '✓ Log Parquet/Iceberg write, snapshot visibility and authenticated read verified.'
+        )
+      );
     }
 
     // Report component results now, but do not claim the deployment is complete until the

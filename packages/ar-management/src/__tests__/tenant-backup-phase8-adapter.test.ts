@@ -14,7 +14,22 @@ const bundle = vi.hoisted(() => ({
   datasets: vi.fn(),
   byId: vi.fn(),
   head: vi.fn(),
+  activateLogHolds: vi.fn(async () => {}),
+  cleanupLogHolds: vi.fn(async () => ({ complete: true, remaining: 0 })),
 }));
+vi.mock('../tenant-backup-iceberg-log-restore-port', async (original) => {
+  const actual = await original<typeof import('../tenant-backup-iceberg-log-restore-port')>();
+  return {
+    ...actual,
+    createTenantBackupIcebergLogRestorePorts: (
+      ...args: Parameters<typeof actual.createTenantBackupIcebergLogRestorePorts>
+    ) => ({
+      ...actual.createTenantBackupIcebergLogRestorePorts(...args),
+      activateRestoredLogHolds: bundle.activateLogHolds,
+      cleanupRestoredLogHolds: bundle.cleanupLogHolds,
+    }),
+  };
+});
 vi.mock('../tenant-backup-restore-authority', async (original) => {
   const actual = await original<typeof import('../tenant-backup-restore-authority')>();
   return {
@@ -109,6 +124,12 @@ function database() {
 function ports(): Phase8InstalledAdapterPorts {
   return {
     tenantKey: 'tenant-key-a',
+    icebergLogs: {
+      records: { ...recordSnapshot('iceberg-log:records'), prepareBoundary: vi.fn() },
+      prepareBoundary: vi.fn(),
+      prepareSources: vi.fn(async () => ({ cursor: null, done: true })),
+      prepareArtifactResources: vi.fn(async () => ({ cursor: null, done: true })),
+    },
     export: {
       prepareSources: vi.fn(),
       assertSources: vi.fn(),
@@ -165,7 +186,7 @@ it('installs the complete Core, PII, and Admin Phase 8 SQL adapter', () => {
     fixed: ['DB_ADMIN'],
   });
   expect(adapter.export.datasets(all)).toHaveLength(
-    PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length + 9
+    PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length + 12
   );
   expect(adapter.export.datasets(all).map(({ id }) => id)).toContain(
     'pii.identity_identifier_replacement_challenges'
@@ -291,4 +312,61 @@ it('reads the bundle roles from the validated input under the sealed restore pla
   await expect(bundle.guardInput!.loadBundleRoles(context)).rejects.toThrow(
     'backup_restore_authority_roles_unavailable'
   );
+});
+
+it('releases restored log holds only after target activation verification succeeds', async () => {
+  const installedPorts = ports();
+  const verifyActivation = vi.fn(async () => {});
+  installedPorts.import.verifyActivation = verifyActivation;
+  const adapter = createPhase8TenantBackupInstalledAdapter({
+    env: {
+      DB_ADMIN: database(),
+      PII_ENCRYPTION_KEY: '11'.repeat(32),
+      OBJECT_ENCRYPTION_ROOT_KEY: '22'.repeat(32),
+      EXPORT_ARTIFACTS: {},
+    } as unknown as Env,
+    planned: planned(),
+    ports: installedPorts,
+  });
+  const context = { operation: { kind: 'import' } } as never;
+  const digest = 'ab'.repeat(32);
+  bundle.activateLogHolds.mockClear();
+  await adapter.import.verifyActivation(context, digest);
+  expect(bundle.activateLogHolds).toHaveBeenCalledWith(context, digest);
+  expect(verifyActivation.mock.invocationCallOrder[0]).toBeLessThan(
+    bundle.activateLogHolds.mock.invocationCallOrder[0]
+  );
+  verifyActivation.mockRejectedValueOnce(new Error('target_not_verified'));
+  bundle.activateLogHolds.mockClear();
+  await expect(adapter.import.verifyActivation(context, digest)).rejects.toThrow(
+    'target_not_verified'
+  );
+  expect(bundle.activateLogHolds).not.toHaveBeenCalled();
+});
+
+it('finishes bounded restored log cleanup before deleting the import inventory', async () => {
+  const installedPorts = ports();
+  const cleanupAdditionalPage = vi.fn(async () => ({ done: true }));
+  installedPorts.cleanup.cleanupAdditionalPage = cleanupAdditionalPage;
+  const adapter = createPhase8TenantBackupInstalledAdapter({
+    env: {
+      DB_ADMIN: database(),
+      PII_ENCRYPTION_KEY: '11'.repeat(32),
+      OBJECT_ENCRYPTION_ROOT_KEY: '22'.repeat(32),
+      EXPORT_ARTIFACTS: {},
+    } as unknown as Env,
+    planned: planned(),
+    ports: installedPorts,
+  });
+  const context = { operation: { kind: 'import' } } as never;
+  bundle.cleanupLogHolds.mockClear();
+  bundle.cleanupLogHolds.mockResolvedValueOnce({ complete: false, remaining: 1 });
+  await expect(adapter.cleanup.cleanupAdditionalPage(context)).resolves.toEqual({ done: false });
+  expect(cleanupAdditionalPage).not.toHaveBeenCalled();
+  await expect(adapter.cleanup.cleanupAdditionalPage(context)).resolves.toEqual({ done: true });
+  expect(bundle.cleanupLogHolds).toHaveBeenCalledWith(context);
+  expect(cleanupAdditionalPage).toHaveBeenCalledWith(context);
+  bundle.cleanupLogHolds.mockClear();
+  await adapter.cleanup.cleanupAdditionalPage({ operation: { kind: 'export' } } as never);
+  expect(bundle.cleanupLogHolds).not.toHaveBeenCalled();
 });

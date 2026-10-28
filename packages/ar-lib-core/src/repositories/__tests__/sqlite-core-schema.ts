@@ -6,6 +6,7 @@ import { renderPortableMigrationSql } from '../../migrations/sql-portability';
 const MIGRATIONS = {
   core: new URL('../../../../../migrations/core/d1/', import.meta.url),
   pii: new URL('../../../../../migrations/pii/d1/', import.meta.url),
+  admin: new URL('../../../../../migrations/admin/d1/', import.meta.url),
 };
 
 type SqlValue = string | number | null;

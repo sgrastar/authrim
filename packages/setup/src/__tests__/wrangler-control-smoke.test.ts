@@ -1,7 +1,7 @@
+import { createArchiveTestConfig, generateArchiveTestWrangler } from './fixtures/log-archive.js';
 import { describe, expect, it } from 'vitest';
-import { createDefaultConfig } from '../core/config.js';
 import type { WorkerComponent } from '../core/naming.js';
-import { generateWranglerConfig, toToml } from '../core/wrangler.js';
+import { toToml } from '../core/wrangler.js';
 
 const RUNTIME_COMPONENTS = [
   'ar-lib-core',
@@ -20,7 +20,7 @@ const RUNTIME_COMPONENTS = [
 ] as const satisfies readonly WorkerComponent[];
 
 function smokeConfig() {
-  const config = createDefaultConfig('smoke-test');
+  const config = createArchiveTestConfig('smoke-test');
   config.keys.keyId = 'smoke-test-signing-key';
   config.urls = {
     api: { auto: 'https://smoke-test-ar-router.example.workers.dev' },
@@ -40,7 +40,7 @@ describe('Control runtime smoke wrangler topology', () => {
   it.each(RUNTIME_COMPONENTS)(
     'adds private RPC identity and version observation to %s',
     (component) => {
-      const generated = generateWranglerConfig(component, smokeConfig(), { d1: {}, kv: {} });
+      const generated = generateArchiveTestWrangler(component, smokeConfig(), { d1: {}, kv: {} });
 
       expect(generated.version_metadata).toEqual({ binding: 'CONTROL_SMOKE_VERSION' });
       expect(generated.vars).toMatchObject({
@@ -56,7 +56,7 @@ describe('Control runtime smoke wrangler topology', () => {
   );
 
   it('binds Control to every runtime through the named smoke entrypoint', () => {
-    const generated = generateWranglerConfig('ar-control', smokeConfig(), { d1: {}, kv: {} });
+    const generated = generateArchiveTestWrangler('ar-control', smokeConfig(), { d1: {}, kv: {} });
 
     expect(generated.workers_dev).toBe(false);
     expect(generated.routes).toBeUndefined();
@@ -82,7 +82,7 @@ describe('Control runtime smoke wrangler topology', () => {
   });
 
   it('can generate an initial Control config without unresolved smoke targets', () => {
-    const generated = generateWranglerConfig(
+    const generated = generateArchiveTestWrangler(
       'ar-control',
       smokeConfig(),
       { d1: {}, kv: {} },
@@ -136,12 +136,14 @@ describe('Control runtime smoke wrangler topology', () => {
       },
     };
 
-    expect(generateWranglerConfig('ar-control', smokeConfig(), resources).vars).toMatchObject({
+    expect(generateArchiveTestWrangler('ar-control', smokeConfig(), resources).vars).toMatchObject({
       RUNTIME_REGISTRY_SIGNING_ACTIVE_SLOT: 'B',
       SMOKE_RPC_SIGNING_ACTIVE_SLOT: 'B',
       SMOKE_RPC_SIGNING_ACTIVE_KID: 'smoke-v2',
     });
-    expect(generateWranglerConfig('ar-management', smokeConfig(), resources).vars).toMatchObject({
+    expect(
+      generateArchiveTestWrangler('ar-management', smokeConfig(), resources).vars
+    ).toMatchObject({
       LOOKUP_HMAC_ACTIVE_SLOT: 'B',
       LOOKUP_HMAC_ACTIVE_GENERATION: '2',
     });
@@ -149,7 +151,7 @@ describe('Control runtime smoke wrangler topology', () => {
 
   it('does not expose the smoke entrypoint metadata on non-runtime Workers', () => {
     for (const component of ['ar-router'] as const) {
-      const generated = generateWranglerConfig(component, smokeConfig(), { d1: {}, kv: {} });
+      const generated = generateArchiveTestWrangler(component, smokeConfig(), { d1: {}, kv: {} });
       expect(generated.version_metadata).toBeUndefined();
       expect(generated.vars.AUTHRIM_WORKER_SCRIPT_NAME).toBeUndefined();
       expect(generated.services).toContainEqual({
@@ -160,7 +162,10 @@ describe('Control runtime smoke wrangler topology', () => {
   });
 
   it('exposes runtime smoke metadata on discovery because it resolves tenant Core', () => {
-    const generated = generateWranglerConfig('ar-discovery', smokeConfig(), { d1: {}, kv: {} });
+    const generated = generateArchiveTestWrangler('ar-discovery', smokeConfig(), {
+      d1: {},
+      kv: {},
+    });
 
     expect(generated.version_metadata).toEqual({ binding: 'CONTROL_SMOKE_VERSION' });
     expect(generated.vars.AUTHRIM_WORKER_SCRIPT_NAME).toBe('smoke-test-ar-discovery');

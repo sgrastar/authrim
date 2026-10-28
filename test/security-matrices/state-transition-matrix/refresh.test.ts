@@ -3,7 +3,7 @@
  *
  * Lifecycle under test: absent → version 1 → version N → absent (expired/revoked/theft).
  * There is no persistent compromised state; theft is observed as family deletion plus
- * exactly one synchronous critical audit (event_log INSERT + audit queue enqueue).
+ * exactly one synchronous critical audit committed to authenticated canonical staging.
  */
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 import { createSecurityMatrixEnv, type SecurityMatrixEnvKit } from '../fixtures/env';

@@ -1,22 +1,21 @@
+import { createArchiveTestConfig, generateArchiveTestWrangler } from './fixtures/log-archive.js';
 import { describe, expect, it } from 'vitest';
 import {
   buildResourceIdsFromLock,
   generateRoutes,
-  generateWranglerConfig,
   parseWranglerToml,
   toToml,
 } from '../core/wrangler.js';
 import { MANAGED_WORKER_DEPLOY_BUILD_COMMAND } from '../core/managed-worker-deploy.js';
-import { createDefaultConfig } from '../core/config.js';
 import type { AuthrimConfig } from '../core/config.js';
 import type { AuthrimLock } from '../core/lock.js';
 import { WORKER_COMPONENTS, getRequiredDataRolesForComponent } from '../core/naming.js';
 
 describe('Worker placement generation', () => {
   it('binds UserInfo to the read-only guest readiness entrypoint', () => {
-    const config = createDefaultConfig('test');
+    const config = createArchiveTestConfig('test');
     config.components.adminUi = false;
-    const generated = generateWranglerConfig('ar-userinfo', config, { d1: {}, kv: {} });
+    const generated = generateArchiveTestWrangler('ar-userinfo', config, { d1: {}, kv: {} });
     expect(generated.services).toContainEqual({
       binding: 'GUEST_UPGRADE_READINESS',
       service: 'test-ar-management',
@@ -32,9 +31,9 @@ describe('Worker placement generation', () => {
     );
   });
   it('binds the Admin database to UserInfo for the identity mapping and Destination Profile', () => {
-    const config = createDefaultConfig('test');
+    const config = createArchiveTestConfig('test');
     config.components.adminUi = false;
-    const generated = generateWranglerConfig('ar-userinfo', config, {
+    const generated = generateArchiveTestWrangler('ar-userinfo', config, {
       d1: {
         DB_ADMIN: { id: 'admin-db-id', name: 'test-authrim-admin-db' },
         LOOKUP_DB: { id: 'lookup-db-id', name: 'test-authrim-lookup-db' },
@@ -48,9 +47,9 @@ describe('Worker placement generation', () => {
     });
   });
   it('protects generated deployment config with the setup-managed build guard', () => {
-    const config = createDefaultConfig('test');
+    const config = createArchiveTestConfig('test');
     config.components.adminUi = false;
-    const generated = generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} });
+    const generated = generateArchiveTestWrangler('ar-auth', config, { d1: {}, kv: {} });
 
     expect(generated.build).toEqual({ command: MANAGED_WORKER_DEPLOY_BUILD_COMMAND });
     expect(toToml(generated, 'test')).toContain(
@@ -59,7 +58,7 @@ describe('Worker placement generation', () => {
   });
 
   it('defaults to off and permits an explicit Smart Placement experiment', () => {
-    const config = createDefaultConfig('test');
+    const config = createArchiveTestConfig('test');
     config.urls = {
       api: { custom: null, auto: 'https://test-ar-router.example.workers.dev' },
       loginUi: {
@@ -73,18 +72,20 @@ describe('Worker placement generation', () => {
         sameAsApi: false,
       },
     };
-    expect(generateWranglerConfig('ar-management', config, { d1: {}, kv: {} }).placement).toEqual({
+    expect(
+      generateArchiveTestWrangler('ar-management', config, { d1: {}, kv: {} }).placement
+    ).toEqual({
       mode: 'off',
     });
     expect(
-      generateWranglerConfig('ar-management', config, { d1: {}, kv: {} }, undefined, {
+      generateArchiveTestWrangler('ar-management', config, { d1: {}, kv: {} }, undefined, {
         placementMode: 'smart',
       }).placement
     ).toEqual({ mode: 'smart' });
   });
 
   it('raises CPU and subrequest limits only for ar-management', () => {
-    const config = createDefaultConfig('test');
+    const config = createArchiveTestConfig('test');
     config.urls = {
       api: { custom: null, auto: 'https://test-ar-router.example.workers.dev' },
       loginUi: {
@@ -98,17 +99,19 @@ describe('Worker placement generation', () => {
         sameAsApi: false,
       },
     };
-    const management = generateWranglerConfig('ar-management', config, { d1: {}, kv: {} });
+    const management = generateArchiveTestWrangler('ar-management', config, { d1: {}, kv: {} });
     expect(management.limits).toEqual({ cpu_ms: 300_000, subrequests: 50_000 });
     expect(toToml(management, 'test')).toContain(
       '[env.test.limits]\ncpu_ms = 300000\nsubrequests = 50000\n'
     );
     expect(toToml(management)).toContain('[limits]\ncpu_ms = 300000\nsubrequests = 50000\n');
-    expect(generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} }).limits).toBeUndefined();
+    expect(
+      generateArchiveTestWrangler('ar-auth', config, { d1: {}, kv: {} }).limits
+    ).toBeUndefined();
   });
 
   it('enables same-Worker loopback RPC exports only for ar-management', () => {
-    const config = createDefaultConfig('test');
+    const config = createArchiveTestConfig('test');
     config.urls = {
       api: { custom: null, auto: 'https://test-ar-router.example.workers.dev' },
       loginUi: {
@@ -124,11 +127,10 @@ describe('Worker placement generation', () => {
     };
     const resources = { d1: {}, kv: {} };
 
-    expect(generateWranglerConfig('ar-management', config, resources).compatibility_flags).toEqual([
-      'nodejs_compat',
-      'enable_ctx_exports',
-    ]);
-    expect(generateWranglerConfig('ar-auth', config, resources).compatibility_flags).toEqual([
+    expect(
+      generateArchiveTestWrangler('ar-management', config, resources).compatibility_flags
+    ).toEqual(['nodejs_compat', 'enable_ctx_exports']);
+    expect(generateArchiveTestWrangler('ar-auth', config, resources).compatibility_flags).toEqual([
       'nodejs_compat',
     ]);
   });
@@ -136,7 +138,7 @@ describe('Worker placement generation', () => {
 
 describe('R2 binding generation', () => {
   it('connects every provisioned standard bucket to its least-privilege Worker consumers', () => {
-    const config = createDefaultConfig('full-r2');
+    const config = createArchiveTestConfig('full-r2');
     config.urls = {
       api: { custom: null, auto: 'https://full-r2-ar-router.example.workers.dev' },
       loginUi: {
@@ -165,29 +167,25 @@ describe('R2 binding generation', () => {
       },
     };
 
-    expect(generateWranglerConfig('ar-control', config, resources).r2_buckets).toEqual([
+    expect(generateArchiveTestWrangler('ar-control', config, resources).r2_buckets).toEqual([
       { binding: 'MIGRATION_RELEASES', bucket_name: 'full-r2-migration-releases' },
     ]);
-    expect(generateWranglerConfig('ar-plugin-runner', config, resources).r2_buckets).toEqual([
+    expect(generateArchiveTestWrangler('ar-plugin-runner', config, resources).r2_buckets).toEqual([
       { binding: 'PLUGIN_BUNDLES', bucket_name: 'full-r2-plugin-bundles' },
     ]);
-    expect(generateWranglerConfig('ar-auth', config, resources).r2_buckets).toEqual([
-      { binding: 'DIAGNOSTIC_LOGS', bucket_name: 'full-r2-diagnostic-logs' },
-      { binding: 'AUDIT_ARCHIVE', bucket_name: 'full-r2-audit-archive' },
-    ]);
-    expect(generateWranglerConfig('ar-management', config, resources).r2_buckets).toEqual([
+    expect(generateArchiveTestWrangler('ar-auth', config, resources).r2_buckets).toBeUndefined();
+    expect(generateArchiveTestWrangler('ar-management', config, resources).r2_buckets).toEqual([
       { binding: 'PUBLIC_ASSETS', bucket_name: 'full-r2-public-assets' },
-      { binding: 'DIAGNOSTIC_LOGS', bucket_name: 'full-r2-diagnostic-logs' },
-      { binding: 'AUDIT_ARCHIVE', bucket_name: 'full-r2-audit-archive' },
       { binding: 'IMPORT_ARTIFACTS', bucket_name: 'full-r2-import-artifacts' },
       { binding: 'EXPORT_ARTIFACTS', bucket_name: 'full-r2-export-artifacts' },
       { binding: 'SENSITIVE_DETAILS', bucket_name: 'full-r2-sensitive-details' },
+      { binding: 'LOG_ARCHIVE', bucket_name: 'full-r2-log-archive' },
     ]);
   });
 
   it('does not ask Wrangler to provision unrecorded optional buckets during deploy', () => {
-    const config = createDefaultConfig('baseline-r2');
-    config.features.r2 = { enabled: false };
+    const config = createArchiveTestConfig('baseline-r2');
+    config.features.r2 = { enabled: true };
     config.urls = {
       api: { custom: null, auto: 'https://baseline-r2-ar-router.example.workers.dev' },
       loginUi: {
@@ -209,15 +207,17 @@ describe('R2 binding generation', () => {
       },
     };
 
-    expect(generateWranglerConfig('ar-control', config, resources).r2_buckets).toEqual([
+    expect(generateArchiveTestWrangler('ar-control', config, resources).r2_buckets).toEqual([
       {
         binding: 'MIGRATION_RELEASES',
         bucket_name: 'baseline-r2-migration-releases',
       },
     ]);
-    expect(generateWranglerConfig('ar-auth', config, resources).r2_buckets).toBeUndefined();
-    expect(generateWranglerConfig('ar-bridge', config, resources).r2_buckets).toBeUndefined();
-    expect(generateWranglerConfig('ar-management', config, resources).r2_buckets).toBeUndefined();
+    expect(generateArchiveTestWrangler('ar-auth', config, resources).r2_buckets).toBeUndefined();
+    expect(generateArchiveTestWrangler('ar-bridge', config, resources).r2_buckets).toBeUndefined();
+    expect(generateArchiveTestWrangler('ar-management', config, resources).r2_buckets).toEqual([
+      { binding: 'LOG_ARCHIVE', bucket_name: 'baseline-r2-log-archive' },
+    ]);
   });
 });
 
@@ -354,16 +354,16 @@ describe('generateRoutes', () => {
       kv: {},
     };
 
-    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
-    const libCoreConfig = generateWranglerConfig('ar-lib-core', config, resourceIds);
-    const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
-    const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
-    const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
-    const vcConfig = generateWranglerConfig('ar-vc', config, resourceIds);
-    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
-    const bridgeConfig = generateWranglerConfig('ar-bridge', config, resourceIds);
-    const samlConfig = generateWranglerConfig('ar-saml', config, resourceIds);
-    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+    const authConfig = generateArchiveTestWrangler('ar-auth', config, resourceIds);
+    const libCoreConfig = generateArchiveTestWrangler('ar-lib-core', config, resourceIds);
+    const managementConfig = generateArchiveTestWrangler('ar-management', config, resourceIds);
+    const tokenConfig = generateArchiveTestWrangler('ar-token', config, resourceIds);
+    const discoveryConfig = generateArchiveTestWrangler('ar-discovery', config, resourceIds);
+    const vcConfig = generateArchiveTestWrangler('ar-vc', config, resourceIds);
+    const agentAccessConfig = generateArchiveTestWrangler('ar-agent-access', config, resourceIds);
+    const bridgeConfig = generateArchiveTestWrangler('ar-bridge', config, resourceIds);
+    const samlConfig = generateArchiveTestWrangler('ar-saml', config, resourceIds);
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, resourceIds);
 
     for (const challengeStoreConsumer of [authConfig, managementConfig, samlConfig, bridgeConfig]) {
       expect(challengeStoreConsumer.vars.AUTHRIM_CHALLENGE_SHARDS).toBe('4');
@@ -422,7 +422,7 @@ describe('generateRoutes', () => {
     expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
     // ar-async reads the browser session for device and CIBA approvals and rate-limits device user
     // code guesses with the UserCodeRateLimiter Durable Object, which ar-lib-core defines.
-    const asyncConfig = generateWranglerConfig('ar-async', config, resourceIds);
+    const asyncConfig = generateArchiveTestWrangler('ar-async', config, resourceIds);
     expect(asyncConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
         {
@@ -476,7 +476,7 @@ describe('generateRoutes', () => {
     expect(vcConfig.vars.VC_TRANSACTION_CODE_HMAC_SECRET).toBe('');
     // Credential issuance reads Settings API values (custom claim schemas).
     expect(
-      generateWranglerConfig('ar-vc', config, {
+      generateArchiveTestWrangler('ar-vc', config, {
         d1: {},
         kv: { SETTINGS: 'settings-id', AUTHRIM_CONFIG: 'config-id' },
       }).kv_namespaces
@@ -496,7 +496,9 @@ describe('generateRoutes', () => {
     );
     expect(authConfig.send_email).toBeUndefined();
     expect(managementConfig.send_email).toBeUndefined();
-    expect(authConfig.services).toEqual([
+    expect(
+      authConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual([
       { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
       {
         binding: 'ACCOUNT_PROVISIONER',
@@ -518,7 +520,9 @@ describe('generateRoutes', () => {
         },
       },
     ]);
-    expect(bridgeConfig.services).toEqual([
+    expect(
+      bridgeConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual([
       {
         binding: 'EXTERNAL_IDP_ACCOUNT_PROVISIONER',
         service: 'emailtest-ar-management',
@@ -539,7 +543,7 @@ describe('generateRoutes', () => {
         },
       },
     ]);
-    const bootstrapBridgeConfig = generateWranglerConfig(
+    const bootstrapBridgeConfig = generateArchiveTestWrangler(
       'ar-bridge',
       config,
       resourceIds,
@@ -551,21 +555,38 @@ describe('generateRoutes', () => {
         expect.objectContaining({ binding: 'EXTERNAL_IDP_ACCOUNT_PROVISIONER' }),
       ])
     );
-    expect(bootstrapBridgeConfig.services).toEqual(
+    expect(
+      bootstrapBridgeConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual(
       bridgeConfig.services?.filter(
-        (service) => service.binding !== 'EXTERNAL_IDP_ACCOUNT_PROVISIONER'
+        (service) =>
+          service.binding !== 'EXTERNAL_IDP_ACCOUNT_PROVISIONER' &&
+          service.binding !== 'LOG_ARCHIVE_WRITER'
       )
     );
-    const bootstrapAuthConfig = generateWranglerConfig('ar-auth', config, resourceIds, undefined, {
-      includeAuthAccountProvisioner: false,
-    });
+    const bootstrapAuthConfig = generateArchiveTestWrangler(
+      'ar-auth',
+      config,
+      resourceIds,
+      undefined,
+      {
+        includeAuthAccountProvisioner: false,
+      }
+    );
     expect(bootstrapAuthConfig.services).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'ACCOUNT_PROVISIONER' })])
     );
-    expect(bootstrapAuthConfig.services).toEqual(
-      authConfig.services?.filter((service) => service.binding !== 'ACCOUNT_PROVISIONER')
+    expect(
+      bootstrapAuthConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual(
+      authConfig.services?.filter(
+        (service) =>
+          service.binding !== 'ACCOUNT_PROVISIONER' && service.binding !== 'LOG_ARCHIVE_WRITER'
+      )
     );
-    expect(managementConfig.services).toEqual([
+    expect(
+      managementConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual([
       { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
       {
         binding: 'CONTROL',
@@ -592,7 +613,7 @@ describe('generateRoutes', () => {
     expect(toToml(managementConfig, 'emailtest')).not.toContain(
       'entrypoint = "VCIssuerEntrypoint"'
     );
-    const vcEnabledManagement = generateWranglerConfig(
+    const vcEnabledManagement = generateArchiveTestWrangler(
       'ar-management',
       { ...config, components: { ...config.components, vc: true } },
       resourceIds
@@ -605,7 +626,9 @@ describe('generateRoutes', () => {
     expect(discoveryConfig.durable_objects?.bindings ?? []).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'KEY_MANAGER' })])
     );
-    expect(discoveryConfig.services).toEqual([
+    expect(
+      discoveryConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual([
       {
         binding: 'KEY_MANAGER_PUBLIC',
         service: 'emailtest-ar-lib-core',
@@ -616,7 +639,7 @@ describe('generateRoutes', () => {
       'entrypoint = "KeyManagerPublicEntrypoint"'
     );
     // ar-async verifies CIBA id_token_hints with the same public keys (any ID token algorithm).
-    expect(generateWranglerConfig('ar-async', config, resourceIds).services).toContainEqual({
+    expect(generateArchiveTestWrangler('ar-async', config, resourceIds).services).toContainEqual({
       binding: 'KEY_MANAGER_PUBLIC',
       service: 'emailtest-ar-lib-core',
       entrypoint: 'KeyManagerPublicEntrypoint',
@@ -641,7 +664,9 @@ describe('generateRoutes', () => {
       tag: 'ar-agent-access-local-v1',
       new_sqlite_classes: ['AgentAccessMcpAgent'],
     });
-    expect(agentAccessConfig.services).toEqual([
+    expect(
+      agentAccessConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual([
       { binding: 'OP_MANAGEMENT', service: 'emailtest-ar-management' },
       { binding: 'OP_DISCOVERY', service: 'emailtest-ar-discovery' },
       {
@@ -734,10 +759,16 @@ describe('generateRoutes', () => {
     } satisfies AuthrimConfig;
 
     const resourceIds = { d1: {}, kv: {} };
-    const initialConfig = generateWranglerConfig('ar-lib-core', config, resourceIds);
-    const updateConfig = generateWranglerConfig('ar-lib-core', config, resourceIds, undefined, {
-      includeDurableObjectMigrations: false,
-    });
+    const initialConfig = generateArchiveTestWrangler('ar-lib-core', config, resourceIds);
+    const updateConfig = generateArchiveTestWrangler(
+      'ar-lib-core',
+      config,
+      resourceIds,
+      undefined,
+      {
+        includeDurableObjectMigrations: false,
+      }
+    );
 
     expect(initialConfig.migrations?.[0]?.new_sqlite_classes).toContain('SessionStore');
     expect(updateConfig.durable_objects?.bindings).toEqual(
@@ -810,9 +841,15 @@ describe('generateRoutes', () => {
       profile: 'basic-op',
     } satisfies AuthrimConfig;
 
-    const updateConfig = generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} }, undefined, {
-      includeDurableObjectMigrations: false,
-    });
+    const updateConfig = generateArchiveTestWrangler(
+      'ar-auth',
+      config,
+      { d1: {}, kv: {} },
+      undefined,
+      {
+        includeDurableObjectMigrations: false,
+      }
+    );
 
     expect(updateConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
   });
@@ -959,8 +996,8 @@ describe('generateRoutes', () => {
       profile: 'basic-op',
     } satisfies AuthrimConfig;
 
-    const bridgeConfig = generateWranglerConfig('ar-bridge', config, { d1: {}, kv: {} });
-    const authConfig = generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} });
+    const bridgeConfig = generateArchiveTestWrangler('ar-bridge', config, { d1: {}, kv: {} });
+    const authConfig = generateArchiveTestWrangler('ar-auth', config, { d1: {}, kv: {} });
     const toml = toToml(bridgeConfig, 'prod');
 
     expect(bridgeConfig.triggers).toEqual({ crons: ['*/15 * * * *'] });
@@ -1077,18 +1114,18 @@ describe('generateRoutes', () => {
       },
     };
 
-    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
-    const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
-    const controlConfig = generateWranglerConfig(
+    const authConfig = generateArchiveTestWrangler('ar-auth', config, resourceIds);
+    const discoveryConfig = generateArchiveTestWrangler('ar-discovery', config, resourceIds);
+    const controlConfig = generateArchiveTestWrangler(
       'ar-control',
-      { ...config, cloudflare: { accountId: 'account-id' } },
+      { ...config, cloudflare: { accountId: 'a'.repeat(32) } },
       resourceIds
     );
-    const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
-    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
-    const asyncConfig = generateWranglerConfig('ar-async', config, resourceIds);
-    const policyConfig = generateWranglerConfig('ar-policy', config, resourceIds);
-    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+    const managementConfig = generateArchiveTestWrangler('ar-management', config, resourceIds);
+    const agentAccessConfig = generateArchiveTestWrangler('ar-agent-access', config, resourceIds);
+    const asyncConfig = generateArchiveTestWrangler('ar-async', config, resourceIds);
+    const policyConfig = generateArchiveTestWrangler('ar-policy', config, resourceIds);
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, resourceIds);
 
     expect(authConfig.d1_databases).toEqual(
       expect.arrayContaining([
@@ -1143,7 +1180,7 @@ describe('generateRoutes', () => {
     expect(controlConfig.vars).toMatchObject({
       AUTHRIM_ENVIRONMENT_NAME: 'tenantd1',
       AUTHRIM_DEPLOYMENT_TARGET: 'default',
-      CLOUDFLARE_ACCOUNT_ID: 'account-id',
+      CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
       CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED: 'false',
       RUNTIME_REGISTRY_SIGNING_ACTIVE_SLOT: 'A',
     });
@@ -1154,7 +1191,9 @@ describe('generateRoutes', () => {
       },
     ]);
     expect(controlConfig.services).toHaveLength(13);
-    expect(controlConfig.services).toEqual(
+    expect(
+      controlConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           binding: 'SMOKE_AR_LIB_CORE',
@@ -1264,7 +1303,7 @@ describe('generateRoutes', () => {
       )
     )) {
       expect(
-        generateWranglerConfig(component, config, resourceIds).kv_namespaces,
+        generateArchiveTestWrangler(component, config, resourceIds).kv_namespaces,
         `${component} must receive the signed tenant runtime registry`
       ).toEqual(
         expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
@@ -1365,8 +1404,8 @@ describe('generateRoutes', () => {
     } satisfies AuthrimConfig;
 
     const resourceIds = { d1: {}, kv: {} };
-    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
-    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+    const authConfig = generateArchiveTestWrangler('ar-auth', config, resourceIds);
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, resourceIds);
 
     expect(authConfig.hyperdrive).toEqual([
       { binding: 'HYPERDRIVE_CORE_PRIMARY', id: 'hyperdrive-core-id' },
@@ -1503,10 +1542,10 @@ crons = ["*/15 * * * *"]
       },
     };
 
-    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
-    const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
-    const userinfoConfig = generateWranglerConfig('ar-userinfo', config, resourceIds);
-    const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
+    const authConfig = generateArchiveTestWrangler('ar-auth', config, resourceIds);
+    const tokenConfig = generateArchiveTestWrangler('ar-token', config, resourceIds);
+    const userinfoConfig = generateArchiveTestWrangler('ar-userinfo', config, resourceIds);
+    const managementConfig = generateArchiveTestWrangler('ar-management', config, resourceIds);
 
     expect(authConfig.queues?.producers).toEqual([
       { queue: 'queuephase4-audit', binding: 'AUDIT_QUEUE' },
@@ -1668,9 +1707,9 @@ crons = ["*/15 * * * *"]
       kv: {},
     };
 
-    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
-    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
-    const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, resourceIds);
+    const authConfig = generateArchiveTestWrangler('ar-auth', config, resourceIds);
+    const managementConfig = generateArchiveTestWrangler('ar-management', config, resourceIds);
 
     expect(routerConfig.routes).toEqual([
       { pattern: 'conformance.authrim.com/*', zone_name: 'authrim.com' },
@@ -1762,7 +1801,7 @@ crons = ["*/15 * * * *"]
     } satisfies AuthrimConfig;
 
     const resourceIds = { d1: {}, kv: {} };
-    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, resourceIds);
 
     expect(routerConfig.routes).toEqual([
       { pattern: 'test.authrim.com', custom_domain: true },
@@ -1850,7 +1889,7 @@ crons = ["*/15 * * * *"]
       profile: 'basic-op',
     } satisfies AuthrimConfig;
 
-    const routerConfig = generateWranglerConfig('ar-router', config, { d1: {}, kv: {} });
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, { d1: {}, kv: {} });
 
     expect(routerConfig.routes).toEqual([
       { pattern: 'example.com', custom_domain: true },
@@ -1937,7 +1976,7 @@ crons = ["*/15 * * * *"]
     } satisfies AuthrimConfig;
 
     const resourceIds = { d1: {}, kv: {} };
-    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, resourceIds);
 
     expect(routerConfig.routes).toEqual([
       { pattern: 'test.authrim.com/*', zone_name: 'authrim.com' },
@@ -2021,9 +2060,11 @@ crons = ["*/15 * * * *"]
     } satisfies AuthrimConfig;
 
     const resourceIds = { d1: {}, kv: {} };
-    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, resourceIds);
 
-    expect(routerConfig.services).toEqual(
+    expect(
+      routerConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual(
       expect.arrayContaining([
         { binding: 'OP_VC', service: 'test-ar-vc' },
         { binding: 'LOGIN_UI_WORKER', service: 'test-ar-login-ui' },
@@ -2123,9 +2164,9 @@ crons = ["*/15 * * * *"]
         },
       },
     };
-    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
-    const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
-    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
+    const routerConfig = generateArchiveTestWrangler('ar-router', config, resourceIds);
+    const discoveryConfig = generateArchiveTestWrangler('ar-discovery', config, resourceIds);
+    const agentAccessConfig = generateArchiveTestWrangler('ar-agent-access', config, resourceIds);
 
     expect(routerConfig.kv_namespaces).toEqual(
       expect.arrayContaining([
@@ -2146,7 +2187,9 @@ crons = ["*/15 * * * *"]
         { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },
       ])
     );
-    expect(routerConfig.services).toEqual(
+    expect(
+      routerConfig.services?.filter((service) => service.binding !== 'LOG_ARCHIVE_WRITER')
+    ).toEqual(
       expect.arrayContaining([
         { binding: 'LOGIN_UI_WORKER', service: 'test-ar-login-ui' },
         { binding: 'ADMIN_UI_WORKER', service: 'test-ar-admin-ui' },
@@ -2239,9 +2282,9 @@ crons = ["*/15 * * * *"]
       },
     };
 
-    const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
-    const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
-    const bridgeConfig = generateWranglerConfig('ar-bridge', config, resourceIds);
+    const managementConfig = generateArchiveTestWrangler('ar-management', config, resourceIds);
+    const authConfig = generateArchiveTestWrangler('ar-auth', config, resourceIds);
+    const bridgeConfig = generateArchiveTestWrangler('ar-bridge', config, resourceIds);
 
     expect(managementConfig.r2_buckets).toEqual(
       expect.arrayContaining([
@@ -2278,8 +2321,8 @@ crons = ["*/15 * * * *"]
     expect(bridgeConfig.r2_buckets).toEqual(
       expect.arrayContaining([
         {
-          binding: 'DIAGNOSTIC_LOGS',
-          bucket_name: 'imports-diagnostic-logs',
+          binding: 'SENSITIVE_DETAILS',
+          bucket_name: 'imports-sensitive-details',
         },
         {
           binding: 'SENSITIVE_DETAILS',
@@ -2298,7 +2341,7 @@ crons = ["*/15 * * * *"]
 
 describe('registered schema references', () => {
   it('rejects a management Worker variable larger than Cloudflare allows', () => {
-    const config = createDefaultConfig('prod');
+    const config = createArchiveTestConfig('prod');
     config.urls = {
       api: { custom: null, auto: 'https://prod-ar-router.example.workers.dev' },
       loginUi: {
@@ -2319,7 +2362,7 @@ describe('registered schema references', () => {
     );
 
     expect(() =>
-      generateWranglerConfig('ar-management', config, {
+      generateArchiveTestWrangler('ar-management', config, {
         d1: {},
         kv: {},
         registeredSchemaReferences: references,
@@ -2329,7 +2372,7 @@ describe('registered schema references', () => {
 });
 
 it('pins fixed database identities only for bindings owned by the generated Worker', () => {
-  const config = createDefaultConfig('test');
+  const config = createArchiveTestConfig('test');
   config.components.adminUi = false;
   const resources = {
     d1: {
@@ -2341,18 +2384,18 @@ it('pins fixed database identities only for bindings owned by the generated Work
     },
     kv: {},
   };
-  const management = generateWranglerConfig('ar-management', config, resources);
+  const management = generateArchiveTestWrangler('ar-management', config, resources);
   expect(JSON.parse(management.vars.AUTHRIM_FIXED_DATABASE_IDS)).toEqual({
     version: 1,
     databases: { DB: 'core-id', DB_ADMIN: 'admin-id', DB_PII: 'pii-id', LOOKUP_DB: 'lookup-id' },
   });
-  const control = generateWranglerConfig('ar-control', config, resources);
+  const control = generateArchiveTestWrangler('ar-control', config, resources);
   expect(JSON.parse(control.vars.AUTHRIM_FIXED_DATABASE_IDS)).toEqual({
     version: 1,
     databases: { CONTROL_DB: 'control-id' },
   });
   expect(
-    generateWranglerConfig('ar-management', config, { d1: {}, kv: {} }).vars
+    generateArchiveTestWrangler('ar-management', config, { d1: {}, kv: {} }).vars
       .AUTHRIM_FIXED_DATABASE_IDS
-  ).toBeUndefined();
+  ).toBe(JSON.stringify({ version: 1, databases: { DB_ADMIN: 'fixture-admin-db-id' } }));
 });

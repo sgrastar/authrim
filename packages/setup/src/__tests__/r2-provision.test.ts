@@ -41,8 +41,6 @@ const requiredR2Buckets = [
   ['MIGRATION_RELEASES', 'prod-migration-releases'],
   ['PLUGIN_BUNDLES', 'prod-plugin-bundles'],
   ['PUBLIC_ASSETS', 'prod-public-assets'],
-  ['DIAGNOSTIC_LOGS', 'prod-diagnostic-logs'],
-  ['AUDIT_ARCHIVE', 'prod-audit-archive'],
   ['IMPORT_ARTIFACTS', 'prod-import-artifacts'],
   ['EXPORT_ARTIFACTS', 'prod-export-artifacts'],
   ['SENSITIVE_DETAILS', 'prod-sensitive-details'],
@@ -141,8 +139,6 @@ describe('r2-provision command', () => {
         ['MIGRATION_RELEASES', 'prod-migration-releases'],
         ['PLUGIN_BUNDLES', 'prod-plugin-bundles'],
         ['PUBLIC_ASSETS', 'prod-public-assets'],
-        ['DIAGNOSTIC_LOGS', 'prod-diagnostic-logs'],
-        ['AUDIT_ARCHIVE', 'prod-audit-archive'],
         ['IMPORT_ARTIFACTS', 'prod-import-artifacts'],
         ['EXPORT_ARTIFACTS', 'prod-export-artifacts'],
         ['SENSITIVE_DETAILS', 'prod-sensitive-details'],
@@ -205,7 +201,7 @@ describe('r2-provision command', () => {
         '__authrim_setup__/ownership-v1-00000000-0000-4000-8000-000000000001.json',
       ownershipId: '00000000-0000-4000-8000-000000000001',
     });
-    expect(Object.keys(lock.r2)).toHaveLength(8);
+    expect(Object.keys(lock.r2)).toHaveLength(6);
     expect(provisionR2BucketsMock).toHaveBeenCalledWith(
       'prod',
       expect.objectContaining({ existing: undefined })
@@ -216,7 +212,6 @@ describe('r2-provision command', () => {
         r2: expect.objectContaining({
           MIGRATION_RELEASES: expect.objectContaining({ name: 'prod-migration-releases' }),
           PUBLIC_ASSETS: expect.objectContaining({ name: 'prod-public-assets' }),
-          DIAGNOSTIC_LOGS: expect.objectContaining({ name: 'prod-diagnostic-logs' }),
           SENSITIVE_DETAILS: expect.objectContaining({ name: 'prod-sensitive-details' }),
         }),
       }),
@@ -253,7 +248,7 @@ describe('r2-provision command', () => {
     expect(deployCommandMock).toHaveBeenCalledOnce();
     expect(saveMasterWranglerConfigsMock).toHaveBeenCalledOnce();
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
-    expect(Object.keys(lock.r2)).toHaveLength(8);
+    expect(Object.keys(lock.r2)).toHaveLength(6);
   });
 
   it('explicitly adopts every legacy bucket during an interrupted initial deploy only', async () => {
@@ -278,7 +273,7 @@ describe('r2-provision command', () => {
         '__authrim_setup__/ownership-v1-99999999-9999-4999-8999-999999999999.json',
       ownershipId: '99999999-9999-4999-8999-999999999999',
     });
-    expect(Object.keys(lock.r2)).toHaveLength(8);
+    expect(Object.keys(lock.r2)).toHaveLength(6);
     expect(listR2BucketsMock).toHaveBeenCalledWith({
       throwOnError: true,
       requireIdentity: true,

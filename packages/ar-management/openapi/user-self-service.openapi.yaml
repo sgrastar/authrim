@@ -1355,6 +1355,21 @@ paths:
             type: string
       security: *a1
 components:
+  headers:
+    LogConsistency:
+      description: snapshot for the scheduled view; eventual when Pipeline visibility can lag ingestion.
+      schema:
+        type: string
+        enum: [snapshot, eventual]
+    LogPendingDeliveries:
+      description: Tenant deliveries not yet confirmed visible. Omitted for self-service subjects. Zero does not guarantee immediate Pipeline visibility.
+      schema:
+        type: integer
+        minimum: 0
+    LogComplete:
+      description: True only for a complete bounded snapshot query. Pipeline responses remain false; incomplete reads return 503.
+      schema:
+        type: boolean
   securitySchemes:
     userBearer:
       type: http
@@ -1554,6 +1569,13 @@ components:
           schema:
             $ref: '#/components/schemas/AccountCapabilitiesResponse'
     AccountOperations:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
       description: Account Page operation history response.
       content:
         application/json:
@@ -1825,6 +1847,21 @@ components:
               profile:
                 sub: user_123
   schemas:
+    LogReadCoverage:
+      type: object
+      additionalProperties: false
+      required: [consistency, pending_deliveries, complete]
+      properties:
+        consistency:
+          type: string
+          enum: [snapshot, eventual]
+        pending_deliveries:
+          type: [integer, 'null']
+          minimum: 0
+          description: Null for self-service subjects that cannot inspect tenant delivery counts.
+        complete:
+          type: boolean
+          description: Pipeline views remain false even when no pending deliveries are known.
     LogCursorPagination:
       type: object
       additionalProperties: false
@@ -2253,6 +2290,8 @@ components:
       required:
         - operations
       properties:
+        coverage:
+          $ref: '#/components/schemas/LogReadCoverage'
         operations:
           type: array
           items:

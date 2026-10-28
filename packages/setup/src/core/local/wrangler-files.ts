@@ -6,6 +6,8 @@
  */
 
 import { existsSync } from 'node:fs';
+import { ensureLogArchiveRootKeyring } from '../log-archive-root-keyring.js';
+import { ensureLogArchiveContentHmacKey } from '../keys.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AuthrimConfig } from '../config.js';
@@ -66,7 +68,11 @@ export function formatDevVars(secrets: Readonly<Record<string, string>>): string
  * every covered settings mutation must acquire a permit from the Control Worker, which local
  * mode does not run; without it the mutation proceeds directly and backups are unavailable.
  */
-const LOCAL_UNSUPPORTED_SECRETS: ReadonlySet<string> = new Set(['TENANT_BACKUP_WRAPPING_KEY']);
+const LOCAL_UNSUPPORTED_SECRETS: ReadonlySet<string> = new Set([
+  'TENANT_BACKUP_WRAPPING_KEY',
+  'LOG_ARCHIVE_CATALOG_READ_TOKEN',
+  'LOG_ARCHIVE_CATALOG_WRITE_TOKEN',
+]);
 
 /** Read every secret the component needs from the local key bundle. */
 export async function loadLocalSecretsForComponent(
@@ -74,7 +80,9 @@ export async function loadLocalSecretsForComponent(
   component: WorkerComponent
 ): Promise<Record<string, string>> {
   const secrets: Record<string, string> = {};
-  for (const name of getSecretNamesForWorker(component) as readonly SecretName[]) {
+  for (const name of getSecretNamesForWorker(component, {
+    logArchive: true,
+  }) as readonly SecretName[]) {
     const fileName = SECRET_KEY_FILES[name];
     // Cloudflare API tokens and Resend credentials have no local equivalent.
     if (!fileName || name.startsWith('CLOUDFLARE_') || name === 'RESEND_API_KEY') continue;
@@ -87,7 +95,7 @@ export async function loadLocalSecretsForComponent(
 }
 
 export function buildLocalResourceIds(lock: AuthrimLock, config: AuthrimConfig): ResourceIds {
-  // Queues and R2 buckets do not exist locally: bindings that depend on them are omitted.
+  // No provider resources exist locally. LOG_ARCHIVE is a local R2 emulator binding for business artifacts.
   return { ...buildResourceIdsFromLock({ ...lock, queues: undefined, r2: undefined }, config) };
 }
 
@@ -98,6 +106,14 @@ export async function buildLocalWorkerFiles(input: {
   running: readonly WorkerComponent[];
   excluded: readonly WorkerComponent[];
 }): Promise<LocalWorkerFiles[]> {
+  const archive = input.config.logging?.archive;
+  if (!archive || archive.mode !== 'scheduled')
+    throw new Error('local_log_archive_requires_scheduled');
+  await ensureLogArchiveRootKeyring(input.keysDir, {
+    keyVersion: archive.objectEncryptionKeyVersion,
+    requireExisting: true,
+  });
+  await ensureLogArchiveContentHmacKey(input.keysDir, { requireExisting: true });
   const env = input.config.environment.prefix;
   const resourceIds = buildLocalResourceIds(input.lock, input.config);
   const files: LocalWorkerFiles[] = [];

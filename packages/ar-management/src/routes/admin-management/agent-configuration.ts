@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import {
@@ -71,7 +72,8 @@ function tenant(c: AgentConfigurationContext): string {
 
 function repository(c: AgentConfigurationContext): AgentConfigurationRepository {
   return new AgentConfigurationRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-configuration-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-configuration-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
 }
 
@@ -551,7 +553,8 @@ agentConfigurationPlansRouter.post('/:id/:version/confirm', async (c) => {
     return error(c, 404, 'AGENT_PLAN_NOT_FOUND');
   }
   const grants = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-plan-confirmation')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-plan-confirmation'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await grants.getGrant(tenant(c), plan.grantId);
   if (!grant || grant.delegatorId !== auth(c).userId || grant.status !== 'active') {

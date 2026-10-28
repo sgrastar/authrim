@@ -1,31 +1,24 @@
 import {
-  createDiagnosticLogR2Adapter,
   createSettingsManager,
-  DIAGNOSTIC_LOGGING_CATEGORY_META,
   ensureDatabaseAdapter,
   hasCapturingTenantBackupSnapshot,
   LOGIN_UI_CATEGORY_META,
-  listEnvironmentTenantDefaultStores,
   resolveTenantUserStoreSourcesFromEnv,
-  type DiagnosticLoggingSettings,
   type Env,
   type ControlR2BucketMetricView,
   type ControlR2BucketBinding,
   CONTROL_R2_BUCKET_BINDINGS,
 } from '@authrim/ar-lib-core';
-import { recordTenantRun } from './retention-tenant-runs';
 import { cleanupOrphanedUserImportUploads } from './user-import-jobs';
 
 export const R2_STORAGE_MAINTENANCE_CRON = '0 */6 * * *';
 const SCHEDULE_STATE_PREFIX = 'jobs:scheduled-task-state:v1:';
-const DIAGNOSTIC_TENANT_CURSOR_KEY = 'jobs:r2-maintenance:diagnostic-tenant-cursor';
 const PUBLIC_ASSET_CURSOR_KEY = 'jobs:r2-maintenance:public-assets-cursor';
 const AUDIT_TRANSIENT_CURSOR_KEY = 'jobs:r2-maintenance:audit-transient-cursor';
 const R2_METRICS_KEY = 'jobs:r2-maintenance:metrics:v1';
 const R2_METRICS_SCAN_PREFIX = 'jobs:r2-maintenance:metrics-scan:v1:';
 const PUBLIC_ASSET_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
 const AUDIT_TRANSIENT_ORPHAN_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
-const DIAGNOSTIC_TENANT_BATCH_SIZE = 16;
 const OBJECT_SCAN_BATCH_SIZE = 500;
 const SCHEDULED_TASK_LEASE_MS = 30 * 60 * 1000;
 
@@ -86,13 +79,6 @@ interface MetricScanAccumulator extends Omit<
   cursor: string | null;
 }
 
-interface DiagnosticRetentionCursor {
-  afterTenantId: string | null;
-  objectCursor: string | null;
-  /** What objectCursor continues (tenant, bucket and prefix); another one starts over. */
-  objectScope?: string | null;
-}
-
 interface AuditTransientCursor {
   prefixIndex: number;
   objectCursor: string | null;
@@ -106,7 +92,7 @@ const TASKS = [
   { id: 'r2_bucket_metrics_scan', name: 'R2 bucket metrics scan' },
   { id: 'logging_storage_maintenance', name: 'Logging storage maintenance' },
   { id: 'object_artifact_cleanup', name: 'Object artifact cleanup' },
-  { id: 'audit_retention', name: 'Audit log retention' },
+  { id: 'audit_retention', name: 'Log retention and delivery' },
   { id: 'check_api_audit_retention', name: 'Check API audit retention' },
   { id: 'user_tombstone_retention', name: 'Deleted user tombstone retention' },
   { id: 'compliance_report_retention', name: 'Compliance report retention' },
@@ -260,10 +246,14 @@ function taskAvailability(env: Env, id: TaskId): { enabled: boolean; reason: str
   if (!env.AUTHRIM_CONFIG) {
     return { enabled: false, reason: 'AUTHRIM_CONFIG is not configured' };
   }
-  // Retention tasks delete database rows on the maintenance schedule; they need no R2 bucket.
+  if (id === 'check_api_audit_retention')
+    return {
+      enabled: false,
+      reason: 'Check API audit retention is managed by Iceberg maintenance',
+    };
+  // Business retention uses its existing schedule; Iceberg log lifecycle uses the minute tick.
   if (
     id === 'audit_retention' ||
-    id === 'check_api_audit_retention' ||
     id === 'user_tombstone_retention' ||
     id === 'compliance_report_retention'
   ) {
@@ -288,9 +278,7 @@ function taskAvailability(env: Env, id: TaskId): { enabled: boolean; reason: str
       : { enabled: false, reason: 'Artifact R2 bindings are incomplete' };
   }
   if (id === 'r2_diagnostic_log_retention') {
-    return env.DIAGNOSTIC_LOGS
-      ? { enabled: true, reason: null }
-      : { enabled: false, reason: 'DIAGNOSTIC_LOGS is not configured' };
+    return { enabled: false, reason: 'Diagnostic retention is managed by Iceberg maintenance' };
   }
   if (id === 'r2_import_artifact_cleanup') {
     return env.IMPORT_ARTIFACTS
@@ -450,134 +438,16 @@ export async function runTrackedObjectArtifactCleanup(
   await runTrackedMaintenanceTask(env, 'object_artifact_cleanup', operation, log);
 }
 
-async function loadDiagnosticSettings(
-  env: Env,
-  tenantId: string
-): Promise<DiagnosticLoggingSettings> {
-  // As stored, or an error: a default prefix or bucket would scan another place than the logs.
-  if (!env.SETTINGS) throw new Error('diagnostic_log_settings_unavailable');
-  const manager = createSettingsManager({
-    env: env as unknown as Record<string, string | undefined>,
-    kv: env.SETTINGS,
-    cacheTTL: 0,
-    strictReads: true,
-  });
-  manager.registerCategory(DIAGNOSTIC_LOGGING_CATEGORY_META);
-  const result = await manager.getAll('diagnostic-logging', { type: 'tenant', id: tenantId });
-  return result.values as unknown as DiagnosticLoggingSettings;
-}
-
-/** The diagnostic log retention the cleanup applies: the setting within 1 to 3650 days (30 unset). */
+/** Diagnostic records carry immutable expires_at; shared Iceberg maintenance owns erasure. */
 export function diagnosticRetentionDays(value: number | null | undefined): number {
   return Math.max(1, Math.min(3650, value ?? 30));
 }
 
-/**
- * Deletes past-retention diagnostic logs, a few tenants and one page of objects each per run; a
- * tenant with more objects continues next run. A tenant's run is recorded once all its objects
- * were scanned (cleaned) or its cleanup failed, so a tenant not reached yet shows no recent run.
- */
 export async function cleanupDiagnosticLogs(
-  env: Env,
-  log: MaintenanceLogger
+  _env: Env,
+  _log: MaintenanceLogger
 ): Promise<Record<string, unknown>> {
-  if (!env.DIAGNOSTIC_LOGS || !env.AUTHRIM_CONFIG) {
-    throw new Error('diagnostic_log_retention_unavailable');
-  }
-  const rawCursor = (await env.AUTHRIM_CONFIG.get(DIAGNOSTIC_TENANT_CURSOR_KEY))?.trim() ?? '';
-  const parsedCursor = parseJson<DiagnosticRetentionCursor>(rawCursor);
-  const cursor: DiagnosticRetentionCursor = parsedCursor ?? {
-    afterTenantId: rawCursor || null,
-    objectCursor: null,
-  };
-  let deleted = 0;
-  let scanned = 0;
-  let failures = 0;
-  for (let index = 0; index < DIAGNOSTIC_TENANT_BATCH_SIZE; index += 1) {
-    const tenants = await listEnvironmentTenantDefaultStores(env, {
-      limit: 1,
-      afterTenantId: cursor.afterTenantId ?? undefined,
-      concurrency: 1,
-    });
-    const tenant = tenants[0];
-    if (!tenant) {
-      await env.AUTHRIM_CONFIG.delete(DIAGNOSTIC_TENANT_CURSOR_KEY);
-      const result = { tenantsScanned: scanned, objectsDeleted: deleted, failures, cursor: null };
-      if (failures > 0) {
-        throw new MaintenancePartialFailure('diagnostic_log_retention_partial_failure', result);
-      }
-      return result;
-    }
-    scanned += 1;
-    try {
-      const settings = await loadDiagnosticSettings(env, tenant.tenantId);
-      const retentionDays = diagnosticRetentionDays(settings['diagnostic-logging.retention_days']);
-      // The bucket the tenant's logs are written to (the same setting the writer reads).
-      const bucket = (env as unknown as Record<string, unknown>)[
-        settings['diagnostic-logging.r2_bucket_binding'] || 'DIAGNOSTIC_LOGS'
-      ] as R2Bucket | undefined;
-      if (!bucket || typeof bucket.list !== 'function' || typeof bucket.delete !== 'function') {
-        throw new Error('diagnostic_log_bucket_unavailable');
-      }
-      const binding = settings['diagnostic-logging.r2_bucket_binding'] || 'DIAGNOSTIC_LOGS';
-      const pathPrefix = settings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs';
-      const adapter = createDiagnosticLogR2Adapter(bucket, {
-        pathPrefix,
-        tenantId: tenant.tenantId,
-        tenantKeySalt: env.LOGGING_TENANT_KEY_SALT,
-      });
-      // A saved position continues only the listing it came from (this tenant, bucket and
-      // prefix); after either changed, or from a cursor without it, the listing starts over.
-      const objectScope = JSON.stringify([tenant.tenantId, binding, pathPrefix]);
-      const page = await adapter.deleteByRetentionPage(
-        Date.now() - retentionDays * 24 * 60 * 60 * 1000,
-        OBJECT_SCAN_BATCH_SIZE,
-        cursor.objectScope === objectScope ? (cursor.objectCursor ?? undefined) : undefined
-      );
-      deleted += page.deleted;
-      if (page.cursor) {
-        cursor.objectCursor = page.cursor;
-        cursor.objectScope = objectScope;
-        await env.AUTHRIM_CONFIG.put(DIAGNOSTIC_TENANT_CURSOR_KEY, JSON.stringify(cursor));
-        const result = {
-          tenantsScanned: scanned,
-          objectsDeleted: deleted,
-          failures,
-          cursor,
-        };
-        if (failures > 0) {
-          throw new MaintenancePartialFailure('diagnostic_log_retention_partial_failure', result);
-        }
-        return result;
-      }
-      await recordTenantRun(
-        env,
-        tenant.tenantId,
-        'r2_diagnostic_log_retention',
-        { at: Date.now(), outcome: 'cleaned' },
-        log
-      );
-    } catch (error) {
-      if (error instanceof MaintenancePartialFailure) throw error;
-      failures += 1;
-      await recordTenantRun(
-        env,
-        tenant.tenantId,
-        'r2_diagnostic_log_retention',
-        { at: Date.now(), outcome: 'failed' },
-        log
-      );
-    }
-    cursor.afterTenantId = tenant.tenantId;
-    cursor.objectCursor = null;
-    cursor.objectScope = null;
-  }
-  await env.AUTHRIM_CONFIG.put(DIAGNOSTIC_TENANT_CURSOR_KEY, JSON.stringify(cursor));
-  const result = { tenantsScanned: scanned, objectsDeleted: deleted, failures, cursor };
-  if (failures > 0) {
-    throw new MaintenancePartialFailure('diagnostic_log_retention_partial_failure', result);
-  }
-  return result;
+  throw new Error('diagnostic_retention_managed_by_iceberg');
 }
 
 function parseLoginUiAssetKey(
@@ -989,8 +859,12 @@ export async function getScheduledMaintenanceTaskView(
     id: task.id,
     name: task.name,
     enabled: availability.enabled,
-    cron: R2_STORAGE_MAINTENANCE_CRON,
-    nextRunAt: availability.enabled ? nextMaintenanceRunAt(now) : null,
+    cron: task.id === 'audit_retention' ? '* * * * *' : R2_STORAGE_MAINTENANCE_CRON,
+    nextRunAt: availability.enabled
+      ? task.id === 'audit_retention'
+        ? (Math.floor(now / 60000) + 1) * 60000
+        : nextMaintenanceRunAt(now)
+      : null,
     disabledReason: availability.reason,
     status: availability.enabled ? (state?.status ?? 'never_run') : 'disabled',
     lastStartedAt: state?.lastStartedAt ?? null,

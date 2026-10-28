@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import type { Context } from 'hono';
 import {
   AGENT_ACCESS_SETTING_KEYS,
@@ -514,7 +515,8 @@ async function handleAdminAgentRefresh(
   }
 
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-refresh')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-refresh'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const now = Date.now();
   const [grant, currentPermissions, familyUsable] = await Promise.all([
@@ -716,7 +718,8 @@ export async function adminAgentDelegationHandler(
     return errorResponse(c, 'invalid_target', 'resource must identify this MCP endpoint');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-delegation')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-delegation'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.getGrant(tenantId, form.grant_id);
   if (
@@ -893,7 +896,8 @@ async function handleAdminAgentModeBExchange(
     return errorResponse(c, 'invalid_grant', 'Agent delegation binding is invalid');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-exchange')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-exchange'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const consumed = await repository.consumeModeBDelegationJti({
     jti,
@@ -1204,7 +1208,8 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
   }
   const delegatorId = codeData.userId.slice('admin_user:'.length);
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-token')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-token'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.getGrant(tenantId, codeData.agentGrantId);
   const currentPermissions = await repository.getActiveDelegatorPermissions(

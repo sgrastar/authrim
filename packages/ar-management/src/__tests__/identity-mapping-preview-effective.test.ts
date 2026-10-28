@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { adminAuthMiddleware, PLATFORM_MAPPING_TENANT_ID } from '@authrim/ar-lib-core';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -93,6 +94,7 @@ function setup(rollout: 'available' | 'read_only' | 'unknown' = 'available') {
     if (rollout === 'unknown') throw new Error('rollout status unavailable');
     return { adminMutationMode: rollout };
   });
+  const { DB_ADMIN: _loggingAdmin, ...loggingEnv } = logging.env;
   const context = setupApp(
     (app) => {
       app.use('*', async (c, next) => {
@@ -126,6 +128,7 @@ function setup(rollout: 'available' | 'read_only' | 'unknown' = 'available') {
       app.route('/api/admin', settingsV2);
     },
     {
+      ...loggingEnv,
       SETTINGS: namespace,
       AUTHRIM_CONFIG: namespace,
       TEST_CORES: { [TENANT]: coreAdapter },
@@ -227,7 +230,10 @@ function setup(rollout: 'available' | 'read_only' | 'unknown' = 'available') {
   };
 }
 
-beforeEach(() => {
+let logging: Awaited<ReturnType<typeof logProducerFixture>>;
+afterEach(() => logging?.close());
+beforeEach(async () => {
+  logging = await logProducerFixture('scheduled');
   vi.clearAllMocks();
 });
 

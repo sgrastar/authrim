@@ -49,7 +49,8 @@
     "vitest": "^4.1.12",
     "yaml": "2.9.1",
     "@authrim/ar-control": "workspace:*",
-    "@authrim/ar-lib-core": "workspace:*"
+    "@authrim/ar-lib-core": "workspace:*",
+    "@authrim/ar-lib-logging": "workspace:*"
   },
   "keywords": [
     "authrim",

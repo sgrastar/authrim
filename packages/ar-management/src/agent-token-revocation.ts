@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import {
   AdminAgentAccessRepository,
   type ClaimedAgentTokenRevocation,
@@ -148,7 +149,8 @@ export async function processScheduledAgentTokenRevocations(
 ): Promise<AgentTokenRevocationSummary | null> {
   try {
     const repository = new AdminAgentAccessRepository(
-      requireDedicatedAdminDatabaseAdapter(env, 'agent-token-revocation')
+      requireDedicatedAdminDatabaseAdapter(env, 'agent-token-revocation'),
+      createCloudflareAdminAgentAuditWriter(env)
     );
     const summary = await processAgentTokenRevocationOutbox(
       repository,

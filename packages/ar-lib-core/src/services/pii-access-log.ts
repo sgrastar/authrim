@@ -1,18 +1,22 @@
 /**
- * Records of who read personal data (audit_log_pii, in the PII store that holds the data read).
+ * Records of who read personal data, in the encrypted pii.audit_log_pii log dataset.
  *
  * A record says who read (the actor), whose data (the user), which fields were returned, for which
  * operation and request, and when; never a value. An admin response collects them as it builds
- * its body and writes them after replying (one batch per PII store), so reading is not slowed down
- * by the writes. A record that cannot be written is logged without PII and does not fail the
+ * its body and writes them after replying (bounded batches grouped by source PII store), so reading is not slowed down
+ * by the writes. No audit row is written to the source PII database. A record that cannot be written is logged without PII and does not fail the
  * response that was already sent.
  */
 
-import type { DatabaseAdapter, PreparedStatement } from '../db/adapter';
+import type { DatabaseAdapter } from '../db/adapter';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
 import { generateId, getCurrentTimestamp } from '../repositories/base';
-import type { PIIAuditAction } from '../repositories/pii/audit-log';
+import {
+  writePiiAccessAuditRows,
+  type PIIAuditLog,
+  type PIIAuditAction,
+} from '../repositories/pii/audit-log';
 import { createLogger } from '../utils/logger';
-import { runTenantBackupCoveredEffect } from './tenant-portability/covered-mutation';
 
 const log = createLogger().module('PII-ACCESS-LOG');
 
@@ -88,31 +92,28 @@ export class PiiAccessLog {
     return total;
   }
 
-  private statements(entries: PiiAccessEntry[], now: number): PreparedStatement[] {
+  private rows(entries: PiiAccessEntry[], now: number): PIIAuditLog[] {
     return entries.map((entry) => ({
-      sql: `INSERT INTO audit_log_pii (
-          id, tenant_id, user_id, action, target_user_id,
-          details, ip_address, user_agent, created_at, exported_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL)`,
-      params: [
-        generateId(),
-        this.context.tenantId,
-        this.context.actorId,
-        entry.action,
-        entry.targetUserId,
-        JSON.stringify({
-          fields: entry.fields,
-          operation: this.context.operation,
-          request_id: this.context.requestId,
-          actor_type: this.context.actorType,
-        }),
-        now,
-      ],
+      id: generateId(),
+      tenant_id: this.context.tenantId,
+      user_id: this.context.actorId,
+      action: entry.action,
+      target_user_id: entry.targetUserId,
+      details: JSON.stringify({
+        fields: entry.fields,
+        operation: this.context.operation,
+        request_id: this.context.requestId,
+        actor_type: this.context.actorType,
+      }),
+      ip_address: null,
+      user_agent: null,
+      created_at: now,
+      updated_at: now,
     }));
   }
 
   /** Writes every noted record; returns how many were written and how many stores failed. */
-  async write(): Promise<{ written: number; failedStores: number }> {
+  async write(env: LogIcebergRuntimeEnv): Promise<{ written: number; failedStores: number }> {
     const now = getCurrentTimestamp();
     let written = 0;
     let failedStores = 0;
@@ -120,7 +121,7 @@ export class PiiAccessLog {
       try {
         for (let offset = 0; offset < group.entries.length; offset += BATCH_STATEMENTS) {
           const chunk = group.entries.slice(offset, offset + BATCH_STATEMENTS);
-          await group.adapter.batch(this.statements(chunk, now));
+          await writePiiAccessAuditRows(env, this.context.tenantId, this.rows(chunk, now));
           written += chunk.length;
         }
       } catch (error) {
@@ -142,13 +143,14 @@ export class PiiAccessLog {
  * as a storage effect a tenant backup accounts for.
  */
 export function schedulePiiAccessLog(
-  env: Parameters<typeof runTenantBackupCoveredEffect>[0],
+  env: LogIcebergRuntimeEnv,
   executionCtx: { waitUntil(promise: Promise<unknown>): void } | undefined,
   accessLog: PiiAccessLog,
   tenantId: string
 ): Promise<void> {
   if (accessLog.size === 0) return Promise.resolve();
-  const promise = runTenantBackupCoveredEffect(env, { tenantId }, () => accessLog.write())
+  const promise = accessLog
+    .write(env)
     .then(() => undefined)
     .catch((error: unknown) => {
       log.warn('PII access records could not be written', {

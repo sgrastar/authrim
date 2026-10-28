@@ -6,12 +6,13 @@
  * Provides flexible audit logging for permission checks with three modes:
  * - waitUntil: Non-blocking (recommended for most cases)
  * - sync: Synchronous logging (guaranteed logging before response)
- * - queue: Queue-based async processing (high-scale scenarios)
+ * - queue: Await acceptance by the common durable storage writer
  */
 
-import type { Queue, ExecutionContext } from '@cloudflare/workers-types';
+import type { ExecutionContext } from '@cloudflare/workers-types';
 import type { ParsedPermission, ResolvedVia, FinalDecision } from '../types/check-api';
-import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from '../db';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
+import { emitLogIcebergRow } from './log-iceberg-emitter';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('CHECK-AUDIT-SERVICE');
@@ -71,15 +72,6 @@ export interface PermissionCheckAuditEntry {
   requestId?: string;
 }
 
-/**
- * Queue message for async audit logging
- * Named CheckAuditQueueMessage to avoid conflict with the unified audit system's AuditQueueMessage
- */
-export interface CheckAuditQueueMessage {
-  type: 'permission_check_audit';
-  entry: PermissionCheckAuditEntry;
-}
-
 // =============================================================================
 // Default Configuration
 // =============================================================================
@@ -107,14 +99,13 @@ export const DEFAULT_CHECK_AUDIT_CONFIG: CheckAuditServiceConfig = {
  * Provides permission check audit logging with configurable modes.
  */
 export class CheckAuditService {
-  private db: DatabaseAdapter;
   private config: CheckAuditServiceConfig;
-  private queue?: Queue<CheckAuditQueueMessage>;
 
-  constructor(db: DatabaseSource, config?: Partial<CheckAuditServiceConfig>, queue?: Queue) {
-    this.db = ensureDatabaseAdapter(db, 'policy-check-audit');
+  constructor(
+    private readonly env: LogIcebergRuntimeEnv,
+    config?: Partial<CheckAuditServiceConfig>
+  ) {
     this.config = { ...DEFAULT_CHECK_AUDIT_CONFIG, ...config };
-    this.queue = queue as Queue<CheckAuditQueueMessage> | undefined;
   }
 
   /**
@@ -147,7 +138,7 @@ export class CheckAuditService {
    * Uses the configured mode to write the log:
    * - waitUntil: Non-blocking via ExecutionContext.waitUntil()
    * - sync: Synchronous write (blocks until complete)
-   * - queue: Queue-based async processing
+   * - queue: Await acceptance by the configured durable storage writer
    *
    * @param entry - Audit entry to log
    * @param ctx - ExecutionContext for waitUntil mode
@@ -158,75 +149,74 @@ export class CheckAuditService {
       return;
     }
 
+    let frozen: PermissionCheckAuditEntry;
     try {
-      switch (this.config.mode) {
-        case 'waitUntil':
-          if (ctx) {
-            ctx.waitUntil(this.writeLog(entry));
-          } else {
-            // Fallback to sync if no context provided
-            await this.writeLog(entry);
-          }
-          break;
-
-        case 'sync':
-          await this.writeLog(entry);
-          break;
-
-        case 'queue':
-          if (this.queue) {
-            await this.queue.send({
-              type: 'permission_check_audit',
-              entry,
-            });
-          } else {
-            // Fallback to sync if queue not configured
-            log.warn('Queue not configured, falling back to sync mode');
-            await this.writeLog(entry);
-          }
-          break;
-      }
+      frozen = structuredClone(entry);
     } catch (error) {
-      // Log errors but don't fail the request
-      log.error('Failed to log audit entry', { entryId: entry.id }, error as Error);
+      log.error(
+        'Failed to prepare audit entry',
+        {},
+        error instanceof Error ? error : new Error('check_audit_prepare_failed')
+      );
+      return;
     }
-  }
-
-  /**
-   * Write audit entry to database
-   */
-  private async writeLog(entry: PermissionCheckAuditEntry): Promise<void> {
     const checkedAt = Math.floor(Date.now() / 1000);
-
-    await this.db.execute(
-      `INSERT INTO permission_check_audit (
-        id, tenant_id, subject_id, permission, permission_json,
-        allowed, resolved_via_json, final_decision, reason,
-        api_key_id, client_id, checked_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        entry.id,
-        entry.tenantId,
-        entry.subjectId,
-        entry.permission,
-        entry.permissionParsed ? JSON.stringify(entry.permissionParsed) : null,
-        entry.allowed ? 1 : 0,
-        JSON.stringify(entry.resolvedVia),
-        entry.finalDecision,
-        entry.reason ?? null,
-        entry.apiKeyId ?? null,
-        entry.clientId ?? null,
-        checkedAt,
-      ]
-    );
-  }
-
-  /**
-   * Process audit queue message (for queue consumer)
-   */
-  async processQueueMessage(message: CheckAuditQueueMessage): Promise<void> {
-    if (message.type === 'permission_check_audit') {
-      await this.writeLog(message.entry);
+    const retentionDays = this.config.retentionDays ?? 90;
+    const write = async () => {
+      try {
+        if (!Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650)
+          throw new Error('check_audit_retention_invalid');
+        await emitLogIcebergRow(this.env, {
+          tenantId: frozen.tenantId,
+          sourceDataset: 'core.permission_check_audit',
+          logType: 'audit',
+          eventAt: checkedAt * 1000,
+          expiresAt: (checkedAt + retentionDays * 86400) * 1000,
+          overview: {
+            action: frozen.permission,
+            result: frozen.allowed ? 'allow' : 'deny',
+            subject_id: frozen.subjectId,
+            client_id: frozen.clientId ?? null,
+            request_id: frozen.requestId ?? null,
+          },
+          row: {
+            id: frozen.id,
+            tenant_id: frozen.tenantId,
+            subject_id: frozen.subjectId,
+            permission: frozen.permission,
+            permission_json: frozen.permissionParsed
+              ? JSON.stringify(frozen.permissionParsed)
+              : null,
+            allowed: frozen.allowed ? 1 : 0,
+            resolved_via_json: JSON.stringify(frozen.resolvedVia),
+            final_decision: frozen.finalDecision,
+            reason: frozen.reason ?? null,
+            api_key_id: frozen.apiKeyId ?? null,
+            client_id: frozen.clientId ?? null,
+            checked_at: checkedAt,
+          },
+        });
+      } catch (error) {
+        // A failed audit must never change the authorization decision, including
+        // an asynchronously rejected waitUntil write.
+        log.error(
+          'Failed to log audit entry',
+          { entryId: frozen.id },
+          error instanceof Error ? error : new Error('check_audit_write_failed')
+        );
+      }
+    };
+    // The setup storage mode owns transport. The queue timing option waits for
+    // the common durable writer; scheduled mode never invokes a Pipeline.
+    try {
+      if (this.config.mode === 'waitUntil' && ctx) ctx.waitUntil(write());
+      else await write();
+    } catch (error) {
+      log.error(
+        'Failed to schedule audit entry',
+        { entryId: frozen.id },
+        error instanceof Error ? error : new Error('check_audit_schedule_failed')
+      );
     }
   }
 
@@ -243,40 +233,16 @@ export class CheckAuditService {
   getConfig(): CheckAuditServiceConfig {
     return { ...this.config };
   }
-
-  /**
-   * Clean up old audit entries (scheduled job)
-   *
-   * @returns Number of deleted entries
-   */
-  async cleanupOldEntries(): Promise<number> {
-    if (!this.config.retentionDays) {
-      return 0;
-    }
-
-    const cutoffTime = Math.floor(Date.now() / 1000) - this.config.retentionDays * 24 * 60 * 60;
-
-    const result = await this.db.execute(
-      'DELETE FROM permission_check_audit WHERE checked_at < ?',
-      [cutoffTime]
-    );
-
-    const deleted = result.rowsAffected;
-    log.info('Cleaned up old audit entries', { deleted, cutoffTime });
-
-    return deleted;
-  }
 }
 
 /**
  * Create CheckAuditService instance
  */
 export function createCheckAuditService(
-  db: DatabaseSource,
-  config?: Partial<CheckAuditServiceConfig>,
-  queue?: Queue
+  env: LogIcebergRuntimeEnv,
+  config?: Partial<CheckAuditServiceConfig>
 ): CheckAuditService {
-  return new CheckAuditService(db, config, queue);
+  return new CheckAuditService(env, config);
 }
 
 /**

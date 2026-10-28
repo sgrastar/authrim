@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import {
   adminAuthMiddleware,
   DISABLED_MARKER,
@@ -75,6 +76,7 @@ function setup(options: { agent?: boolean } = {}) {
   const directory = openCoreDatabase();
   insertTenant(directory, TENANT);
   const directoryHooks: AdapterHooks = {};
+  const { DB_ADMIN: _loggingAdmin, ...loggingEnv } = logging.env;
   const context = setupApp(
     (app) => {
       app.use(
@@ -103,6 +105,7 @@ function setup(options: { agent?: boolean } = {}) {
       app.route('/api/admin', settingsV2);
     },
     {
+      ...loggingEnv,
       DB: sqliteAdapter(directory, directoryHooks),
       SETTINGS: settings.namespace,
       AUTHRIM_CONFIG: settings.namespace,
@@ -158,7 +161,10 @@ function setup(options: { agent?: boolean } = {}) {
   return { ...context, directory, directoryHooks, settings, admin, version, patch, get, effective };
 }
 
-beforeEach(() => {
+let logging: Awaited<ReturnType<typeof logProducerFixture>>;
+afterEach(() => logging?.close());
+beforeEach(async () => {
+  logging = await logProducerFixture('scheduled');
   vi.mocked(createAuditLogFromContext).mockClear();
 });
 

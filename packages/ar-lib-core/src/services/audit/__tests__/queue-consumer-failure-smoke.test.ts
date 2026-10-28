@@ -178,7 +178,7 @@ describe('logging failure smoke', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: dlqAdminDb,
-        AUDIT_ARCHIVE: replayBucket,
+        SENSITIVE_DETAILS: replayBucket,
         OBJECT_ENCRYPTION_ROOT_KEY,
       } as unknown as Parameters<typeof processDLQQueue>[1]
     );
@@ -226,7 +226,7 @@ describe('logging failure smoke', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: replayAdminDb,
-        AUDIT_ARCHIVE: replayBucket,
+        SENSITIVE_DETAILS: replayBucket,
         AUDIT_QUEUE: { send } as never,
         OBJECT_ENCRYPTION_ROOT_KEY,
       } as unknown as Parameters<typeof processLoggingDeliveryQueue>[1]

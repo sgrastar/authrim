@@ -1,10 +1,10 @@
+import { createArchiveTestConfig, generateArchiveTestWrangler } from './fixtures/log-archive.js';
 import { describe, expect, it } from 'vitest';
-import { createDefaultConfig } from '../core/config.js';
 import { getSecretNamesForWorker } from '../core/secrets.js';
-import { generateWranglerConfig, toToml } from '../core/wrangler.js';
+import { toToml } from '../core/wrangler.js';
 
 function pluginRunnerConfig() {
-  const config = createDefaultConfig('plugin-test');
+  const config = createArchiveTestConfig('plugin-test');
   config.urls = {
     api: { auto: 'https://plugin-test-ar-router.example.workers.dev' },
     loginUi: {
@@ -27,7 +27,7 @@ function dynamicWorkerPluginRunnerConfig() {
 
 describe('Plugin Runner wrangler topology', () => {
   it('generates a private scheduled Worker with its owned state and Worker Loader bindings', () => {
-    const generated = generateWranglerConfig(
+    const generated = generateArchiveTestWrangler(
       'ar-plugin-runner',
       dynamicWorkerPluginRunnerConfig(),
       {
@@ -65,7 +65,7 @@ describe('Plugin Runner wrangler topology', () => {
       ],
       kv_namespaces: [{ binding: 'TENANT_RUNTIME_REGISTRY', id: 'runtime-registry-id' }],
       r2_buckets: [{ binding: 'PLUGIN_BUNDLES', bucket_name: 'plugin-test-plugin-bundles' }],
-      services: [
+      services: expect.arrayContaining([
         {
           binding: 'CONTROL',
           service: 'plugin-test-ar-control',
@@ -75,13 +75,13 @@ describe('Plugin Runner wrangler topology', () => {
             audience: 'authrim-control-v1',
           },
         },
-      ],
+      ]),
     });
     expect(generated.routes).toBeUndefined();
   });
 
   it('serializes Worker Loader bindings in environment and flat Wrangler formats', () => {
-    const generated = generateWranglerConfig(
+    const generated = generateArchiveTestWrangler(
       'ar-plugin-runner',
       dynamicWorkerPluginRunnerConfig(),
       { d1: {}, kv: {}, r2: { PLUGIN_BUNDLES: { name: 'plugin-test-plugin-bundles' } } }
@@ -94,7 +94,7 @@ describe('Plugin Runner wrangler topology', () => {
   });
 
   it('materializes only Control-projected active Plugin resource bindings', () => {
-    const generated = generateWranglerConfig(
+    const generated = generateArchiveTestWrangler(
       'ar-plugin-runner',
       dynamicWorkerPluginRunnerConfig(),
       {
@@ -140,7 +140,7 @@ describe('Plugin Runner wrangler topology', () => {
       bucket_name: 'plugin-r2-name',
     });
     expect(
-      generateWranglerConfig('ar-management', dynamicWorkerPluginRunnerConfig(), {
+      generateArchiveTestWrangler('ar-management', dynamicWorkerPluginRunnerConfig(), {
         d1: {},
         kv: {},
         r2: { PLUGIN_BUNDLES: { name: 'plugin-bundles' } },
@@ -157,7 +157,7 @@ describe('Plugin Runner wrangler topology', () => {
   });
 
   it('omits the paid Worker Loader while retaining the built-in scheduled runner by default', () => {
-    const generated = generateWranglerConfig('ar-plugin-runner', pluginRunnerConfig(), {
+    const generated = generateArchiveTestWrangler('ar-plugin-runner', pluginRunnerConfig(), {
       d1: {},
       kv: {},
     });
@@ -171,7 +171,7 @@ describe('Plugin Runner wrangler topology', () => {
 
   it('fails closed when Dynamic Worker bundle storage has not been provisioned', () => {
     expect(() =>
-      generateWranglerConfig('ar-plugin-runner', dynamicWorkerPluginRunnerConfig(), {
+      generateArchiveTestWrangler('ar-plugin-runner', dynamicWorkerPluginRunnerConfig(), {
         d1: {},
         kv: {},
         r2: {},
@@ -187,7 +187,7 @@ describe('Plugin Runner wrangler topology', () => {
       'ar-policy',
       'ar-saml',
     ] as const) {
-      const generated = generateWranglerConfig(caller, pluginRunnerConfig(), {
+      const generated = generateArchiveTestWrangler(caller, pluginRunnerConfig(), {
         d1: {},
         kv: {},
       });
@@ -202,8 +202,8 @@ describe('Plugin Runner wrangler topology', () => {
       });
     }
 
-    const token = generateWranglerConfig('ar-token', pluginRunnerConfig(), { d1: {}, kv: {} });
-    expect(token.services).toBeUndefined();
+    const token = generateArchiveTestWrangler('ar-token', pluginRunnerConfig(), { d1: {}, kv: {} });
+    expect(token.services?.map((service) => service.binding)).toEqual(['LOG_ARCHIVE_WRITER']);
   });
 
   it('limits the platform notification D1 binding to producers and Plugin Runner', () => {
@@ -214,7 +214,7 @@ describe('Plugin Runner wrangler topology', () => {
       kv: {},
     };
     for (const component of ['ar-auth', 'ar-management', 'ar-plugin-runner'] as const) {
-      const generated = generateWranglerConfig(component, pluginRunnerConfig(), resources);
+      const generated = generateArchiveTestWrangler(component, pluginRunnerConfig(), resources);
       expect(generated.d1_databases).toContainEqual({
         binding: 'PLATFORM_NOTIFICATION_DB',
         database_name: 'plugin-test-authrim-db',
@@ -223,7 +223,7 @@ describe('Plugin Runner wrangler topology', () => {
     }
 
     for (const component of ['ar-policy', 'ar-token', 'ar-userinfo'] as const) {
-      const generated = generateWranglerConfig(component, pluginRunnerConfig(), resources);
+      const generated = generateArchiveTestWrangler(component, pluginRunnerConfig(), resources);
       expect(generated.d1_databases ?? []).not.toContainEqual(
         expect.objectContaining({ binding: 'PLATFORM_NOTIFICATION_DB' })
       );
@@ -235,7 +235,7 @@ describe('Plugin Runner wrangler topology', () => {
     config.keys.keyId = 'environment-key';
     for (const producer of ['ar-auth', 'ar-management'] as const) {
       expect(getSecretNamesForWorker(producer)).toContain('NOTIFICATION_INTENT_HMAC_KEY');
-      const generated = generateWranglerConfig(producer, config, { d1: {}, kv: {} });
+      const generated = generateArchiveTestWrangler(producer, config, { d1: {}, kv: {} });
       expect(generated.vars?.NOTIFICATION_PAYLOAD_ENCRYPTION_ACTIVE_KID).toBe(
         'environment-key-notification-payload'
       );
@@ -243,7 +243,7 @@ describe('Plugin Runner wrangler topology', () => {
     expect(getSecretNamesForWorker('ar-plugin-runner')).not.toContain(
       'NOTIFICATION_INTENT_HMAC_KEY'
     );
-    const runner = generateWranglerConfig('ar-plugin-runner', config, { d1: {}, kv: {} });
+    const runner = generateArchiveTestWrangler('ar-plugin-runner', config, { d1: {}, kv: {} });
     expect(runner.vars?.NOTIFICATION_PAYLOAD_ENCRYPTION_ACTIVE_KID).toBeUndefined();
   });
 
@@ -282,7 +282,7 @@ describe('Plugin Runner wrangler topology', () => {
       fromAddress: 'noreply@example.test',
       fromName: 'Authrim',
     };
-    const generated = generateWranglerConfig('ar-plugin-runner', config, { d1: {}, kv: {} });
+    const generated = generateArchiveTestWrangler('ar-plugin-runner', config, { d1: {}, kv: {} });
     expect(generated.send_email).toEqual([{ name: 'EMAIL' }]);
     expect(generated.vars).toMatchObject({
       EMAIL_FROM: 'noreply@example.test',

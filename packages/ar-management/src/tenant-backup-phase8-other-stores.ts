@@ -25,6 +25,10 @@ import {
 } from './tenant-backup-phase5-other-stores';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  ICEBERG_LOG_RECORDS_DATASETS,
+  type IcebergLogRecordDatasetId,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-iceberg-log';
+import {
   decodePortableUserAvatar,
   USER_AVATARS_DATASET,
 } from '@authrim/ar-lib-core/services/tenant-portability/phase5-record-datasets';
@@ -45,9 +49,14 @@ type DatasetId =
   | 'pii.linked_identities'
   | 'pii.pii_log'
   | 'users.public_avatars'
+  | IcebergLogRecordDatasetId
   | PortableR2DatasetId;
 
-type SqlDatasetId = Exclude<DatasetId, typeof USER_AVATAR_DATASET_ID>;
+type RecordDatasetId =
+  | typeof USER_AVATAR_DATASET_ID
+  | PortableR2DatasetId
+  | IcebergLogRecordDatasetId;
+type SqlDatasetId = Exclude<DatasetId, RecordDatasetId>;
 
 const DATASETS: readonly DatasetId[] = [
   'core.notification_delivery_intents',
@@ -58,9 +67,13 @@ const DATASETS: readonly DatasetId[] = [
   USER_AVATAR_DATASET_ID,
   ARTIFACT_OBJECT_BODIES_DATASET.id,
   LOG_ARCHIVE_OBJECT_BODIES_DATASET.id,
+  ...ICEBERG_LOG_RECORDS_DATASETS.map((dataset) => dataset.id),
 ];
 
 const RECORD_BATCH_LIMIT = 4;
+function isIcebergLogDataset(id: DatasetId): id is IcebergLogRecordDatasetId {
+  return ICEBERG_LOG_RECORDS_DATASETS.some((dataset) => dataset.id === id);
+}
 
 interface Cursor {
   version: 1;
@@ -71,6 +84,21 @@ interface Cursor {
 }
 
 export interface Phase8OtherStorePorts extends Phase5OtherStorePorts {
+  isDatasetSelected(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    datasetId: string
+  ): Promise<boolean>;
+  importIcebergLog(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    rowJson: string
+  ): Promise<void>;
+  verifyIcebergLog(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    rowJson: string
+  ): Promise<boolean>;
   loadPhase8Sqlite(
     context: TenantBackupStepContext,
     planDigest: string,
@@ -81,7 +109,7 @@ export interface Phase8OtherStorePorts extends Phase5OtherStorePorts {
     context: TenantBackupStepContext,
     planDigest: string,
     purpose: Purpose,
-    datasetId: typeof USER_AVATAR_DATASET_ID | PortableR2DatasetId
+    datasetId: RecordDatasetId
   ): Promise<Omit<Phase3OtherStoreSource, 'target'>>;
   importR2Chunk(
     context: TenantBackupStepContext,
@@ -206,7 +234,12 @@ export function createPhase8OtherStoreHandlers(
     }
 
     const datasetId = cursor.datasetId ?? invalid();
+    if (!(await ports.isDatasetSelected(context, planDigest, datasetId))) {
+      if (cursor.sourceCursor !== null) invalid();
+      return advance(datasetId, purpose);
+    }
     if (
+      isIcebergLogDataset(datasetId) ||
       datasetId === USER_AVATAR_DATASET_ID ||
       datasetId === ARTIFACT_OBJECT_BODIES_DATASET.id ||
       datasetId === LOG_ARCHIVE_OBJECT_BODIES_DATASET.id
@@ -226,7 +259,12 @@ export function createPhase8OtherStoreHandlers(
         rows.push(row);
         sourceCursor = row.nextCursor;
       }
-      if (datasetId === USER_AVATAR_DATASET_ID) {
+      if (isIcebergLogDataset(datasetId)) {
+        for (const { rowJson } of rows) {
+          if (purpose === 'restore') await ports.importIcebergLog(context, planDigest, rowJson);
+          else if (!(await ports.verifyIcebergLog(context, planDigest, rowJson))) invalid();
+        }
+      } else if (datasetId === USER_AVATAR_DATASET_ID) {
         const avatars = await Promise.all(
           rows.map(({ rowJson }) => decodePortableUserAvatar(rowJson, context.lease.tenantId))
         );

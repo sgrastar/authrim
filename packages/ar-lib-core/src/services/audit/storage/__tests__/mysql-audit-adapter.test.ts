@@ -16,7 +16,7 @@ function createEventEntry(overrides: Partial<EventLogEntry> = {}): EventLogEntry
 }
 
 describe('MysqlAuditAdapter', () => {
-  it('uses insert-if-not-exists writes for event batches', async () => {
+  it('refuses retired writeEventLogBatch instead of creating an old primary copy', async () => {
     const execute = vi.fn().mockResolvedValue({ rows: [], affectedRows: 1 });
     const adapter = new MysqlAuditAdapter({
       id: 'audit-mysql',
@@ -38,17 +38,12 @@ describe('MysqlAuditAdapter', () => {
       }),
     });
 
-    const result = await adapter.writeEventLogBatch([createEventEntry()]);
-
-    expect(result.success).toBe(true);
-    expect(result.entriesWritten).toBe(1);
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0]?.[0]).toContain('INSERT INTO `event_log`');
-    expect(execute.mock.calls[0]?.[0]).toContain('WHERE NOT EXISTS');
-    expect(execute.mock.calls[0]?.[0]).not.toContain('ON DUPLICATE KEY');
+    await expect(adapter.writeEventLogBatch([createEventEntry()])).rejects.toThrow(
+      'audit_primary_storage_retired_use_configured_iceberg_mode'
+    );
   });
 
-  it('reports zero event writes when MySQL skips an existing ID', async () => {
+  it('refuses retired writeEventLogBatch instead of creating an old primary copy', async () => {
     const adapter = new MysqlAuditAdapter({
       id: 'audit-mysql',
       hyperdrive: {
@@ -69,10 +64,9 @@ describe('MysqlAuditAdapter', () => {
       }),
     });
 
-    await expect(adapter.writeEventLog(createEventEntry())).resolves.toMatchObject({
-      success: true,
-      entriesWritten: 0,
-    });
+    await expect(adapter.writeEventLogBatch([createEventEntry()])).rejects.toThrow(
+      'audit_primary_storage_retired_use_configured_iceberg_mode'
+    );
   });
 
   it('uses MySQL retention cleanup with tenant scoping and limit', async () => {

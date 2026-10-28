@@ -25,7 +25,6 @@ import {
   type Env,
   type SessionTtlContext,
 } from '@authrim/ar-lib-core';
-import { getAuditHotQuerySqlSpec, getAuditHotQuerySupportForProfile } from '../audit-hot-query';
 import {
   diagnosticRetentionDays,
   getScheduledMaintenanceTaskView,
@@ -127,6 +126,7 @@ export interface RetentionCategory {
   cap?: { kind: 'tenant_profile'; seconds: number };
   /** Records kept now and those past their retention; null when they cannot be counted here. */
   counts: { total: number; expired: number } | null;
+  counts_unavailable_reason?: string;
   /**
    * For sessions: an active session can be extended by `per_refresh_seconds` at a time, up to
    * `absolute_limit_seconds` from sign-in (null: nothing bounds it). Absent when extension is off.
@@ -216,26 +216,6 @@ function auditEdit(from: AuditRetentionSource): RetentionEdit {
   return { kind: 'audit_pii_config' };
 }
 
-async function auditEventCounts(
-  env: Env,
-  auditProfile: AuditProfile,
-  tenantId: string,
-  now: number
-): Promise<{ total: number; expired: number } | null> {
-  const hotQuery = getAuditHotQuerySupportForProfile(env, auditProfile);
-  if (!hotQuery.supported || !hotQuery.context) return null;
-  const { tableName } = getAuditHotQuerySqlSpec(hotQuery.context);
-  // Only the unified event log records each entry's retention_until; the older table does not.
-  if (tableName !== 'event_log') return null;
-  const row = await hotQuery.context.adapter.queryOne<{ total: number; expired: number }>(
-    `SELECT COUNT(*) AS total,
-            SUM(CASE WHEN retention_until IS NOT NULL AND retention_until < ? THEN 1 ELSE 0 END) AS expired
-       FROM event_log WHERE tenant_id = ?`,
-    [now, tenantId]
-  );
-  return sumCounts([row]);
-}
-
 async function lookupPolicy(adapter: DatabaseAdapter, tenantId: string) {
   const row = await adapter.queryOne<{
     retention_days: number | string;
@@ -315,24 +295,14 @@ export async function buildRetentionInventory(
   const tenantRuns = await readTenantRetentionRuns(env, tenantId);
   const [auditTask, checkAuditTask, tombstoneTask, diagnosticTask, reportTask] = await Promise.all([
     scheduledTask(env, 'audit_retention', now, tenantRuns.audit_retention ?? null),
-    scheduledTask(
-      env,
-      'check_api_audit_retention',
-      now,
-      tenantRuns.check_api_audit_retention ?? null
-    ),
+    scheduledTask(env, 'audit_retention', now, tenantRuns.audit_retention ?? null),
     scheduledTask(
       env,
       'user_tombstone_retention',
       now,
       tenantRuns.user_tombstone_retention ?? null
     ),
-    scheduledTask(
-      env,
-      'r2_diagnostic_log_retention',
-      now,
-      tenantRuns.r2_diagnostic_log_retention ?? null
-    ),
+    scheduledTask(env, 'audit_retention', now, tenantRuns.audit_retention ?? null),
     scheduledTask(
       env,
       'compliance_report_retention',
@@ -343,14 +313,9 @@ export async function buildRetentionInventory(
 
   const [eventCounts, checkAuditCounts, tombstoneCounts, reportCounts] = withCounts
     ? await Promise.all([
-        auditEventCounts(env, auditProfile, tenantId, now),
-        coreAdapter
-          .queryOne<{ total: number; expired: number }>(
-            `SELECT COUNT(*) AS total, SUM(CASE WHEN checked_at < ? THEN 1 ELSE 0 END) AS expired
-               FROM permission_check_audit WHERE tenant_id = ?`,
-            [Math.floor(now / 1000) - checkAuditDays * DAY_SECONDS, tenantId]
-          )
-          .then((row) => sumCounts([row])),
+        Promise.resolve(null),
+        // The authorized reader omits expired rows. Physical expired counts require separate metadata.
+        Promise.resolve(null),
         Promise.all(
           piiAdapters.map((adapter) =>
             adapter.queryOne<{ total: number; expired: number }>(
@@ -414,6 +379,7 @@ export async function buildRetentionInventory(
       deletion: auditTask,
       varies: audit.event.variesByRoute ? 'by_route' : null,
       counts: eventCounts,
+      counts_unavailable_reason: 'iceberg_physical_expired_counts_unavailable',
       ...auditArchive(audit.event.archived),
     },
     {
@@ -444,6 +410,7 @@ export async function buildRetentionInventory(
       deletion: checkAuditTask,
       varies: null,
       counts: checkAuditCounts,
+      counts_unavailable_reason: 'iceberg_physical_expired_counts_unavailable',
     },
     {
       id: 'user_tombstones',

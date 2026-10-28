@@ -41,6 +41,7 @@ function sameDataset(left: TenantPortableDataset, right: TenantPortableDataset):
 const CORE_USERS_DATASETS_IN_METADATA: ReadonlySet<string> = new Set([
   'core.tenant_invitations',
   'core.tenant_invitation_redemptions',
+  'core.provisioning_revocation_receipts',
 ]);
 
 /**

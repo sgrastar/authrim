@@ -20,7 +20,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { toCsv } from '../admin-job-executor';
-import { createLogReadAdapter } from '../log-read-adapter';
+import { createLogReadAdapter, type LogReadCoverage } from '../log-read-adapter';
 import {
   fromStoredAuditTimestamp,
   getAuditHotQuerySqlSpec,
@@ -59,6 +59,7 @@ export interface GeneratedReport {
   contentType: 'text/csv' | 'application/json';
   format: 'csv' | 'json';
   rowCount: number;
+  logCoverage?: LogReadCoverage;
 }
 
 function csvReport(rows: Array<Record<string, unknown>>, headers: string[]): GeneratedReport {
@@ -221,7 +222,7 @@ export async function auditLogReport(
   tenantId: string,
   period: { fromMs: number; toMs: number }
 ): Promise<GeneratedReport> {
-  const support = getAuditHotQuerySupportForProfile(env, auditProfile);
+  const support = getAuditHotQuerySupportForProfile(env, auditProfile, tenantId);
   if (!support.supported || !support.context) {
     throw new ReportUnavailableError('audit_log_not_queryable');
   }
@@ -251,7 +252,7 @@ export async function auditLogReport(
       LIMIT ?`,
     [tenantId, toStored(period.fromMs), toStored(period.toMs), MAX_REPORT_ROWS + 1]
   );
-  return csvReport(
+  const report = csvReport(
     rows.map(({ created_at, ...row }) => ({
       id: row.id,
       occurred_at: fromStoredAuditTimestamp(Number(created_at), context),
@@ -277,6 +278,7 @@ export async function auditLogReport(
       'error_code',
     ]
   );
+  return { ...report, logCoverage: logRead.coverage() };
 }
 
 /** The compliance status at this moment, as the status API answers it (JSON). */

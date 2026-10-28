@@ -270,6 +270,15 @@ export function phase8SqliteRestoreDependencies(datasetId: string): readonly str
 function phase8RestoreOverrides(
   datasetId: string
 ): Readonly<Record<string, readonly [string, string | null]>> | undefined {
+  if (datasetId === 'admin.log_iceberg_subject_erasures')
+    return {
+      state: ['text', 'pending'],
+      snapshot_id: ['null', null],
+      scan_cursor_json: ['null', null],
+      mutation_receipt_json: ['null', null],
+      mutation_history_json: ['text', '[]'],
+      removed_count: ['integer', '0'],
+    };
   // Machine principals and their credentials belong to the target environment. A restored
   // tenant grant may retain its mapped human administrators, but never a source machine binding.
   if (datasetId === 'admin.admin_agent_grants') return { machine_principal_id: ['null', null] };

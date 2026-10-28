@@ -1,10 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs';
 import { Hono } from 'hono';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import type { DatabaseAdapter, Env, PreparedStatement } from '@authrim/ar-lib-core';
-import { renderPortableMigrationSql } from '../../../ar-lib-core/dist/migrations/sql-portability';
 import { openCoreStore } from './helpers/core-schema-sqlite';
-import { DatabaseSync, type SQLInputValue, type SQLiteDatabase } from './test-sqlite';
+import type { SQLiteDatabase } from './test-sqlite';
 
 type Store = { db: SQLiteDatabase; adapter: DatabaseAdapter };
 
@@ -96,31 +95,9 @@ vi.mock('../admin-session-end', () => ({ startAdminSessionEndLogout: vi.fn() }))
 import { processPendingSupportOpsSnapshotJobs, supportOpsRouter } from '../support-ops';
 import { processSupportOpsExecuteJobInline } from '../support-ops-execute-job';
 
-const ADMIN_MIGRATIONS = new URL('../../../../migrations/admin/d1/', import.meta.url);
-
-function openAdminStore(): DatabaseAdapter {
-  const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(ADMIN_MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
-    db.exec(
-      renderPortableMigrationSql(readFileSync(new URL(file, ADMIN_MIGRATIONS), 'utf8'), 'sqlite')
-    );
-  }
-  const values = (params: unknown[] = []) =>
-    params.map((value) => (value === undefined ? null : value) as SQLInputValue);
-  const run = (statement: PreparedStatement) => ({
-    success: true,
-    rowsAffected: Number(db.prepare(statement.sql).run(...values(statement.params)).changes),
-  });
-  return {
-    query: async (sql: string, params?: unknown[]) => db.prepare(sql).all(...values(params)),
-    queryOne: async (sql: string, params?: unknown[]) =>
-      db.prepare(sql).get(...values(params)) ?? null,
-    execute: async (sql: string, params?: unknown[]) => run({ sql, params }),
-    batch: async (statements: PreparedStatement[]) => statements.map(run),
-  } as unknown as DatabaseAdapter;
-}
+let logging: Awaited<ReturnType<typeof logProducerFixture>>;
+let runtimeEnv: Env;
+afterEach(() => logging?.close());
 
 let metadata: Store;
 let first: Store;
@@ -203,7 +180,7 @@ async function post(path: string, body: unknown) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     },
-    {} as Env
+    runtimeEnv
   );
   return { status: response.status, body: (await response.json()) as Record<string, any> };
 }
@@ -214,7 +191,7 @@ async function finishExecution(response: Awaited<ReturnType<typeof post>>) {
   const jobId = response.body.job_id as string;
   for (let run = 0; run < 200; run++) {
     await state.admin.execute('UPDATE admin_jobs SET next_run_at=NULL WHERE id=?', [jobId]);
-    await processSupportOpsExecuteJobInline({} as Env, 'tenant-a', jobId, {
+    await processSupportOpsExecuteJobInline(runtimeEnv, 'tenant-a', jobId, {
       maxCallsPerRun: 600,
       maxTargetsPerRun: 1000,
     });
@@ -283,7 +260,7 @@ function approveSuspend(cohortId: string) {
 }
 
 async function readAction() {
-  const response = await app().request('/api/admin/support-ops/actions/action-1', {}, {} as Env);
+  const response = await app().request('/api/admin/support-ops/actions/action-1', {}, runtimeEnv);
   return (await response.json()) as Record<string, any>;
 }
 
@@ -295,14 +272,16 @@ function job(jobId: string) {
 }
 
 describe('Support Ops under routed account storage', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    logging = await logProducerFixture('scheduled', { separateAdmin: true });
+    runtimeEnv = logging.env as unknown as Env;
     metadata = openCoreStore('tenant-a');
     first = openCoreStore('tenant-a');
     second = openCoreStore('tenant-a');
     state.metadata = metadata;
     state.accounts = [{ adapter: first.adapter }, { adapter: second.adapter }];
-    state.admin = openAdminStore();
+    state.admin = logging.adminAdapter;
     state.maxSnapshotCount = null;
     mockTransition.mockResolvedValue({ state: {}, endedSessionIds: [] });
     seed();
@@ -424,7 +403,7 @@ describe('Support Ops under routed account storage', () => {
     // Seven rows a run, four a page: every run stops part-way through a store or between them.
     let runs = 0;
     while ((await job(jobId))?.status !== 'completed' && runs < 20) {
-      await processPendingSupportOpsSnapshotJobs({} as Env, undefined, {
+      await processPendingSupportOpsSnapshotJobs(runtimeEnv, undefined, {
         pageSize: 4,
         maxRowsPerRun: 7,
       });
@@ -454,11 +433,11 @@ describe('Support Ops under routed account storage', () => {
       "DELETE FROM identity_accounts WHERE legacy_user_id IN ('user-b-00', 'user-b-01', 'user-b-02', 'user-b-03', 'user-b-04', 'user-b-05')"
     );
 
-    await processPendingSupportOpsSnapshotJobs({} as Env);
+    await processPendingSupportOpsSnapshotJobs(runtimeEnv);
     const read = await app().request(
       `/api/admin/support-ops/cohorts/${created.body.cohort_id}`,
       {},
-      {} as Env
+      runtimeEnv
     );
     const cohort = (await read.json()) as Record<string, any>;
 
@@ -486,7 +465,7 @@ describe('Support Ops under routed account storage', () => {
     // of six reads two pages at most, though its rows would allow all of them.
     let runs = 0;
     while ((await job(jobId))?.status !== 'completed' && runs < 20) {
-      await processPendingSupportOpsSnapshotJobs({} as Env, undefined, {
+      await processPendingSupportOpsSnapshotJobs(runtimeEnv, undefined, {
         pageSize: 10,
         maxRowsPerRun: 1000,
         maxQueriesPerRun: 6,
@@ -503,7 +482,7 @@ describe('Support Ops under routed account storage', () => {
     state.maxSnapshotCount = 25;
     const created = await post('/cohorts', { resource: 'User', intent: { action: 'suspend' } });
     const jobId = created.body.snapshot_job_id as string;
-    await processPendingSupportOpsSnapshotJobs({} as Env, undefined, {
+    await processPendingSupportOpsSnapshotJobs(runtimeEnv, undefined, {
       pageSize: 4,
       maxRowsPerRun: 20,
     });
@@ -514,7 +493,7 @@ describe('Support Ops under routed account storage', () => {
     );
 
     for (let runs = 0; runs < 10 && (await job(jobId))?.status !== 'completed'; runs += 1) {
-      await processPendingSupportOpsSnapshotJobs({} as Env, undefined, {
+      await processPendingSupportOpsSnapshotJobs(runtimeEnv, undefined, {
         pageSize: 4,
         maxRowsPerRun: 20,
       });
@@ -542,6 +521,15 @@ describe('Support Ops under routed account storage', () => {
     const executed = await finishExecution(await post('/actions/action-1/execute', {}));
 
     expect(executed.status).toBe(200);
+    expect(await logging.rows('admin.admin_audit_log')).toEqual([
+      expect.objectContaining({
+        action: 'support_ops.action.execute',
+        result: 'success',
+        resource_id: 'action-1',
+      }),
+    ]);
+    expect(logging.adminDb.prepare('SELECT count(*) n FROM admin_audit_log').get()?.n).toBe(0);
+    expect(logging.adminDb.prepare('SELECT count(*) n FROM admin_audit_receipts').get()?.n).toBe(1);
     expect(executed.body).toMatchObject({
       status: 'completed',
       succeeded_count: 20,
@@ -650,7 +638,7 @@ describe('Support Ops under routed account storage', () => {
 
       const executed = await post('/actions/action-1/execute', {});
       await processSupportOpsExecuteJobInline(
-        {} as Env,
+        runtimeEnv,
         'tenant-a',
         executed.body.job_id as string,
         { maxCallsPerRun: 600 }
@@ -773,7 +761,7 @@ describe('Support Ops under routed account storage', () => {
       });
       state.maxSnapshotCount = 25;
       const queued = await post('/cohorts', { resource: 'User', intent: { action: 'suspend' } });
-      await processPendingSupportOpsSnapshotJobs({} as Env);
+      await processPendingSupportOpsSnapshotJobs(runtimeEnv);
 
       expect([inRequest.status, inRequest.body.error]).toEqual([409, 'account_store_ambiguous']);
       expect(queued.status).toBe(202);

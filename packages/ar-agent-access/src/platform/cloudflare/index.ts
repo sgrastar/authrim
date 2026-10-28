@@ -1,4 +1,5 @@
 export * from './admin-agent-audit';
+export * from './admin-agent-audit-writer';
 export * from './durable-object-stores';
 export * from './durable-object-rate-limiter';
 export * from './elevation';

@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
 import { createDefaultConfig } from '../core/config.js';
 import { WORKER_COMPONENTS } from '../core/naming.js';
-import { generateWranglerConfig } from '../core/wrangler.js';
+import { generateArchiveTestWrangler as generateWranglerConfig } from './fixtures/log-archive.js';
 
 function drConfig() {
   const config = createDefaultConfig('dr-test');

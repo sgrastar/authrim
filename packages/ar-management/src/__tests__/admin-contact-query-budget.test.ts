@@ -1,17 +1,28 @@
 /** Real canonical SQL + signed runtime inventory. No owner-search or registry resolver seam. */
+const piiLogRows = vi.hoisted(() => [] as Array<import('@authrim/ar-lib-core').PIIAuditLog>);
+vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original) => ({
+  ...(await original<typeof import('../../../ar-lib-core/dist/repositories/pii/audit-log')>()),
+  writePiiAccessAuditRows: async (
+    _env: unknown,
+    _tenantId: string,
+    rows: import('@authrim/ar-lib-core').PIIAuditLog[]
+  ) => {
+    piiLogRows.push(...structuredClone(rows));
+  },
+}));
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { clearTenantDatabaseResolverMemoryCache, generateUserId } from '@authrim/ar-lib-core';
 const errors = vi.hoisted(() => [] as unknown[]);
 
-// Only deferred backup-effect scheduling is a seam; audit SQL still uses the actual PII adapter.
+// Contact SQL is real; the new audit writer is observed as its own transport port.
 vi.mock('@authrim/ar-lib-core', async (original) => ({
   ...(await original<typeof import('@authrim/ar-lib-core')>()),
   schedulePiiAccessLog: async (
     _env: unknown,
     execution: { waitUntil(promise: Promise<unknown>): void } | undefined,
-    access: { write(): Promise<unknown> }
+    access: { write(env: unknown): Promise<unknown> }
   ) => {
-    const result = access.write();
+    const result = access.write(_env);
     execution?.waitUntil(result);
     await result;
   },
@@ -35,6 +46,7 @@ afterEach(() => {
 });
 async function fixture(options: Parameters<typeof contactFixture>[1] = {}) {
   errors.length = 0;
+  piiLogRows.length = 0;
   clearTenantDatabaseResolverMemoryCache();
   const value = await contactFixture(keys, options);
   fixtures.push(value);
@@ -55,7 +67,7 @@ const n = (db: Fixture['metadata']['db'], table: string) =>
 
 describe('bounded admin session contacts with actual signed inventory', () => {
   it.for([100, 500])(
-    '%i distinct users across 32 Core/PII stores stay below the Paid invocation budget including audits',
+    '%i distinct users across 32 Core/PII stores stay below the Paid D1 contact-query budget with the audit transport observed separately',
     { timeout: 30_000 },
     async (users, context) => {
       const f = await fixture({ shards: 32, users });
@@ -68,7 +80,7 @@ describe('bounded admin session contacts with actual signed inventory', () => {
           maxBatch: f.counter.maxBatch,
           maxConcurrent: f.counter.maxConcurrent,
           registryReads: [...f.registryReads.values()],
-          audited: f.pii.reduce((count, store) => count + n(store.db, 'audit_log_pii'), 0),
+          audited: piiLogRows.length,
           budgetExceeded: f.counter.budgetExceeded,
           cap: f.counter.cap,
         }),
@@ -91,16 +103,15 @@ describe('bounded admin session contacts with actual signed inventory', () => {
       expect(f.counter.maxConcurrent).toBeLessThanOrEqual(4);
       expect(f.counter.sessions.every((constraint) => constraint === 'first-primary')).toBe(true);
       expect([...f.registryReads.values()]).toEqual([1, 1]);
-      expect(f.pii.reduce((count, store) => count + n(store.db, 'audit_log_pii'), 0)).toBe(users);
+      expect(piiLogRows.length).toBe(users);
       expect(n(f.defaultPii.db, 'audit_log_pii')).toBe(0);
       expect(n(f.metadata.db, 'account_routing_outbox')).toBe(0);
       for (let index = 0; index < users; index++) {
         const store = f.pii[index % 32];
-        const records = store.db
-          .prepare(
-            'SELECT target_user_id,details FROM audit_log_pii WHERE tenant_id=? AND target_user_id=?'
-          )
-          .all(TENANT, `user-${index}`);
+        const records = piiLogRows.filter(
+          (row) => row.tenant_id === TENANT && row.target_user_id === `user-${index}`
+        );
+        expect(n(store.db, 'audit_log_pii')).toBe(0);
         expect(records).toHaveLength(1);
         expect(JSON.stringify(records)).not.toContain('@example.test');
       }
@@ -128,7 +139,8 @@ describe('bounded admin session contacts with actual signed inventory', () => {
     );
     expect(f.counter.calls).toBeLessThanOrEqual(50);
     expect(f.registryReads.size).toBe(0);
-    expect(n(f.defaultPii.db, 'audit_log_pii')).toBe(20);
+    expect(piiLogRows).toHaveLength(20);
+    expect(n(f.defaultPii.db, 'audit_log_pii')).toBe(0);
   });
 
   it('keeps suspended and locked contact selection including profile-over-contact precedence', async () => {
@@ -181,7 +193,8 @@ describe('bounded admin session contacts with actual signed inventory', () => {
       user_email: 'user-1@example.test',
     });
     expect(n(f.pii[0].db, 'audit_log_pii')).toBe(0);
-    expect(n(f.pii[1].db, 'audit_log_pii')).toBe(1);
+    expect(piiLogRows.filter((row) => row.target_user_id === 'user-1')).toHaveLength(1);
+    expect(n(f.pii[1].db, 'audit_log_pii')).toBe(0);
     expect(n(f.defaultPii.db, 'audit_log_pii')).toBe(0);
   });
 
@@ -193,7 +206,7 @@ describe('bounded admin session contacts with actual signed inventory', () => {
       const response = await f.fetch();
       expect(response.status).toBe(500);
       expect(JSON.stringify(await response.json())).not.toContain('@example.test');
-      expect(f.pii.reduce((count, store) => count + n(store.db, 'audit_log_pii'), 0)).toBe(0);
+      expect(piiLogRows.length).toBe(0);
     }
   );
 
@@ -216,14 +229,14 @@ describe('bounded admin session contacts with actual signed inventory', () => {
     expect(await sessions(response)).toEqual([
       expect.objectContaining({ user_email: null, user_name: null }),
     ]);
-    expect(f.pii.reduce((count, store) => count + n(store.db, 'audit_log_pii'), 0)).toBe(0);
+    expect(piiLogRows.length).toBe(0);
   });
 
   it('duplicate current owners fail closed even when each owner has a valid publication', async () => {
     const f = await fixture();
     await f.seed('user-0', 1);
     expect((await f.fetch()).status).toBe(500);
-    expect(f.pii.reduce((count, store) => count + n(store.db, 'audit_log_pii'), 0)).toBe(0);
+    expect(piiLogRows.length).toBe(0);
   });
 
   it.each(['generation', 'residency', 'owner', 'tenant'] as const)(
@@ -239,7 +252,7 @@ describe('bounded admin session contacts with actual signed inventory', () => {
         if (invalid === 'tenant') publication.tenantId = 'tenant-b';
       });
       expect((await f.fetch()).status).toBe(500);
-      expect(f.pii.reduce((count, store) => count + n(store.db, 'audit_log_pii'), 0)).toBe(0);
+      expect(piiLogRows.length).toBe(0);
     }
   );
 
@@ -279,7 +292,7 @@ describe('bounded admin session contacts with actual signed inventory', () => {
     expect(await sessions(response)).toEqual([
       expect.objectContaining({ user_email: null, user_name: null }),
     ]);
-    expect(f.pii.reduce((count, store) => count + n(store.db, 'audit_log_pii'), 0)).toBe(0);
+    expect(piiLogRows.length).toBe(0);
   });
 
   it('a legacy ID mismatch cannot disclose a different account matching its synthetic account ID', async () => {
@@ -316,7 +329,8 @@ describe('bounded admin session contacts with actual signed inventory', () => {
           user_name: `Name ${id}`,
         }),
       ]);
-      expect(n(f.pii[0].db, 'audit_log_pii')).toBe(1);
+      expect(piiLogRows).toHaveLength(1);
+      expect(n(f.pii[0].db, 'audit_log_pii')).toBe(0);
     }
   );
 

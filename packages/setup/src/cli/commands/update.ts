@@ -1,3 +1,7 @@
+import {
+  prepareLogArchiveReadinessAttempt,
+  waitForLogArchiveReadiness,
+} from '../../core/log-archive-readiness.js';
 /**
  * Update Command
  *
@@ -1651,6 +1655,47 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       throw new Error('release_manifest_changed_while_waiting_for_update_lock');
     }
 
+    const verifyUpdatedLogArchive = async () => {
+      if (options.databaseOnly || options.dryRun) return;
+      const archive = lockedConfig.logging?.archive,
+        owned = workingLock.logArchive,
+        signing = workingLock.controlKeyState?.smokeRpc;
+      const keys = findKeysDirectory({ env, sourceDir: baseDir, keysBaseDir: process.cwd() });
+      if (!archive || !owned || !signing || !keys)
+        throw new Error('log_archive_readiness_identity_required');
+      const attempt = prepareLogArchiveReadinessAttempt(archive, owned, workingLock.workers);
+      const pending = {
+        ...owned,
+        activation: { ...owned.activation, pendingRuntimeProbe: attempt, runtimeProof: undefined },
+      };
+      workingLock = { ...workingLock, logArchive: pending };
+      await saveLockFile(workingLock, lockPath);
+      const workersSubdomain = await getWorkersSubdomain();
+      const proof = await waitForLogArchiveReadiness({
+        apiBaseUrl: resolveIssuerUrl(lockedConfig, { env, workersSubdomain }),
+        environmentId: env,
+        keysDir: keys.path,
+        activeSlot: signing.activeSlot,
+        activeKeyId: signing.activeKeyId,
+        archive,
+        owned: pending,
+        attempt,
+        onProgress: (message) => console.log(chalk.gray(message)),
+      });
+      workingLock = {
+        ...workingLock,
+        logArchive: {
+          ...pending,
+          activation: {
+            ...pending.activation,
+            pendingRuntimeProbe: undefined,
+            runtimeProof: proof,
+          },
+        },
+      };
+      await saveLockFile(workingLock, lockPath);
+    };
+
     // The migration plan addresses D1 targets by name, while the lock retains their immutable
     // provider IDs. Re-prove the complete topology after both locks are held and before persisting
     // `planned` or mutating any schema. This prevents a deleted resource from being silently
@@ -1664,6 +1709,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         ...Object.values(workingLock.r2 ?? {}).map((bucket) => bucket.name),
         ...getRequiredR2Buckets(env, {
           includeFeatureBuckets: lockedConfig.features.r2?.enabled === true,
+          logArchiveBucketName: lockedConfig.logging?.archive.bucketName,
         }).map((bucket) => bucket.name),
       ]),
     ];
@@ -1914,7 +1960,11 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       const deploymentSecrets = await loadDeploySecretsFromKeys(
         keysDirectory?.path,
         [...components],
-        { replicationWriter: config.features.replicationWriter !== undefined }
+        {
+          rootDir: baseDir,
+          env,
+          replicationWriter: config.features.replicationWriter !== undefined,
+        }
       );
       const deploymentControlDatabase = workingLock.d1.CONTROL_DB;
       if (!deploymentControlDatabase) {
@@ -2301,6 +2351,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           ? error
           : new Error('ui_worker_release_deployment_failed', { cause: error });
       }
+      await verifyUpdatedLogArchive();
       if (!controlDatabase && workingLock.releaseUpdate?.controlOperationId) {
         throw new Error('control_database_required_for_release_rollout_completion');
       }
@@ -2685,6 +2736,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           ? error
           : new Error('ui_worker_release_deployment_failed', { cause: error });
       }
+      await verifyUpdatedLogArchive();
       if (!controlDatabase && workingLock.releaseUpdate?.controlOperationId) {
         throw new Error('control_database_required_for_release_rollout_completion');
       }

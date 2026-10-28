@@ -18,6 +18,51 @@ tags:
 
 The Web UI is the primary path for interactive setup. It runs only on your local machine, talks to a local HTTP server started by the CLI, and uses your local `wrangler` authentication to operate against Cloudflare.
 
+Log archive setup uses the existing features step when a release supports the complete storage
+path. `pipeline` sends new logs to a private Basin Pipeline Stream without a searchable DB copy;
+`scheduled` stores them in the DB and periodically writes Parquet into an Iceberg table. Scheduled
+setup initially offers seven days of DB retention. This does not change dataset retention in R2.
+A missing `logging.archive` is allowed only while editing a wizard draft. Provisioning, Worker
+configuration generation, and deployment require an explicit mode; there is no legacy storage mode.
+
+Both modes require R2 and Basin Catalog. Pipeline mode also requires Workers Paid and durable
+logging delivery queues. Setup checks subscriptions and permissions; it never subscribes the
+account or silently changes modes. A mode whose producer, query, retention, or recovery path is
+incomplete is hidden in interactive setup and rejected before resource creation or Worker config
+generation. Resource-plan previews report whether the selected mode is implemented.
+
+The wizard requests separate Catalog read-only and write tokens. The read token also needs Basin
+SQL and R2 Storage read permissions. Setup authentication needs permission to inspect these account token policies
+and, for pipeline mode, read account subscriptions. Noninteractive setup reads the tokens from
+`LOG_ARCHIVE_CATALOG_READ_TOKEN` and `LOG_ARCHIVE_CATALOG_WRITE_TOKEN`. Pipeline mode additionally
+requires a separate Setup-only `LOG_ARCHIVE_CATALOG_SINK_TOKEN`. Tokens are stored as
+private local secret files and are never written into config, lock, plans, or progress responses.
+Only Management receives the read and maintenance-write tokens in both modes. The third Pipeline
+Sink token is kept by Setup and is never uploaded as a Worker secret.
+
+Reuse a saved config to preserve the storage generation and activation boundary:
+
+```bash
+npx @authrim/setup init --config ./config.json --dry-run
+npx @authrim/setup init --config ./config.json --yes
+```
+
+The Web API provides the same read-only plan through `POST /api/log-archive/plan`. Planning does
+not create resources, enable a Catalog, change billing, or write local files. Created resource IDs
+and immutable configuration digests are journaled before later setup work. Ambiguous creates with
+no provider ID stop for recovery; a same-name resource is never treated as owned merely because
+it exists. Mode and generation changes require an explicit transition rather than an edit that
+reuses the old Iceberg table.
+
+Authrim owns snapshot retention for its log tables. Setup disables provider snapshot expiration
+only after table ownership is proven, verifies `disabled` and `next_eligible_at=null`, and records
+the maintenance policy digest. Public provider APIs do not prove that an earlier maintenance run
+has finished. Initial activation therefore requires the owned table to be empty and records
+that limited basis together with its UUID, physical schema fingerprint, and metadata location.
+Deployment rejects missing or mismatched evidence; the existing post-deploy connection checks
+remain separate from this preparation evidence. Explicit environment deletion verifies resource identities and
+removes Pipeline, Sink, Stream, and Catalog metadata before the normal R2 cleanup.
+
 ## Quick Start
 
 ```bash

@@ -98,16 +98,22 @@ export function isProcessAlive(pid: number): boolean {
  */
 export function getProcessStartSeconds(pid: number): Promise<number | null> {
   return new Promise((resolve) => {
-    execFile(
-      'ps',
-      ['-o', 'lstart=', '-p', String(pid)],
-      { env: { ...process.env, LC_ALL: 'C', LANG: 'C' }, timeout: 3_000 },
-      (error, stdout) => {
-        if (error) return resolve(null);
-        const parsed = Date.parse(stdout.trim());
-        resolve(Number.isNaN(parsed) ? null : Math.floor(parsed / 1000));
-      }
-    );
+    try {
+      execFile(
+        'ps',
+        ['-o', 'lstart=', '-p', String(pid)],
+        { env: { ...process.env, LC_ALL: 'C', LANG: 'C' }, timeout: 3_000 },
+        (error, stdout) => {
+          if (error) return resolve(null);
+          const parsed = Date.parse(stdout.trim());
+          resolve(Number.isNaN(parsed) ? null : Math.floor(parsed / 1000));
+        }
+      );
+    } catch {
+      // Some restricted environments reject spawning synchronously, before a callback exists.
+      // PID liveness remains the authority; an unreadable start time never evicts a live lock.
+      resolve(null);
+    }
   });
 }
 

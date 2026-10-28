@@ -9,7 +9,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
 }));
 
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { GuestLifecycleRepository, writeLegacyAuditLog } from '@authrim/ar-lib-core';
+import { GuestLifecycleRepository } from '@authrim/ar-lib-core';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import {
   createGuestDeletionAuditTaskFromContext,
@@ -179,7 +179,7 @@ describe('guest deletion audit reconciliation outbox', () => {
       {
         now: () => 1001,
         writeAudit: async (task, _adapter, completedAt) => {
-          await writeLegacyAuditLog(adapter, {
+          await mockCreateAuditLog({} as Env, {
             id: task.audit_id,
             tenantId: task.tenant_id,
             userId: task.actor_user_id,
@@ -190,19 +190,27 @@ describe('guest deletion audit reconciliation outbox', () => {
             userAgent: task.user_agent,
             metadata: task.metadata_json,
             severity: 'info',
-            createdAt: completedAt / 1000,
+            createdAt: completedAt,
           });
         },
       }
     );
 
     expect(summary).toEqual({ processed: 1, succeeded: 1, retrying: 0 });
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        id: 'account-guest-deleted-operation-1',
+        action: 'user.deleted',
+        userId: 'admin-1',
+        createdAt: 1_000_000,
+      })
+    );
     expect(
-      await adapter.queryOne<{ action: string; user_id: string; created_at: number }>(
-        'SELECT action, user_id, created_at FROM audit_log WHERE id = ?',
-        ['account-guest-deleted-operation-1']
-      )
-    ).toEqual({ action: 'user.deleted', user_id: 'admin-1', created_at: 1000 });
+      await adapter.queryOne('SELECT id FROM audit_log WHERE id = ?', [
+        'account-guest-deleted-operation-1',
+      ])
+    ).toBeNull();
     expect(await restartedRepository.get('account-guest-deleted-operation-1')).toBeNull();
   });
 

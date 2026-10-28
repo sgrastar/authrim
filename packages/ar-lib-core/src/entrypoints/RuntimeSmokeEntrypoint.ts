@@ -1,3 +1,12 @@
+import { runSamlDrCoveredOperation } from '../services/tenant-portability/saml-dr-writer';
+import {
+  probeLogIcebergReadiness,
+  assertLogIcebergReadinessAttempt,
+  logIcebergReadinessAttemptDigest,
+  type LogIcebergReadinessResult,
+} from '../services/log-iceberg-readiness';
+import type { LogIcebergCatalogEnv } from '../services/log-iceberg-catalog';
+import { resolveLogIcebergConfig } from '../services/log-iceberg-config';
 import {
   SAML_DR_WRITER_COMPONENTS,
   samlDrWriterContractDigest,
@@ -39,7 +48,7 @@ function lookupHmacTestBinding(environmentId: string): string {
   return `${getTenantDatabaseBindingPrefix(environmentId)}_LOOKUP_HMAC_TEST`;
 }
 
-export interface RuntimeSmokeEntrypointEnv {
+export interface RuntimeSmokeEntrypointEnv extends LogIcebergCatalogEnv {
   AUTHRIM_ENVIRONMENT_NAME?: string;
   AUTHRIM_WORKER_SCRIPT_NAME?: string;
   CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS?: string;
@@ -244,6 +253,42 @@ export class RuntimeSmokeEntrypoint extends WorkerEntrypoint<
         throw new Error(error.message);
       }
       throw new Error('runtime_smoke_internal_error');
+    }
+  }
+
+  async probeLogArchive(input: unknown): Promise<LogIcebergReadinessResult> {
+    const context = authorizedIdentity(this.env, this.ctx.props);
+    if (context.targetWorker !== `${context.environmentId}-ar-management`)
+      throw new Error('runtime_smoke_log_archive_target_denied');
+    const publicJwks = this.env.CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS;
+    if (!publicJwks) throw new Error('runtime_smoke_caller_unauthorized');
+    const value = exactRecord(input);
+    if (Object.keys(value).sort().join(',') !== 'attempt,token')
+      throw new Error('runtime_smoke_log_archive_scope_denied');
+    assertLogIcebergReadinessAttempt(value.attempt);
+    const attempt = { ...value.attempt };
+    const claims = await verifyRuntimeSmokeRequest(value.token, { ...context, publicJwks });
+    const digest = await logIcebergReadinessAttemptDigest(attempt);
+    const config = resolveLogIcebergConfig(this.env);
+    if (
+      claims.operationId !== `log_archive_probe_v1:${digest}` ||
+      claims.bindingRef !== 'LOG_ARCHIVE' ||
+      claims.dataRole !== 'tenant_core/default' ||
+      claims.residencyPartition !== 'platform' ||
+      claims.expectedMigrationGeneration !== config.schemaVersion
+    )
+      throw new Error('runtime_smoke_log_archive_scope_denied');
+    try {
+      return await runSamlDrCoveredOperation(this.env, this.ctx, (covered) =>
+        probeLogIcebergReadiness(covered, attempt)
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      throw new Error(
+        /^log_iceberg_[a-z0-9_]{1,96}$/.test(message)
+          ? `runtime_smoke_${message}`
+          : 'runtime_smoke_log_archive_probe_failed'
+      );
     }
   }
 
@@ -502,3 +547,5 @@ export class RuntimeSmokeEntrypoint extends WorkerEntrypoint<
 }
 
 export const RUNTIME_LOOKUP_HMAC_TEST_VECTOR = LOOKUP_HMAC_TEST_VECTOR;
+
+export const SAML_DR_WRITER_SURFACES = ['RuntimeSmokeEntrypoint.probeLogArchive'] as const;

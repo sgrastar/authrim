@@ -7,7 +7,7 @@
  */
 
 import { Hono } from 'hono';
-import type { Env, DiagnosticLogEntry } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import {
   adminAuthMiddleware,
   createLogger,
@@ -21,15 +21,14 @@ import {
   applyPrivacyModeToEntry,
   protectDiagnosticEntry,
   identifierOrFingerprint,
-  buildDiagnosticLogPrefix,
+  createDiagnosticLogR2Adapter,
   type DiagnosticLogPrivacyMode,
   type DiagnosticLoggingSettings,
   type ExportOptions,
-  readR2ObjectTextWithLimit,
 } from '@authrim/ar-lib-core';
 
 const log = createLogger().module('DiagnosticLogsExportAPI');
-const DIAGNOSTIC_EXPORT_R2_OBJECT_MAX_BYTES = 16 * 1024 * 1024;
+const DIAGNOSTIC_EXPORT_MAX_ENTRIES = 10000;
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -152,97 +151,6 @@ function resolveEffectiveMode(
   return rank[storedMode] <= rank[requestedMode] ? storedMode : requestedMode;
 }
 
-function getDiagnosticObjectDayTimestamp(key: string): number {
-  const partitionMatch = key.match(/\/yyyy=(\d{4})\/mm=(\d{2})\/dd=(\d{2})\//);
-  if (partitionMatch) {
-    return Date.UTC(
-      Number.parseInt(partitionMatch[1], 10),
-      Number.parseInt(partitionMatch[2], 10) - 1,
-      Number.parseInt(partitionMatch[3], 10)
-    );
-  }
-
-  const legacyMatch = key.match(/\/(\d{4}-\d{2}-\d{2})\//);
-  if (legacyMatch) {
-    return new Date(`${legacyMatch[1]}T00:00:00.000Z`).getTime();
-  }
-
-  return Number.POSITIVE_INFINITY;
-}
-
-function isDiagnosticObjectInDateRange(key: string, startDate: Date, endDate: Date): boolean {
-  const day = getDiagnosticObjectDayTimestamp(key);
-  if (!Number.isFinite(day)) return true;
-  const start = Date.UTC(
-    startDate.getUTCFullYear(),
-    startDate.getUTCMonth(),
-    startDate.getUTCDate()
-  );
-  const end =
-    Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate()) +
-    24 * 60 * 60 * 1000 -
-    1;
-  return day >= start - 24 * 60 * 60 * 1000 && day <= end + 24 * 60 * 60 * 1000;
-}
-
-/**
- * List immutable diagnostic chunk objects in date range.
- */
-async function listR2Objects(
-  r2: R2Bucket,
-  prefix: string,
-  startDate: Date,
-  endDate: Date
-): Promise<string[]> {
-  const keys: string[] = [];
-  let cursor: string | undefined;
-  const listPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`;
-
-  do {
-    const listed = await r2.list({ prefix: listPrefix, limit: 1000, cursor });
-
-    for (const object of listed.objects) {
-      if (isDiagnosticObjectInDateRange(object.key, startDate, endDate)) {
-        keys.push(object.key);
-      }
-    }
-
-    cursor = listed.truncated ? listed.cursor : undefined;
-  } while (cursor);
-
-  return keys;
-}
-
-/**
- * Fetch and parse diagnostic logs from R2
- */
-async function fetchLogsFromR2(r2: R2Bucket, keys: string[]): Promise<DiagnosticLogEntry[]> {
-  const logs: DiagnosticLogEntry[] = [];
-
-  for (const key of keys) {
-    try {
-      const object = await r2.get(key);
-      if (!object) continue;
-
-      const text = await readR2ObjectTextWithLimit(object, DIAGNOSTIC_EXPORT_R2_OBJECT_MAX_BYTES);
-      const lines = text.split('\n').filter((line) => line.trim());
-
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line) as DiagnosticLogEntry;
-          logs.push(parsed);
-        } catch (error) {
-          log.warn('Failed to parse log line', { key, error: String(error) });
-        }
-      }
-    } catch (error) {
-      log.warn('Failed to fetch R2 object', { key, error: String(error) });
-    }
-  }
-
-  return logs;
-}
-
 /**
  * GET /api/admin/diagnostic-logging/export
  *
@@ -351,25 +259,12 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     );
   }
 
-  // Check R2 bucket binding
-  const r2 = c.env.DIAGNOSTIC_LOGS;
-  if (!r2) {
-    return c.json(
-      {
-        error: 'r2_not_configured',
-        message: 'DIAGNOSTIC_LOGS R2 bucket is not configured',
-      },
-      500
-    );
-  }
-
   try {
     // Settings that cannot be read leave the defaults, which are the safe values: PII filter on,
     // merged output off (the export is then exactly what it was before the setting existed).
     const settingsFallback: DiagnosticLoggingSettings = {
       ...DIAGNOSTIC_LOGGING_DEFAULTS,
       'diagnostic-logging.enabled': true,
-      'diagnostic-logging.r2_output_enabled': true,
     };
 
     let diagnosticSettings = settingsFallback;
@@ -414,90 +309,43 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     const sessionFilter = sessionIds ? await Promise.all(sessionIds.map(normalizeId)) : undefined;
     const flowFilter = flowIds ? await Promise.all(flowIds.map(normalizeId)) : undefined;
 
-    // Build R2 prefixes for immutable diagnostic chunks.
-    const logTypes = categories || ['token-validation', 'auth-decision'];
-    const allLogs: DiagnosticLogEntry[] = [];
-    const pathPrefix = diagnosticSettings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs';
-
-    const prefixes: string[] = [];
-
-    for (const logType of logTypes) {
-      if (clientIds && clientIds.length > 0) {
-        for (const clientId of clientIds) {
-          prefixes.push(
-            await buildDiagnosticLogPrefix({
-              pathPrefix,
-              tenantId,
-              tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
-              category: logType as DiagnosticLogEntry['category'],
-              clientId,
-            })
-          );
-        }
-      } else {
-        prefixes.push(
-          await buildDiagnosticLogPrefix({
-            pathPrefix,
-            tenantId,
-            tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
-            category: logType as DiagnosticLogEntry['category'],
-          })
-        );
-      }
-    }
-
-    const keySet = new Set<string>();
-
-    for (const prefix of prefixes) {
-      const keys = await listR2Objects(r2, prefix, startDate, endDate);
-      log.debug('Listed R2 objects', { prefix, keyCount: keys.length });
-      for (const key of keys) {
-        keySet.add(key);
-      }
-    }
-
-    const logs = await fetchLogsFromR2(r2, Array.from(keySet));
-    allLogs.push(...logs);
-
-    // Merged output: an export limited to some clients leaves out what the server wrote for the
-    // same sessions outside those clients' folders (a server entry with no client sits in the
-    // tenant folder). Correlated by diagnosticSessionId, those entries join the export.
-    if (mergedOutput && clientIds && clientIds.length > 0) {
-      // Only sessions that exist in the selected clients' folders are merged: the sessions asked
-      // for (sessionIds) that those folders hold, or, with no sessionIds, the sessions they hold.
-      // A session that only another client has is never brought in.
+    const adapter = createDiagnosticLogR2Adapter(c.env, { tenantId });
+    const archive = await adapter.query({
+      tenantId,
+      startTime: startDate.getTime(),
+      endTime: endDate.getTime(),
+      limit: DIAGNOSTIC_EXPORT_MAX_ENTRIES,
+    });
+    if (archive.hasMore)
+      return c.json(
+        {
+          error: 'diagnostic_export_too_large',
+          message: 'Choose a narrower date range for this export.',
+        },
+        413
+      );
+    const logTypes = new Set(categories ?? ['token-validation', 'auth-decision']);
+    const candidates = archive.entries.filter((entry) => logTypes.has(entry.category));
+    const logs = candidates.filter(
+      (entry) => !clientIds || clientIds.includes(entry.clientId ?? '')
+    );
+    const allLogs = [...logs];
+    if (mergedOutput && clientIds?.length) {
       const sessionsOfClients = new Set<string>();
-      for (const entry of logs) {
-        if (entry.diagnosticSessionId) {
+      for (const entry of logs)
+        if (entry.diagnosticSessionId)
           sessionsOfClients.add(await normalizeId(entry.diagnosticSessionId));
-        }
-      }
       const sessionsToMerge = sessionFilter
-        ? new Set(sessionFilter.filter((sessionId) => sessionsOfClients.has(sessionId)))
+        ? new Set(sessionFilter.filter((id) => sessionsOfClients.has(id)))
         : sessionsOfClients;
-      if (sessionsToMerge.size > 0) {
-        const otherKeys = new Set<string>();
-        for (const logType of logTypes) {
-          const prefix = await buildDiagnosticLogPrefix({
-            pathPrefix,
-            tenantId,
-            tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
-            category: logType as DiagnosticLogEntry['category'],
-          });
-          for (const key of await listR2Objects(r2, prefix, startDate, endDate)) {
-            if (!keySet.has(key)) otherKeys.add(key);
-          }
-        }
-        const others = await fetchLogsFromR2(r2, Array.from(otherKeys));
-        for (const entry of others) {
-          if (
-            entry.diagnosticSessionId &&
-            sessionsToMerge.has(await normalizeId(entry.diagnosticSessionId))
-          ) {
-            allLogs.push(entry);
-          }
-        }
-      }
+      const selectedIds = new Set(logs.map((entry) => entry.id));
+      for (const entry of candidates)
+        if (
+          !selectedIds.has(entry.id) &&
+          entry.diagnosticSessionId &&
+          sessionsToMerge.has(await normalizeId(entry.diagnosticSessionId))
+        )
+          allLogs.push(entry);
     }
 
     const processedLogs = await Promise.all(
@@ -578,6 +426,7 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
         'Content-Disposition': `attachment; filename="${filename}"`,
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'no-store',
+        'X-Authrim-Log-Consistency': archive.consistency ?? 'snapshot',
       },
     });
   } catch (error) {

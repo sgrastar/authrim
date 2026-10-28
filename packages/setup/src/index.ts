@@ -86,6 +86,11 @@ program
   .description('Initialize a new Authrim setup')
   .option('--cli', 'Use CLI mode instead of Web UI')
   .option('--config <path>', 'Load existing configuration file')
+  .option('--yes', 'Run setup from --config without interactive prompts')
+  .option(
+    '--dry-run',
+    'Print the resource plan from --config without changing Cloudflare or local files'
+  )
   .option('--keep <path>', 'Keep source files at specified path')
   .option('--env <name>', 'Environment name (prod, staging, dev)', 'prod')
   .option(
@@ -732,6 +737,8 @@ program
           }
           const secrets = keysDirectory
             ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent], {
+                rootDir: resolve(baseDir),
+                env,
                 replicationWriter: cfg?.features.replicationWriter !== undefined,
               })
             : {};

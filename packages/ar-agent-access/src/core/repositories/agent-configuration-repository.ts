@@ -1,5 +1,9 @@
 import type { DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core/db/adapter';
-import type { AdminAgentAuditWrite } from '../audit';
+import {
+  prepareAdminAgentAuditStatements,
+  type AdminAgentAuditWrite,
+  type AdminAgentAuditWriter,
+} from '../audit';
 import type {
   AgentConfigurationPlanDefinition,
   AgentScopePolicyDefinition,
@@ -217,44 +221,6 @@ function jsonObject(value: string | null): JsonObject | undefined {
   return parsed as JsonObject;
 }
 
-function auditStatement(
-  audit: AdminAgentAuditWrite,
-  guard?: { from: string; where: string; params: readonly unknown[] }
-): PreparedStatement {
-  const values = [
-    audit.id,
-    audit.tenantId,
-    audit.adminUserId ?? null,
-    audit.action,
-    audit.resourceType,
-    audit.resourceId,
-    audit.result ?? 'success',
-    audit.severity,
-    audit.requestId ?? null,
-    JSON.stringify(audit.metadata),
-    audit.createdAt,
-    audit.actorType,
-    audit.actorSub,
-    audit.actorMode ?? null,
-    audit.actorAssurance ?? null,
-    audit.tokenBinding ?? null,
-    audit.actClientId ?? null,
-    audit.actPrincipalId ?? null,
-    audit.grantId ?? null,
-    audit.elevationId ?? null,
-    audit.mcpTool ?? null,
-  ];
-  return {
-    sql: `INSERT INTO admin_audit_log (
-      id, tenant_id, admin_user_id, action, resource_type, resource_id,
-      result, severity, request_id, metadata_json, created_at,
-      actor_type, actor_sub, actor_mode, actor_assurance, token_binding,
-      act_client_id, act_principal_id, grant_id, elevation_id, mcp_tool
-    ) ${guard ? `SELECT ${values.map(() => '?').join(', ')} FROM ${guard.from} WHERE ${guard.where}` : `VALUES (${values.map(() => '?').join(', ')})`}`,
-    params: guard ? [...values, ...guard.params] : values,
-  };
-}
-
 function taskSet(row: TaskSetRow): AgentTaskSetRecord {
   return {
     id: row.id,
@@ -332,11 +298,14 @@ function plan(row: PlanRow): AgentConfigurationPlanRecord {
 
 /** DB_ADMIN repository using the existing cross-platform DatabaseAdapter. */
 export class AgentConfigurationRepository {
-  constructor(private readonly adapter: DatabaseAdapter) {}
+  constructor(
+    private readonly adapter: DatabaseAdapter,
+    private readonly auditWriter?: AdminAgentAuditWriter
+  ) {}
 
   async writeAudit(audit: AdminAgentAuditWrite): Promise<void> {
-    const statement = auditStatement(audit);
-    await this.adapter.execute(statement.sql, statement.params);
+    const statement = await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, audit);
+    await this.adapter.batch(statement);
   }
 
   async isActiveTenant(tenantId: string): Promise<boolean> {
@@ -381,7 +350,7 @@ export class AgentConfigurationRepository {
           input.now,
         ],
       },
-      auditStatement(input.audit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
     ]);
   }
 
@@ -456,7 +425,7 @@ export class AgentConfigurationRepository {
           input.now,
         ],
       },
-      auditStatement(input.audit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
     ]);
   }
 
@@ -519,11 +488,11 @@ export class AgentConfigurationRepository {
           input.audit.id,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_task_sets',
         where: 'tenant_id = ? AND id = ? AND last_transition_id = ?',
         params: [input.tenantId, input.id, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -542,12 +511,12 @@ export class AgentConfigurationRepository {
              WHERE id = agent_task_set_versions.task_set_id AND tenant_id = ?)`,
         params: [input.audit.id, input.id, input.version, input.tenantId],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_task_set_versions v JOIN agent_task_sets s ON s.id = v.task_set_id',
         where:
           's.tenant_id = ? AND v.task_set_id = ? AND v.version = ? AND v.last_transition_id = ?',
         params: [input.tenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -595,11 +564,11 @@ export class AgentConfigurationRepository {
           input.audit.id,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_scope_policies',
         where: 'tenant_id = ? AND id = ? AND last_transition_id = ?',
         params: [input.tenantId, input.id, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -618,12 +587,12 @@ export class AgentConfigurationRepository {
              WHERE id = agent_scope_policy_versions.scope_policy_id AND tenant_id = ?)`,
         params: [input.audit.id, input.id, input.version, input.tenantId],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_scope_policy_versions v JOIN agent_scope_policies p ON p.id = v.scope_policy_id',
         where:
           'p.tenant_id = ? AND v.scope_policy_id = ? AND v.version = ? AND v.last_transition_id = ?',
         params: [input.tenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -694,7 +663,11 @@ export class AgentConfigurationRepository {
         input.risks[sequence],
       ],
     }));
-    await this.adapter.batch([planStatement, ...steps, auditStatement(input.audit)]);
+    await this.adapter.batch([
+      planStatement,
+      ...steps,
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
+    ]);
   }
 
   async getPlan(
@@ -759,11 +732,11 @@ export class AgentConfigurationRepository {
           input.now,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_configuration_plans',
         where: 'tenant_id = ? AND id = ? AND version = ? AND last_transition_id = ?',
         params: [input.tenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -841,11 +814,11 @@ export class AgentConfigurationRepository {
             },
           ]
         : []),
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_configuration_plans',
         where: 'tenant_id = ? AND id = ? AND version = ? AND last_transition_id = ?',
         params: [input.tenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -882,11 +855,11 @@ export class AgentConfigurationRepository {
           input.audit.id,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_plan_confirmations',
         where: 'id = ? AND tenant_id = ? AND last_transition_id = ?',
         params: [input.id, input.tenantId, input.audit.id],
-      }),
+      })),
     ]);
     const confirmation = await this.getPlanConfirmation(
       input.tenantId,
@@ -966,11 +939,11 @@ export class AgentConfigurationRepository {
           input.now,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_plan_confirmations',
         where: 'tenant_id = ? AND id = ? AND last_transition_id = ?',
         params: [input.tenantId, input.confirmationId, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -1011,11 +984,11 @@ export class AgentConfigurationRepository {
           input.definitionDigest,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_configuration_plans',
         where: 'tenant_id = ? AND id = ? AND version = ? AND last_transition_id = ?',
         params: [input.tenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -1049,11 +1022,11 @@ export class AgentConfigurationRepository {
           input.version,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_configuration_plans',
         where: 'tenant_id = ? AND id = ? AND version = ? AND last_transition_id = ?',
         params: [input.tenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -1088,11 +1061,11 @@ export class AgentConfigurationRepository {
           input.definitionDigest,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_configuration_plans',
         where: 'tenant_id = ? AND id = ? AND version = ? AND last_transition_id = ?',
         params: [input.tenantId, input.id, input.version, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -1141,7 +1114,7 @@ export class AgentConfigurationRepository {
           input.expiresAt ?? null,
         ],
       },
-      auditStatement(input.audit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
     ]);
   }
 
@@ -1252,11 +1225,11 @@ export class AgentConfigurationRepository {
          WHERE tenant_id = ? AND id = ? AND status = 'active'`,
         params: [input.now, input.revokedBy, input.audit.id, input.tenantId, input.id],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_secret_refs',
         where: 'tenant_id = ? AND id = ? AND last_transition_id = ?',
         params: [input.tenantId, input.id, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }

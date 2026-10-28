@@ -1,6 +1,16 @@
 import type { DatabaseAdapter } from '../../db';
 import { compileGroups, evaluateGroupInputDelta } from './engine';
 import type { Evaluation, EvaluationInput, Field, GroupPlan, ServiceGroup, Scalar } from './model';
+import {
+  prepareCoreLogPublication,
+  type CoreLogPublicationSource,
+} from '../log-iceberg-core-publication';
+import type { LogIcebergRuntimeEnv } from '../log-iceberg-runtime';
+
+export interface GroupLogPublicationContext {
+  env: LogIcebergRuntimeEnv;
+  source: CoreLogPublicationSource;
+}
 
 const primary = { consistencyClass: 'primary_required' as const };
 export interface Catalog {
@@ -63,9 +73,54 @@ const equalVersion = (a: InputVersion, b: InputVersion) =>
 export class DynamicGroupStore {
   constructor(
     readonly db: DatabaseAdapter,
-    readonly tenantId: string
+    readonly tenantId: string,
+    private readonly publication?: GroupLogPublicationContext
   ) {
     if (!tenantId.trim()) throw new Error('group_tenant_required');
+  }
+  async prepareAudit(input: {
+    id?: string;
+    userId: string;
+    ruleVersion: number;
+    generation: number;
+    eventType: string;
+    detail: Record<string, unknown>;
+    createdAt?: number;
+  }) {
+    if (!this.publication || this.publication.source.tenantId !== this.tenantId)
+      throw new Error('group_audit_publication_context_required');
+    const at = input.createdAt ?? Date.now();
+    return prepareCoreLogPublication(this.publication.env, this.db, {
+      source: this.publication.source,
+      tenantId: this.tenantId,
+      sourceDataset: 'core.service_group_audit',
+      logType: 'audit',
+      eventAt: at,
+      expiresAt: null,
+      overview: { action: input.eventType, subject_id: input.userId || null },
+      row: {
+        id: input.id ?? crypto.randomUUID(),
+        tenant_id: this.tenantId,
+        user_id: input.userId,
+        rule_version: input.ruleVersion,
+        generation: input.generation,
+        event_type: input.eventType,
+        detail_json: JSON.stringify(input.detail),
+        created_at: at,
+      },
+    });
+  }
+  async finishAudit(
+    prepared: Awaited<ReturnType<DynamicGroupStore['prepareAudit']>>,
+    conflict = 'group_version_conflict'
+  ) {
+    const state = await this.db.queryOne<{ state: string }>(
+      'SELECT state FROM log_iceberg_core_publications WHERE id=? AND tenant_id=?',
+      [prepared.publicationId, this.tenantId],
+      primary
+    );
+    if (!state || !['committed', 'published'].includes(state.state)) throw new Error(conflict);
+    await prepared.dispatch();
   }
   async catalog(): Promise<Catalog | null> {
     const row = await this.db.queryOne<{ revision: number; plan_json: string }>(
@@ -124,29 +179,41 @@ export class DynamicGroupStore {
     const catalog = await this.catalog();
     if (!catalog?.plan.groups.some((g) => g.id === groupId && g.enabled))
       throw new Error('group_not_found');
-    await this.db.batch([
-      present
-        ? {
-            sql: `INSERT INTO service_group_manual(tenant_id, user_id, group_id) VALUES (?, ?, ?) ON CONFLICT(tenant_id, user_id, group_id) DO NOTHING`,
-            params: [this.tenantId, userId, groupId],
-          }
-        : {
-            sql: 'DELETE FROM service_group_manual WHERE tenant_id = ? AND user_id = ? AND group_id = ?',
-            params: [this.tenantId, userId, groupId],
-          },
-      {
-        sql: `INSERT INTO service_group_audit(id, tenant_id, user_id, rule_version, generation, event_type, detail_json, created_at) VALUES (?, ?, ?, ?, 0, 'manual', ?, ?)`,
-        params: [
-          crypto.randomUUID(),
-          this.tenantId,
-          userId,
-          catalog.revision,
-          JSON.stringify({ actorId, groupId, present }),
-          Date.now(),
+    const audit = await this.prepareAudit({
+      userId,
+      ruleVersion: catalog.revision,
+      generation: 0,
+      eventType: 'manual',
+      detail: { actorId, groupId, present },
+    });
+    if (audit.state === 'committed' || audit.state === 'published') {
+      await audit.dispatch();
+      return;
+    }
+    const catalogGuard =
+      'EXISTS(SELECT 1 FROM service_group_catalog WHERE tenant_id=? AND revision=?)';
+    await this.db.batch(
+      audit.wrapBusinessBatch(
+        [
+          present
+            ? {
+                sql: `INSERT INTO service_group_manual(tenant_id,user_id,group_id) SELECT ?,?,? WHERE ${catalogGuard} ON CONFLICT(tenant_id,user_id,group_id) DO NOTHING`,
+                params: [this.tenantId, userId, groupId, this.tenantId, catalog.revision],
+              }
+            : {
+                sql: `DELETE FROM service_group_manual WHERE tenant_id=? AND user_id=? AND group_id=? AND ${catalogGuard}`,
+                params: [this.tenantId, userId, groupId, this.tenantId, catalog.revision],
+              },
         ],
-      },
-    ]);
+        {
+          where: `${catalogGuard} AND ${present ? '' : 'NOT '}EXISTS(SELECT 1 FROM service_group_manual WHERE tenant_id=? AND user_id=? AND group_id=?)`,
+          params: [this.tenantId, catalog.revision, this.tenantId, userId, groupId],
+        }
+      )
+    );
+    await this.finishAudit(audit);
   }
+
   async snapshot(userId: string, reader: GroupInputReader): Promise<GroupSnapshot> {
     if (reader.tenantId !== this.tenantId || reader.userId !== userId)
       throw new Error('group_tenant_or_subject_mismatch');
@@ -221,6 +288,7 @@ export class DynamicGroupStore {
       [lease, now + 60_000, this.tenantId, userId, now]
     );
     if (claimed.rowsAffected !== 1) throw new Error('group_evaluation_busy');
+    let committed = false;
     try {
       const catalog = await this.catalog();
       if (!catalog) throw new Error('group_catalog_missing');
@@ -236,55 +304,83 @@ export class DynamicGroupStore {
       );
       if (!equalVersion(after, await reader.version())) throw new Error('group_input_changed');
       const json = JSON.stringify(evaluation);
-      const results = await this.db.batch([
-        {
-          sql: `UPDATE service_group_results SET generation = generation + 1, rule_version = ?, core_version = ?, pii_version = ?, metadata_version = ?, epoch = ?, result_json = ?, evaluated_at = ?, error_code = NULL, lease_until = 0, route_version = ?
+      const evaluatedAt = Date.now();
+      if (!Number.isSafeInteger(old.generation) || old.generation < 0)
+        throw new Error('group_generation_invalid');
+      const generation = old.generation + 1;
+      const audit = await this.prepareAudit({
+        userId,
+        ruleVersion: catalog.revision,
+        generation,
+        eventType: 'evaluation',
+        createdAt: evaluatedAt,
+        detail: {
+          before: old.evaluation?.groups ?? null,
+          after: evaluation.groups,
+          inputVersion: after,
+        },
+      });
+      if (audit.state === 'committed' || audit.state === 'published') {
+        await audit.dispatch();
+        return this.snapshot(userId, reader);
+      }
+      if (!equalVersion(after, await reader.version())) throw new Error('group_input_changed');
+      const results = await this.db.batch(
+        audit.wrapBusinessBatch(
+          [
+            {
+              sql: `UPDATE service_group_results SET generation = generation + 1, rule_version = ?, core_version = ?, pii_version = ?, metadata_version = ?, epoch = ?, result_json = ?, evaluated_at = ?, error_code = NULL, lease_until = 0, route_version = ?
           WHERE tenant_id = ? AND user_id = ? AND lease_token = ? AND lease_until > ?
           AND (route_version <> ? OR (core_version <= ? AND pii_version <= ?)) AND metadata_version <= ? AND epoch <= ?
-          AND (SELECT revision FROM service_group_catalog WHERE tenant_id = ?) = ?`,
-          params: [
-            catalog.revision,
-            after.core,
-            after.pii,
-            after.metadata,
-            after.epoch,
-            json,
-            Date.now(),
-            after.route ?? '',
-            this.tenantId,
-            userId,
-            lease,
-            Date.now(),
-            after.route ?? '',
-            after.core,
-            after.pii,
-            after.metadata,
-            after.epoch,
-            this.tenantId,
-            catalog.revision,
+          AND (SELECT revision FROM service_group_catalog WHERE tenant_id = ?) = ? AND generation = ?`,
+              params: [
+                catalog.revision,
+                after.core,
+                after.pii,
+                after.metadata,
+                after.epoch,
+                json,
+                evaluatedAt,
+                after.route ?? '',
+                this.tenantId,
+                userId,
+                lease,
+                Date.now(),
+                after.route ?? '',
+                after.core,
+                after.pii,
+                after.metadata,
+                after.epoch,
+                this.tenantId,
+                catalog.revision,
+                old.generation,
+              ],
+            },
           ],
-        },
-        {
-          sql: `INSERT INTO service_group_audit(id, tenant_id, user_id, rule_version, generation, event_type, detail_json, created_at)
-          SELECT ?, tenant_id, user_id, rule_version, generation, 'evaluation', ?, ? FROM service_group_results
-          WHERE tenant_id = ? AND user_id = ? AND lease_token = ? AND lease_until = 0 AND error_code IS NULL`,
-          params: [
-            crypto.randomUUID(),
-            JSON.stringify({
-              before: old.evaluation?.groups ?? null,
-              after: evaluation.groups,
-              inputVersion: after,
-            }),
-            Date.now(),
-            this.tenantId,
-            userId,
-            lease,
-          ],
-        },
-      ]);
+          {
+            where: `EXISTS(SELECT 1 FROM service_group_results WHERE tenant_id=? AND user_id=? AND lease_token=? AND lease_until=0 AND error_code IS NULL AND generation=? AND rule_version=? AND route_version=? AND core_version=? AND pii_version=? AND metadata_version=? AND epoch=? AND evaluated_at=?)`,
+            params: [
+              this.tenantId,
+              userId,
+              lease,
+              generation,
+              catalog.revision,
+              after.route ?? '',
+              after.core,
+              after.pii,
+              after.metadata,
+              after.epoch,
+              evaluatedAt,
+            ],
+          }
+        )
+      );
       if (results[0].rowsAffected !== 1) throw new Error('group_evaluation_superseded');
+      committed = true;
+      await this.finishAudit(audit, 'group_evaluation_superseded');
       return await this.snapshot(userId, reader);
     } catch (error) {
+      if (committed) throw error;
       const code =
         error instanceof Error && /^group_[a-z_]+$/.test(error.message)
           ? error.message

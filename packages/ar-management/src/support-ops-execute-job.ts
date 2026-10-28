@@ -565,7 +565,7 @@ async function run(
         }
         const resource = getSupportOpsResource('User');
         if (!resource) throw new Error('support_ops_resource_missing');
-        await effect(3, () =>
+        await effect(16, () =>
           keepSupportOpsFinalAudit(
             env,
             db,

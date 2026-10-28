@@ -66,7 +66,7 @@ const TABLE_GROUPS: Partial<
       notification_delivery_intents oauth_client_consent_revocations oauth_client_consents passkeys
       plugin_account_metadata
       plugin_account_metadata_mutations plugin_hook_outbox profile_attribute_values
-      profiles provisioning_assignment_ownership relationships role_assignments
+      profiles provisioning_assignment_ownership provisioning_revocation_receipts relationships role_assignments
       service_group_inputs service_group_manual service_group_write_boundaries structured_attribute_values subject_account_links
       subject_org_membership tenant_invitation_redemptions tenant_invitations totp_backup_codes totp_credentials
       user_consent_records user_custom_fields user_roles
@@ -103,6 +103,7 @@ const TABLE_GROUPS: Partial<
     rebuild: `
       authrim_migrations migration_metadata tenant_database_migration_state
       account_routing_outbox authrim_control_plane_shard_metadata contact_point_search_indexes did_document_cache
+      log_iceberg_core_publications
       directory_auth_release_advisories
       identity_binding_lookup_indexes legal_hold_projection_outbox lookup_retention_policy_projection_outbox refresh_token_shard_configs
       relationship_closure service_group_catalog service_group_epoch service_group_results
@@ -123,7 +124,7 @@ const TABLE_GROUPS: Partial<
     users: `
       account_webhook_delivery_fields account_webhook_outbox account_webhook_snapshots external_identifier_unlink_operations
       guest_upgrade_operations identity_identifier_replacement_challenges identity_identifier_replacement_operations identity_sensitive_values linked_identities
-      pairwise_subject_identifiers service_group_inputs service_group_write_boundaries subject_identifiers user_anonymization_map
+      pairwise_subject_identifiers pii_log_purge_operations service_group_inputs service_group_write_boundaries subject_identifiers user_anonymization_map
       users_pii users_pii_tombstone
     `,
     sensitive_logs: `
@@ -144,7 +145,7 @@ const TABLE_GROUPS: Partial<
     tenant_state: 'tenant_runtime_cache_generations',
     delivery_state: 'internal_notification_delivery_attempts internal_notification_events',
     admin: `
-      admin_agent_grants admin_agent_token_revocation_outbox admin_attribute_values admin_attributes
+      admin_agent_grants admin_agent_token_revocation_outbox admin_attribute_values admin_attributes admin_audit_receipts
       admin_database_connection_usages admin_invitations admin_jobs admin_relationships
       admin_role_assignments admin_storage_destination_usages admin_users agent_bulk_plans
       agent_bulk_tenant_executions agent_configuration_plan_steps agent_configuration_plans agent_consents
@@ -155,7 +156,11 @@ const TABLE_GROUPS: Partial<
       operational_notification_states replay_jobs review_task_groups review_tasks
       rewrap_jobs
     `,
+    // Anonymous deletion denial is business state, independent of log selection.
+    // The restore adapter discards source physical cursors and starts target GC anew.
+    users: 'log_iceberg_subject_erasures',
     settings: `
+      identity_mapping_level_history
       admin_destination_capabilities admin_destinations admin_ip_allowlist admin_logging_critical_policies
       admin_logging_sensitive_detail_policies admin_policies admin_rebac_definitions admin_roles
       agent_baseline_assignments agent_baseline_exceptions agent_baselines agent_configuration_templates
@@ -176,7 +181,7 @@ const TABLE_GROUPS: Partial<
       source_profile_versions source_profiles storage_destination_assignments tenant_settings_documents
     `,
     audit: `
-      admin_audit_log identity_mapping_level_history key_access_events
+      admin_audit_log key_access_events
     `,
     history: `
       admin_destination_health_events admin_login_attempts federation_metadata_validation_events federation_selected_entity_import_events
@@ -200,6 +205,10 @@ const TABLE_GROUPS: Partial<
       admin_machine_resource_scopes
     `,
     rebuild: `
+      log_iceberg_event_receipts log_iceberg_records log_iceberg_record_parts
+      log_iceberg_outbox log_iceberg_export_batches log_iceberg_read_watermarks
+      log_iceberg_erasure_artifacts log_iceberg_publications log_sign_in_attempt_receipts
+      log_iceberg_retention_jobs log_iceberg_retention_artifacts log_iceberg_backup_seen log_iceberg_restore_holds log_iceberg_restore_activations
       authrim_migrations migration_metadata
       admin_audit_coverage_status admin_search_projections federation_metadata_refresh_jobs
       identifier_replacement_scheduler_state mapping_activation_leases projection_jobs

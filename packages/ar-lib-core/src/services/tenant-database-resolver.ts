@@ -868,6 +868,7 @@ async function reportRuntimeSnapshotSecurityFailure(
       },
       {
         adminAuditAdapter: adminAdapter,
+        logEnv: env,
         internalNotificationAdapter: adminAdapter,
       }
     );

@@ -236,22 +236,36 @@ export async function serviceGroupRestart(c: Ctx) {
     const input = await body(c);
     const catalog = await store.catalog();
     if (!catalog || input.ifMatch !== catalog.revision) throw new Error('group_version_conflict');
-    await store.db.batch([
-      {
-        sql: "UPDATE service_group_scans SET cursor_id = '', processed = 0, failures = 0, status = 'pending', lease_until = 0, lease_token = NULL, updated_at = ? WHERE tenant_id = ?",
-        params: [Date.now(), store.tenantId],
-      },
-      {
-        sql: "INSERT INTO service_group_audit(id, tenant_id, user_id, rule_version, generation, event_type, detail_json, created_at) VALUES (?, ?, '', ?, 0, 'reconcile_requested', ?, ?)",
-        params: [
-          crypto.randomUUID(),
-          store.tenantId,
-          catalog.revision,
-          JSON.stringify({ actorId: actor(c) }),
-          Date.now(),
+    const at = Date.now();
+    const audit = await store.prepareAudit({
+      userId: '',
+      ruleVersion: catalog.revision,
+      generation: 0,
+      eventType: 'reconcile_requested',
+      createdAt: at,
+      detail: { actorId: actor(c) },
+    });
+    if (audit.state === 'committed' || audit.state === 'published') {
+      await audit.dispatch();
+      return c.json({ status: 'pending' }, 202);
+    }
+    await store.db.batch(
+      audit.wrapBusinessBatch(
+        [
+          {
+            sql: `UPDATE service_group_scans SET cursor_id='',processed=0,failures=0,status='pending',lease_until=0,lease_token=NULL,updated_at=?
+        WHERE tenant_id=? AND EXISTS(SELECT 1 FROM service_group_catalog WHERE tenant_id=? AND revision=?)`,
+            params: [at, store.tenantId, store.tenantId, catalog.revision],
+          },
         ],
-      },
-    ]);
+        {
+          where: `EXISTS(SELECT 1 FROM service_group_catalog WHERE tenant_id=? AND revision=?) AND
+      NOT EXISTS(SELECT 1 FROM service_group_scans WHERE tenant_id=? AND (cursor_id!='' OR processed!=0 OR failures!=0 OR status!='pending' OR lease_until!=0 OR lease_token IS NOT NULL OR updated_at!=?))`,
+          params: [store.tenantId, catalog.revision, store.tenantId, at],
+        }
+      )
+    );
+    await store.finishAudit(audit);
     return c.json({ status: 'pending' }, 202);
   } catch (error) {
     return failure(c, error);

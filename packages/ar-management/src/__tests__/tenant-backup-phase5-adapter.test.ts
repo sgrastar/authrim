@@ -8,6 +8,11 @@ import { emptyKeyManagerTenantBackupSnapshot } from '@authrim/ar-lib-core/servic
 import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import { PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase5-sqlite-modules';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
+import {
+  ICEBERG_LOG_RECORDS_DATASETS,
+  createIcebergLogRecordDatasetPolicy,
+} from '@authrim/ar-lib-core/services/tenant-portability/portable-iceberg-log';
+import { PHASE5_TRANSFORMED_SQLITE_DATASETS } from '../tenant-backup-phase5-row-transform';
 import type { AdapterContext } from '../tenant-backup-export-dispatcher';
 import {
   createPhase5TenantBackupInstalledAdapter,
@@ -49,11 +54,18 @@ function database() {
   };
 }
 
-function fixture() {
+function fixture(
+  sqliteExtension?: Parameters<
+    typeof createPhase5TenantBackupInstalledAdapter
+  >[0]['sqliteExtension']
+) {
   const snapshot = emptyKeyManagerTenantBackupSnapshot();
   const keyManagerSnapshot = {
     assertSource: vi.fn(async () => {}),
-    start: vi.fn(async (_context, _snapshotId, assertHeld) => assertHeld()),
+    start: vi.fn(
+      async (_context: AdapterContext, _snapshotId: string, assertHeld: () => Promise<void>) =>
+        assertHeld()
+    ),
     load: vi.fn(async () => snapshot),
     release: vi.fn(async () => {}),
     assertReleased: vi.fn(async () => {}),
@@ -61,7 +73,10 @@ function fixture() {
   const recordSnapshot = (resourceId: string) => ({
     resourceId,
     assertSource: vi.fn(async () => {}),
-    start: vi.fn(async (_context, _snapshotId, assertHeld) => assertHeld()),
+    start: vi.fn(
+      async (_context: AdapterContext, _snapshotId: string, assertHeld: () => Promise<void>) =>
+        assertHeld()
+    ),
     readNext: vi.fn(async () => null),
     release: vi.fn(async () => {}),
     assertReleased: vi.fn(async () => {}),
@@ -83,7 +98,9 @@ function fixture() {
       verifyActivation: vi.fn(async () => {}),
     },
     tenantKey: 'tenant-key-a',
-    rowTransform: { transformAdminEnvelope: vi.fn(async (_datasetId, rowJson) => rowJson) },
+    rowTransform: {
+      transformAdminEnvelope: vi.fn(async (_datasetId: string, rowJson: string) => rowJson),
+    },
     otherStores: {
       phase4: {
         load: vi.fn(async () => ({}) as never),
@@ -141,6 +158,7 @@ function fixture() {
   const adapter = createPhase5TenantBackupInstalledAdapter({
     env: { DB_ADMIN: database(), RP_TOKEN_ENCRYPTION_KEY: '11'.repeat(32) } as unknown as Env,
     planned: planned(),
+    sqliteExtension,
     ports,
   });
   return { adapter, ports, snapshot };
@@ -200,13 +218,14 @@ it('captures, exports and releases the immutable KeyManager snapshot participant
     signal: context.context.signal,
   });
   expect(first).not.toBeNull();
-  const rowJson = new TextDecoder().decode(first!.bytes).trimEnd();
+  if (!first) throw new Error('Missing key-manager snapshot');
+  const rowJson = new TextDecoder().decode(first.bytes).trimEnd();
   await expect(decodeKeyManagerTenantBackupRow(rowJson, 'tenant-a')).resolves.toEqual(snapshot);
   await expect(
     adapter.export.readNext({
       ...context,
       datasetId: KEY_MANAGER_TENANT_BACKUP_DATASET.id,
-      cursor: first!.nextCursor,
+      cursor: first.nextCursor,
       signal: context.context.signal,
     })
   ).resolves.toBeNull();
@@ -253,7 +272,7 @@ it('blocks activation until external prerequisites and logical references pass',
   await adapter.import.prepareActivation(context, 'ab'.repeat(32));
   expect(ports.loadExternalPrerequisites).toHaveBeenCalledWith(context, 'ab'.repeat(32));
   expect(ports.loadExternalPrerequisites.mock.invocationCallOrder[0]).toBeLessThan(
-    ports.import.prepareActivation.mock.invocationCallOrder[0]!
+    ports.import.prepareActivation.mock.invocationCallOrder[0]
   );
   expect(ports.loadDeliverySafety).toHaveBeenCalledWith(context, 'ab'.repeat(32));
 });
@@ -356,4 +375,93 @@ it('rejects an incomplete cumulative SQL plan before installing Phase 5', () => 
       ports,
     })
   ).toThrow('backup_phase5_plan_incomplete');
+});
+
+it('shares one physical capture handler for three selected log categories and preserves dataset identity during reads', async () => {
+  const capture = {
+    resourceId: 'iceberg-log:records',
+    assertSource: vi.fn(async () => {}),
+    prepareBoundary: vi.fn(async () => {}),
+    start: vi.fn(
+      async (_context: AdapterContext, _snapshotId: string, assertHeld: () => Promise<void>) =>
+        assertHeld()
+    ),
+    readNext: vi.fn(async () => null),
+    release: vi.fn(async () => {}),
+    assertReleased: vi.fn(async () => {}),
+  };
+  const entries = ICEBERG_LOG_RECORDS_DATASETS.map((dataset) => ({
+    dataset,
+    policy: createIcebergLogRecordDatasetPolicy(dataset.id),
+    port: capture,
+  }));
+  const { adapter } = fixture({
+    loadPolicies: async () => [],
+    requiredDatabases: { roles: [], fixed: [] },
+    registrations: PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
+    transformedDatasetIds: PHASE5_TRANSFORMED_SQLITE_DATASETS,
+    transformRow: async (value) => value.rowJson,
+    recordSnapshots: entries,
+  });
+  const context = {
+    ...adapterContext(),
+    selection: {
+      ...selection,
+      settings: false,
+      logs: { audit: true, other: true, sensitive: true, period: 'all' as const },
+    },
+  };
+  expect(
+    adapter.export
+      .datasets(context.selection)
+      .filter((dataset) => dataset.id.startsWith('logs.iceberg_'))
+  ).toEqual(ICEBERG_LOG_RECORDS_DATASETS);
+  await adapter.export.assertSources(context);
+  expect(capture.assertSource).toHaveBeenCalledOnce();
+  const participants = await adapter.export.additionalParticipants(context);
+  expect(participants).toHaveLength(1);
+  expect(capture.prepareBoundary).toHaveBeenCalledOnce();
+  await participants[0].start(async () => {}, 100);
+  expect(capture.start).toHaveBeenCalledOnce();
+  for (const dataset of ICEBERG_LOG_RECORDS_DATASETS) {
+    await adapter.export.readNext({
+      ...context,
+      datasetId: dataset.id,
+      cursor: null,
+      signal: context.context.signal,
+    });
+    expect(capture.readNext).toHaveBeenLastCalledWith(
+      expect.objectContaining({ datasetId: dataset.id }),
+      expect.any(String),
+      null,
+      context.context.signal
+    );
+  }
+  await adapter.export.releaseAdditionalResources(context);
+  expect(capture.release).toHaveBeenCalledOnce();
+});
+
+it('rejects different handlers pretending to own the same physical snapshot resource', () => {
+  const capture = {
+    resourceId: 'iceberg-log:records',
+    assertSource: async () => {},
+    start: async () => {},
+    readNext: async () => null,
+    release: async () => {},
+    assertReleased: async () => {},
+  };
+  expect(() =>
+    fixture({
+      loadPolicies: async () => [],
+      requiredDatabases: { roles: [], fixed: [] },
+      registrations: PHASE5_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS,
+      transformedDatasetIds: PHASE5_TRANSFORMED_SQLITE_DATASETS,
+      transformRow: async (value) => value.rowJson,
+      recordSnapshots: ICEBERG_LOG_RECORDS_DATASETS.map((dataset) => ({
+        dataset,
+        policy: createIcebergLogRecordDatasetPolicy(dataset.id),
+        port: { ...capture },
+      })),
+    })
+  ).toThrow('backup_phase5_record_snapshot_ports');
 });

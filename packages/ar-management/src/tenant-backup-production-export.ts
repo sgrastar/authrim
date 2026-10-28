@@ -34,6 +34,7 @@ import { createTenantBackupPiiLogTransformPort } from './tenant-backup-pii-log-p
 import { createTenantBackupPluginConfigurationPorts } from './tenant-backup-plugin-configuration-port';
 import { createTenantBackupPublicAssetPorts } from './tenant-backup-public-assets-port';
 import { createTenantBackupR2ObjectSnapshotPorts } from './tenant-backup-r2-object-snapshot-port';
+import { createTenantBackupIcebergLogSnapshotPorts } from './tenant-backup-iceberg-log-snapshot-port';
 import { createTenantBackupSamlPorts } from './tenant-backup-saml-port';
 import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupRestoreTargets } from './tenant-backup-production-restore-targets';
@@ -225,6 +226,29 @@ export async function createProductionTenantBackupExportAdapter(
     env,
     assertSource: async () => {},
   });
+  const icebergLogs = createTenantBackupIcebergLogSnapshotPorts({
+    env,
+    tenantKey,
+    now,
+    assertSourceDdlHeld: async () => assertSources(),
+    resolveCoreSource: async (value) => {
+      const resources = await resolveBackupTenantDatabaseResources(env, {
+        tenantId: value.context.lease.tenantId,
+        roles: ['tenant_core'],
+        signal: value.context.signal,
+      });
+      const core = resources.filter((resource) =>
+        resource.assignments.some((assignment) => assignment.dataRole === 'tenant_core/default')
+      );
+      if (core.length !== 1) throw new Error('backup_iceberg_core_source_unavailable');
+      return { resourceId: core[0].databaseId, database: core[0].database };
+    },
+    resolveAdminSource: async () => {
+      const [admin] = resolveFixedBackupDatabaseResources(env, ['DB_ADMIN']);
+      if (!admin) throw new Error('backup_iceberg_admin_source_unavailable');
+      return { resourceId: admin.databaseId, database: admin.database };
+    },
+  });
   const records: Phase5RecordSnapshotPort[] = [
     saml.saml,
     directory.directorySecrets,
@@ -234,6 +258,7 @@ export async function createProductionTenantBackupExportAdapter(
     placement.logicalPlacement,
     r2Snapshots.artifactObjects,
     r2Snapshots.logArchiveObjects,
+    icebergLogs.records,
   ];
   // Reuse the immutable installed plan within one leased slice. Export policy comes from the
   // sealed, lease-bound inventory; import still inspects the newly provisioned target schemas.
@@ -297,6 +322,7 @@ export async function createProductionTenantBackupExportAdapter(
     now,
     ports: {
       tenantKey,
+      icebergLogs,
       async allowSqliteSource(rowInput) {
         if (importing) unavailable();
         const registration = PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.find(
@@ -320,9 +346,9 @@ export async function createProductionTenantBackupExportAdapter(
         ));
       },
       export: {
-        async prepareSources() {
+        async prepareSources(context) {
           await assertSources();
-          return { cursor: null, done: true };
+          return icebergLogs.prepareSources(context);
         },
         assertSources: async () => assertSources(),
         assertBoundaryReady: async () => {

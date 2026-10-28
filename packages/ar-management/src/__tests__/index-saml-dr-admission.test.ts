@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   operations: vi.fn(),
   audit: vi.fn(),
   logging: vi.fn(),
+  iceberg: vi.fn(),
 }));
 vi.mock('../tenant-backup-services', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../tenant-backup-services')>()),
@@ -13,6 +14,17 @@ vi.mock('../tenant-backup-services', async (importOriginal) => ({
 vi.mock('../tenant-backup-operation-dispatcher', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../tenant-backup-operation-dispatcher')>()),
   processTenantBackupOperations: mocks.operations,
+}));
+vi.mock('../log-iceberg-maintenance', () => ({ runLogIcebergScheduledMaintenance: mocks.iceberg }));
+vi.mock('../r2-storage-maintenance', async (original) => ({
+  ...(await original<typeof import('../r2-storage-maintenance')>()),
+  runTrackedMaintenanceTask: async (
+    _env: unknown,
+    _id: string,
+    operation: () => Promise<unknown>
+  ) => {
+    await operation();
+  },
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
@@ -36,6 +48,7 @@ beforeEach(() => {
   mocks.operations.mockResolvedValue({ inspected: 0, advanced: 0, failures: 0, failureCodes: [] });
   mocks.audit.mockResolvedValue(undefined);
   mocks.logging.mockResolvedValue(undefined);
+  mocks.iceberg.mockResolvedValue({ ran: true, mode: 'scheduled' });
 });
 describe('Management opt-in SAML DR admission', () => {
   it.each(['GET', 'HEAD', 'OPTIONS', 'POST'])(
@@ -136,7 +149,12 @@ describe('Management opt-in SAML DR admission', () => {
     control.acquireEnvironmentBackupMutationPermit
       .mockResolvedValueOnce({ admitted: true })
       .mockResolvedValueOnce({ admitted: true })
+      .mockResolvedValueOnce({ admitted: true })
       .mockResolvedValue({ admitted: false });
+    mocks.iceberg.mockImplementation(async (_event: ScheduledEvent, covered: Env) => {
+      expect(hasTenantBackupMutationCoverage(covered, { environment: true })).toBe(true);
+      return { ran: true, mode: 'scheduled' };
+    });
     mocks.maintenance.mockImplementation(async (covered: Env) => {
       expect(hasTenantBackupMutationCoverage(covered, { environment: true })).toBe(true);
       return { keysRemoved: 0 };
@@ -160,8 +178,40 @@ describe('Management opt-in SAML DR admission', () => {
       ['export'],
       ['import'],
     ]);
-    expect(control.completeEnvironmentBackupMutationPermit).toHaveBeenCalledTimes(2);
+    expect(control.completeEnvironmentBackupMutationPermit).toHaveBeenCalledTimes(3);
   });
+  it.each(['scheduled', 'pipeline'] as const)(
+    'fences %s log maintenance before staging, export or retention effects',
+    async (mode) => {
+      const { env, control } = environment(false);
+      env.AUTHRIM_LOG_ARCHIVE_MODE = mode;
+      await worker.scheduled({ cron: '* * * * *' } as ScheduledEvent, env);
+      expect(mocks.iceberg).not.toHaveBeenCalled();
+      expect(mocks.maintenance).not.toHaveBeenCalled();
+      expect(control.completeEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps log maintenance inside its permit until the work completes', async () => {
+    const { env, control } = environment();
+    control.acquireEnvironmentBackupMutationPermit
+      .mockResolvedValueOnce({ admitted: true })
+      .mockResolvedValue({ admitted: false });
+    let finish!: () => void;
+    mocks.iceberg.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+    );
+    const running = worker.scheduled({ cron: '* * * * *' } as ScheduledEvent, env);
+    await vi.waitFor(() => expect(mocks.iceberg).toHaveBeenCalledOnce());
+    expect(control.completeEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+    finish();
+    await running;
+    expect(control.completeEnvironmentBackupMutationPermit).toHaveBeenCalledOnce();
+  });
+
   it('does not exempt another path or method that resembles the test coordinator', async () => {
     for (const [method, path, enabled] of [
       ['GET', '/api/admin/test/run-scheduled', 'true'],

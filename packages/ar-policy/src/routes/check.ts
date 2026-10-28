@@ -206,7 +206,7 @@ async function getCheckService(
   let auditService: CheckAuditService | undefined;
   const auditConfig = await getAuditConfig(env);
   if (auditConfig.enabled) {
-    auditService = createCheckAuditService(coreAdapter, auditConfig.config, env.CHECK_AUDIT_QUEUE);
+    auditService = createCheckAuditService(env, auditConfig.config);
   }
 
   const checkService = createUnifiedCheckService({

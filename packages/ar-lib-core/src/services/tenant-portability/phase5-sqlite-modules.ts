@@ -72,6 +72,7 @@ export const PHASE5_SQLITE_TABLE_GROUPS: readonly Phase5TableGroup[] = [
       'credential_secret_bodies',
       'credential_secret_metadata',
       'internal_notification_delivery_routes',
+      'identity_mapping_level_history',
       'logging_destination_overrides',
       'logging_fallback_policies',
       'logging_key_material_bodies',

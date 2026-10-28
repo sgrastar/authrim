@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   createAuthContextFromHono: vi.fn(),
   resolveAuthCorePersistenceAdapterFromEnv: vi.fn(),
   createAuditLog: vi.fn(),
+  emitLog: vi.fn(async () => ({})),
+}));
+
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', () => ({
+  emitLogIcebergRow: mocks.emitLog,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -165,8 +170,14 @@ function createAggregateStoreNamespace(input: {
       fetch: vi.fn(async (request: Request | string, init?: RequestInit) => {
         const url = new URL(typeof request === 'string' ? request : request.url);
         const method = init?.method ?? (typeof request === 'string' ? 'GET' : request.method);
-        const readJson = async () =>
-          init?.body ? JSON.parse(init.body as string) : await (request as Request).json();
+        const readJson = async (): Promise<Record<string, unknown>> => {
+          const value: unknown = init?.body
+            ? JSON.parse(init.body as string)
+            : await (request as Request).json();
+          if (!value || typeof value !== 'object' || Array.isArray(value))
+            throw new Error('invalid_fixture_body');
+          return value as Record<string, unknown>;
+        };
 
         if (url.pathname === `/preview/${input.previewId}` && method === 'GET') {
           return json(input.preview ?? {}, input.preview ? 200 : 404);
@@ -977,9 +988,17 @@ describe('SAML aggregate provider API', () => {
           expect.any(Number),
         ])
       );
-      expect(adminAdapter.execute).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO federation_selected_entity_import_events'),
-        expect.arrayContaining(['tenant-a', 'trust-source-1', null, expect.any(String)])
+      expect(mocks.emitLog).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining<Record<string, unknown>>({
+          sourceDataset: 'admin.federation_selected_entity_import_events',
+          row: expect.objectContaining<Record<string, unknown>>({
+            tenant_id: 'tenant-a',
+            trust_source_id: 'trust-source-1',
+            metadata_entity_summary_id: null,
+            provider_id: expect.any(String),
+          }),
+        })
       );
     }
   );

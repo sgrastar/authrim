@@ -1,3 +1,14 @@
+const piiLogRows = vi.hoisted(() => [] as Array<import('@authrim/ar-lib-core').PIIAuditLog>);
+vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original) => ({
+  ...(await original<typeof import('../../../ar-lib-core/dist/repositories/pii/audit-log')>()),
+  writePiiAccessAuditRows: async (
+    _env: unknown,
+    _tenantId: string,
+    rows: import('@authrim/ar-lib-core').PIIAuditLog[]
+  ) => {
+    piiLogRows.push(...structuredClone(rows));
+  },
+}));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type RuntimeUserFixture = {
@@ -191,6 +202,8 @@ function createContext(
 
 describe('admin user session revocation', () => {
   beforeEach(() => {
+    piiLogRows.length = 0;
+
     vi.clearAllMocks();
     mockCoreAdapter.queryOne.mockReset().mockResolvedValue(null);
     mockCoreAdapter.query
@@ -590,18 +603,15 @@ describe('admin user session revocation', () => {
         vi.mocked(createPIIContextFromHono).mockReturnValue({ defaultPiiAdapter: {} } as never);
       }
 
-      expect(piiStore.batch).toHaveBeenCalledTimes(1);
-      const [[statement]] = piiStore.batch.mock.calls[0] as [
-        Array<{ sql: string; params: unknown[] }>,
-      ];
-      expect(statement.sql).toContain('INSERT INTO audit_log_pii');
-      expect(statement.params[4]).toBe('user-1');
-      expect(JSON.parse(statement.params[5] as string)).toMatchObject({
+      expect(piiStore.batch).not.toHaveBeenCalled();
+      expect(piiLogRows).toHaveLength(1);
+      expect(piiLogRows[0].target_user_id).toBe('user-1');
+      expect(JSON.parse(piiLogRows[0].details!)).toMatchObject({
         fields: ['user_email', 'user_name', 'ip_address'],
         operation: 'admin.sessions.list',
       });
-      expect(JSON.stringify(statement.params)).not.toContain('person@example.com');
-      expect(JSON.stringify(statement.params)).not.toContain('203.0.113.9');
+      expect(JSON.stringify(piiLogRows)).not.toContain('person@example.com');
+      expect(JSON.stringify(piiLogRows)).not.toContain('203.0.113.9');
     });
 
     it.each([

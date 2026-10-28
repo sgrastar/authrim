@@ -51,6 +51,11 @@ export type TenantBackupValidatedInputPorts = Pick<
   loadValidatedSqliteDatasets(
     context: TenantBackupStepContext
   ): Promise<readonly Phase8ValidatedSqliteRestoreDataset[]>;
+  isDatasetSelected(
+    context: TenantBackupStepContext,
+    planDigest: string,
+    datasetId: string
+  ): Promise<boolean>;
   loadValidatedDatasetById(
     context: TenantBackupStepContext,
     planDigest: string,
@@ -379,6 +384,13 @@ export function createTenantBackupValidatedInputPorts(
       await execution.assertInputValidated(context.lease);
       await loadCurrent(context);
       return result;
+    },
+
+    async isDatasetSelected(context, planDigest, datasetId) {
+      if (!/^[A-Za-z0-9_.:-]{1,256}$/u.test(datasetId)) invalid();
+      await assertPlan(context, planDigest);
+      const current = await loadCurrent(context);
+      return current.datasets.some((dataset) => dataset.id === datasetId);
     },
 
     async loadValidatedDatasetById(context, planDigest, datasetId) {

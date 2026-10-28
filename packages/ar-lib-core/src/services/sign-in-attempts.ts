@@ -1,12 +1,12 @@
 /**
  * Records of failed sign-in attempts, for investigating a sign-in problem without personal data.
  *
- * A failure is recorded in Core `flow_audit_events`, tied to the Flow interaction the attempt
+ * A failure is recorded in the `core.flow_audit_events` log dataset, tied to the Flow interaction the attempt
  * belongs to. Attempts outside any Flow interaction are not recorded. The record carries no user
  * ID: once the account is known, it carries the account's subject hash instead (an HMAC under the
  * environment's investigation keyring), so an investigator who already knows the account can
- * find its attempts, and nobody can read the account off a record. Each record has a random
- * inquiry number, unique in its tenant, that a person can quote.
+ * find its attempts, and nobody can read the account off a record. Each record has a deterministic 128-bit
+ * inquiry number, scoped to its tenant and opaque event ID, that a person can quote.
  *
  * INVESTIGATION_SUBJECT_HMAC_KEYRING has the tombstone keyring's shape and rotation: new hashes
  * are made with the current generation, every listed generation is read, and a generation is
@@ -16,6 +16,12 @@
 import type { DatabaseAdapter } from '../db';
 import type { LookupBlindIndexKey } from './lookup-directory/blind-index';
 import { parseGenerationalHmacKeyring, type TombstoneHmacKeys } from './tombstone-hmac-keyring';
+import { emitLogIcebergRow, buildLogIcebergRowRecord } from './log-iceberg-emitter';
+import { createLogIcebergWritePort } from './log-iceberg-runtime';
+import { resolveLogIcebergConfig } from './log-iceberg-config';
+import { signInAttemptLogLogicalHmac } from './log-iceberg-sign-in-attempt';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
+import { runTenantBackupCoveredEffect } from './tenant-portability/covered-mutation';
 
 /** The sign-in methods whose failures are recorded. */
 export const SIGN_IN_ATTEMPT_METHODS = [
@@ -71,8 +77,6 @@ const SUBJECT_HASH_VERSION = 1;
 const SUBJECT_HASH = /^isub:v1:g([1-9][0-9]{0,8}):[0-9a-f]{64}$/u;
 const INTERACTION_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const INQUIRY_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const INQUIRY_LENGTH = 10;
-const INQUIRY_ATTEMPTS = 3;
 const encoder = new TextEncoder();
 
 /**
@@ -145,10 +149,27 @@ export function isInvestigationSubjectHash(value: unknown): value is string {
   return typeof value === 'string' && SUBJECT_HASH.test(value);
 }
 
-/** A random inquiry number: 10 characters of Crockford base32 (50 bits). */
-export function generateInquiryNumber(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(INQUIRY_LENGTH));
-  return Array.from(bytes, (byte) => INQUIRY_ALPHABET[byte & 31]).join('');
+/** A tenant-scoped deterministic 128-bit inquiry number, encoded as 26 Crockford characters. */
+export async function generateInquiryNumber(tenantId: string, eventId: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      encoder.encode(JSON.stringify(['authrim.sign-in-inquiry', 1, tenantId, eventId]))
+    )
+  ).subarray(0, 16);
+  let bits = 0,
+    value = 0,
+    result = '';
+  for (const byte of digest) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      result += INQUIRY_ALPHABET[(value >>> bits) & 31];
+    }
+  }
+  if (bits) result += INQUIRY_ALPHABET[(value << (5 - bits)) & 31];
+  return result;
 }
 
 /**
@@ -218,19 +239,13 @@ async function signInAttemptEventId(input: SignInAttemptFailure): Promise<string
   return `sia:v1:${hex}`;
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const cause = error.cause instanceof Error ? error.cause.message : '';
-  const text = `${error.message} ${cause}`;
-  return /unique|constraint/i.test(text);
-}
-
 /**
- * Records a failed attempt in its interaction's `flow_audit_events`. Returns the record's inquiry
+ * Records a failed attempt in its interaction's encrypted log dataset. Returns the record's inquiry
  * number, or null when the interaction is gone. The subject hash is left out when no keyring is
  * configured. Callers run this after the response and never let it fail a sign-in.
  */
 export async function recordSignInAttemptFailure(
+  env: LogIcebergRuntimeEnv,
   core: DatabaseAdapter,
   keys: InvestigationSubjectHmacKeys | null,
   input: SignInAttemptFailure,
@@ -265,55 +280,74 @@ export async function recordSignInAttemptFailure(
     keys && input.userId
       ? await computeInvestigationSubjectHash(keys.writeKey, input.tenantId, input.userId)
       : null;
-  const eventId = await signInAttemptEventId(input);
-
-  for (let attempt = 1; ; attempt++) {
-    const inquiryNumber = generateInquiryNumber();
-    try {
-      const inserted = await core.execute(
-        `INSERT INTO flow_audit_events (
-          id, tenant_id, interaction_id, flow_id, flow_version_id, user_id, client_id, saml_sp_id,
-          node_id, branch_handle_id, event_type, result, error_code, contract_hash, metadata_json,
-          method, reason_code, subject_hash, inquiry_number, created_at
-        ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, 'failure', NULL, ?, NULL, ?, ?, ?, ?, ?)${eventId ? ' ON CONFLICT(id) DO NOTHING' : ''}`,
-        [
-          eventId ?? crypto.randomUUID(),
-          input.tenantId,
-          input.interactionId,
-          interaction.flow_id,
-          interaction.flow_version_id,
-          interaction.client_id,
-          interaction.saml_sp_id,
-          interaction.current_node_id,
-          SIGN_IN_ATTEMPT_FAILED_EVENT,
-          interaction.contract_hash,
-          input.method,
-          input.reasonCode,
-          subjectHash,
-          inquiryNumber,
-          nowSeconds,
-        ]
-      );
-      if (eventId && inserted.rowsAffected === 0) {
-        const existing = await core.queryOne<{ inquiry_number: string }>(
-          `SELECT inquiry_number FROM flow_audit_events
-            WHERE id=? AND tenant_id=? AND interaction_id=? AND method=? AND event_type=?`,
-          [
-            eventId,
-            input.tenantId,
-            input.interactionId,
-            input.method,
-            SIGN_IN_ATTEMPT_FAILED_EVENT,
-          ],
-          { consistencyClass: 'primary_required' }
-        );
-        return existing?.inquiry_number ?? null;
-      }
-      return inquiryNumber;
-    } catch (error) {
-      if (attempt >= INQUIRY_ATTEMPTS || !isUniqueViolation(error)) throw error;
-    }
+  if (!Number.isSafeInteger(nowSeconds) || nowSeconds < 0)
+    throw new Error('sign_in_attempt_failure_invalid');
+  const eventId = (await signInAttemptEventId(input)) ?? crypto.randomUUID();
+  const inquiryNumber = await generateInquiryNumber(input.tenantId, eventId);
+  const write = (failedAt: number) => ({
+    tenantId: input.tenantId,
+    sourceDataset: 'core.flow_audit_events',
+    logType: 'normal',
+    eventAt: failedAt * 1000,
+    expiresAt: null,
+    overview: {
+      action: SIGN_IN_ATTEMPT_FAILED_EVENT,
+      result: 'failure',
+      reason_code: input.reasonCode,
+      client_id: interaction.client_id,
+    },
+    row: {
+      id: eventId,
+      tenant_id: input.tenantId,
+      interaction_id: input.interactionId,
+      flow_id: interaction.flow_id,
+      flow_version_id: interaction.flow_version_id,
+      user_id: null,
+      client_id: interaction.client_id,
+      saml_sp_id: interaction.saml_sp_id,
+      node_id: interaction.current_node_id,
+      branch_handle_id: null,
+      event_type: SIGN_IN_ATTEMPT_FAILED_EVENT,
+      result: 'failure',
+      error_code: null,
+      contract_hash: interaction.contract_hash,
+      metadata_json: null,
+      method: input.method,
+      reason_code: input.reasonCode,
+      subject_hash: subjectHash,
+      inquiry_number: inquiryNumber,
+      created_at: failedAt,
+    },
+  });
+  if (input.dedupeKey === undefined) {
+    await emitLogIcebergRow(env, write(nowSeconds));
+    return inquiryNumber;
   }
+  const writer =
+    env.LOG_ARCHIVE_WRITER ?? createLogIcebergWritePort(env, resolveLogIcebergConfig(env));
+  const persist = async () => {
+    const logicalHmac = await signInAttemptLogLogicalHmac(env, {
+      tenantId: input.tenantId,
+      eventId,
+      row: write(nowSeconds).row,
+    });
+    const reservation = await writer.reserveSignInAttempt({
+      tenantId: input.tenantId,
+      eventId,
+      failedAt: nowSeconds,
+      logicalHmac,
+    });
+    const record = await buildLogIcebergRowRecord(env, write(reservation.failedAt));
+    await writer.commitSignInAttempt({ tenantId: input.tenantId, eventId, record });
+    return inquiryNumber;
+  };
+  return env.LOG_ARCHIVE_WRITER
+    ? persist()
+    : runTenantBackupCoveredEffect(
+        { CONTROL: env.CONTROL, TENANT_BACKUP_WRAPPING_KEY: 'required' },
+        { tenantId: input.tenantId },
+        persist
+      );
 }
 
 /**
@@ -325,7 +359,7 @@ export function scheduleSignInAttemptFailureRecord(
   options: {
     waitUntil?: ((promise: Promise<unknown>) => void) | null;
     core: () => Promise<DatabaseAdapter> | DatabaseAdapter;
-    env: { INVESTIGATION_SUBJECT_HMAC_KEYRING?: string };
+    env: LogIcebergRuntimeEnv & { INVESTIGATION_SUBJECT_HMAC_KEYRING?: string };
     onError?: (error: unknown) => void;
   },
   input: Omit<SignInAttemptFailure, 'interactionId'> & { interactionId: string | null | undefined }
@@ -340,7 +374,7 @@ export function scheduleSignInAttemptFailureRecord(
       // A malformed keyring: the attempt is still recorded, without the subject hash.
       options.onError?.(error);
     }
-    await recordSignInAttemptFailure(await options.core(), keys, {
+    await recordSignInAttemptFailure(options.env, await options.core(), keys, {
       ...input,
       interactionId,
       userId: input.userId && input.userId !== 'unknown' ? input.userId : null,

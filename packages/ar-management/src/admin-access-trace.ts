@@ -1,4 +1,9 @@
-import { createLogReadAdapter, logDetailWindow, logPageRequest } from './log-read-adapter';
+import {
+  createLogReadAdapter,
+  logCoverageHeaders,
+  logDetailWindow,
+  logPageRequest,
+} from './log-read-adapter';
 import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin Access Trace API
@@ -93,14 +98,13 @@ export async function adminAccessTraceListHandler(c: Context<{ Bindings: Env }>)
       env: c.env,
       tenantId,
       dataset: 'core.permission_check_audit',
+      onCoverage: logCoverageHeaders(c),
       adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
-      page: c.env?.DB_ADMIN
-        ? logPageRequest(
-            c,
-            tenantId,
-            Math.min(200, Math.max(1, Number(c.req.query('limit') || 50)))
-          )
-        : undefined,
+      page: logPageRequest(
+        c,
+        tenantId,
+        Math.min(200, Math.max(1, Number.parseInt(c.req.query('limit') ?? '50', 10)))
+      ),
     });
     const db = logRead.adapter;
 
@@ -169,8 +173,10 @@ export async function adminAccessTraceListHandler(c: Context<{ Bindings: Env }>)
 
     const entries = rows.map(rowToAccessTrace);
 
-    if (logRead.pagination()) return c.json({ entries, pagination: logRead.pagination() });
+    if (logRead.pagination())
+      return c.json({ entries, pagination: logRead.pagination(), coverage: logRead.coverage() });
     return c.json({
+      coverage: logRead.coverage(),
       entries,
       pagination: {
         page: pageNum,
@@ -204,6 +210,7 @@ export async function adminAccessTraceGetHandler(c: Context<{ Bindings: Env }>) 
       env: c.env,
       tenantId,
       dataset: 'core.permission_check_audit',
+      onCoverage: logCoverageHeaders(c),
       adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
       ...logDetailWindow(c),
     });
@@ -226,6 +233,7 @@ export async function adminAccessTraceGetHandler(c: Context<{ Bindings: Env }>) 
     }
 
     return c.json({
+      coverage: logRead.coverage(),
       entry: rowToAccessTrace(row),
     });
   } catch (error) {
@@ -253,6 +261,7 @@ export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>
       env: c.env,
       tenantId,
       dataset: 'core.permission_check_audit',
+      onCoverage: logCoverageHeaders(c),
       adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
     });
     const db = logRead.adapter;
@@ -330,6 +339,7 @@ export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>
     const resolutionStats = aggregateResolvedVia(resolutionRows);
 
     return c.json({
+      coverage: logRead.coverage(),
       period,
       total: totalStats?.total || 0,
       allowed: totalStats?.allowed || 0,
@@ -366,6 +376,7 @@ export async function adminAccessTraceTimelineHandler(c: Context<{ Bindings: Env
       env: c.env,
       tenantId,
       dataset: 'core.permission_check_audit',
+      onCoverage: logCoverageHeaders(c),
       adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
     });
     const db = logRead.adapter;
@@ -412,7 +423,7 @@ export async function adminAccessTraceTimelineHandler(c: Context<{ Bindings: Env
       denied: number;
     }>(
       `SELECT
-        (checked_at / ?) * ? as bucket,
+        FLOOR(checked_at / ?) * ? as bucket,
         COUNT(*) as total,
         SUM(CASE WHEN allowed = 1 THEN 1 ELSE 0 END) as allowed,
         SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) as denied
@@ -424,6 +435,7 @@ export async function adminAccessTraceTimelineHandler(c: Context<{ Bindings: Env
     );
 
     return c.json({
+      coverage: logRead.coverage(),
       period,
       granularity: bucketSize,
       data: timeline.map((row) => ({

@@ -14,6 +14,17 @@ const mocks = vi.hoisted(() => ({
   resolveStores: vi.fn(),
 }));
 
+vi.mock('../log-read-adapter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../log-read-adapter')>();
+  return {
+    ...actual,
+    createLogReadAdapter: (input: { adapter: unknown }) => ({
+      adapter: input.adapter,
+      coverage: () => undefined,
+    }),
+  };
+});
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -184,7 +195,7 @@ describe('admin compliance APIs', () => {
     expect(mocks.buildRetentionInventory).toHaveBeenCalledWith(
       expect.objectContaining({ auditProfile: { id: 'p' } })
     );
-    expect(mocks.hotSupport).toHaveBeenCalledWith(expect.anything(), { id: 'p' });
+    expect(mocks.hotSupport).toHaveBeenCalledWith(expect.anything(), { id: 'p' }, 'tenant-a');
     expect(mocks.countUserMfa).toHaveBeenCalledWith(expect.anything(), 'tenant-a', {
       routed: false,
     });

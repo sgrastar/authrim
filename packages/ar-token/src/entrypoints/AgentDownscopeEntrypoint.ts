@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
@@ -218,7 +219,8 @@ export async function exchangeAgentAccessToken(
       overrides.createRepository ??
       ((runtimeEnv) =>
         new AdminAgentAccessRepository(
-          requireDedicatedAdminDatabaseAdapter(runtimeEnv, 'agent-downscope-exchange')
+          requireDedicatedAdminDatabaseAdapter(runtimeEnv, 'agent-downscope-exchange'),
+          createCloudflareAdminAgentAuditWriter(runtimeEnv)
         )),
     getModeBPermissionLimit: overrides.getModeBPermissionLimit ?? defaultModeBPermissionLimit,
     signToken: overrides.signToken ?? defaultSignToken,
@@ -394,9 +396,11 @@ export async function issueAgentBulkChildToken(
       ? undefined
       : requireDedicatedAdminDatabaseAdapter(env, 'agent-bulk-child-token');
   const bulkRepository =
-    overrides.createBulkRepository?.(env) ?? new AgentBulkRepository(database!);
+    overrides.createBulkRepository?.(env) ??
+    new AgentBulkRepository(database!, createCloudflareAdminAgentAuditWriter(env));
   const accessRepository =
-    overrides.createRepository?.(env) ?? new AdminAgentAccessRepository(database!);
+    overrides.createRepository?.(env) ??
+    new AdminAgentAccessRepository(database!, createCloudflareAdminAgentAuditWriter(env));
   const [plan, execution] = await Promise.all([
     bulkRepository.get(input.controlTenantId, input.bulkPlanId, input.bulkPlanVersion),
     bulkRepository.getTenantExecution(

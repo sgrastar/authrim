@@ -1,3 +1,9 @@
+import { prepareLogIcebergRowWrite } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
+import {
+  adminAuditReceiptStatement,
+  confirmAdminAuditReceipt,
+} from '@authrim/ar-lib-core/services/admin-audit-receipts';
+import type { LogIcebergRuntimeEnv } from '@authrim/ar-lib-core/services/log-iceberg-runtime';
 /**
  * What an import may write that the Admin API would refuse its requester.
  *
@@ -158,7 +164,8 @@ function parse(rowJson: string): PortableSqliteRow {
 
 export function createTenantBackupRestoreAuthorityGuard(input: {
   /** The management database: import requests, the Admin restore target and the audit log. */
-  database: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+  database: DatabaseAdapter;
+  logEnv: LogIcebergRuntimeEnv;
   /**
    * The bundle's validated `admin.admin_roles` rows, for a restore (an empty list when the bundle
    * has none). Roles are judged by the bundle's own definitions, not by what the target already
@@ -167,7 +174,6 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
   loadBundleRoles(context: TenantBackupStepContext): Promise<readonly string[]>;
   now?: () => number;
 }) {
-  const now = input.now ?? Date.now;
   const requests = new TenantBackupRequestStore(input.database);
   let cache: { key: string; value: Promise<TenantBackupImportAuthority> } | undefined;
   let rolesCache: { key: string; value: Promise<Map<string, BundleRole>> } | undefined;
@@ -403,30 +409,41 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
         ...assignment,
       }),
     };
-    // One statement: a new entry, or a retried write's own entry (every field the same). Any
-    // other row under the id (a restored audit row, for one) returns nothing, and the assignment
-    // is not written without its record.
-    const columns = Object.keys(expected);
-    const stored = await input.database.queryOne<{ id: string }>(
-      `INSERT INTO admin_audit_log (id,${columns.join(',')},created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(id) DO UPDATE SET id=excluded.id
-         WHERE ${columns.map((column) => `admin_audit_log.${column} IS excluded.${column}`).join(' AND ')}
-       RETURNING id`,
-      [
-        id,
-        expected.tenant_id,
-        expected.admin_user_id,
-        expected.action,
-        expected.resource_type,
-        expected.resource_id,
-        expected.result,
-        expected.severity,
-        expected.metadata_json,
-        now(),
-      ]
+    const operation = await input.database.queryOne<{ created_at: number }>(
+      'SELECT created_at FROM tenant_backup_operations WHERE id=? AND tenant_id=?',
+      [context.lease.operationId, context.lease.tenantId],
+      { consistencyClass: 'primary_required' }
     );
-    if (stored?.id !== id) throw new Error('backup_restore_authority_audit_failed');
+    if (!operation || !Number.isSafeInteger(operation.created_at) || operation.created_at < 0)
+      throw new Error('backup_restore_authority_audit_failed');
+    // The timestamp belongs to the immutable operation, so retries retain the
+    // original identity even when the first successful response was lost.
+    try {
+      const prepared = await prepareLogIcebergRowWrite(input.logEnv, input.database, {
+        tenantId: context.lease.tenantId,
+        sourceDataset: 'admin.admin_audit_log',
+        logType: 'admin_audit',
+        eventAt: operation.created_at,
+        expiresAt: null,
+        overview: {
+          action: expected.action,
+          result: expected.result,
+          severity: expected.severity,
+          resource_id: assignment.assignmentId,
+          subject_id: requester.actorId || null,
+        },
+        adminInlineMetadata: { admin_actor_type: 'admin_user', admin_actor_id: requester.actorId },
+        row: { id, ...expected, created_at: operation.created_at },
+      });
+      await input.database.batch([
+        adminAuditReceiptStatement(prepared.record, context.lease.tenantId),
+        ...prepared.statements,
+      ]);
+      await confirmAdminAuditReceipt(input.database, prepared.record, context.lease.tenantId);
+      await prepared.dispatch();
+    } catch {
+      throw new Error('backup_restore_authority_audit_failed');
+    }
   }
 
   /**

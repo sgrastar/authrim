@@ -53,7 +53,7 @@ const groups: Array<{
     kind: 'R2Bucket',
     disposition: 'mixed',
     names:
-      'AUDIT_ARCHIVE DIAGNOSTIC_LOGS EXPORT_ARTIFACTS IMPORT_ARTIFACTS PUBLIC_ASSETS SENSITIVE_DETAILS',
+      'AUDIT_ARCHIVE DIAGNOSTIC_LOGS EXPORT_ARTIFACTS IMPORT_ARTIFACTS LOG_ARCHIVE PUBLIC_ASSETS SENSITIVE_DETAILS',
     reason:
       'Select tenant records/assets with dependencies, log scope, sensitive-detail permission, and artifact policy; never copy a shared bucket wholesale.',
   },

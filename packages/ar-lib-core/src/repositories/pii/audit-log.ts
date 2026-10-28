@@ -1,44 +1,20 @@
-/**
- * PII Audit Log Repository
- *
- * Repository for PII access audit logs stored in D1_PII.
- *
- * Purpose:
- * - Compliance auditing: Track all PII access
- * - GDPR/CCPA evidence: "Who accessed what, when"
- * - Security monitoring: Detect unauthorized access patterns
- *
- * Note: This D1 table serves as a "recent buffer".
- * Audit logs should be periodically exported to R2/Logpush/SIEM
- * for long-term retention (1-7 years).
- *
- * Fields:
- * - id: Record ID (UUID)
- * - tenant_id: Tenant ID
- * - user_id: Actor who accessed PII
- * - action: Action performed
- * - target_user_id: Whose PII was accessed
- * - details: Action details (JSON)
- * - ip_address: Request IP
- * - user_agent: Request user agent
- * - created_at: Timestamp
- * - exported_at: Export timestamp (NULL = not exported)
- */
-
-import type { DatabaseAdapter } from '../../db/adapter';
+/** PII access audit metadata. IDs remain inside the encrypted log body. */
+import type { BaseEntity } from '../base';
+import { generateId, getCurrentTimestamp } from '../base';
 import { requireTenantId } from '../tenant';
+import type { LogIcebergRuntimeEnv } from '../../services/log-iceberg-runtime';
+import { createLogIcebergWritePort } from '../../services/log-iceberg-runtime';
+import { buildLogIcebergRecord } from '../../services/log-iceberg-record';
+import { encodeLogIcebergRow } from '../../services/log-iceberg-row-codec';
+import { createLogIcebergKeyResolver } from '../../services/log-iceberg-keys';
 import {
-  BaseRepository,
-  type BaseEntity,
-  type PaginationOptions,
-  type PaginationResult,
-  generateId,
-  getCurrentTimestamp,
-} from '../base';
+  resolveLogIcebergConfig,
+  assertLogIcebergActivated,
+} from '../../services/log-iceberg-config';
+import { resolveTenantAuditRetentionFromEnv } from '../../utils/audit-log';
+import type { Env } from '../../types/env';
+import { runTenantBackupCoveredEffect } from '../../services/tenant-portability/covered-mutation';
 
-/**
- * PII Audit Action types
- */
 export type PIIAuditAction =
   | 'pii_accessed'
   | 'pii_created'
@@ -47,10 +23,6 @@ export type PIIAuditAction =
   | 'pii_exported'
   | 'pii_viewed'
   | 'pii_searched';
-
-/**
- * PII Audit Log entity
- */
 export interface PIIAuditLog extends BaseEntity {
   tenant_id: string;
   user_id: string | null;
@@ -59,12 +31,7 @@ export interface PIIAuditLog extends BaseEntity {
   details: string | null;
   ip_address: string | null;
   user_agent: string | null;
-  exported_at: number | null;
 }
-
-/**
- * PII Audit Log create input
- */
 export interface CreatePIIAuditLogInput {
   id?: string;
   tenant_id?: string;
@@ -75,83 +42,97 @@ export interface CreatePIIAuditLogInput {
   ip_address?: string | null;
   user_agent?: string | null;
 }
-
-/**
- * PII Audit Log filter options
- */
-export interface PIIAuditLogFilterOptions {
-  tenant_id?: string;
-  user_id?: string;
-  target_user_id?: string;
-  action?: PIIAuditAction;
-  from_date?: number;
-  to_date?: number;
-  exported?: boolean;
+/** Source-owned bounded batch. No source PII adapter or old export marker is involved. */
+export async function writePiiAccessAuditRows(
+  env: LogIcebergRuntimeEnv,
+  tenantId: string,
+  rows: readonly PIIAuditLog[]
+): Promise<void> {
+  if (rows.length === 0) return;
+  if (rows.length > 50) throw new Error('pii_access_log_batch_limit');
+  const captured = rows.map((row) => ({ ...row }));
+  const config = resolveLogIcebergConfig(env);
+  assertLogIcebergActivated(config);
+  const writer = env.LOG_ARCHIVE_WRITER ?? createLogIcebergWritePort(env, config);
+  const tenantKey = await writer.resolveTenantKey(tenantId),
+    keys = createLogIcebergKeyResolver(env)();
+  const retention = await resolveTenantAuditRetentionFromEnv(env as Env, tenantId);
+  if (!Number.isSafeInteger(retention.pii.days) || retention.pii.days < 0)
+    throw new Error('pii_access_log_retention_invalid');
+  const records = [];
+  let bytes = 0;
+  for (const row of captured) {
+    if (row.tenant_id !== tenantId) throw new Error('pii_access_log_tenant_mismatch');
+    const expiresAt = row.created_at + retention.pii.days * 86400000;
+    if (!Number.isSafeInteger(expiresAt) || expiresAt < row.created_at)
+      throw new Error('pii_access_log_retention_invalid');
+    const body = await encodeLogIcebergRow({
+      context: {
+        tenantKey,
+        sourceDataset: 'pii.audit_log_pii',
+        eventId: row.id,
+        generation: config.generation,
+        schemaVersion: config.schemaVersion,
+      },
+      keys,
+      row: {
+        id: row.id,
+        tenant_id: row.tenant_id,
+        user_id: row.user_id,
+        action: row.action,
+        target_user_id: row.target_user_id,
+        details: row.details,
+        ip_address: row.ip_address,
+        user_agent: row.user_agent,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      },
+    });
+    const record = await buildLogIcebergRecord(
+      config,
+      {
+        eventId: row.id,
+        tenantKey,
+        sourceDataset: 'pii.audit_log_pii',
+        logType: 'pii',
+        eventAt: row.created_at,
+        ingestedAt: Date.now(),
+        expiresAt,
+        overview: { action: row.action },
+        body,
+      },
+      keys
+    );
+    bytes += new TextEncoder().encode(JSON.stringify(record)).byteLength;
+    if (bytes > 4 * 1024 * 1024) throw new Error('pii_access_log_batch_limit');
+    records.push(record);
+  }
+  const request = { tenantId, storageGeneration: config.generation, records };
+  if (env.LOG_ARCHIVE_WRITER) await writer.writeRecords(request);
+  else
+    await runTenantBackupCoveredEffect(
+      { CONTROL: env.CONTROL, TENANT_BACKUP_WRAPPING_KEY: 'required' },
+      { tenantId },
+      () => writer.writeRecords(request)
+    );
 }
 
-/**
- * Maximum IDs per batch for markExported
- * Prevents SQL query from becoming too long
- */
-const MARK_EXPORTED_BATCH_SIZE = 500;
-
-/**
- * Maximum allowed limit for queries
- */
-const MAX_QUERY_LIMIT = 10000; // Higher for audit logs due to export batching
-
-/**
- * PII Audit Log Repository
- */
-export class PIIAuditLogRepository extends BaseRepository<PIIAuditLog> {
-  /**
-   * Validate and normalize limit parameter
-   * @param limit - Requested limit
-   * @returns Validated limit (1-10000)
-   */
-  private validateLimit(limit: number): number {
-    if (!Number.isInteger(limit) || limit < 1) {
-      return 1000; // Safe default
-    }
-    return Math.min(limit, MAX_QUERY_LIMIT);
+/** The old raw-DB readers/export helpers had no production callers and are removed.
+ * Authorized log readers use the common tenant-scoped Iceberg backend. */
+export class PIIAuditLogRepository {
+  constructor(
+    private readonly env: LogIcebergRuntimeEnv,
+    private readonly tenantId: string
+  ) {
+    requireTenantId(tenantId, 'PII audit repository');
   }
-
-  constructor(adapter: DatabaseAdapter) {
-    super(adapter, {
-      tableName: 'audit_log_pii',
-      primaryKey: 'id',
-      softDelete: false,
-      allowedFields: [
-        'tenant_id',
-        'user_id',
-        'action',
-        'target_user_id',
-        'details',
-        'ip_address',
-        'user_agent',
-        'exported_at',
-      ],
-    });
-  }
-
-  /**
-   * Create an audit log entry
-   *
-   * @param input - Audit log data
-   * @param adapter - Optional partition-specific adapter
-   * @returns Created audit log
-   */
-  async createAuditLog(
-    input: CreatePIIAuditLogInput,
-    adapter?: DatabaseAdapter
-  ): Promise<PIIAuditLog> {
-    const db = adapter ?? this.adapter;
-    const id = input.id ?? generateId();
+  async createAuditLog(input: CreatePIIAuditLogInput): Promise<PIIAuditLog> {
+    const tenantId = requireTenantId(input.tenant_id, 'PII audit create');
+    if (tenantId !== this.tenantId) throw new Error('pii_access_log_tenant_mismatch');
     const now = getCurrentTimestamp();
-
-    const auditLog: PIIAuditLog = {
-      id,
-      tenant_id: requireTenantId(input.tenant_id, 'Repository create'),
+    const row: PIIAuditLog = {
+      id: input.id ?? generateId(),
+      tenant_id: tenantId,
       user_id: input.user_id ?? null,
       action: input.action,
       target_user_id: input.target_user_id ?? null,
@@ -160,328 +141,31 @@ export class PIIAuditLogRepository extends BaseRepository<PIIAuditLog> {
       user_agent: input.user_agent ?? null,
       created_at: now,
       updated_at: now,
-      exported_at: null,
     };
-
-    const sql = `
-      INSERT INTO audit_log_pii (
-        id, tenant_id, user_id, action, target_user_id,
-        details, ip_address, user_agent, created_at, exported_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    await db.execute(sql, [
-      auditLog.id,
-      auditLog.tenant_id,
-      auditLog.user_id,
-      auditLog.action,
-      auditLog.target_user_id,
-      auditLog.details,
-      auditLog.ip_address,
-      auditLog.user_agent,
-      auditLog.created_at,
-      auditLog.exported_at,
-    ]);
-
-    return auditLog;
+    await writePiiAccessAuditRows(this.env, tenantId, [row]);
+    return row;
   }
-
-  /**
-   * Log PII access
-   *
-   * Convenience method for common PII access logging.
-   *
-   * @param userId - Actor user ID
-   * @param targetUserId - Target user ID
-   * @param action - Action performed
-   * @param details - Additional details
-   * @param context - Request context (IP, user agent)
-   * @param adapter - Optional partition-specific adapter
-   * @returns Created audit log
-   */
   async logAccess(
     userId: string | null,
     targetUserId: string,
     action: PIIAuditAction,
     details?: Record<string, unknown>,
-    context?: { ip_address?: string; user_agent?: string; tenant_id?: string },
-    adapter?: DatabaseAdapter
+    context?: { ip_address?: string; user_agent?: string; tenant_id?: string }
   ): Promise<PIIAuditLog> {
-    return this.createAuditLog(
-      {
-        user_id: userId,
-        target_user_id: targetUserId,
-        action,
-        details,
-        ip_address: context?.ip_address,
-        user_agent: context?.user_agent,
-        tenant_id: context?.tenant_id,
-      },
-      adapter
-    );
+    return this.createAuditLog({
+      tenant_id: context?.tenant_id,
+      user_id: userId,
+      target_user_id: targetUserId,
+      action,
+      details,
+      ip_address: context?.ip_address,
+      user_agent: context?.user_agent,
+    });
   }
-
-  /**
-   * Find audit logs by actor user
-   *
-   * @param userId - Actor user ID
-   * @param options - Pagination options
-   * @param adapter - Optional partition-specific adapter
-   * @returns Paginated audit logs
-   */
-  async findByUser(
-    userId: string,
-    options?: PaginationOptions,
-    adapter?: DatabaseAdapter
-  ): Promise<PaginationResult<PIIAuditLog>> {
-    const db = adapter ?? this.adapter;
-    const page = Math.max(1, options?.page ?? 1);
-    const limit = Math.min(100, Math.max(1, options?.limit ?? 20));
-    const offset = (page - 1) * limit;
-
-    const countResult = await db.queryOne<{ count: number }>(
-      'SELECT COUNT(*) as count FROM audit_log_pii WHERE user_id = ?',
-      [userId]
-    );
-    const total = countResult?.count ?? 0;
-
-    const items = await db.query<PIIAuditLog>(
-      'SELECT * FROM audit_log_pii WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [userId, limit, offset]
-    );
-
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      items,
-      total,
-      page,
-      limit,
-      totalPages,
-      hasNext: page < totalPages,
-      hasPrev: page > 1,
-    };
-  }
-
-  /**
-   * Find audit logs by target user
-   *
-   * @param targetUserId - Target user ID
-   * @param options - Pagination options
-   * @param adapter - Optional partition-specific adapter
-   * @returns Paginated audit logs
-   */
-  async findByTargetUser(
-    targetUserId: string,
-    options?: PaginationOptions,
-    adapter?: DatabaseAdapter
-  ): Promise<PaginationResult<PIIAuditLog>> {
-    const db = adapter ?? this.adapter;
-    const page = Math.max(1, options?.page ?? 1);
-    const limit = Math.min(100, Math.max(1, options?.limit ?? 20));
-    const offset = (page - 1) * limit;
-
-    const countResult = await db.queryOne<{ count: number }>(
-      'SELECT COUNT(*) as count FROM audit_log_pii WHERE target_user_id = ?',
-      [targetUserId]
-    );
-    const total = countResult?.count ?? 0;
-
-    const items = await db.query<PIIAuditLog>(
-      'SELECT * FROM audit_log_pii WHERE target_user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [targetUserId, limit, offset]
-    );
-
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      items,
-      total,
-      page,
-      limit,
-      totalPages,
-      hasNext: page < totalPages,
-      hasPrev: page > 1,
-    };
-  }
-
-  /**
-   * Find audit logs by action type
-   *
-   * @param action - Action type
-   * @param options - Pagination options
-   * @param adapter - Optional partition-specific adapter
-   * @returns Paginated audit logs
-   */
-  async findByAction(
-    action: PIIAuditAction,
-    options?: PaginationOptions,
-    adapter?: DatabaseAdapter
-  ): Promise<PaginationResult<PIIAuditLog>> {
-    const db = adapter ?? this.adapter;
-    const page = Math.max(1, options?.page ?? 1);
-    const limit = Math.min(100, Math.max(1, options?.limit ?? 20));
-    const offset = (page - 1) * limit;
-
-    const countResult = await db.queryOne<{ count: number }>(
-      'SELECT COUNT(*) as count FROM audit_log_pii WHERE action = ?',
-      [action]
-    );
-    const total = countResult?.count ?? 0;
-
-    const items = await db.query<PIIAuditLog>(
-      'SELECT * FROM audit_log_pii WHERE action = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
-      [action, limit, offset]
-    );
-
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      items,
-      total,
-      page,
-      limit,
-      totalPages,
-      hasNext: page < totalPages,
-      hasPrev: page > 1,
-    };
-  }
-
-  /**
-   * Find unexported audit logs
-   *
-   * Used by export job to find records to export.
-   *
-   * @param limit - Maximum records to return (1-10000, default 1000)
-   * @param adapter - Optional partition-specific adapter
-   * @returns Unexported audit logs
-   */
-  async findUnexported(limit: number = 1000, adapter?: DatabaseAdapter): Promise<PIIAuditLog[]> {
-    const db = adapter ?? this.adapter;
-    const validLimit = this.validateLimit(limit);
-    return db.query<PIIAuditLog>(
-      'SELECT * FROM audit_log_pii WHERE exported_at IS NULL ORDER BY created_at ASC LIMIT ?',
-      [validLimit]
-    );
-  }
-
-  /**
-   * Mark audit logs as exported
-   *
-   * Processes in batches to prevent SQL query from becoming too long.
-   * Uses sequential processing to avoid D1 connection limits.
-   *
-   * @param ids - Audit log IDs to mark
-   * @param adapter - Optional partition-specific adapter
-   * @returns Number of marked records
-   */
-  async markExported(ids: string[], adapter?: DatabaseAdapter): Promise<number> {
-    if (ids.length === 0) return 0;
-
-    const db = adapter ?? this.adapter;
-    const now = getCurrentTimestamp();
-    let totalAffected = 0;
-
-    // Process in batches to prevent SQL from becoming too long
-    for (let i = 0; i < ids.length; i += MARK_EXPORTED_BATCH_SIZE) {
-      const batch = ids.slice(i, i + MARK_EXPORTED_BATCH_SIZE);
-      const placeholders = batch.map(() => '?').join(',');
-      const result = await db.execute(
-        `UPDATE audit_log_pii SET exported_at = ? WHERE id IN (${placeholders})`,
-        [now, ...batch]
-      );
-      totalAffected += result.rowsAffected;
-    }
-
-    return totalAffected;
-  }
-
-  /**
-   * Delete old exported audit logs
-   *
-   * Used for cleanup after successful export to long-term storage.
-   *
-   * @param beforeDate - Delete records exported before this timestamp
-   * @param adapter - Optional partition-specific adapter
-   * @returns Number of deleted records
-   */
-  async deleteExported(beforeDate: number, adapter?: DatabaseAdapter): Promise<number> {
-    const db = adapter ?? this.adapter;
-    const result = await db.execute(
-      'DELETE FROM audit_log_pii WHERE exported_at IS NOT NULL AND exported_at < ?',
-      [beforeDate]
-    );
-    return result.rowsAffected;
-  }
-
-  /**
-   * Get action statistics
-   *
-   * @param tenantId - Optional tenant filter
-   * @param adapter - Optional partition-specific adapter
-   * @returns Map of action → count
-   */
-  async getActionStats(
-    tenantId?: string,
-    adapter?: DatabaseAdapter
-  ): Promise<Map<PIIAuditAction, number>> {
-    const db = adapter ?? this.adapter;
-    const sql = tenantId
-      ? 'SELECT action, COUNT(*) as count FROM audit_log_pii WHERE tenant_id = ? GROUP BY action'
-      : 'SELECT action, COUNT(*) as count FROM audit_log_pii GROUP BY action';
-
-    const params = tenantId ? [tenantId] : [];
-    const results = await db.query<{ action: PIIAuditAction; count: number }>(sql, params);
-
-    const stats = new Map<PIIAuditAction, number>();
-    for (const row of results) {
-      stats.set(row.action, row.count);
-    }
-    return stats;
-  }
-
-  /**
-   * Get export statistics
-   *
-   * @param adapter - Optional partition-specific adapter
-   * @returns Export statistics
-   */
-  async getExportStats(adapter?: DatabaseAdapter): Promise<{
-    totalRecords: number;
-    exportedRecords: number;
-    pendingRecords: number;
-  }> {
-    const db = adapter ?? this.adapter;
-
-    const totalResult = await db.queryOne<{ count: number }>(
-      'SELECT COUNT(*) as count FROM audit_log_pii'
-    );
-    const exportedResult = await db.queryOne<{ count: number }>(
-      'SELECT COUNT(*) as count FROM audit_log_pii WHERE exported_at IS NOT NULL'
-    );
-
-    const total = totalResult?.count ?? 0;
-    const exported = exportedResult?.count ?? 0;
-
-    return {
-      totalRecords: total,
-      exportedRecords: exported,
-      pendingRecords: total - exported,
-    };
-  }
-
-  /**
-   * Get parsed details
-   *
-   * @param auditLog - Audit log with details
-   * @returns Parsed details or null
-   */
-  getDetails(auditLog: PIIAuditLog): Record<string, unknown> | null {
-    if (!auditLog.details) {
-      return null;
-    }
+  getDetails(row: PIIAuditLog): Record<string, unknown> | null {
+    if (!row.details) return null;
     try {
-      return JSON.parse(auditLog.details) as Record<string, unknown>;
+      return JSON.parse(row.details) as Record<string, unknown>;
     } catch {
       return null;
     }

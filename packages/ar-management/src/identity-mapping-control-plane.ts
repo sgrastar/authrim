@@ -1,3 +1,14 @@
+import {
+  emitLogIcebergRow,
+  prepareLogIcebergRowWrite,
+  type LogIcebergRowWrite,
+  type LogIcebergSqlGuard,
+} from '@authrim/ar-lib-core/services/log-iceberg-emitter';
+import {
+  coreLogPublicationSource,
+  prepareCoreLogPublication,
+  type CoreLogPublicationSource,
+} from '@authrim/ar-lib-core/services/log-iceberg-core-publication';
 import type { Context } from 'hono';
 import type {
   Env,
@@ -6,7 +17,8 @@ import type {
   PreparedStatement,
 } from '@authrim/ar-lib-core';
 import {
-  createAuthContextFromHono,
+  ensureDatabaseAdapter,
+  getTenantMetadataContextFromHono,
   findConflictingSourceIds,
   findPlatformMappingCompileViolation,
   findPlatformMappingVersionViolation,
@@ -789,6 +801,8 @@ interface ProvisioningAssignmentRuleRow {
 }
 
 interface ProvisioningAssignmentOwnershipRow {
+  id: string;
+  updated_at: number;
   assignment_type: string;
   assignment_id: string;
   ownership_policy: string;
@@ -1730,8 +1744,78 @@ export class IdentityMappingControlPlaneRepository {
     private readonly adapter: DatabaseAdapter,
     private readonly now: () => number = () => Date.now(),
     private readonly coreAdapter?: DatabaseAdapter,
-    private readonly accountSuspensionSignals?: AccountSuspensionSignalService
+    private readonly accountSuspensionSignals?: AccountSuspensionSignalService,
+    private readonly logEnvironment?: Env,
+    private readonly corePublicationSource?:
+      | CoreLogPublicationSource
+      | (() => CoreLogPublicationSource)
   ) {}
+
+  private requireLogEnvironment(): Env {
+    if (!this.logEnvironment) throw new Error('identity_mapping_log_environment_required');
+    return this.logEnvironment;
+  }
+  private requireCore(): DatabaseAdapter {
+    if (!this.coreAdapter) throw new Error('identity_mapping_tenant_metadata_required');
+    return this.coreAdapter;
+  }
+  private prepareCoreEvent(tenantId: string, input: Omit<LogIcebergRowWrite, 'tenantId'>) {
+    const source =
+      typeof this.corePublicationSource === 'function'
+        ? this.corePublicationSource()
+        : this.corePublicationSource;
+    if (!source || source.tenantId !== tenantId)
+      throw new Error('identity_mapping_log_source_required');
+    return prepareCoreLogPublication(this.requireLogEnvironment(), this.requireCore(), {
+      ...input,
+      tenantId,
+      source,
+    });
+  }
+  private async finishCoreEvent(
+    prepared: Awaited<ReturnType<IdentityMappingControlPlaneRepository['prepareCoreEvent']>>
+  ) {
+    const state = await this.requireCore().queryOne<{ state: string }>(
+      'SELECT state FROM log_iceberg_core_publications WHERE id=?',
+      [prepared.publicationId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (!state || !['committed', 'published'].includes(state.state))
+      throw conflict('business state changed before log publication');
+    await prepared.dispatch();
+  }
+  private corePlan(): { statements: PreparedStatement[]; executor: SqlQueryExecutor } {
+    const statements: PreparedStatement[] = [];
+    return {
+      statements,
+      executor: {
+        queryOne: <T>(sql: string, params?: unknown[]) =>
+          this.requireCore().queryOne<T>(sql, params, { consistencyClass: 'primary_required' }),
+        execute: async (sql, params) => {
+          statements.push({ sql, params });
+        },
+      },
+    };
+  }
+  /** Only the fixed INSERT VALUES / UPDATE statements constructed by this repository enter here. */
+  private guardCoreMutation(
+    statement: PreparedStatement,
+    guard: LogIcebergSqlGuard
+  ): PreparedStatement {
+    let sql: string;
+    if (/^\s*UPDATE\b/iu.test(statement.sql) && /\bWHERE\b/iu.test(statement.sql))
+      sql = `${statement.sql} AND (${guard.where})`;
+    else if (
+      /^\s*INSERT\b/iu.test(statement.sql) &&
+      /\bVALUES\s*\([^()]*\)\s*$/iu.test(statement.sql)
+    )
+      sql = statement.sql.replace(
+        /\bVALUES\s*\(([^()]*)\)\s*$/iu,
+        `SELECT $1 WHERE (${guard.where})`
+      );
+    else throw new Error('identity_mapping_core_mutation_unsupported');
+    return { sql, params: [...(statement.params ?? []), ...guard.params] };
+  }
 
   async listSchemaReadiness() {
     const schemaRows = await this.adapter.query<{ name: string }>(
@@ -2001,7 +2085,7 @@ export class IdentityMappingControlPlaneRepository {
     if (tenantId === PLATFORM_MAPPING_TENANT_ID) return null;
     let rows: CustomClaimSchemaCatalogRow[];
     try {
-      rows = await (this.coreAdapter ?? this.adapter).query<CustomClaimSchemaCatalogRow>(
+      rows = await this.requireCore().query<CustomClaimSchemaCatalogRow>(
         `SELECT
             id,
             field_key,
@@ -5174,24 +5258,31 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.outcome, 'outcome');
     const now = this.now();
     const id = createId('mapping_event');
-    await this.adapter.execute(
-      `INSERT INTO mapping_events (
-        id, tenant_id, event_type, field_mapping_version_id, subject_id, source_id,
-        outcome, reason_codes_json, trace_ref, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+    await emitLogIcebergRow(this.requireLogEnvironment(), {
+      tenantId,
+      sourceDataset: 'admin.mapping_events',
+      logType: 'normal',
+      eventAt: now,
+      expiresAt: null,
+      overview: {
+        action: input.eventType,
+        result: input.outcome,
+        subject_id: input.subjectId ?? null,
+        resource_id: input.fieldMappingVersionId ?? null,
+      },
+      row: {
         id,
-        tenantId,
-        input.eventType,
-        input.fieldMappingVersionId ?? null,
-        input.subjectId ?? null,
-        input.sourceId ?? null,
-        input.outcome,
-        stableJson(input.reasonCodes ?? []),
-        input.traceRef ?? null,
-        now,
-      ]
-    );
+        tenant_id: tenantId,
+        event_type: input.eventType,
+        field_mapping_version_id: input.fieldMappingVersionId ?? null,
+        subject_id: input.subjectId ?? null,
+        source_id: input.sourceId ?? null,
+        outcome: input.outcome,
+        reason_codes_json: stableJson(input.reasonCodes ?? []),
+        trace_ref: input.traceRef ?? null,
+        created_at: now,
+      },
+    });
     return {
       id,
       tenantId,
@@ -5692,7 +5783,7 @@ export class IdentityMappingControlPlaneRepository {
     if (input.metadata) {
       assertNoSensitiveMetadata(input.metadata, 'metadata');
     }
-    return this.adapter.transaction((tx) => this.upsertGroup(tenantId, input, tx));
+    return this.requireCore().transaction((tx) => this.upsertGroup(tenantId, input, tx));
   }
 
   private async upsertGroup(
@@ -5747,7 +5838,7 @@ export class IdentityMappingControlPlaneRepository {
     if (!input.subjectId && !input.accountId) {
       throw badRequest('subjectId or accountId is required');
     }
-    return this.adapter.transaction((tx) => this.upsertGroupMembership(tenantId, input, tx));
+    return this.requireCore().transaction((tx) => this.upsertGroupMembership(tenantId, input, tx));
   }
 
   private async upsertGroupMembership(
@@ -5837,7 +5928,7 @@ export class IdentityMappingControlPlaneRepository {
     if (input.value) {
       assertNoReviewPayloadRawIdentifiers(input.value, 'value');
     }
-    return this.adapter.transaction((tx) => this.upsertEntitlementGrant(tenantId, input, tx));
+    return this.requireCore().transaction((tx) => this.upsertEntitlementGrant(tenantId, input, tx));
   }
 
   private async upsertEntitlementGrant(
@@ -5938,7 +6029,7 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('condition must be an object');
     }
     assertNoReviewPayloadRawIdentifiers(input.condition, 'condition');
-    return this.insertProvisioningAssignmentRule(tenantId, input, this.adapter);
+    return this.insertProvisioningAssignmentRule(tenantId, input, this.requireCore());
   }
 
   private async insertProvisioningAssignmentRule(
@@ -5986,7 +6077,7 @@ export class IdentityMappingControlPlaneRepository {
     if (!input.subjectId && !input.accountId) {
       throw badRequest('subjectId or accountId is required');
     }
-    const rule = await this.adapter.queryOne<ProvisioningAssignmentRuleRow>(
+    const rule = await this.requireCore().queryOne<ProvisioningAssignmentRuleRow>(
       `SELECT id, target_type, target_id, condition_json, priority
          FROM provisioning_assignment_rules
         WHERE tenant_id = ? AND id = ? AND lifecycle_state = ?`,
@@ -6006,35 +6097,73 @@ export class IdentityMappingControlPlaneRepository {
       input
     );
     const outcome = evaluation.matched ? 'assigned' : 'skipped';
+    const event = this.provisioningAssignmentEvent(tenantId, {
+      ruleId,
+      subjectId: input.subjectId,
+      accountId: input.accountId,
+      targetType: rule.target_type,
+      targetId: rule.target_id,
+      outcome,
+      reasonCodes: evaluation.reasonCodes,
+      traceRef: input.dryRun ? `dry-run:${ruleId}` : `rule:${ruleId}`,
+    });
     if (evaluation.matched && !input.dryRun) {
-      await this.adapter.transaction(async (tx) => {
-        await this.applyProvisioningAssignment(tenantId, rule, input, tx);
-        await this.recordProvisioningAssignmentEvent(
+      const plan = this.corePlan();
+      const assignment = await this.applyProvisioningAssignment(
+        tenantId,
+        rule,
+        input,
+        plan.executor
+      );
+      const targetTable = rule.target_type === 'group' ? 'group_memberships' : 'entitlements';
+      const assignmentType = rule.target_type === 'group' ? 'group_membership' : rule.target_type;
+      const sourceId = rule.target_type === 'group' ? `rule:${rule.id}` : rule.id;
+      const ruleGuard: LogIcebergSqlGuard = {
+        where: `EXISTS(SELECT 1 FROM provisioning_assignment_rules WHERE tenant_id=? AND id=? AND lifecycle_state='active' AND target_type=? AND target_id=? AND condition_json=? AND priority=?)`,
+        params: [
           tenantId,
-          {
-            ruleId,
-            subjectId: input.subjectId,
-            accountId: input.accountId,
-            targetType: rule.target_type,
-            targetId: rule.target_id,
-            outcome,
-            reasonCodes: evaluation.reasonCodes,
-            traceRef: `rule:${ruleId}`,
-          },
-          tx
+          rule.id,
+          rule.target_type,
+          rule.target_id,
+          rule.condition_json,
+          rule.priority,
+        ],
+      };
+      const targetGuard: LogIcebergSqlGuard = {
+        where: `EXISTS(SELECT 1 FROM ${targetTable} WHERE tenant_id=? AND id=? AND lifecycle_state='active')`,
+        params: [tenantId, assignment.id],
+      };
+      const prepared = await this.prepareCoreEvent(tenantId, event);
+      if (prepared.state === 'committed' || prepared.state === 'published') {
+        await prepared.dispatch();
+      } else {
+        const statements = plan.statements.map((statement) =>
+          this.guardCoreMutation(
+            statement,
+            /provisioning_assignment_ownership/iu.test(statement.sql)
+              ? {
+                  where: `(${ruleGuard.where}) AND (${targetGuard.where})`,
+                  params: [...ruleGuard.params, ...targetGuard.params],
+                }
+              : ruleGuard
+          )
         );
-      });
+        const predicate = {
+          where: `(${ruleGuard.where}) AND (${targetGuard.where}) AND EXISTS(SELECT 1 FROM provisioning_assignment_ownership WHERE tenant_id=? AND assignment_type=? AND assignment_id=? AND source_id IS ? AND ownership_policy='source_owned' AND revoke_policy='review' AND protected_until IS NULL)`,
+          params: [
+            ...ruleGuard.params,
+            ...targetGuard.params,
+            tenantId,
+            assignmentType,
+            assignment.id,
+            sourceId,
+          ],
+        };
+        await this.requireCore().batch(prepared.wrapBusinessBatch(statements, predicate));
+        await this.finishCoreEvent(prepared);
+      }
     } else {
-      await this.recordProvisioningAssignmentEvent(tenantId, {
-        ruleId,
-        subjectId: input.subjectId,
-        accountId: input.accountId,
-        targetType: rule.target_type,
-        targetId: rule.target_id,
-        outcome,
-        reasonCodes: evaluation.reasonCodes,
-        traceRef: input.dryRun ? `dry-run:${ruleId}` : `rule:${ruleId}`,
-      });
+      await emitLogIcebergRow(this.requireLogEnvironment(), { tenantId, ...event });
     }
     return {
       ...evaluation,
@@ -6086,7 +6215,10 @@ export class IdentityMappingControlPlaneRepository {
       input.targetType,
       input.targetId,
     ].join(':');
-    const existingEvent = await this.adapter.queryOne<{ id: string; processing_state: string }>(
+    const existingEvent = await this.requireCore().queryOne<{
+      id: string;
+      processing_state: string;
+    }>(
       `SELECT id, processing_state
          FROM external_lifecycle_signal_events
         WHERE tenant_id = ? AND source_type = ? AND source_id = ? AND dedupe_key = ?
@@ -6094,7 +6226,7 @@ export class IdentityMappingControlPlaneRepository {
       [tenantId, input.sourceType, input.sourceId, dedupeKey]
     );
     if (existingEvent) {
-      const existingDecision = await this.adapter.queryOne<{
+      const existingDecision = await this.requireCore().queryOne<{
         decision: string;
         reason_codes_json: string | null;
       }>(
@@ -6115,74 +6247,113 @@ export class IdentityMappingControlPlaneRepository {
       }
     }
 
-    const eventId = existingEvent?.id ?? createId('external_lifecycle_signal_event');
-    const signalEventId = eventId;
-    const lifecycleDecision = await this.adapter.transaction(async (tx) => {
-      if (!existingEvent) {
-        await tx.execute(
-          `INSERT INTO external_lifecycle_signal_events (
-            id, tenant_id, source_type, source_id, source_event_id, source_timestamp,
-            observed_at, binding_version, payload_ref, signal_type, dedupe_key,
-            processing_state, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            eventId,
-            tenantId,
-            input.sourceType,
-            input.sourceId,
-            input.sourceEventId,
-            input.sourceTimestamp ?? null,
-            now,
-            input.bindingVersion ?? null,
-            input.payloadRef ?? null,
-            input.signalType,
-            dedupeKey,
-            'processing',
-            now,
-            now,
-          ]
-        );
-      }
-      const ownership =
-        input.ownership ?? (await this.findAssignmentOwnership(tenantId, input, tx));
-      const decision = decideLifecycleSignalRevocation({
-        signalType: input.signalType,
-        targetType: input.targetType,
-        targetId: input.targetId,
-        ownership,
-        now,
-      });
-      await tx.execute(
-        `INSERT INTO external_lifecycle_signal_decisions (
-          id, tenant_id, signal_event_id, subject_id, account_id, decision,
-          propagation_targets_json, reason_codes_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          createId('external_lifecycle_signal_decision'),
-          tenantId,
-          signalEventId,
-          input.subjectId ?? null,
-          input.accountId ?? null,
-          decision.decision,
-          stableJson([{ targetType: input.targetType, targetId: input.targetId }]),
-          stableJson(decision.reasonCodes),
-          now,
-        ]
-      );
-      await this.applyLifecycleSignalDecision(tenantId, input, signalEventId, decision, tx);
-      await tx.execute(
-        `UPDATE external_lifecycle_signal_events
-            SET processing_state = ?, updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
-        ['processed', now, tenantId, signalEventId]
-      );
-      return decision;
+    if (existingEvent) throw conflict('Lifecycle signal has no committed decision');
+    const signalEventId = createId('external_lifecycle_signal_event');
+    const ownership = input.ownership ?? (await this.findAssignmentOwnership(tenantId, input));
+    const decision = decideLifecycleSignalRevocation({
+      signalType: input.signalType,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      ownership,
+      now,
     });
-    return {
-      signalEventId,
-      decision: lifecycleDecision.decision,
-      reasonCodes: lifecycleDecision.reasonCodes,
+    const ownershipGuard = input.ownership
+      ? { where: '1=1', params: [] }
+      : await this.assignmentOwnershipGuard(tenantId, input, ownership);
+    const eventGuard: LogIcebergSqlGuard = {
+      where: `EXISTS(SELECT 1 FROM external_lifecycle_signal_events WHERE tenant_id=? AND id=? AND processing_state='processing' AND observed_at=?) AND (${ownershipGuard.where})`,
+      params: [tenantId, signalEventId, now, ...ownershipGuard.params],
     };
+    const decisionId = createId('external_lifecycle_signal_decision');
+    const plan = this.corePlan();
+    await plan.executor.execute(
+      `INSERT INTO external_lifecycle_signal_events (id,tenant_id,source_type,source_id,source_event_id,source_timestamp,observed_at,binding_version,payload_ref,signal_type,dedupe_key,processing_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        signalEventId,
+        tenantId,
+        input.sourceType,
+        input.sourceId,
+        input.sourceEventId,
+        input.sourceTimestamp ?? null,
+        now,
+        input.bindingVersion ?? null,
+        input.payloadRef ?? null,
+        input.signalType,
+        dedupeKey,
+        'processing',
+        now,
+        now,
+      ]
+    );
+    await plan.executor.execute(
+      `INSERT INTO external_lifecycle_signal_decisions(id,tenant_id,signal_event_id,subject_id,account_id,decision,propagation_targets_json,reason_codes_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+      [
+        decisionId,
+        tenantId,
+        signalEventId,
+        input.subjectId ?? null,
+        input.accountId ?? null,
+        decision.decision,
+        stableJson([{ targetType: input.targetType, targetId: input.targetId }]),
+        stableJson(decision.reasonCodes),
+        now,
+      ]
+    );
+    await this.applyLifecycleSignalDecision(tenantId, input, decision, plan.executor, now);
+    await plan.executor.execute(
+      `UPDATE external_lifecycle_signal_events SET processing_state=?,updated_at=? WHERE tenant_id=? AND id=?`,
+      ['processed', now, tenantId, signalEventId]
+    );
+    const prepared = await this.prepareCoreEvent(tenantId, {
+      sourceDataset: 'core.provisioning_revocation_events',
+      logType: 'audit',
+      eventAt: now,
+      expiresAt: null,
+      overview: {
+        action: 'provisioning.revocation',
+        result: decision.decision,
+        subject_id: input.subjectId ?? input.accountId ?? undefined,
+      },
+      row: {
+        id: signalEventId + ':revocation',
+        tenant_id: tenantId,
+        subject_id: input.subjectId ?? null,
+        account_id: input.accountId ?? null,
+        source_event_id: signalEventId,
+        target_type: input.targetType,
+        target_id: input.targetId,
+        decision: decision.decision,
+        reason_codes_json: stableJson(decision.reasonCodes),
+        created_at: now,
+      },
+    });
+    if (prepared.state === 'committed' || prepared.state === 'published') await prepared.dispatch();
+    else {
+      const firstGuard = {
+        where: `(${ownershipGuard.where}) AND NOT EXISTS(SELECT 1 FROM external_lifecycle_signal_events WHERE tenant_id=? AND source_type=? AND source_id=? AND dedupe_key=?)`,
+        params: [...ownershipGuard.params, tenantId, input.sourceType, input.sourceId, dedupeKey],
+      };
+      await this.requireCore().batch(
+        prepared.wrapBusinessBatch(
+          plan.statements.map((statement, index) =>
+            this.guardCoreMutation(statement, index === 0 ? firstGuard : eventGuard)
+          ),
+          {
+            where: `EXISTS(SELECT 1 FROM external_lifecycle_signal_events e JOIN external_lifecycle_signal_decisions d ON d.tenant_id=e.tenant_id AND d.signal_event_id=e.id WHERE e.tenant_id=? AND e.id=? AND e.processing_state='processed' AND e.observed_at=? AND d.id=? AND d.decision=? AND d.reason_codes_json=?)`,
+            params: [
+              tenantId,
+              signalEventId,
+              now,
+              decisionId,
+              decision.decision,
+              stableJson(decision.reasonCodes),
+            ],
+          }
+        )
+      );
+      await this.finishCoreEvent(prepared);
+    }
+    return { signalEventId, decision: decision.decision, reasonCodes: decision.reasonCodes };
   }
 
   async createKeyRegistry(tenantId: string, input: CreateKeyRegistryRequest) {
@@ -6203,55 +6374,54 @@ export class IdentityMappingControlPlaneRepository {
     const registryId = createId('key_registry');
     const versionId = createId('key_version');
     const materialRefId = createId('key_material_ref');
-    await this.adapter.transaction(async (tx) => {
-      await tx.execute(
-        `INSERT INTO key_registries (
+    await this.commitKeyAccessEvent(
+      tenantId,
+      registryId,
+      {
+        keyVersionId: versionId,
+        actorId: input.actorId ?? null,
+        accessType: 'registry.create',
+        outcome: 'success',
+      },
+      async (tx) => {
+        await tx.execute(
+          `INSERT INTO key_registries (
           id, tenant_id, key_purpose, scope_json, active_version_id, status, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          registryId,
-          tenantId,
-          input.keyPurpose,
-          stableJson(input.scope),
-          versionId,
-          'active',
-          now,
-          now,
-        ]
-      );
-      await tx.execute(
-        `INSERT INTO key_versions (
+          [
+            registryId,
+            tenantId,
+            input.keyPurpose,
+            stableJson(input.scope),
+            versionId,
+            'active',
+            now,
+            now,
+          ]
+        );
+        await tx.execute(
+          `INSERT INTO key_versions (
           id, tenant_id, key_registry_id, version, status, algorithm,
           created_at, activated_at, retired_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [versionId, tenantId, registryId, 1, 'active', input.algorithm, now, now, null]
-      );
-      await tx.execute(
-        `INSERT INTO key_material_refs (
+          [versionId, tenantId, registryId, 1, 'active', input.algorithm, now, now, null]
+        );
+        await tx.execute(
+          `INSERT INTO key_material_refs (
           id, tenant_id, key_version_id, backend_type, material_ref, metadata_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          materialRefId,
-          tenantId,
-          versionId,
-          input.backendType,
-          input.materialRef,
-          input.materialMetadata ? stableJson(input.materialMetadata) : null,
-          now,
-        ]
-      );
-      await this.recordKeyAccessEvent(
-        tenantId,
-        registryId,
-        {
-          keyVersionId: versionId,
-          actorId: input.actorId ?? null,
-          accessType: 'registry.create',
-          outcome: 'success',
-        },
-        tx
-      );
-    });
+          [
+            materialRefId,
+            tenantId,
+            versionId,
+            input.backendType,
+            input.materialRef,
+            input.materialMetadata ? stableJson(input.materialMetadata) : null,
+            now,
+          ]
+        );
+      }
+    );
     return {
       id: registryId,
       tenantId,
@@ -6329,97 +6499,106 @@ export class IdentityMappingControlPlaneRepository {
     const versionId = createId('key_version');
     const materialRefId = createId('key_material_ref');
     const jobs: Array<{ id: string; type: 'rewrap' | 'blind_index_rotation' }> = [];
-    await this.adapter.transaction(async (tx) => {
-      await tx.execute(
-        `INSERT INTO key_versions (
+    await this.commitKeyAccessEvent(
+      tenantId,
+      keyRegistryId,
+      {
+        keyVersionId: versionId,
+        actorId: input.actorId ?? null,
+        accessType: 'registry.rotate',
+        outcome: 'success',
+      },
+      async (tx) => {
+        await tx.execute(
+          `INSERT INTO key_versions (
           id, tenant_id, key_registry_id, version, status, algorithm,
           created_at, activated_at, retired_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [versionId, tenantId, keyRegistryId, nextVersion, 'active', input.algorithm, now, now, null]
-      );
-      await tx.execute(
-        `INSERT INTO key_material_refs (
+          [
+            versionId,
+            tenantId,
+            keyRegistryId,
+            nextVersion,
+            'active',
+            input.algorithm,
+            now,
+            now,
+            null,
+          ]
+        );
+        await tx.execute(
+          `INSERT INTO key_material_refs (
           id, tenant_id, key_version_id, backend_type, material_ref, metadata_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          materialRefId,
-          tenantId,
-          versionId,
-          input.backendType,
-          input.materialRef,
-          input.materialMetadata ? stableJson(input.materialMetadata) : null,
-          now,
-        ]
-      );
-      if (registry.active_version_id) {
-        await tx.execute(
-          `UPDATE key_versions
+          [
+            materialRefId,
+            tenantId,
+            versionId,
+            input.backendType,
+            input.materialRef,
+            input.materialMetadata ? stableJson(input.materialMetadata) : null,
+            now,
+          ]
+        );
+        if (registry.active_version_id) {
+          await tx.execute(
+            `UPDATE key_versions
               SET status = ?, retired_at = ?
             WHERE tenant_id = ? AND id = ?`,
-          ['retiring', now, tenantId, registry.active_version_id]
-        );
-      }
-      await tx.execute(
-        `UPDATE key_registries
+            ['retiring', now, tenantId, registry.active_version_id]
+          );
+        }
+        await tx.execute(
+          `UPDATE key_registries
             SET active_version_id = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
-        [versionId, now, tenantId, keyRegistryId]
-      );
-      if (jobMode === 'rewrap' || jobMode === 'both') {
-        const jobId = createId('rewrap_job');
-        jobs.push({ id: jobId, type: 'rewrap' });
-        await tx.execute(
-          `INSERT INTO rewrap_jobs (
+          [versionId, now, tenantId, keyRegistryId]
+        );
+        if (jobMode === 'rewrap' || jobMode === 'both') {
+          const jobId = createId('rewrap_job');
+          jobs.push({ id: jobId, type: 'rewrap' });
+          await tx.execute(
+            `INSERT INTO rewrap_jobs (
             id, tenant_id, key_registry_id, source_version_id, target_version_id,
             artifact_scope_json, status, cursor_json, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            jobId,
-            tenantId,
-            keyRegistryId,
-            registry.active_version_id ?? null,
-            versionId,
-            stableJson(input.artifactScope ?? { scope: 'registry', keyRegistryId }),
-            'queued',
-            stableJson({ offset: 0 }),
-            now,
-            now,
-          ]
-        );
-      }
-      if (jobMode === 'blind_index' || jobMode === 'both') {
-        const jobId = createId('blind_index_rotation_job');
-        jobs.push({ id: jobId, type: 'blind_index_rotation' });
-        await tx.execute(
-          `INSERT INTO blind_index_rotation_jobs (
+            [
+              jobId,
+              tenantId,
+              keyRegistryId,
+              registry.active_version_id ?? null,
+              versionId,
+              stableJson(input.artifactScope ?? { scope: 'registry', keyRegistryId }),
+              'queued',
+              stableJson({ offset: 0 }),
+              now,
+              now,
+            ]
+          );
+        }
+        if (jobMode === 'blind_index' || jobMode === 'both') {
+          const jobId = createId('blind_index_rotation_job');
+          jobs.push({ id: jobId, type: 'blind_index_rotation' });
+          await tx.execute(
+            `INSERT INTO blind_index_rotation_jobs (
             id, tenant_id, key_registry_id, source_version_id, target_version_id,
             status, cursor_json, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            jobId,
-            tenantId,
-            keyRegistryId,
-            registry.active_version_id ?? null,
-            versionId,
-            'queued',
-            stableJson({ phase: 'dual_read', offset: 0 }),
-            now,
-            now,
-          ]
-        );
+            [
+              jobId,
+              tenantId,
+              keyRegistryId,
+              registry.active_version_id ?? null,
+              versionId,
+              'queued',
+              stableJson({ phase: 'dual_read', offset: 0 }),
+              now,
+              now,
+            ]
+          );
+        }
       }
-      await this.recordKeyAccessEvent(
-        tenantId,
-        keyRegistryId,
-        {
-          keyVersionId: versionId,
-          actorId: input.actorId ?? null,
-          accessType: 'registry.rotate',
-          outcome: 'success',
-        },
-        tx
-      );
-    });
+    );
     return {
       keyRegistryId,
       activeVersionId: versionId,
@@ -6442,7 +6621,7 @@ export class IdentityMappingControlPlaneRepository {
     if (input.keyVersionId) {
       await this.ensureKeyVersion(tenantId, keyRegistryId, input.keyVersionId);
     }
-    await this.recordKeyAccessEvent(tenantId, keyRegistryId, input);
+    await this.commitKeyAccessEvent(tenantId, keyRegistryId, input);
     return { keyRegistryId, recorded: true };
   }
 
@@ -7028,28 +7207,45 @@ export class IdentityMappingControlPlaneRepository {
     return [...documents.values()];
   }
 
-  private async recordKeyAccessEvent(
+  private async commitKeyAccessEvent(
     tenantId: string,
     keyRegistryId: string,
     input: RecordKeyAccessRequest,
-    executor: SqlExecutor = this.adapter
+    business?: (executor: SqlExecutor) => Promise<void>
   ) {
-    await executor.execute(
-      `INSERT INTO key_access_events (
-        id, tenant_id, key_registry_id, key_version_id, actor_id,
-        access_type, outcome, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        createId('key_access_event'),
-        tenantId,
-        keyRegistryId,
-        input.keyVersionId ?? null,
-        input.actorId ?? null,
-        input.accessType,
-        input.outcome,
-        this.now(),
-      ]
-    );
+    const now = this.now();
+    const prepared = await prepareLogIcebergRowWrite(this.requireLogEnvironment(), this.adapter, {
+      tenantId,
+      sourceDataset: 'admin.key_access_events',
+      logType: 'audit',
+      eventAt: now,
+      expiresAt: null,
+      overview: {
+        action: input.accessType,
+        result: input.outcome,
+        subject_id: input.actorId ?? null,
+        resource_id: keyRegistryId,
+      },
+      row: {
+        id: createId('key_access_event'),
+        tenant_id: tenantId,
+        key_registry_id: keyRegistryId,
+        key_version_id: input.keyVersionId ?? null,
+        actor_id: input.actorId ?? null,
+        access_type: input.accessType,
+        outcome: input.outcome,
+        created_at: now,
+      },
+    });
+    const statements: PreparedStatement[] = [];
+    if (business)
+      await business({
+        execute: async (sql, params) => {
+          statements.push({ sql, params });
+        },
+      });
+    await this.adapter.batch([...statements, ...prepared.statements]);
+    await prepared.dispatch();
   }
 
   private async ensureKeyRegistry(tenantId: string, keyRegistryId: string): Promise<void> {
@@ -7102,7 +7298,7 @@ export class IdentityMappingControlPlaneRepository {
     executor: SqlQueryExecutor
   ) {
     if (rule.target_type === 'group') {
-      await this.upsertGroupMembership(
+      return this.upsertGroupMembership(
         tenantId,
         {
           groupId: rule.target_id,
@@ -7115,9 +7311,8 @@ export class IdentityMappingControlPlaneRepository {
         },
         executor
       );
-      return;
     }
-    await this.upsertEntitlementGrant(
+    return this.upsertEntitlementGrant(
       tenantId,
       {
         subjectId: input.subjectId,
@@ -7132,7 +7327,7 @@ export class IdentityMappingControlPlaneRepository {
     );
   }
 
-  private async recordProvisioningAssignmentEvent(
+  private provisioningAssignmentEvent(
     tenantId: string,
     input: {
       ruleId: string | null;
@@ -7143,28 +7338,33 @@ export class IdentityMappingControlPlaneRepository {
       outcome: string;
       reasonCodes: string[];
       traceRef: string;
-    },
-    executor: SqlExecutor = this.adapter
-  ) {
-    await executor.execute(
-      `INSERT INTO provisioning_assignment_events (
-        id, tenant_id, rule_id, subject_id, account_id, target_type, target_id,
-        outcome, reason_codes_json, trace_ref, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        createId('provisioning_assignment_event'),
-        tenantId,
-        input.ruleId,
-        input.subjectId ?? null,
-        input.accountId ?? null,
-        input.targetType,
-        input.targetId,
-        input.outcome,
-        stableJson(input.reasonCodes),
-        input.traceRef,
-        this.now(),
-      ]
-    );
+    }
+  ): Omit<LogIcebergRowWrite, 'tenantId'> {
+    const at = this.now();
+    return {
+      sourceDataset: 'core.provisioning_assignment_events',
+      logType: 'audit',
+      eventAt: at,
+      expiresAt: null,
+      overview: {
+        action: 'provisioning.assignment',
+        result: input.outcome,
+        subject_id: input.subjectId ?? input.accountId ?? undefined,
+      },
+      row: {
+        id: createId('provisioning_assignment_event'),
+        tenant_id: tenantId,
+        rule_id: input.ruleId,
+        subject_id: input.subjectId ?? null,
+        account_id: input.accountId ?? null,
+        target_type: input.targetType,
+        target_id: input.targetId,
+        outcome: input.outcome,
+        reason_codes_json: stableJson(input.reasonCodes),
+        trace_ref: input.traceRef,
+        created_at: at,
+      },
+    };
   }
 
   private async recordAssignmentOwnership(
@@ -7177,7 +7377,7 @@ export class IdentityMappingControlPlaneRepository {
       revokePolicy: string;
       protectedUntil?: number | null;
     },
-    executor: SqlQueryExecutor = this.adapter
+    executor: SqlQueryExecutor = this.requireCore()
   ) {
     const now = this.now();
     const existing = await executor.queryOne<{ id: string }>(
@@ -7232,13 +7432,13 @@ export class IdentityMappingControlPlaneRepository {
   private async findAssignmentOwnership(
     tenantId: string,
     input: Pick<RecordLifecycleSignalRequest, 'targetType' | 'targetId'>,
-    executor: SqlQueryExecutor = this.adapter
+    executor: SqlQueryExecutor = this.requireCore()
   ): Promise<ProvisioningAssignmentOwnershipContext | null> {
     const row = await executor.queryOne<ProvisioningAssignmentOwnershipRow>(
-      `SELECT assignment_type, assignment_id, ownership_policy, revoke_policy, protected_until
+      `SELECT id, updated_at, assignment_type, assignment_id, ownership_policy, revoke_policy, protected_until
          FROM provisioning_assignment_ownership
         WHERE tenant_id = ? AND assignment_type = ? AND assignment_id = ?
-        ORDER BY updated_at DESC
+        ORDER BY updated_at DESC, id DESC
         LIMIT 1`,
       [tenantId, input.targetType, input.targetId]
     );
@@ -7254,52 +7454,61 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  private async assignmentOwnershipGuard(
+    tenantId: string,
+    input: Pick<RecordLifecycleSignalRequest, 'targetType' | 'targetId'>,
+    expected: ProvisioningAssignmentOwnershipContext | null
+  ): Promise<LogIcebergSqlGuard> {
+    const row = await this.requireCore().queryOne<ProvisioningAssignmentOwnershipRow>(
+      `SELECT id,updated_at,assignment_type,assignment_id,ownership_policy,revoke_policy,protected_until FROM provisioning_assignment_ownership WHERE tenant_id=? AND assignment_type=? AND assignment_id=? ORDER BY updated_at DESC,id DESC LIMIT 1`,
+      [tenantId, input.targetType, input.targetId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (!row) {
+      if (expected) throw conflict('Assignment ownership changed');
+      return {
+        where: `NOT EXISTS(SELECT 1 FROM provisioning_assignment_ownership WHERE tenant_id=? AND assignment_type=? AND assignment_id=?)`,
+        params: [tenantId, input.targetType, input.targetId],
+      };
+    }
+    if (
+      !expected ||
+      expected.ownershipPolicy !== row.ownership_policy ||
+      expected.revokePolicy !== row.revoke_policy ||
+      expected.protectedUntil !== row.protected_until
+    )
+      throw conflict('Assignment ownership changed');
+    return {
+      where: `EXISTS(SELECT 1 FROM provisioning_assignment_ownership o WHERE o.tenant_id=? AND o.id=? AND o.assignment_type=? AND o.assignment_id=? AND o.ownership_policy=? AND o.revoke_policy=? AND o.protected_until IS ? AND o.updated_at=? AND NOT EXISTS(SELECT 1 FROM provisioning_assignment_ownership n WHERE n.tenant_id=o.tenant_id AND n.assignment_type=o.assignment_type AND n.assignment_id=o.assignment_id AND (n.updated_at>o.updated_at OR (n.updated_at=o.updated_at AND n.id>o.id))))`,
+      params: [
+        tenantId,
+        row.id,
+        input.targetType,
+        input.targetId,
+        row.ownership_policy,
+        row.revoke_policy,
+        row.protected_until,
+        row.updated_at,
+      ],
+    };
+  }
+
   private async applyLifecycleSignalDecision(
     tenantId: string,
     input: RecordLifecycleSignalRequest,
-    signalEventId: string,
     decision: { decision: string; reasonCodes: string[] },
-    executor: SqlExecutor = this.adapter
+    executor: SqlExecutor,
+    at: number
   ) {
-    if (decision.decision === 'revoke') {
-      if (input.targetType === 'group_membership') {
-        await executor.execute(
-          `UPDATE group_memberships
-              SET lifecycle_state = ?, updated_at = ?
-            WHERE tenant_id = ? AND id = ?`,
-          ['revoked', this.now(), tenantId, input.targetId]
-        );
-      }
-      if (input.targetType === 'entitlement' || input.targetType === 'permission') {
-        await executor.execute(
-          `UPDATE entitlements
-              SET lifecycle_state = ?, updated_at = ?
-            WHERE tenant_id = ? AND id = ?`,
-          ['revoked', this.now(), tenantId, input.targetId]
-        );
-      }
-    }
-    if (decision.decision === 'suspend_account') {
+    if (decision.decision === 'suspend_account')
       throw new Error('lifecycle_signal_account_service_required');
+    if (decision.decision === 'revoke') {
+      const table = input.targetType === 'group_membership' ? 'group_memberships' : 'entitlements';
+      await executor.execute(
+        `UPDATE ${table} SET lifecycle_state=?,updated_at=? WHERE tenant_id=? AND id=?`,
+        ['revoked', at, tenantId, input.targetId]
+      );
     }
-    await executor.execute(
-      `INSERT INTO provisioning_revocation_events (
-        id, tenant_id, subject_id, account_id, source_event_id, target_type,
-        target_id, decision, reason_codes_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        createId('provisioning_revocation_event'),
-        tenantId,
-        input.subjectId ?? null,
-        input.accountId ?? null,
-        signalEventId,
-        input.targetType,
-        input.targetId,
-        decision.decision,
-        stableJson(decision.reasonCodes),
-        this.now(),
-      ]
-    );
   }
 
   async runIdempotent<T>(
@@ -8817,12 +9026,19 @@ async function handleMutation<T>(
 
 export function createRepository(c: AdminContext): IdentityMappingControlPlaneRepository {
   const tenantId = getTenantIdFromContext(c);
-  const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+  const metadata = getTenantMetadataContextFromHono(c);
+  if (metadata && metadata.tenantId !== tenantId)
+    throw new Error('identity_mapping_tenant_metadata_mismatch');
+  const coreAdapter = metadata
+    ? ensureDatabaseAdapter(metadata.coreDb, 'identity-mapping-tenant-metadata')
+    : undefined;
   return new IdentityMappingControlPlaneRepository(
     requireDedicatedAdminDatabaseAdapter(c.env, 'identity-mapping-control-plane'),
     () => Date.now(),
     coreAdapter,
-    createAccountSuspensionSignalService(c, coreAdapter)
+    createAccountSuspensionSignalService(c, coreAdapter),
+    c.env,
+    metadata ? () => coreLogPublicationSource(c.env, metadata.route) : undefined
   );
 }
 

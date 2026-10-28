@@ -16,6 +16,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
+import { logProducerFixture } from '../../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 
 const provider = {
   entityId: 'https://idp.example.test',
@@ -80,9 +81,10 @@ type StoredRequest = {
 describe('SAML selector preserves only a revalidated Flow association', () => {
   let db: Sqlite;
   let adapter: DatabaseAdapter;
+  let archive: Awaited<ReturnType<typeof logProducerFixture>>;
   let env: TestEnv;
   let app: Hono<{ Bindings: Env }>;
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     db = new DatabaseSync(':memory:');
     const migrations = new URL('../../../../../migrations/core/d1/', import.meta.url);
@@ -119,7 +121,9 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
       { id: 'idp-one', name: 'First provider', entityId: provider.entityId },
       { id: 'idp-two', name: 'Second provider', entityId: 'https://second.example.test' },
     ]);
+    archive = await logProducerFixture('scheduled', { tenantId: TENANT, separateAdmin: true });
     env = {
+      ...archive.env,
       TEST_CORE: adapter,
       ISSUER_URL: ISSUER,
       SETTINGS: { get: async () => null },
@@ -148,6 +152,7 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
   });
   afterEach(() => {
     db.close();
+    archive.close();
   });
   const request = (url: URL) => app.request(url.toString(), {}, env);
   async function selection(value?: string) {
@@ -194,10 +199,10 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
     await Promise.all(tasks);
     expect(onError).not.toHaveBeenCalled();
   }
-  function attempts() {
-    return db
-      .prepare("SELECT * FROM flow_audit_events WHERE event_type='flow.sign_in_attempt.failed'")
-      .all() as Array<Record<string, unknown>>;
+  async function attempts() {
+    const rows = await archive.rows('core.flow_audit_events', TENANT);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM flow_audit_events').get()).toMatchObject({ n: 0 });
+    return rows.filter((row) => row.event_type === 'flow.sign_in_attempt.failed');
   }
 
   it('carries the Flow hint through every selection link, revalidates it, and preserves request/browser binding', async () => {
@@ -230,15 +235,16 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
     await recordFromContext(body.context, body.requestId);
     const keys = loadInvestigationSubjectHmacKeysFromEnv(env);
     if (!keys) throw new Error('fixture-keyring-missing');
-    expect(attempts()).toHaveLength(1);
-    expect(attempts()[0]).toMatchObject({
+    const events = await attempts();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
       tenant_id: TENANT,
       interaction_id: 'int-selector',
       method: 'saml',
       user_id: null,
       subject_hash: await computeInvestigationSubjectHash(keys.writeKey, TENANT, 'fixture-user'),
     });
-    expect(JSON.stringify(attempts())).not.toContain('fixture-user');
+    expect(JSON.stringify(events)).not.toContain('fixture-user');
   });
 
   it.each([undefined, '', 'not/a/flow', '"><script>alert(1)</script>', 'x'.repeat(129)])(
@@ -251,7 +257,7 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
       expect(response.status).toBe(200);
       expect(stored().context).toBeUndefined();
       await recordFromContext(stored().context, stored().requestId);
-      expect(attempts()).toEqual([]);
+      expect(await attempts()).toEqual([]);
     }
   );
 
@@ -264,7 +270,7 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
       expect(response.status).toBe(200);
       expect(stored().context).toBeUndefined();
       await recordFromContext(stored().context, stored().requestId);
-      expect(attempts()).toEqual([]);
+      expect(await attempts()).toEqual([]);
     }
   );
 
@@ -282,7 +288,7 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
       expect(response.status).toBe(200);
       expect(stored().context).toBeUndefined();
       await recordFromContext(stored().context, stored().requestId);
-      expect(attempts()).toEqual([]);
+      expect(await attempts()).toEqual([]);
     }
   );
 
@@ -298,6 +304,6 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
     expect(response.status).toBe(200);
     expect(stored().context).toBeUndefined();
     await recordFromContext(stored().context, stored().requestId);
-    expect(attempts()).toEqual([]);
+    expect(await attempts()).toEqual([]);
   });
 });

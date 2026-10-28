@@ -94,16 +94,20 @@ export function getSettingsManager(
   const bulkId =
     options.identityMappingHistory?.bulkId ??
     (typeof auditMetadata?.bulk_id === 'string' ? auditMetadata.bulk_id : undefined);
+  const canonicalAdapter = canonicalSettings
+    ? requireDedicatedAdminDatabaseAdapter(env, 'settings-canonical')
+    : null;
   const manager = createSettingsManager({
     env: env as unknown as Record<string, string | undefined>,
     kv: env.SETTINGS ?? null,
     strictReads,
     // Tenants created before settings were written to SETTINGS keep their creation-time copy.
     legacyKv: env.AUTHRIM_CONFIG ?? null,
-    canonicalStore: canonicalSettings
-      ? new DatabaseSettingsCanonicalStore(
-          requireDedicatedAdminDatabaseAdapter(env, 'settings-canonical')
-        )
+    canonicalStore: canonicalAdapter
+      ? new DatabaseSettingsCanonicalStore(canonicalAdapter, Date.now, {
+          env,
+          adapter: canonicalAdapter,
+        })
       : null,
     cacheTTL: 5000, // 5 seconds (as per plan)
     readOnly: options.readOnly === true,

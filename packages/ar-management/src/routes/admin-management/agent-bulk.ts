@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import {
@@ -94,7 +95,8 @@ function error(c: BulkContext, status: 400 | 403 | 404 | 409 | 503, code: string
 
 function repository(c: BulkContext): AgentBulkRepository {
   return new AgentBulkRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-bulk-plan-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-bulk-plan-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
 }
 
@@ -277,7 +279,10 @@ agentBulkPlansRouter.post('/', async (c) => {
     return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
   }
   const database = requireDedicatedAdminDatabaseAdapter(c.env, 'agent-bulk-grant-validation');
-  const grants = new AdminAgentAccessRepository(database);
+  const grants = new AdminAgentAccessRepository(
+    database,
+    createCloudflareAdminAgentAuditWriter(c.env)
+  );
   const grant = await grants.getGrant(controlTenant(c), grantId);
   if (
     !grant ||

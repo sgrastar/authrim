@@ -53,6 +53,15 @@ export interface IAnonymizationService {
   getRealUserId(tenantId: string, anonymizedUserId: string): Promise<string | null>;
 }
 
+export interface PendingPIILogPurge {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  old_anonymized_user_id: string;
+  new_anonymized_user_id: string | null;
+  created_at: number;
+}
+
 /**
  * Adapter-backed anonymization service.
  */
@@ -61,6 +70,14 @@ export class AnonymizationService implements IAnonymizationService {
 
   constructor(piiDb: DatabaseSource) {
     this.piiAdapter = ensureDatabaseAdapter(piiDb, 'audit-pii-anonymization');
+  }
+
+  async findAnonymizedUserId(tenantId: string, userId: string): Promise<string | null> {
+    const found = await this.piiAdapter.queryOne<{ anonymized_user_id: string }>(
+      'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
+    );
+    return found?.anonymized_user_id ?? null;
   }
 
   /**
@@ -149,6 +166,75 @@ export class AnonymizationService implements IAnonymizationService {
     }
 
     return (await select())?.anonymized_user_id ?? null;
+  }
+
+  /** Rotate the live mapping and retain the old subject in a restartable business operation. */
+  async preparePIILogPurge(tenantId: string, userId: string): Promise<PendingPIILogPurge> {
+    const load = () =>
+      this.piiAdapter.queryOne<PendingPIILogPurge>(
+        'SELECT * FROM pii_log_purge_operations WHERE tenant_id = ? AND user_id = ?',
+        [tenantId, userId]
+      );
+    const existing = await load();
+    if (existing) return existing;
+    const id = crypto.randomUUID(),
+      next = crypto.randomUUID(),
+      now = Date.now();
+    try {
+      await this.piiAdapter.batch([
+        {
+          sql: `INSERT INTO pii_log_purge_operations
+            (id, tenant_id, user_id, old_anonymized_user_id, new_anonymized_user_id, created_at)
+          SELECT ?, m.tenant_id, m.user_id, m.anonymized_user_id,
+            CASE WHEN EXISTS (SELECT 1 FROM users_pii_tombstone t WHERE t.tenant_id = m.tenant_id AND t.id = m.user_id)
+              THEN NULL ELSE ? END, ?
+          FROM user_anonymization_map m WHERE m.tenant_id = ? AND m.user_id = ?
+            AND NOT EXISTS (SELECT 1 FROM pii_log_purge_operations p WHERE p.tenant_id = m.tenant_id AND p.user_id = m.user_id)`,
+          params: [id, next, now, tenantId, userId],
+        },
+        {
+          sql: `UPDATE user_anonymization_map SET anonymized_user_id = ?, created_at = ?
+          WHERE tenant_id = ? AND user_id = ?
+            AND NOT EXISTS (SELECT 1 FROM users_pii_tombstone t WHERE t.tenant_id = ? AND t.id = ?)
+            AND EXISTS (SELECT 1 FROM pii_log_purge_operations p WHERE p.id = ?
+              AND p.tenant_id = ? AND p.user_id = ? AND p.new_anonymized_user_id = ?
+              AND p.old_anonymized_user_id = user_anonymization_map.anonymized_user_id)`,
+          params: [next, now, tenantId, userId, tenantId, userId, id, tenantId, userId, next],
+        },
+      ]);
+    } catch (error) {
+      if (
+        !isUniqueConstraintError(error) &&
+        !(error instanceof Error && /duplicate key/iu.test(error.message))
+      )
+        throw error;
+    }
+    const operation = await load();
+    if (!operation) throw new Error('pii_purge_subject_mapping_missing');
+    forgetCachedAnonymizedUserId(tenantId, userId);
+    return operation;
+  }
+
+  /** Read only the already-authorized intent. Missing is a skip, never a new rotation. */
+  async loadPendingPIILogPurge(
+    tenantId: string,
+    userId: string,
+    expectedOperationId: string
+  ): Promise<PendingPIILogPurge | null> {
+    return this.piiAdapter.queryOne<PendingPIILogPurge>(
+      'SELECT * FROM pii_log_purge_operations WHERE tenant_id=? AND user_id=? AND id=?',
+      [tenantId, userId, expectedOperationId],
+      { consistencyClass: 'primary_required' }
+    );
+  }
+
+  /** Completion removes the temporary real-user link, preserving the replacement live mapping. */
+  async completePIILogPurge(tenantId: string, userId: string, operationId: string): Promise<void> {
+    await this.piiAdapter.execute(
+      'DELETE FROM pii_log_purge_operations WHERE tenant_id = ? AND user_id = ? AND id = ?',
+      [tenantId, userId, operationId]
+    );
+    forgetCachedAnonymizedUserId(tenantId, userId);
   }
 
   /**

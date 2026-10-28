@@ -36,6 +36,7 @@ export { DeviceSecretRouteStore } from './DeviceSecretRouteStore';
 export type { DeviceSecretRouteHint } from './DeviceSecretRouteStore';
 export { KeyManagerPublicEntrypoint } from '../entrypoints/KeyManagerPublicEntrypoint';
 export { RuntimeSmokeEntrypoint } from '../entrypoints/RuntimeSmokeEntrypoint';
+export { LogArchiveWriteEntrypoint } from '../entrypoints/LogArchiveWriteEntrypoint';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';

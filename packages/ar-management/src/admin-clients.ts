@@ -2875,7 +2875,7 @@ async function executeAdminClientUpdate(
         receipt.bulkId !== history.bulk_id
       )
         throw new Error('history_receipt_mismatch');
-      await finalizeIdentityMappingLevelHistoryFromReceipt(historyAdmin, {
+      await finalizeIdentityMappingLevelHistoryFromReceipt(c.env, historyAdmin, {
         historyId: receipt.historyId,
         tenantId: receipt.tenantId,
         clientId: receipt.clientId,

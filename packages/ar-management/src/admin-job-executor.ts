@@ -1,3 +1,9 @@
+import { prepareLogIcebergRowWrite } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
+import {
+  adminAuditReceiptStatement,
+  confirmAdminAuditReceipt,
+} from '@authrim/ar-lib-core/services/admin-audit-receipts';
+import { createLogReadAdapter } from './log-read-adapter';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { SUPPORT_OPS_LOGOUT_JOB_TYPE } from './support-ops-job-evidence';
 import type {
@@ -10,6 +16,7 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   decryptObjectArtifact,
+  requireDedicatedAdminDatabaseAdapter,
   ensureDatabaseAdapter,
   emitRuntimeLogRecords,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -155,6 +162,7 @@ async function emitAdminJobRuntimeLog(
       tenantId: input.job.tenant_id,
       logType: 'job',
       surface: 'admin_job',
+      sourceDataset: 'runtime.admin_job_events',
       tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
       records: [
         {
@@ -273,9 +281,8 @@ interface TenantLifecycleValidationConfig {
   actor_id?: string | null;
 }
 
-async function writeTenantLifecycleJobAudit(
+export async function writeTenantLifecycleJobAudit(
   env: Env,
-  fallbackAdapter: DatabaseAdapter,
   job: AdminJobRow,
   input: {
     action: string;
@@ -285,30 +292,68 @@ async function writeTenantLifecycleJobAudit(
     error?: unknown;
   }
 ): Promise<void> {
-  const auditAdapter = ensureDatabaseAdapter(
-    env.DB_ADMIN ?? fallbackAdapter,
-    'tenant-lifecycle-job-audit'
-  );
   const config = job.config ? (JSON.parse(job.config) as TenantLifecycleValidationConfig) : null;
-  await auditAdapter.execute(
-    `INSERT INTO admin_audit_log (
-      id, tenant_id, admin_user_id, action, resource_type, resource_id,
-      result, error_code, error_message, severity, metadata_json, created_at
-    ) VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      crypto.randomUUID(),
-      job.tenant_id,
-      config?.actor_id ?? null,
-      input.action,
-      job.tenant_id,
-      input.result,
-      input.result === 'failure' ? 'tenant_lifecycle_validation_failed' : null,
-      input.error instanceof Error ? input.error.message : input.error ? String(input.error) : null,
-      input.severity,
-      JSON.stringify({ job_id: job.id, ...input.metadata }),
-      Date.now(),
-    ]
+  const recordedAt = Date.now();
+  const admin = requireDedicatedAdminDatabaseAdapter(env, 'tenant-lifecycle-job-audit');
+  const prepared = await prepareLogIcebergRowWrite(
+    env,
+    admin,
+    {
+      tenantId: job.tenant_id,
+      sourceDataset: 'admin.admin_audit_log',
+      logType: 'admin_audit',
+      eventAt: recordedAt,
+      expiresAt: null,
+      overview: {
+        action: input.action,
+        result: input.result,
+        severity: input.severity,
+        resource_id: job.tenant_id,
+        subject_id: config?.actor_id ?? null,
+      },
+      row: {
+        id: crypto.randomUUID(),
+        tenant_id: job.tenant_id,
+        admin_user_id: config?.actor_id ?? null,
+        action: input.action,
+        resource_type: 'tenant',
+        resource_id: job.tenant_id,
+        result: input.result,
+        error_code: input.result === 'failure' ? 'tenant_lifecycle_validation_failed' : null,
+        error_message:
+          input.error instanceof Error
+            ? input.error.message
+            : input.error
+              ? String(input.error)
+              : null,
+        severity: input.severity,
+        metadata_json: JSON.stringify({ job_id: job.id, ...input.metadata }),
+        created_at: recordedAt,
+      },
+    },
+    (record) => ({
+      where:
+        'EXISTS(SELECT 1 FROM admin_audit_receipts WHERE id=? AND tenant_id=? AND payload_hmac=?)',
+      params: [record.event_id, job.tenant_id, record.payload_hmac],
+    })
   );
+  try {
+    await admin.batch([
+      adminAuditReceiptStatement(prepared.record, job.tenant_id),
+      ...prepared.statements,
+    ]);
+  } catch (error) {
+    // Recover a lost acknowledgement only from this exact durable commit.
+    try {
+      await confirmAdminAuditReceipt(admin, prepared.record, job.tenant_id);
+    } catch {
+      throw error;
+    }
+  }
+  await confirmAdminAuditReceipt(admin, prepared.record, job.tenant_id);
+  // The scanner owns transport recovery after the pointer/row commit. A queue
+  // outage must not retry an already completed tenant lifecycle transition.
+  await prepared.dispatch().catch(() => {});
 }
 
 async function processTenantLifecycleValidationJob(
@@ -423,10 +468,11 @@ async function processTenantLifecycleValidationJob(
     checks.push({ id: 'r2', status: 'passed', evidence: 'temporary object round-trip succeeded' });
   }
 
-  const auditAdapter = ensureDatabaseAdapter(
-    env.DB_ADMIN ?? stores.jobs,
-    'tenant-lifecycle-audit-probe'
-  );
+  const auditAdapter = createLogReadAdapter({
+    env,
+    tenantId: job.tenant_id,
+    dataset: 'admin.admin_audit_log',
+  }).adapter;
   await auditAdapter.queryOne('SELECT id FROM admin_audit_log WHERE tenant_id = ? LIMIT 1', [
     job.tenant_id,
   ]);
@@ -455,7 +501,7 @@ async function processTenantLifecycleValidationJob(
     await deleteTenantExistsCache(env.AUTHRIM_CONFIG, job.tenant_id);
   }
 
-  await writeTenantLifecycleJobAudit(env, stores.jobs, job, {
+  await writeTenantLifecycleJobAudit(env, job, {
     action: 'tenant.lifecycle.validation_completed',
     result: 'success',
     severity: 'info',
@@ -2673,7 +2719,7 @@ async function processGenericAdminJob(
       await auditSessionEndLogoutFailed(env, job, error);
     }
     if (job.job_type === 'tenants/lifecycle-validation') {
-      await writeTenantLifecycleJobAudit(env, adapter, job, {
+      await writeTenantLifecycleJobAudit(env, job, {
         action: exhausted
           ? 'tenant.lifecycle.validation_failed'
           : 'tenant.lifecycle.validation_retry_scheduled',

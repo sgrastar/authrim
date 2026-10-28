@@ -1314,6 +1314,24 @@
             "kind": "version_metadata",
             "name": "CONTROL_SMOKE_VERSION",
             "required": true
+          },
+          {
+            "capability": "logging.archive.write",
+            "kind": "service",
+            "name": "LOG_ARCHIVE_WRITER",
+            "required": false
+          },
+          {
+            "capability": "logging.archive.objects",
+            "kind": "r2_bucket",
+            "name": "LOG_ARCHIVE",
+            "required": false
+          },
+          {
+            "capability": "logging.archive.ingest",
+            "kind": "pipelines",
+            "name": "LOG_ARCHIVE_STREAM",
+            "required": false
           }
         ],
         "dynamicBindings": [],
@@ -1411,6 +1429,26 @@
             "capability": "control_smoke.verify",
             "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
             "required": true
+          },
+          {
+            "capability": "logging.archive.encrypt",
+            "name": "LOG_ARCHIVE_CONTENT_HMAC_KEY",
+            "required": false
+          },
+          {
+            "capability": "logging.archive.encrypt",
+            "name": "LOG_ARCHIVE_ROOT_KEYRING",
+            "required": false
+          },
+          {
+            "capability": "logging.archive.catalog.read",
+            "name": "LOG_ARCHIVE_CATALOG_READ_TOKEN",
+            "required": false
+          },
+          {
+            "capability": "logging.archive.catalog.write",
+            "name": "LOG_ARCHIVE_CATALOG_WRITE_TOKEN",
+            "required": false
           }
         ],
         "worker": "ar-management"

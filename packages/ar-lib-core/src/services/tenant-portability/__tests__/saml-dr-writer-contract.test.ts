@@ -123,6 +123,29 @@ describe('installed SAML DR writer capability contract', () => {
       expect([...observed].sort()).toEqual(expected.sort());
     }
   );
+  it('pins the new log RPCs and signed bootstrap probe to their literal guarded/read-only catalogues', () => {
+    const log = 'packages/ar-lib-core/src/entrypoints/LogArchiveWriteEntrypoint.ts';
+    expect(
+      samlDrWriterSurfaces('ar-lib-core')
+        .filter((surface) => surface.includes('LogArchiveWriteEntrypoint.'))
+        .sort()
+    ).toEqual(
+      [
+        ...array(log, 'SAML_DR_WRITER_SURFACES').map((surface) => `guarded:${surface}`),
+        ...array(log, 'SAML_DR_READ_ONLY_SURFACES').map((surface) => `read-only:${surface}`),
+      ].sort()
+    );
+    expect(
+      array(
+        'packages/ar-lib-core/src/entrypoints/RuntimeSmokeEntrypoint.ts',
+        'SAML_DR_WRITER_SURFACES'
+      ).map((surface) => `guarded:${surface}`)
+    ).toEqual(
+      samlDrWriterSurfaces('ar-management').filter((surface) =>
+        surface.includes('RuntimeSmokeEntrypoint.probeLogArchive')
+      )
+    );
+  });
   it('pins plugin read-only exemptions and Management coordinator exceptions explicitly', () => {
     expect(
       samlDrWriterSurfaces('ar-router').filter((surface) => surface.startsWith('coordinator:'))

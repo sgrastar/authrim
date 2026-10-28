@@ -169,6 +169,7 @@ async function recordDiagnosticIngestFailure(
       tenantId,
       logType: 'diagnostic',
       surface: 'diagnostic_ingest',
+      sourceDataset: 'diagnostic.ingest_events',
       planes: ['archive'],
       records: [
         {
@@ -200,19 +201,6 @@ async function recordDiagnosticIngestFailure(
  * Ingest diagnostic logs from SDK
  */
 app.post('/', async (c) => {
-  // Check R2 bucket binding
-  const r2 = c.env.DIAGNOSTIC_LOGS;
-  if (!r2) {
-    log.error('DIAGNOSTIC_LOGS R2 bucket not configured');
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Diagnostic logging storage not configured',
-      },
-      500
-    );
-  }
-
   // Parse request body
   let body: IngestRequestBody;
   let rawBody: string;
@@ -234,7 +222,7 @@ app.post('/', async (c) => {
   }
   try {
     body = JSON.parse(rawBody);
-  } catch (error) {
+  } catch {
     await recordDiagnosticIngestFailure(c, {
       reason: 'invalid_json',
       httpStatus: 400,
@@ -377,7 +365,10 @@ app.post('/', async (c) => {
     );
   }
 
-  if (!diagnosticSettings['diagnostic-logging.sdk_ingest_enabled']) {
+  if (
+    !diagnosticSettings['diagnostic-logging.enabled'] ||
+    !diagnosticSettings['diagnostic-logging.sdk_ingest_enabled']
+  ) {
     await recordDiagnosticIngestFailure(c, {
       reason: 'sdk_ingest_disabled',
       tenantId,
@@ -387,7 +378,7 @@ app.post('/', async (c) => {
     return c.json(
       {
         error: 'feature_disabled',
-        error_description: 'SDK log ingestion is disabled',
+        error_description: 'Diagnostic logging or SDK log ingestion is disabled',
       },
       403
     );
@@ -396,7 +387,6 @@ app.post('/', async (c) => {
   try {
     const effectiveSettings = diagnosticSettings;
     const storageMode = resolveStorageMode(effectiveSettings, body.client_id);
-    const pathPrefix = effectiveSettings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs';
     const hashSecret = resolveHashSecret(c.env, tenantId);
     const tokenHashPrefixLength =
       effectiveSettings['diagnostic-logging.token_hash_prefix_length'] ?? 12;
@@ -420,36 +410,15 @@ app.post('/', async (c) => {
       })
     );
 
-    // Group logs by category and write to R2
-    const logsByCategory = new Map<string, DiagnosticLogEntry[]>();
-    for (const entry of sanitizedLogs) {
-      const category = entry.category;
-      if (!logsByCategory.has(category)) {
-        logsByCategory.set(category, []);
-      }
-      logsByCategory.get(category)!.push(entry);
-    }
-
-    let totalWritten = 0;
-
-    for (const [category, logs] of logsByCategory) {
-      const adapter = new DiagnosticLogR2Adapter({
-        bucket: r2,
-        pathPrefix,
-        tenantId,
-        tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
-        clientId: body.client_id,
-      });
-
-      const result = await adapter.writeLogBatch(logs);
-      totalWritten += result.entriesWritten;
-
-      log.debug('Wrote diagnostic logs', {
-        clientId: body.client_id,
-        category,
-        count: result.entriesWritten,
-      });
-    }
+    const adapter = new DiagnosticLogR2Adapter({
+      env: c.env,
+      tenantId,
+      clientId: body.client_id,
+      retentionDays: effectiveSettings['diagnostic-logging.retention_days'],
+    });
+    const result = await adapter.writeLogBatch(sanitizedLogs);
+    if (!result.success) throw new Error(result.errorMessage ?? 'diagnostic_log_write_failed');
+    const totalWritten = result.entriesWritten;
 
     log.info('Ingested diagnostic logs', {
       clientId: body.client_id,

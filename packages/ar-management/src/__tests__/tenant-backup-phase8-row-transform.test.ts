@@ -255,7 +255,7 @@ describe('Phase 8 row transform', () => {
     expect(new Set(PHASE8_TRANSFORMED_SQLITE_DATASETS).size).toBe(
       PHASE8_TRANSFORMED_SQLITE_DATASETS.length
     );
-    expect(PHASE8_FILTERED_LOG_DATASETS).toHaveLength(45);
+    expect(PHASE8_FILTERED_LOG_DATASETS).toHaveLength(44);
     for (const dataset of PHASE8_SENSITIVE_SQLITE_DATASETS)
       if (dataset !== 'pii.identity_identifier_replacement_challenges')
         expect(PHASE8_TRANSFORMED_SQLITE_DATASETS).toContain(dataset);

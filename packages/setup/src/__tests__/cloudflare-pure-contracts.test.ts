@@ -34,13 +34,11 @@ describe('Cloudflare pure resource contracts', () => {
     ).toThrow('cloudflare_worker_cron_response_invalid');
   });
 
-  it('requires the complete eight-bucket R2 topology by default', () => {
+  it('requires the six non-log R2 buckets by default', () => {
     expect(getRequiredR2Buckets('prod')).toEqual([
       { binding: 'MIGRATION_RELEASES', name: 'prod-migration-releases' },
       { binding: 'PLUGIN_BUNDLES', name: 'prod-plugin-bundles' },
       { binding: 'PUBLIC_ASSETS', name: 'prod-public-assets' },
-      { binding: 'DIAGNOSTIC_LOGS', name: 'prod-diagnostic-logs' },
-      { binding: 'AUDIT_ARCHIVE', name: 'prod-audit-archive' },
       { binding: 'IMPORT_ARTIFACTS', name: 'prod-import-artifacts' },
       { binding: 'EXPORT_ARTIFACTS', name: 'prod-export-artifacts' },
       { binding: 'SENSITIVE_DETAILS', name: 'prod-sensitive-details' },
@@ -54,14 +52,14 @@ describe('Cloudflare pure resource contracts', () => {
         createQueues: true,
         createR2: true,
       })
-    ).toBe(27);
+    ).toBe(25);
     expect(
       getProvisioningResourceCount({
         env: 'prod',
         createQueues: false,
         createR2: true,
       })
-    ).toBe(23);
+    ).toBe(21);
     expect(
       getProvisioningResourceCount({
         env: 'prod',
@@ -85,8 +83,8 @@ describe('Cloudflare pure resource contracts', () => {
           ownershipMarkerKey: `__authrim_setup__/ownership-v1-${ownershipId}.json`,
           ownershipId,
         },
-        DIAGNOSTIC_LOGS: {
-          name: 'legacy-diagnostic-logs',
+        PLUGIN_BUNDLES: {
+          name: 'legacy-plugin-bundles',
         },
       },
       [{ name: 'prod-public-assets', creationDate }]
@@ -96,10 +94,10 @@ describe('Cloudflare pure resource contracts', () => {
     expect(status.buckets.find((bucket) => bucket.binding === 'PUBLIC_ASSETS')?.state).toBe(
       'configured'
     );
-    expect(status.buckets.find((bucket) => bucket.binding === 'DIAGNOSTIC_LOGS')?.state).toBe(
+    expect(status.buckets.find((bucket) => bucket.binding === 'PLUGIN_BUNDLES')?.state).toBe(
       'recorded_but_missing'
     );
-    expect(status.buckets.find((bucket) => bucket.binding === 'AUDIT_ARCHIVE')?.state).toBe(
+    expect(status.buckets.find((bucket) => bucket.binding === 'SENSITIVE_DETAILS')?.state).toBe(
       'missing'
     );
     expect(getR2BucketName('dev', 'SENSITIVE_DETAILS')).toBe('dev-sensitive-details');
@@ -193,7 +191,7 @@ describe('Cloudflare pure resource contracts', () => {
         queues: [{ binding: 'AUDIT_QUEUE', id: 'queue-id', name: 'queue-name' }],
         r2: [
           {
-            binding: 'AUDIT_ARCHIVE',
+            binding: 'LOG_ARCHIVE',
             name: 'archive-name',
             creationDate: '2026-08-31T00:00:00.000Z',
             ownershipMarkerKey:
@@ -207,7 +205,7 @@ describe('Cloudflare pure resource contracts', () => {
       kv: { SETTINGS: { id: 'kv-id', name: 'kv-name' } },
       queues: { AUDIT_QUEUE: { id: 'queue-id', name: 'queue-name' } },
       r2: {
-        AUDIT_ARCHIVE: {
+        LOG_ARCHIVE: {
           name: 'archive-name',
           creationDate: '2026-08-31T00:00:00.000Z',
           ownershipMarkerKey:
@@ -244,21 +242,21 @@ describe('Cloudflare pure resource contracts', () => {
   });
 
   it('maps valid object-catalog rows and ignores malformed records', () => {
-    expect(getObjectCatalogR2BucketName('prod', 'AUDIT_ARCHIVE')).toBe('prod-audit-archive');
+    expect(getObjectCatalogR2BucketName('prod', 'LOG_ARCHIVE')).toBe('prod-log-archive');
     expect(getObjectCatalogR2BucketName('prod', 'UNKNOWN')).toBeNull();
     expect(
       parseObjectCatalogR2RowsFromWranglerJson(
         JSON.stringify([
           {
             results: [
-              { bucket_binding: 'AUDIT_ARCHIVE', object_key: 'audit/1.json' },
+              { bucket_binding: 'LOG_ARCHIVE', object_key: 'audit/1.json' },
               { bucket_binding: 1, object_key: 'bad' },
-              { bucket_binding: 'AUDIT_ARCHIVE' },
+              { bucket_binding: 'LOG_ARCHIVE' },
             ],
           },
         ])
       )
-    ).toEqual([{ bucketBinding: 'AUDIT_ARCHIVE', objectKey: 'audit/1.json' }]);
+    ).toEqual([{ bucketBinding: 'LOG_ARCHIVE', objectKey: 'audit/1.json' }]);
     expect(parseObjectCatalogR2RowsFromWranglerJson(JSON.stringify([]))).toEqual([]);
   });
 });

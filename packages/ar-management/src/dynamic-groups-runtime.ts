@@ -9,6 +9,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import type { GuestMaintenanceTarget } from './guest-lifecycle-scheduled';
+import { coreLogPublicationSource } from '@authrim/ar-lib-core/services/log-iceberg-core-publication';
 function routeStamp(account: AccountDataContext): string {
   return JSON.stringify([
     account.coreBindingRef,
@@ -18,11 +19,13 @@ function routeStamp(account: AccountDataContext): string {
   ]);
 }
 export async function serviceGroupRuntime(env: Env, tenantId: string, userId?: string) {
-  const metadata = ensureDatabaseAdapter(
-    (await resolveTenantMetadataContext(env, tenantId)).coreDb,
-    'service-group-metadata'
-  );
-  const store = new DynamicGroupStore(metadata, tenantId);
+  const context = await resolveTenantMetadataContext(env, tenantId);
+  if (context.tenantId !== tenantId) throw new Error('group_tenant_mismatch');
+  const metadata = ensureDatabaseAdapter(context.coreDb, 'service-group-metadata');
+  const store = new DynamicGroupStore(metadata, tenantId, {
+    env,
+    source: coreLogPublicationSource(env, context.route),
+  });
   if (!userId) return { store, reader: null };
   const account = await resolveAccountDataContext(env, { tenantId, accountId: userId });
   if (account.legacyUserId !== userId) throw new Error('group_subject_invalid');
@@ -41,7 +44,8 @@ export async function serviceGroupRuntime(env: Env, tenantId: string, userId?: s
           if (routeStamp(current) !== routeStamp(account))
             throw new Error('group_input_route_changed');
         },
-      }
+      },
+      env
     ),
   };
 }

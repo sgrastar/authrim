@@ -1,9 +1,39 @@
+vi.mock('../core/log-archive-readiness.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/log-archive-readiness.js')>();
+  return {
+    ...actual,
+    waitForLogArchiveReadiness: vi.fn(
+      async (input: Parameters<typeof actual.waitForLogArchiveReadiness>[0]) => ({
+        ...input.attempt,
+        state: 'ready' as const,
+        mode: input.archive.mode,
+        generation: input.archive.storageGeneration,
+        schemaVersion: input.archive.schemaVersion,
+        keyVersion: input.archive.objectEncryptionKeyVersion,
+        tableUuid: input.owned.activation.tableUuid,
+        physicalFingerprint: input.owned.activation.schemaSpecFingerprint,
+        eventId: `log_archive_probe_v1:${input.attempt.attemptId}:${input.archive.objectEncryptionKeyVersion}`,
+        snapshotId: '123',
+        checkedAt: new Date().toISOString(),
+      })
+    ),
+  };
+});
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['pipeline', 'scheduled'],
+}));
+import { LOG_ARCHIVE_PRODUCER_COMPONENTS } from '@authrim/ar-lib-logging/iceberg/capabilities';
+import { waitForLogArchiveReadiness } from '../core/log-archive-readiness.js';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDefaultConfig } from '../core/config.js';
+import {
+  createArchiveTestConfig as createDefaultConfig,
+  archiveLockFixture,
+} from './fixtures/log-archive.js';
 import { CORE_WORKER_COMPONENTS } from '../core/naming.js';
 import { stagePendingControlBootstrap } from '../core/pending-control-bootstrap.js';
 import { acquireEnvironmentOperationLock, type AuthrimLock } from '../core/lock.js';
@@ -381,6 +411,7 @@ async function writeHeadlessEnvironment(
     join(root, '.authrim', env, 'lock.json'),
     `${JSON.stringify(
       {
+        logArchive: archiveLockFixture(config, TEST_ACCOUNT_ID),
         version: '1.0.0',
         env,
         createdAt: '2026-07-22T00:00:00.000Z',
@@ -415,6 +446,13 @@ async function writeHeadlessEnvironment(
         queues: {},
         r2: {
           MIGRATION_RELEASES: { name: `${env}-migration-releases` },
+          LOG_ARCHIVE: {
+            name: `${env}-log-archive`,
+            creationDate: '2026-10-27T00:00:00.000Z',
+            ownershipId: '11111111-1111-4111-8111-111111111111',
+            ownershipMarkerKey:
+              '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+          },
         },
         workers: {},
       },
@@ -841,6 +879,7 @@ describe('CLI initial deployment', () => {
           'import-artifacts',
           'export-artifacts',
           'sensitive-details',
+          'log-archive',
         ].map((suffix) => ({ name: `${environment}-${suffix}` }))
       )
     );
@@ -1070,6 +1109,7 @@ describe('CLI initial deployment', () => {
     const configPath = join(root, '.authrim', env, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
     config.environment.prefix = 'another-environment';
+    config.logging.archive.bucketName = `${config.environment.prefix}-log-archive`;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
     await expect(deployCommand({ env, source: root, skipBuild: true, yes: true })).rejects.toThrow(
@@ -1203,6 +1243,7 @@ describe('CLI initial deployment', () => {
     const configPath = join(root, '.authrim', pathEnvironment, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
     config.environment.prefix = 'another-environment';
+    config.logging.archive.bucketName = `${config.environment.prefix}-log-archive`;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
     await expect(
@@ -2654,6 +2695,22 @@ describe('CLI initial deployment', () => {
     await writeHeadlessEnvironment(env);
     const lockPath = join(root, '.authrim', env, 'lock.json');
     const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    lock.workers = Object.fromEntries(
+      successfulDeploymentSummary(env)
+        .results.filter((worker) =>
+          (LOG_ARCHIVE_PRODUCER_COMPONENTS as readonly string[]).includes(worker.component)
+        )
+        .map((worker) => [
+          worker.component,
+          {
+            name: worker.workerName,
+            version: worker.version,
+            deployedAt: worker.deployedAt,
+            cloudflareVersionId: worker.cloudflareVersionId,
+            cloudflareScriptTag: worker.cloudflareScriptTag,
+          },
+        ])
+    );
     lock.productVersion = '0.2.0';
     const draftManifest = await readFile(
       join(root, 'migrations', 'release-manifest.draft.json'),
@@ -2745,6 +2802,32 @@ describe('CLI initial deployment', () => {
           )
         )
       ).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('keeps the fresh probe resumable and withholds completion when the actual archive roundtrip is not verified', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    vi.mocked(waitForLogArchiveReadiness).mockRejectedValueOnce(
+      new Error('log_archive_readiness_not_confirmed_resume_setup')
+    );
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await expect(
+        deployCommand({ env, source: root, skipBuild: true, yes: true })
+      ).rejects.toThrow('log_archive_readiness_not_confirmed_resume_setup');
+      const lock = JSON.parse(await readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8'));
+      expect(lock.logArchive.activation.pendingRuntimeProbe).toEqual(
+        expect.objectContaining({
+          attemptId: expect.any(String),
+          deploymentFingerprint: expect.any(String),
+        })
+      );
+      expect(lock.logArchive.activation.runtimeProof).toBeUndefined();
+      expect(log.mock.calls.flat().join('\n')).not.toContain('━━━ Deployment Complete ━━━');
+      expect(mocks.cleanupSetupMachineAccessInD1).toHaveBeenCalled();
     } finally {
       log.mockRestore();
     }

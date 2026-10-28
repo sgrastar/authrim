@@ -1,3 +1,4 @@
+import { prepareLogIcebergRowWrite } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
@@ -547,6 +548,41 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
   const userAgent = c.req.header('user-agent') || null;
   const enrollmentTokenHash = await hashEnrollmentToken(token);
 
+  const preparedAudit = await prepareLogIcebergRowWrite(c.env, checked.adapter, {
+    tenantId: invitation.tenant_id,
+    sourceDataset: 'admin.admin_audit_log',
+    logType: 'admin_audit',
+    eventAt: now,
+    expiresAt: null,
+    overview: {
+      action: 'admin_invitation.accept',
+      result: 'success',
+      severity: 'critical',
+      subject_id: invitation.admin_user_id,
+      resource_id: invitation.admin_user_id,
+    },
+    row: {
+      id: auditId,
+      tenant_id: invitation.tenant_id,
+      admin_user_id: invitation.admin_user_id,
+      admin_email: invitation.email,
+      action: 'admin_invitation.accept',
+      resource_type: 'admin_user',
+      resource_id: invitation.admin_user_id,
+      result: 'success',
+      severity: 'critical',
+      ip_address: clientIp,
+      user_agent: userAgent,
+      session_id: sessionId,
+      created_at: now,
+      metadata_json: JSON.stringify({
+        invitation_id: invitation.id,
+        role_id: invitation.admin_role_id,
+        scope_type: invitation.scope_type,
+        ip_restriction_enabled: Boolean(invitation.ip_restriction_enabled),
+      }),
+    },
+  });
   try {
     await checked.adapter.batch([
       {
@@ -621,31 +657,7 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
                WHERE id = ? AND status = 'pending'`,
         params: [now, clientIp, now, invitation.id],
       },
-      {
-        sql: `INSERT INTO admin_audit_log (
-                id, tenant_id, admin_user_id, admin_email, action, resource_type,
-                resource_id, result, severity, ip_address, user_agent, session_id,
-                metadata_json, created_at
-              ) VALUES (?, ?, ?, ?, 'admin_invitation.accept', 'admin_user', ?,
-                        'success', 'critical', ?, ?, ?, ?, ?)`,
-        params: [
-          auditId,
-          invitation.tenant_id,
-          invitation.admin_user_id,
-          invitation.email,
-          invitation.admin_user_id,
-          clientIp,
-          userAgent,
-          sessionId,
-          JSON.stringify({
-            invitation_id: invitation.id,
-            role_id: invitation.admin_role_id,
-            scope_type: invitation.scope_type,
-            ip_restriction_enabled: Boolean(invitation.ip_restriction_enabled),
-          }),
-          now,
-        ],
-      },
+      ...preparedAudit.statements,
       {
         sql: `DELETE FROM admin_invitation_enrollments
                WHERE token_hash = ? AND phase = 'authentication' AND expires_at > ?`,
@@ -656,6 +668,9 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
     return c.json({ error: 'invitation_activation_conflict' }, 409);
   }
 
+  // The atomic batch already retained the delivery pointer. A transport outage
+  // is retried by the scanner and must not strand an accepted invitation.
+  await preparedAudit.dispatch().catch(() => {});
   setCookie(c, 'authrim_admin_session', sessionId, {
     path: '/',
     httpOnly: true,

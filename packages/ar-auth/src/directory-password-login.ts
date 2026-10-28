@@ -1319,7 +1319,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
     });
 
     const now = Date.now();
-    const completed = await completeDirectoryAuthPasskeyEnrollment(authCtx.coreAdapter, {
+    const completed = await completeDirectoryAuthPasskeyEnrollment(c.env, authCtx.coreAdapter, {
       tenantId,
       transactionId: transaction.id,
       campaignId: transaction.campaign_id,
@@ -1658,7 +1658,7 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    const completed = await completeDirectoryAuthEmailCodeFallback(authCtx.coreAdapter, {
+    const completed = await completeDirectoryAuthEmailCodeFallback(c.env, authCtx.coreAdapter, {
       tenantId,
       transactionId: transaction.id,
       campaignId: transaction.campaign_id,
@@ -1745,7 +1745,7 @@ async function createMigrationRequiredResponse(
   }
 ): Promise<Response> {
   const token = createMigrationTransactionToken();
-  const transaction = await createDirectoryAuthMigrationTransaction(input.adapter, {
+  const transaction = await createDirectoryAuthMigrationTransaction(c.env, input.adapter, {
     tenantId: input.tenantId,
     campaignId: input.decision.campaign.id,
     userId: input.runtimeUser.id,
@@ -1862,7 +1862,7 @@ async function createDirectoryUnavailableRecoveryResponse(
   }
 
   const token = createMigrationTransactionToken();
-  const transaction = await createDirectoryAuthMigrationTransaction(authCtx.coreAdapter, {
+  const transaction = await createDirectoryAuthMigrationTransaction(c.env, authCtx.coreAdapter, {
     tenantId: input.tenantId,
     campaignId: campaign.id,
     userId: runtimeUser.id,
@@ -1995,7 +1995,7 @@ async function createEmailFallbackMigrationResponse(
 
   let token = createMigrationTransactionToken();
   if (token === passkeyToken) token = createMigrationTransactionToken();
-  const transaction = await createDirectoryAuthMigrationTransaction(input.adapter, {
+  const transaction = await createDirectoryAuthMigrationTransaction(c.env, input.adapter, {
     tenantId: input.tenantId,
     campaignId: input.decision.campaign.id,
     userId: input.runtimeUser.id,

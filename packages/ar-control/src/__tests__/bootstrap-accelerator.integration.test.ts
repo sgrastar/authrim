@@ -117,6 +117,42 @@ describe('initial bootstrap accelerator admission', () => {
     });
   }
 
+  it('permits only the separately signed log-readiness purpose after bootstrap acceptance', async () => {
+    database.exec(
+      "UPDATE control_bootstrap_handoffs SET state='accepted',verified_at=1,accepted_at=1"
+    );
+    const signed = await signBootstrapAcceleratorProof({
+      environmentId: 'test',
+      jti: 'probe-attempt',
+      purpose: 'log_archive_readiness',
+      probeDigest: 'd'.repeat(64),
+      privateJwk,
+      keyId: 'smoke-a',
+      now: NOW,
+    });
+    await expect(
+      admitInitialBootstrapAcceleration({ env, proof: signed, now: NOW })
+    ).rejects.toThrow();
+    const admission = await admitInitialBootstrapAcceleration({
+      env,
+      proof: signed,
+      purpose: 'log_archive_readiness',
+      now: NOW,
+    });
+    expect(admission.state).toBe('acquired');
+    if (admission.state === 'acquired')
+      await releaseInitialBootstrapAcceleration({ env, claims: admission.claims });
+    expect(
+      (
+        await admitInitialBootstrapAcceleration({
+          env,
+          proof: await proof('old-advance'),
+          now: NOW,
+        })
+      ).state
+    ).toBe('inactive');
+  });
+
   it('admits one pending-handoff execution and rejects replay or overlap', async () => {
     const first = await admitInitialBootstrapAcceleration({
       env,

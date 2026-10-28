@@ -1,3 +1,4 @@
+import { LOG_ARCHIVE_PRODUCER_COMPONENTS } from './log-archive-config.js';
 import type { WorkerComponent } from './naming.js';
 
 export const SECRET_NAMES = [
@@ -8,6 +9,10 @@ export const SECRET_NAMES = [
   'OBJECT_ENCRYPTION_ROOT_KEY',
   'OTP_HMAC_SECRET',
   'LOGGING_CURSOR_HMAC_SECRET',
+  'LOG_ARCHIVE_CONTENT_HMAC_KEY',
+  'LOG_ARCHIVE_ROOT_KEYRING',
+  'LOG_ARCHIVE_CATALOG_READ_TOKEN',
+  'LOG_ARCHIVE_CATALOG_WRITE_TOKEN',
   'FLOW_RUNTIME_HMAC_SECRET',
   'VC_TRANSACTION_CODE_HMAC_SECRET',
   'VC_EVIDENCE_HMAC_SECRET',
@@ -54,6 +59,10 @@ export const SECRET_KEY_FILES: Partial<Record<SecretName, string>> = {
   OBJECT_ENCRYPTION_ROOT_KEY: 'object_encryption_root_key.txt',
   OTP_HMAC_SECRET: 'otp_hmac_secret.txt',
   LOGGING_CURSOR_HMAC_SECRET: 'logging_cursor_hmac_secret.txt',
+  LOG_ARCHIVE_CONTENT_HMAC_KEY: 'log_archive_content_hmac_key.txt',
+  LOG_ARCHIVE_ROOT_KEYRING: 'log_archive_root_keyring.json',
+  LOG_ARCHIVE_CATALOG_READ_TOKEN: 'log_archive_catalog_read_token.txt',
+  LOG_ARCHIVE_CATALOG_WRITE_TOKEN: 'log_archive_catalog_write_token.txt',
   FLOW_RUNTIME_HMAC_SECRET: 'flow_runtime_hmac_secret.txt',
   VC_TRANSACTION_CODE_HMAC_SECRET: 'vc_transaction_code_hmac_secret.txt',
   VC_EVIDENCE_HMAC_SECRET: 'vc_evidence_hmac_secret.txt',
@@ -224,6 +233,10 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
 
 /** Provider/integration credentials that are intentionally optional at deploy time. */
 export const OPTIONAL_DEPLOY_SECRET_NAMES: readonly SecretName[] = [
+  'LOG_ARCHIVE_CONTENT_HMAC_KEY',
+  'LOG_ARCHIVE_ROOT_KEYRING',
+  'LOG_ARCHIVE_CATALOG_READ_TOKEN',
+  'LOG_ARCHIVE_CATALOG_WRITE_TOKEN',
   'CLOUDFLARE_KV_API_TOKEN',
   'CLOUDFLARE_R2_API_TOKEN',
   'RESEND_API_KEY',
@@ -282,10 +295,29 @@ export function getSecretTargetWorkers(
   return requestedWorkers.filter((component) => SECRET_UPLOAD_PLAN[component]?.length > 0);
 }
 
+export function getLogArchiveSecretNamesForWorker(
+  component: WorkerComponent
+): readonly SecretName[] {
+  if (!LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component)) return [];
+  return [
+    'LOG_ARCHIVE_CONTENT_HMAC_KEY',
+    'LOG_ARCHIVE_ROOT_KEYRING',
+    'OBJECT_ENCRYPTION_ROOT_KEY',
+    ...(component === 'ar-management'
+      ? (['LOG_ARCHIVE_CATALOG_READ_TOKEN', 'LOG_ARCHIVE_CATALOG_WRITE_TOKEN'] as const)
+      : []),
+  ];
+}
+
 export function getSecretNamesForWorker(
   component: WorkerComponent,
-  options: { replicationWriter?: boolean } = {}
+  options: { logArchive?: boolean; replicationWriter?: boolean } = {}
 ): readonly SecretName[] {
-  const names = SECRET_UPLOAD_PLAN[component] ?? [];
-  return options.replicationWriter ? [...names, 'AUTHRIM_REPLICATION_WRITER_SECRET'] : names;
+  return [
+    ...new Set<SecretName>([
+      ...(SECRET_UPLOAD_PLAN[component] ?? []),
+      ...(options.logArchive ? getLogArchiveSecretNamesForWorker(component) : []),
+      ...(options.replicationWriter ? (['AUTHRIM_REPLICATION_WRITER_SECRET'] as const) : []),
+    ]),
+  ];
 }

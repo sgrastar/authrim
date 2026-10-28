@@ -1753,27 +1753,31 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     mocks.passkey.findByCredentialId.mockResolvedValue(null);
     const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
 
-    const response = await directPasskeyLoginFinishHandler(
-      createContext(
-        {
-          challenge_id: 'challenge_1',
-          credential: {
-            id: 'missing-credential-id',
-            rawId: 'missing-credential-id',
-            response: {},
-            type: 'public-key',
-          },
-          code_verifier: codeVerifier,
-          channel: 'browser',
+    const context = createContext(
+      {
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'missing-credential-id',
+          rawId: 'missing-credential-id',
+          response: {},
+          type: 'public-key',
         },
-        // Named at verify time: never what the failure is recorded against.
-        { 'x-authrim-interaction-id': 'int-2' }
-      ) as never
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      },
+      // Named at verify time: never what the failure is recorded against.
+      { 'x-authrim-interaction-id': 'int-2' }
     );
+    const response = await directPasskeyLoginFinishHandler(context as never);
 
     expect(response.status).toBe(400);
     await vi.waitFor(() => expect(attemptRecording.record).toHaveBeenCalledTimes(1));
-    expect(attemptRecording.record.mock.calls[0]?.[2]).toEqual({
+    const recorded = attemptRecording.record.mock.calls[0];
+    expect(recorded).toHaveLength(4);
+    expect(recorded?.[0]).toBe(context.env);
+    expect(recorded?.[1]).toBe(mocks.coreAdapter);
+    expect(recorded?.[2]).toBeNull();
+    expect(recorded?.[3]).toEqual({
       tenantId: 'tenant_test',
       interactionId: 'int-1',
       method: 'passkey',

@@ -11,6 +11,7 @@ import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
 import type { JWK } from 'jose';
+import type { LogIcebergSettingsEnv } from '../services/log-iceberg-config';
 import type { SAMLRuntimePorts } from './saml-runtime-ports';
 import type { AuthRuntimePorts } from './auth-runtime-ports';
 import type { RuntimeDataPorts } from './runtime-data-ports';
@@ -428,7 +429,15 @@ export interface PluginRunnerServiceBinding {
  * - API_: API settings
  * - PII_: PII encryption settings
  */
-export interface Env {
+export interface Env extends LogIcebergSettingsEnv {
+  LOG_ARCHIVE?: R2Bucket;
+  LOG_ARCHIVE_STREAM?: import('cloudflare:pipelines').Pipeline;
+  LOG_ARCHIVE_CATALOG_READ_TOKEN?: string;
+  LOG_ARCHIVE_CATALOG_WRITE_TOKEN?: string;
+  LOG_ARCHIVE_CONTENT_HMAC_KEY?: string;
+  /** Private log-only master history; never expose in config or API responses. */
+  LOG_ARCHIVE_ROOT_KEYRING?: string;
+  LOG_ARCHIVE_WRITER?: import('../services/log-iceberg-runtime').LogArchiveWriteServiceBinding;
   /** Optional deployment-owned database routing. Cloudflare continues using its registry. */
   RUNTIME_DATA_PORTS?: RuntimeDataPorts;
   AUDIT_RUNTIME_PORTS?: AuditRuntimePorts;

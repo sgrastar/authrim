@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import type { AdminAgentAuditWriter } from '@authrim/ar-agent-access/core';
 import {
   ADMIN_PERMISSIONS,
-  adminAuthMiddleware,
   type AdminAuthContext,
+  type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
   agentBaselinesRouter,
@@ -14,9 +15,14 @@ const adapter = {
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn(),
-  batch: vi.fn(),
+  batch: vi.fn<DatabaseAdapter['batch']>(),
   transaction: vi.fn(),
 };
+
+const audit = vi.hoisted(() => ({ prepare: vi.fn<AdminAgentAuditWriter>() }));
+vi.mock('@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer', () => ({
+  createCloudflareAdminAgentAuditWriter: () => audit.prepare,
+}));
 
 const reader = vi.hoisted(() => ({ readCurrent: vi.fn() }));
 const settings = vi.hoisted(() => ({ get: vi.fn() }));
@@ -93,6 +99,9 @@ function configurationProfile() {
 describe('Agent template and baseline control plane', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    audit.prepare.mockResolvedValue([
+      { sql: 'SELECT ? AS iceberg_audit_test_receipt', params: ['test-audit'] },
+    ]);
     authContext = {
       userId: 'platform-admin',
       authMethod: 'session',
@@ -114,7 +123,10 @@ describe('Agent template and baseline control plane', () => {
     authContext = { ...authContext, globalPermissions: authContext.permissions };
     adapter.query.mockResolvedValue([]);
     adapter.queryOne.mockResolvedValue(null);
-    adapter.batch.mockResolvedValue([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
+    adapter.batch.mockResolvedValue([
+      { success: true, rowsAffected: 1 },
+      { success: true, rowsAffected: 1 },
+    ]);
     reader.readCurrent.mockResolvedValue({ client_name: 'Changed client' });
     settings.get.mockResolvedValue({ bulkCanaryProtected: false });
   });
@@ -133,9 +145,28 @@ describe('Agent template and baseline control plane', () => {
     expect(response.status).toBe(201);
     expect(adapter.batch).toHaveBeenCalledWith(
       expect.arrayContaining([
-        expect.objectContaining({ sql: expect.stringContaining('INSERT INTO agent_baselines') }),
-        expect.objectContaining({ sql: expect.stringContaining('INSERT INTO admin_audit_log') }),
+        expect.objectContaining({
+          sql: 'SELECT ? AS iceberg_audit_test_receipt',
+          params: ['test-audit'],
+        }),
       ])
+    );
+    expect(
+      adapter.batch.mock.calls
+        .flatMap(([statements]) => statements)
+        .some(({ sql }) => sql.includes('INSERT INTO agent_baselines'))
+    ).toBe(true);
+    expect(audit.prepare).toHaveBeenCalledWith(
+      adapter,
+      expect.objectContaining({
+        tenantId: 'control',
+        action: 'agent.baseline.created',
+        resourceType: 'agent_baseline',
+        actorType: 'admin_user',
+        actorSub: 'admin_user:platform-admin',
+        severity: 'info',
+      }),
+      undefined
     );
   });
 
@@ -353,15 +384,19 @@ describe('Agent template and baseline control plane', () => {
       'POST'
     );
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      drift_status: 'drifted',
-      remediation: {
-        status: 'queued',
-        bulk_plan_id: expect.stringMatching(/^abp_baseline_/u),
-      },
-    });
-    expect(JSON.stringify(adapter.batch.mock.calls)).toContain(
-      'agent.baseline.remediation_requested'
+    const body = await response.json<{
+      drift_status: string;
+      remediation: { status: string; bulk_plan_id: string };
+    }>();
+    expect(body).toMatchObject({ drift_status: 'drifted', remediation: { status: 'queued' } });
+    expect(body.remediation.bulk_plan_id).toMatch(/^abp_baseline_/u);
+    expect(audit.prepare).toHaveBeenCalledWith(
+      adapter,
+      expect.objectContaining({
+        action: 'agent.baseline.remediation_requested',
+        tenantId: 'control',
+      }),
+      expect.anything()
     );
   });
 });

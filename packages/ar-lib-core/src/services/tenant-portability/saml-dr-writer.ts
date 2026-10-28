@@ -3,6 +3,7 @@ import { withReplicationStorageBindings } from '../deployment-replication/write-
 import type { SamlDrWriterInventoryReceipt } from './saml-dr-writer-contract';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
+  hasTenantBackupMutationCoverage,
   runRequiredTenantBackupCoveredEffect,
   withTenantBackupMutationCoverage,
   type TenantBackupMutationCoverage,
@@ -92,6 +93,12 @@ export function samlDrWaitUntil(
   context.waitUntil(effect.catch(() => undefined));
 }
 
+/** True only inside this process-owned operation, never from RPC input. */
+export function isSamlDrCoveredOperation(env: object): boolean {
+  const current = ownedOperation.getStore();
+  return Boolean(current?.active && current.environments.has(env));
+}
+
 /** Keep the permit until every request-owned deferred storage effect settles. */
 export async function runSamlDrCoveredOperation<
   T,
@@ -154,7 +161,7 @@ export async function runSamlDrCoveredOperation<
   // The backup admission comes first. Its refusal happens before any write, while an exception
   // inside the replication permit is kept as an unconfirmed write: a refusal that came after
   // the permit would leave it open and block a later switch of the primary.
-  return backupEnabled
+  return backupEnabled && !hasTenantBackupMutationCoverage(env, coverage)
     ? runRequiredTenantBackupCoveredEffect(
         { CONTROL: env.SAML_DR_MUTATION_CONTROL },
         coverage,

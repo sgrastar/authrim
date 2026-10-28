@@ -9,9 +9,11 @@ import { sanitizeObject } from '../utils/security';
 import {
   identityMappingLevelHistoryChoicesEqual,
   identityMappingLevelHistoryInsertStatement,
+  prepareIdentityMappingLevelHistoryLog,
   type IdentityMappingLevelHistoryInput,
   type IdentityMappingLevelHistoryRow,
 } from './identity-mapping-level-history';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
 
 type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> &
   Partial<Pick<DatabaseAdapter, 'batch'>>;
@@ -128,7 +130,8 @@ function toProjection(row: StoredRow): PendingSettingsProjection {
 export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
   constructor(
     private readonly database: Database,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly historyLogging?: { env: LogIcebergRuntimeEnv; adapter: DatabaseAdapter }
   ) {}
 
   private timestamp(): number {
@@ -256,7 +259,16 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
         )
       )
         invalid();
-      const now = this.timestamp();
+      if (!this.historyLogging)
+        throw new Error('identity_mapping_history_log_environment_required');
+      const previous = await this.database.queryOne<{ stamp: number | null }>(
+        'SELECT MAX(created_at) AS stamp FROM identity_mapping_level_history WHERE tenant_id=? AND tier=? AND client_id IS ?',
+        [history.tenantId, history.tier, history.clientId ?? null],
+        { consistencyClass: 'primary_required' }
+      );
+      const previousStamp = Number(previous?.stamp ?? -1);
+      if (!Number.isSafeInteger(previousStamp) || previousStamp < -1) invalid();
+      const now = Math.max(this.timestamp(), previousStamp + 1);
       const guardParams = [
         ...key.params,
         expectedVersion,
@@ -273,8 +285,8 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
             : ` AND (SELECT id FROM identity_mapping_level_history
                  WHERE tenant_id=? AND tier='tenant_default' AND status='committed'
                  ORDER BY created_at DESC,id DESC LIMIT 1)=?`
-        }`,
-        params: guardParams,
+        } AND NOT EXISTS(SELECT 1 FROM identity_mapping_level_history WHERE tenant_id=? AND tier=? AND client_id IS ? AND created_at>=?)`,
+        params: [...guardParams, history.tenantId, history.tier, history.clientId ?? null, now],
       });
       const confirmed = async () => {
         const row = await this.database.queryOne<IdentityMappingLevelHistoryRow>(
@@ -303,6 +315,30 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
           )
         );
       };
+      if (await confirmed()) return true;
+      const prepared = await prepareIdentityMappingLevelHistoryLog(
+        this.historyLogging.env,
+        this.historyLogging.adapter,
+        {
+          id: history.id,
+          tenant_id: history.tenantId,
+          tier: history.tier,
+          client_id: history.clientId ?? null,
+          before_json: JSON.stringify(history.before),
+          after_json: JSON.stringify(history.after),
+          actor_id: history.actorId,
+          actor_type: history.actorType,
+          via: history.via,
+          bulk_id: history.bulkId ?? null,
+          source_version: saved.version,
+          status: 'committed',
+          created_at: now,
+          updated_at: now,
+          committed_at: now,
+          last_reconciled_at: 0,
+          receipt_acknowledged_at: null,
+        }
+      );
       try {
         const results = await this.database.batch([
           insert,
@@ -321,15 +357,24 @@ export class DatabaseSettingsCanonicalStore implements SettingsCanonicalStore {
               history.tenantId,
             ],
           },
+          ...prepared.statements,
         ]);
-        if (results[1]?.success && results[1].rowsAffected === 1) return true;
+        if (results[1]?.success && results[1].rowsAffected === 1) {
+          await prepared.dispatch();
+          return true;
+        }
       } catch (error) {
         // An atomic batch may have committed before its response was lost. Confirm the same
         // immutable history instead of repeating a later source mutation or claiming rollback.
-        if (await confirmed()) return true;
+        if (await confirmed()) {
+          await prepared.dispatch();
+          return true;
+        }
         throw error;
       }
-      return confirmed();
+      const committed = await confirmed();
+      if (committed) await prepared.dispatch();
+      return committed;
     }
     const result = await this.database.execute(
       `UPDATE ${key.table}

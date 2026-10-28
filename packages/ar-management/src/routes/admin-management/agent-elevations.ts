@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono } from 'hono';
 import {
   AdminAgentAccessRepository,
@@ -44,7 +45,8 @@ agentElevationsRouter.get('/:id', async (c) => {
     return c.json({ error: 'AGENT_MCP_DISABLED' }, 404);
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevation-review')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevation-review'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const challenge = await repository.getElevationChallenge(tenantId, c.req.param('id'));
   if (!challenge || challenge.userId !== auth.userId) {
@@ -98,7 +100,10 @@ agentElevationsRouter.post('/:id/ciba/start', async (c) => {
   }
   const approverId = body.approver_id;
   const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevation-ciba-start');
-  const repository = new AdminAgentAccessRepository(adapter);
+  const repository = new AdminAgentAccessRepository(
+    adapter,
+    createCloudflareAdminAgentAuditWriter(c.env)
+  );
   const challenge = await repository.getElevationChallenge(tenantId, c.req.param('id'));
   if (!challenge || challenge.userId !== auth.userId) {
     return c.json({ error: 'AGENT_ELEVATION_NOT_FOUND' }, 404);
@@ -249,7 +254,8 @@ agentElevationsRouter.post('/:id/decision', async (c) => {
   }
   const decision = body.decision;
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevation-decision')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevation-decision'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const challenge = await repository.getElevationChallenge(tenantId, c.req.param('id'));
   if (!challenge || challenge.userId !== auth.userId) {
@@ -360,7 +366,8 @@ agentElevationsRouter.post('/:id/reconcile', async (c) => {
     return c.json({ error: 'AGENT_ELEVATION_RECONCILIATION_EVIDENCE_INVALID' }, 400);
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevation-human-reconcile')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevation-human-reconcile'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const challenge = await repository.getElevationChallenge(tenantId, c.req.param('id'));
   if (!challenge || challenge.status !== 'indeterminate') {

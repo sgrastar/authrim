@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono, type Context } from 'hono';
 import {
   ADMIN_AGENT_LOGIN_HANDOFF_CODE_TTL_MS,
@@ -129,7 +130,10 @@ agentLoginHandoffsRouter.post('/:handoff_id/approve', async (c) => {
     c.env,
     'admin-agent-login-handoff-approval'
   );
-  const repository = new AdminAgentAccessRepository(database);
+  const repository = new AdminAgentAccessRepository(
+    database,
+    createCloudflareAdminAgentAuditWriter(c.env)
+  );
   const handoff = await repository.getLoginHandoffById(handoffId);
   if (!handoff || handoff.status !== 'pending' || handoff.expiresAt <= now) {
     return c.json(

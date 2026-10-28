@@ -1,7 +1,7 @@
 /**
  * PII read records for admin responses (audit_log_pii; see ar-lib-core pii-access-log): which
  * administrator was given which personal fields of which user, through which operation and
- * request. Written after the response, in the PII store each user's data was read from.
+ * request. Written after the response through the configured encrypted log storage.
  */
 import type { Context } from 'hono';
 import {

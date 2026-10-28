@@ -1,3 +1,28 @@
+vi.mock('../core/log-archive-readiness.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/log-archive-readiness.js')>();
+  return {
+    ...actual,
+    waitForLogArchiveReadiness: vi.fn(
+      async (input: Parameters<typeof actual.waitForLogArchiveReadiness>[0]) => ({
+        ...input.attempt,
+        state: 'ready' as const,
+        mode: input.archive.mode,
+        generation: input.archive.storageGeneration,
+        schemaVersion: input.archive.schemaVersion,
+        keyVersion: input.archive.objectEncryptionKeyVersion,
+        tableUuid: input.owned.activation.tableUuid,
+        physicalFingerprint: input.owned.activation.schemaSpecFingerprint,
+        eventId: `log_archive_probe_v1:${input.attempt.attemptId}:${input.archive.objectEncryptionKeyVersion}`,
+        snapshotId: '123',
+        checkedAt: new Date().toISOString(),
+      })
+    ),
+  };
+});
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['pipeline', 'scheduled'],
+}));
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -5,7 +30,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getRequiredR2Buckets } from '../core/cloudflare.js';
 import { CloudflareTokenBootstrapError } from '../core/cloudflare-control-token-bootstrap.js';
-import { createDefaultConfig } from '../core/config.js';
+import {
+  createArchiveTestConfig as createDefaultConfig,
+  archiveLockFixture,
+} from './fixtures/log-archive.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 import { acquireDeployConfigLock } from '../core/lock.js';
 import {
@@ -578,6 +606,7 @@ async function writeEnvironment(env: string) {
     join(envDir, 'lock.json'),
     `${JSON.stringify(
       {
+        logArchive: archiveLockFixture(config),
         version: '1.0.0',
         productVersion: '0.2.0',
         env,
@@ -621,6 +650,13 @@ async function writeEnvironment(env: string) {
         ),
         r2: {
           MIGRATION_RELEASES: { name: `${env}-migration-releases` },
+          LOG_ARCHIVE: {
+            name: `${env}-log-archive`,
+            creationDate: '2026-10-27T00:00:00.000Z',
+            ownershipId: '11111111-1111-4111-8111-111111111111',
+            ownershipMarkerKey:
+              '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+          },
         },
         schemaTargets: Object.fromEntries(
           [
@@ -1198,6 +1234,7 @@ describe('setup web worker update API', () => {
         { name: `${environment}-import-artifacts` },
         { name: `${environment}-export-artifacts` },
         { name: `${environment}-sensitive-details` },
+        { name: `${environment}-log-archive` },
       ])
     );
     queryD1RowsMock.mockImplementation(async (_databaseName, sql: string) =>
@@ -3108,7 +3145,9 @@ describe('setup web worker update API', () => {
   it('offers CLI adoption when every required legacy R2 bucket still exists', async () => {
     const env = 'test';
     await writeEnvironment(env);
-    const requiredBuckets = getRequiredR2Buckets(env);
+    const requiredBuckets = getRequiredR2Buckets(env, {
+      logArchiveBucketName: `${env}-log-archive`,
+    });
     const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
     const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
     lock.r2 = Object.fromEntries(
@@ -3173,6 +3212,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
     config.environment.prefix = 'other';
+    config.logging.archive.bucketName = `${config.environment.prefix}-log-archive`;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
     const token = generateSessionToken();
@@ -3199,7 +3239,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -3491,6 +3531,7 @@ describe('setup web worker update API', () => {
 
     const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
     const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    lock.logArchive = archiveLockFixture(config);
     const manifest = JSON.parse(
       await readFile(join(tempDir!, 'migrations', 'releases', '0.2.0.json'), 'utf-8')
     );
@@ -3580,7 +3621,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -3652,7 +3693,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -3700,7 +3741,7 @@ describe('setup web worker update API', () => {
 
     const responseBody = await response.json();
     expect(preflightCloudflareBootstrapTokenMock).toHaveBeenCalledWith({
-      accountId: 'account-id',
+      accountId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       token: 'bootstrap-token-should-not-appear-in-logs',
     });
     expect(completeControlTokenBootstrapMock).toHaveBeenCalledOnce();
@@ -3735,7 +3776,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
     preflightCloudflareBootstrapTokenMock.mockRejectedValueOnce(
       new CloudflareTokenBootstrapError(
@@ -3787,7 +3828,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -3883,7 +3924,7 @@ describe('setup web worker update API', () => {
     expect(reconcileWorkerCronTriggersMock).toHaveBeenCalledWith(
       expect.objectContaining({
         env,
-        cloudflareAccountId: 'account-id',
+        cloudflareAccountId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         workerScriptOwnership: expect.objectContaining({
           assertBeforeMutation: expect.any(Function),
         }),
@@ -3912,7 +3953,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -5241,7 +5282,8 @@ describe('setup web worker update API', () => {
     await expect(response.json()).resolves.toMatchObject({ success: true });
     expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(
       expect.any(String),
-      expect.arrayContaining(['ar-auth'])
+      expect.arrayContaining(['ar-auth']),
+      expect.objectContaining({ env, rootDir: tempDir })
     );
     expect(saveMasterWranglerConfigsMock).toHaveBeenCalledWith(
       expect.any(Object),
@@ -5309,7 +5351,11 @@ describe('setup web worker update API', () => {
     await expect(readFile(responseBody.logPath, 'utf-8')).resolves.toContain(
       'Deploying component: ar-auth'
     );
-    expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(expect.any(String), ['ar-auth']);
+    expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(
+      expect.any(String),
+      ['ar-auth'],
+      expect.objectContaining({ env, rootDir: tempDir })
+    );
     expect(deployAllMock).toHaveBeenCalledWith(
       expect.objectContaining({
         env,

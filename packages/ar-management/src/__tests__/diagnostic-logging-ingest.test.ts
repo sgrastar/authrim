@@ -7,6 +7,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    DiagnosticLogR2Adapter: class {
+      private readonly store: Map<string, string>;
+      constructor(config: { env: { LOG_ARCHIVE: { store: Map<string, string> } } }) {
+        this.store = config.env.LOG_ARCHIVE.store;
+      }
+      async writeLogBatch(entries: Array<{ id: string }>) {
+        for (const entry of entries) this.store.set(entry.id, JSON.stringify(entry));
+        return { success: true, entriesWritten: entries.length };
+      }
+    },
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async (env: { DB: unknown }) => env.DB),
     emitRuntimeLogRecords: mocks.emitRuntimeLogRecords,
   };
@@ -134,7 +144,15 @@ function createAdapter(client: OAuthClient | null) {
 
 function createKV(values: Record<string, string>): KVNamespace {
   return {
-    get: vi.fn(async (key: string) => values[key] ?? null),
+    get: vi.fn(async (key: string) =>
+      key === 'settings:tenant:tenant-1:diagnostic-logging'
+        ? JSON.stringify({
+            'diagnostic-logging.enabled': true,
+            'diagnostic-logging.sdk_ingest_enabled': true,
+            ...JSON.parse(values[key] ?? '{}'),
+          })
+        : (values[key] ?? null)
+    ),
     put: vi.fn(async () => undefined),
     delete: vi.fn(async () => undefined),
     list: vi.fn(async () => ({ keys: [], list_complete: true, cacheStatus: null })),
@@ -147,7 +165,8 @@ function createEnv(client: OAuthClient | null, bucket: MockR2Bucket, settings?: 
     ISSUER_URL: 'https://issuer.example.com',
     OTP_HMAC_SECRET: 'otp-secret',
     DB: createAdapter(client),
-    DIAGNOSTIC_LOGS: bucket as unknown as R2Bucket,
+    LOG_ARCHIVE: bucket as unknown as R2Bucket,
+    AUTHRIM_LOG_ARCHIVE_MODE: 'pipeline',
     ...(settings ? { SETTINGS: settings } : {}),
   } as unknown as Env;
 }

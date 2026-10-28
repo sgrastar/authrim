@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import type { Context } from 'hono';
 import {
   AdminAgentAccessRepository,
@@ -127,7 +128,8 @@ async function defaultValidateBulkChild(
 ): Promise<boolean> {
   if (!claims.bulk) return true;
   const repository = new AgentBulkRepository(
-    requireDedicatedAdminDatabaseAdapter(env, 'agent-admin-api-bulk-child')
+    requireDedicatedAdminDatabaseAdapter(env, 'agent-admin-api-bulk-child'),
+    createCloudflareAdminAgentAuditWriter(env)
   );
   const [plan, execution] = await Promise.all([
     repository.get(claims.bulk.control_tenant_id, claims.bulk.plan_id, claims.bulk.plan_version),
@@ -197,7 +199,8 @@ export async function authenticateAgentDownscopeBearer(
       overrides.createRepository ??
       ((env) =>
         new AdminAgentAccessRepository(
-          requireDedicatedAdminDatabaseAdapter(env, 'agent-admin-api-authentication')
+          requireDedicatedAdminDatabaseAdapter(env, 'agent-admin-api-authentication'),
+          createCloudflareAdminAgentAuditWriter(env)
         )),
     getModeBPermissionLimit: overrides.getModeBPermissionLimit ?? defaultModeBPermissionLimit,
     validateBulkChild: overrides.validateBulkChild ?? defaultValidateBulkChild,

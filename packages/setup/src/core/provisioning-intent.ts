@@ -25,7 +25,15 @@ export interface ProvisioningIntent {
   resources: Record<string, ProvisioningResourceCheckpoint>;
 }
 
-export type ProvisioningResourceKind = 'd1' | 'kv' | 'queue' | 'r2';
+export type ProvisioningResourceKind =
+  | 'd1'
+  | 'kv'
+  | 'queue'
+  | 'r2'
+  | 'catalog'
+  | 'stream'
+  | 'sink'
+  | 'pipeline';
 
 export type ProvisioningResourceState =
   | 'create_issued'
@@ -39,6 +47,8 @@ export interface ProvisioningResourceCheckpoint {
   name: string;
   state: ProvisioningResourceState;
   id?: string;
+  /** Hash of immutable archive schema/config, including a credential fingerprint for a Sink. */
+  configurationDigest?: string;
   /** Cloudflare's provider-assigned R2 bucket generation timestamp. */
   creationDate?: string;
   /** Unpredictable object key written by Setup before an R2 bucket is adopted. */
@@ -173,7 +183,9 @@ function parseProvisioningIntent(raw: unknown, expectedEnvironment: string): Pro
       checkpoint.ownershipMarkerKey !== undefined ||
       checkpoint.ownershipId !== undefined;
     if (
-      !['d1', 'kv', 'queue', 'r2'].includes(checkpoint.kind ?? '') ||
+      !['d1', 'kv', 'queue', 'r2', 'catalog', 'stream', 'sink', 'pipeline'].includes(
+        checkpoint.kind ?? ''
+      ) ||
       typeof checkpoint.binding !== 'string' ||
       !checkpoint.binding ||
       typeof checkpoint.name !== 'string' ||
@@ -182,6 +194,9 @@ function parseProvisioningIntent(raw: unknown, expectedEnvironment: string): Pro
         checkpoint.state ?? ''
       ) ||
       (checkpoint.id !== undefined && (typeof checkpoint.id !== 'string' || !checkpoint.id)) ||
+      (checkpoint.configurationDigest !== undefined &&
+        (typeof checkpoint.configurationDigest !== 'string' ||
+          !/^[a-f0-9]{64}$/u.test(checkpoint.configurationDigest))) ||
       (checkpoint.creationDate !== undefined &&
         (typeof checkpoint.creationDate !== 'string' ||
           !Number.isFinite(Date.parse(checkpoint.creationDate)))) ||
@@ -362,6 +377,7 @@ function normalizeProvisioningResourceIdentity(
     kind: resource.kind,
     binding: resource.binding,
     name: resource.name,
+    ...(resource.configurationDigest ? { configurationDigest: resource.configurationDigest } : {}),
     ...(resource.creationDate ? { creationDate: resource.creationDate } : {}),
     ...(resource.ownershipMarkerKey ? { ownershipMarkerKey: resource.ownershipMarkerKey } : {}),
     ...(resource.ownershipId ? { ownershipId: resource.ownershipId } : {}),
@@ -369,11 +385,17 @@ function normalizeProvisioningResourceIdentity(
 }
 
 function assertValidProvisioningResourceIdentity(resource: ProvisioningResourceIdentity): void {
-  if (!['d1', 'kv', 'queue', 'r2'].includes(resource.kind) || !resource.binding || !resource.name) {
+  if (
+    !['d1', 'kv', 'queue', 'r2', 'catalog', 'stream', 'sink', 'pipeline'].includes(resource.kind) ||
+    !resource.binding ||
+    !resource.name
+  ) {
     throw new Error('invalid_provisioning_resource_checkpoint');
   }
   const hasOwnershipMarker = Boolean(resource.ownershipMarkerKey || resource.ownershipId);
   if (
+    (resource.configurationDigest !== undefined &&
+      !/^[a-f0-9]{64}$/u.test(resource.configurationDigest)) ||
     (resource.kind !== 'r2' && (hasOwnershipMarker || resource.creationDate)) ||
     (resource.ownershipMarkerKey === undefined) !== (resource.ownershipId === undefined) ||
     (resource.creationDate !== undefined && !Number.isFinite(Date.parse(resource.creationDate)))
@@ -391,6 +413,7 @@ function assertMatchingProvisioningResourceIdentity(
     existing.kind !== resource.kind ||
     existing.binding !== resource.binding ||
     existing.name !== resource.name ||
+    existing.configurationDigest !== resource.configurationDigest ||
     (existing.ownershipMarkerKey !== undefined &&
       existing.ownershipMarkerKey !== resource.ownershipMarkerKey) ||
     (existing.ownershipId !== undefined && existing.ownershipId !== resource.ownershipId) ||
@@ -486,7 +509,7 @@ export async function recordProvisioningResourceIdentified(input: {
     resource.creationDate && resource.ownershipMarkerKey && resource.ownershipId
   );
   if (
-    !['d1', 'kv', 'queue', 'r2'].includes(resource.kind) ||
+    !['d1', 'kv', 'queue', 'r2', 'catalog', 'stream', 'sink', 'pipeline'].includes(resource.kind) ||
     !resource.binding ||
     !resource.name ||
     resource.state !== 'identified' ||
@@ -532,7 +555,7 @@ export async function recordProvisionedResource(input: {
   // identity. R2 also requires the provider creation timestamp plus Setup's durable marker.
   const resource = input.resource;
   if (
-    !['d1', 'kv', 'queue', 'r2'].includes(resource.kind) ||
+    !['d1', 'kv', 'queue', 'r2', 'catalog', 'stream', 'sink', 'pipeline'].includes(resource.kind) ||
     !resource.binding ||
     !resource.name ||
     (resource.id !== undefined && !resource.id) ||

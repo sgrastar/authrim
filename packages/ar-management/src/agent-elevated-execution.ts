@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import type { Context, Next } from 'hono';
 import {
   canonicalizeJson,
@@ -84,7 +85,8 @@ export function agentElevatedExecutionMiddleware(
 
     const now = Date.now();
     const repository = new AdminAgentAccessRepository(
-      requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevated-execution')
+      requireDedicatedAdminDatabaseAdapter(c.env, 'agent-elevated-execution'),
+      createCloudflareAdminAgentAuditWriter(c.env)
     );
     const challenge = await repository.getElevationChallenge(auth.tenantId, challengeId);
     if (

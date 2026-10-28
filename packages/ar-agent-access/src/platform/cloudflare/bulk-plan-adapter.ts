@@ -14,6 +14,7 @@ import {
   resolveAgentConfigurationPlan,
   hasCompleteAgentConfigurationSnapshot,
   type AdminAgentAuditWrite,
+  type AdminAgentAuditWriter,
   type AgentBulkPlanDefinition,
   type AgentGrantContract,
   type AgentToolCatalog,
@@ -96,10 +97,11 @@ export class CloudflareAgentBulkPlanAdapter implements AgentBulkPlanPort {
     private readonly resolveActiveTenantIds: (
       tenantIds: readonly string[]
     ) => Promise<ReadonlySet<string>>,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    auditWriter?: AdminAgentAuditWriter
   ) {
-    this.bulk = new AgentBulkRepository(database);
-    this.grants = new AdminAgentAccessRepository(database);
+    this.bulk = new AgentBulkRepository(database, auditWriter);
+    this.grants = new AdminAgentAccessRepository(database, auditWriter);
     this.machines = new AdminMachineAccessRepository(database);
   }
 

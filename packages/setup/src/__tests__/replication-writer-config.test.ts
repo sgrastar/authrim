@@ -1,10 +1,14 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
 import { AuthrimConfigSchema, createDefaultConfig } from '../core/config.js';
 import { WORKER_COMPONENTS } from '../core/naming.js';
-import { generateWranglerConfig } from '../core/wrangler.js';
+import { generateArchiveTestWrangler as generateWranglerConfig } from './fixtures/log-archive.js';
 import {
   getSecretNamesForWorker,
   getSecretTargetWorkers,
@@ -155,3 +159,13 @@ it.each(WORKER_COMPONENTS)(
     ).toBe(false);
   }
 );
+
+it('keeps explicit replication credentials and archive keys independent when both features are enabled', () => {
+  const names = getSecretNamesForWorker('ar-auth', { replicationWriter: true, logArchive: true });
+  expect(names).toEqual(
+    expect.arrayContaining([SECRET, 'LOG_ARCHIVE_ROOT_KEYRING', 'LOG_ARCHIVE_CONTENT_HMAC_KEY'])
+  );
+  expect(names).not.toContain('LOG_ARCHIVE_CATALOG_READ_TOKEN');
+  expect(names).not.toContain('LOG_ARCHIVE_CATALOG_WRITE_TOKEN');
+  expect(getSecretNamesForWorker('ar-router', { replicationWriter: true })).toEqual([SECRET]);
+});

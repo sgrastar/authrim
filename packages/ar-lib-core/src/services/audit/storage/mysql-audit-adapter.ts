@@ -84,35 +84,6 @@ function qualifyTable(schema: string | undefined, table: string): string {
   return `\`${safeSchema}\`.\`${safeTable}\``;
 }
 
-function buildInsertIfNotExistsSql(
-  tableName: string,
-  columns: string[],
-  keyColumn: string,
-  rowCount: number
-): string {
-  const selectStatements = Array.from({ length: rowCount }, (_, rowIdx) => {
-    if (rowIdx === 0) {
-      return `SELECT ${columns.map((column) => `? AS \`${column}\``).join(', ')}`;
-    }
-    return `SELECT ${columns.map(() => '?').join(', ')}`;
-  });
-
-  const quotedColumns = columns.map((column) => `\`${column}\``).join(', ');
-  const selectedColumns = columns.map((column) => `incoming.\`${column}\``).join(', ');
-
-  return `
-    INSERT INTO ${tableName} (${quotedColumns})
-    SELECT ${selectedColumns}
-    FROM (
-      ${selectStatements.join('\n      UNION ALL\n      ')}
-    ) incoming
-    WHERE NOT EXISTS (
-      SELECT 1 FROM ${tableName} existing
-      WHERE existing.\`${keyColumn}\` = incoming.\`${keyColumn}\`
-    )
-  `;
-}
-
 export class MysqlAuditAdapter implements IAuditStorageAdapter {
   private readonly id: string;
   private readonly hyperdrive: Hyperdrive;
@@ -155,164 +126,16 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
     return this.writeEventLogBatch([entry]);
   }
 
-  async writeEventLogBatch(entries: EventLogEntry[]): Promise<AuditWriteResult> {
-    if (entries.length === 0) {
-      return { success: true, entriesWritten: 0, backend: this.id, durationMs: 0 };
-    }
-
-    const startTime = Date.now();
-
-    try {
-      const client = await this.getClient();
-      const values: unknown[] = [];
-      const columns = [
-        'id',
-        'tenant_id',
-        'event_type',
-        'event_category',
-        'result',
-        'severity',
-        'error_code',
-        'error_message',
-        'anonymized_user_id',
-        'client_id',
-        'session_id',
-        'request_id',
-        'duration_ms',
-        'details_r2_key',
-        'details_json',
-        'retention_until',
-        'created_at',
-      ] as const;
-      entries.forEach((entry) => {
-        values.push(
-          entry.id,
-          entry.tenantId,
-          entry.eventType,
-          entry.eventCategory,
-          entry.result,
-          entry.severity,
-          entry.errorCode ?? null,
-          entry.errorMessage ?? null,
-          entry.anonymizedUserId ?? null,
-          entry.clientId ?? null,
-          entry.sessionId ?? null,
-          entry.requestId ?? null,
-          entry.durationMs ?? null,
-          entry.detailsR2Key ?? null,
-          entry.detailsJson ?? null,
-          entry.retentionUntil ?? null,
-          entry.createdAt
-        );
-      });
-
-      const result = await client.execute(
-        buildInsertIfNotExistsSql(
-          qualifyTable(this.schema, 'event_log'),
-          [...columns],
-          'id',
-          entries.length
-        ),
-        values
-      );
-
-      return {
-        success: true,
-        entriesWritten: result.affectedRows ?? 0,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-        errorMessage: String(error),
-      };
-    }
+  async writeEventLogBatch(_entries: EventLogEntry[]): Promise<AuditWriteResult> {
+    throw new Error('audit_primary_storage_retired_use_configured_iceberg_mode');
   }
 
   async writePIILog(entry: PIILogEntry): Promise<AuditWriteResult> {
     return this.writePIILogBatch([entry]);
   }
 
-  async writePIILogBatch(entries: PIILogEntry[]): Promise<AuditWriteResult> {
-    if (entries.length === 0) {
-      return { success: true, entriesWritten: 0, backend: this.id, durationMs: 0 };
-    }
-
-    const startTime = Date.now();
-
-    try {
-      const client = await this.getClient();
-      const values: unknown[] = [];
-      const columns = [
-        'id',
-        'tenant_id',
-        'user_id',
-        'anonymized_user_id',
-        'change_type',
-        'affected_fields',
-        'values_r2_key',
-        'values_encrypted',
-        'encryption_key_id',
-        'encryption_iv',
-        'actor_user_id',
-        'actor_type',
-        'request_id',
-        'legal_basis',
-        'consent_reference',
-        'retention_until',
-        'created_at',
-      ] as const;
-      entries.forEach((entry) => {
-        values.push(
-          entry.id,
-          entry.tenantId,
-          entry.userId,
-          entry.anonymizedUserId,
-          entry.changeType,
-          entry.affectedFields,
-          entry.valuesR2Key ?? null,
-          entry.valuesEncrypted ?? null,
-          entry.encryptionKeyId,
-          entry.encryptionIv,
-          entry.actorUserId ?? null,
-          entry.actorType,
-          entry.requestId ?? null,
-          entry.legalBasis ?? null,
-          entry.consentReference ?? null,
-          entry.retentionUntil,
-          entry.createdAt
-        );
-      });
-
-      const result = await client.execute(
-        buildInsertIfNotExistsSql(
-          qualifyTable(this.schema, 'pii_log'),
-          [...columns],
-          'id',
-          entries.length
-        ),
-        values
-      );
-
-      return {
-        success: true,
-        entriesWritten: result.affectedRows ?? 0,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-        errorMessage: String(error),
-      };
-    }
+  async writePIILogBatch(_entries: PIILogEntry[]): Promise<AuditWriteResult> {
+    throw new Error('audit_primary_storage_retired_use_configured_iceberg_mode');
   }
 
   async query(options: AuditQueryOptions): Promise<AuditQueryResult> {

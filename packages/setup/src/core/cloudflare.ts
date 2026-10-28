@@ -1,3 +1,16 @@
+import { IcebergRestCatalog, prepareScheduledTable } from '@authrim/ar-lib-logging/iceberg';
+import {
+  assertLogArchiveImplemented,
+  type LogArchiveConfig,
+  type LogArchiveLock,
+} from './log-archive-config.js';
+import {
+  LogArchiveApi,
+  preflightLogArchive,
+  provisionLogArchive,
+  prepareLogArchiveDeletion,
+  LOG_ARCHIVE_SCHEMA_DIGEST,
+} from './log-archive.js';
 /**
  * Cloudflare API Integration Module
  *
@@ -82,7 +95,10 @@ export function getRequiredQueues(env: string): Array<{ binding: string; name: s
 }
 
 export function getProvisioningResourceCount(
-  options: Pick<ProvisionOptions, 'env' | 'createD1' | 'createKV' | 'createQueues' | 'createR2'>
+  options: Pick<
+    ProvisionOptions,
+    'env' | 'createD1' | 'createKV' | 'createQueues' | 'createR2' | 'logArchive'
+  >
 ): number {
   validateEnvName(options.env);
   return (
@@ -91,7 +107,9 @@ export function getProvisioningResourceCount(
     (options.createQueues ? QUEUE_PROVISIONING_DEFINITIONS.length : 0) +
     getRequiredR2Buckets(options.env, {
       includeFeatureBuckets: options.createR2 !== false,
-    }).length
+      logArchiveBucketName: options.logArchive?.bucketName,
+    }).length +
+    (options.logArchive ? (options.logArchive.mode === 'pipeline' ? 4 : 1) : 0)
   );
 }
 const QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS = 15_000;
@@ -402,6 +420,7 @@ export interface ProvisionedResources {
   kv: KVNamespaceInfo[];
   queues: QueueInfo[];
   r2: R2BucketInfo[];
+  logArchive?: LogArchiveLock;
 }
 
 /** Options for creating a D1 database with location/jurisdiction */
@@ -420,6 +439,12 @@ export interface DatabaseProvisionConfig {
 }
 
 export interface ProvisionOptions {
+  logArchive?: LogArchiveConfig;
+  logArchiveCatalogSecrets?: { readToken: string; writeToken: string; sinkToken?: string };
+  prepareScheduledLogArchiveTable?: (catalog: {
+    catalogUri: string;
+    warehouse: string;
+  }) => Promise<void>;
   env: string;
   createD1?: boolean;
   createKV?: boolean;
@@ -556,8 +581,6 @@ export const R2_BUCKETS = [
   { binding: 'MIGRATION_RELEASES', suffix: 'migration-releases', baseline: true },
   { binding: 'PLUGIN_BUNDLES', suffix: 'plugin-bundles', baseline: false },
   { binding: 'PUBLIC_ASSETS', suffix: 'public-assets', baseline: false },
-  { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs', baseline: false },
-  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive', baseline: false },
   { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts', baseline: false },
   { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts', baseline: false },
   { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details', baseline: false },
@@ -575,19 +598,25 @@ export function getR2BucketName(env: string, binding: R2BucketBinding): string {
 
 export function getRequiredR2Buckets(
   env: string,
-  options: { includeFeatureBuckets?: boolean } = {}
+  options: { includeFeatureBuckets?: boolean; logArchiveBucketName?: string } = {}
 ): R2BucketInfo[] {
   const includeFeatureBuckets = options.includeFeatureBuckets ?? true;
-  return R2_BUCKETS.filter((bucket) => bucket.baseline || includeFeatureBuckets).map((bucket) => ({
-    binding: bucket.binding,
-    name: `${env}-${bucket.suffix}`,
-  }));
+  return [
+    ...R2_BUCKETS.filter((bucket) => bucket.baseline || includeFeatureBuckets).map((bucket) => ({
+      binding: bucket.binding,
+      name: `${env}-${bucket.suffix}`,
+    })),
+    ...(options.logArchiveBucketName
+      ? [{ binding: 'LOG_ARCHIVE', name: options.logArchiveBucketName }]
+      : []),
+  ];
 }
 
 export function buildR2BucketProvisioningStatus(
   env: string,
   recordedBuckets: Record<string, Omit<R2BucketInfo, 'binding'>> | null | undefined,
-  cloudflareBuckets: Iterable<R2BucketProviderIdentity>
+  cloudflareBuckets: Iterable<R2BucketProviderIdentity>,
+  options: { logArchiveBucketName?: string } = {}
 ): {
   env: string;
   enabled: boolean;
@@ -599,7 +628,7 @@ export function buildR2BucketProvisioningStatus(
   const liveByName = new Map(
     Array.from(cloudflareBuckets, (bucket) => [bucket.name, bucket] as const)
   );
-  const buckets = getRequiredR2Buckets(env).map((bucket) => {
+  const buckets = getRequiredR2Buckets(env, options).map((bucket) => {
     const recordedBucket = recordedBuckets?.[bucket.binding];
     const recordedName = recordedBucket?.name;
     const name = recordedName ?? bucket.name;
@@ -8805,6 +8834,7 @@ export async function provisionR2Buckets(
       }
     > | null;
     includeFeatureBuckets?: boolean;
+    logArchiveBucketName?: string;
     onProgress?: (message: string) => void;
     onResourceProvisioned?: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
     onResourceIdentified?: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
@@ -8818,6 +8848,7 @@ export async function provisionR2Buckets(
   const existing = options.existing ?? {};
   const requiredBuckets = getRequiredR2Buckets(env, {
     includeFeatureBuckets: options.includeFeatureBuckets,
+    logArchiveBucketName: options.logArchiveBucketName,
   });
   const provisioned: Array<R2BucketInfo | undefined> = new Array(requiredBuckets.length);
   const bucketsByName = new Map(
@@ -9093,6 +9124,25 @@ function sanitizeError(error: unknown): string {
 export async function provisionResources(options: ProvisionOptions): Promise<ProvisionedResources> {
   const { env, onProgress = console.log } = options;
 
+  // Reject an incomplete mode before provisioning any remote resource.
+  assertLogArchiveImplemented(options.logArchive);
+  if (options.logArchive && options.createR2 === false) throw new Error('log_archive_requires_r2');
+  if (options.logArchive?.mode === 'pipeline' && options.createQueues !== true)
+    throw new Error('log_archive_requires_durable_queues');
+  let logArchiveApi: LogArchiveApi | undefined;
+  if (options.logArchive) {
+    const accountId = await getAccountId();
+    const credential = await getCloudflareApiToken();
+    if (!accountId || !credential) throw new Error('log_archive_cloudflare_credentials_required');
+    logArchiveApi = new LogArchiveApi(accountId, credential.token);
+    await preflightLogArchive({
+      archive: options.logArchive,
+      api: logArchiveApi,
+      catalogReadToken: options.logArchiveCatalogSecrets?.readToken ?? '',
+      catalogWriteToken: options.logArchiveCatalogSecrets?.writeToken ?? '',
+      catalogSinkToken: options.logArchiveCatalogSecrets?.sinkToken,
+    });
+  }
   // Security: Validate environment name
   validateEnvName(env);
   const resources: ProvisionedResources = {
@@ -9251,6 +9301,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
       ...(await provisionR2Buckets(env, {
         onProgress,
         includeFeatureBuckets: options.createR2 !== false,
+        logArchiveBucketName: options.logArchive?.bucketName,
         onResourceProvisioned: options.onResourceProvisioned,
         onResourceIdentified: options.onResourceIdentified,
         provisioningIntentResources: options.provisioningIntentResources,
@@ -9263,6 +9314,62 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     throw new Error('Failed to provision baseline R2 migration release bucket', { cause: error });
   }
   onProgress('');
+
+  if (options.logArchive && logArchiveApi) {
+    const bucket = resources.r2.find((resource) => resource.binding === 'LOG_ARCHIVE');
+    if (!bucket) throw new Error('log_archive_owned_bucket_missing');
+    resources.logArchive = await provisionLogArchive({
+      environment: env,
+      archive: options.logArchive,
+      api: logArchiveApi,
+      onProgress,
+      catalogReadToken: options.logArchiveCatalogSecrets!.readToken,
+      catalogWriteToken: options.logArchiveCatalogSecrets!.writeToken,
+      catalogSinkToken: options.logArchiveCatalogSecrets!.sinkToken,
+      checkpoints: options.provisioningIntentResources,
+      checkpoint: async (resource) => {
+        if (resource.state === 'create_issued') await options.onResourceCreateIssued(resource);
+        else if (resource.state === 'create_rejected')
+          await options.onResourceCreateRejected(resource);
+        else if (resource.state === 'identified') await options.onResourceIdentified(resource);
+        else await options.onResourceProvisioned(resource);
+      },
+      assertBucketOwned: async () => {
+        if (!bucket.creationDate || !bucket.ownershipId || !bucket.ownershipMarkerKey)
+          throw new Error('log_archive_bucket_ownership_incomplete');
+        await assertR2OwnershipMarker({
+          bucketName: bucket.name,
+          markerKey: bucket.ownershipMarkerKey,
+          ownershipId: bucket.ownershipId,
+          environment: env,
+          binding: 'LOG_ARCHIVE',
+        });
+      },
+      loadArchiveTable: () =>
+        new IcebergRestCatalog({
+          uri: `https://catalog.cloudflarestorage.com/${logArchiveApi.accountId}/${options.logArchive!.bucketName}`,
+          warehouse: `${logArchiveApi.accountId}_${options.logArchive!.bucketName}`,
+          namespace: [options.logArchive!.namespace],
+          table: options.logArchive!.tableName,
+          bucketName: options.logArchive!.bucketName,
+          token: options.logArchiveCatalogSecrets!.readToken,
+        }).loadTable(),
+      prepareScheduledTable:
+        options.prepareScheduledLogArchiveTable ??
+        (async (catalog) => {
+          await prepareScheduledTable({
+            uri: catalog.catalogUri,
+            warehouse: catalog.warehouse,
+            namespace: [options.logArchive!.namespace],
+            table: options.logArchive!.tableName,
+            bucketName: options.logArchive!.bucketName,
+            token: options.logArchiveCatalogSecrets!.writeToken,
+            storageGeneration: options.logArchive!.storageGeneration,
+            schemaDigest: LOG_ARCHIVE_SCHEMA_DIGEST,
+          });
+        }),
+    });
+  }
 
   // Summary
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -9278,6 +9385,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
  * Convert provisioned resources to ResourceIds format for wrangler.ts
  */
 export function toResourceIds(resources: ProvisionedResources): {
+  logArchive?: LogArchiveLock;
   d1: Record<string, { id: string; name: string }>;
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
@@ -9294,6 +9402,7 @@ export function toResourceIds(resources: ProvisionedResources): {
   const result: ReturnType<typeof toResourceIds> = {
     d1: {},
     kv: {},
+    ...(resources.logArchive ? { logArchive: resources.logArchive } : {}),
   };
 
   for (const db of resources.d1) {
@@ -9343,7 +9452,7 @@ const AUTHRIM_PATTERNS = {
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
   // Keep the retired authrim-avatars suffix discoverable so environment deletion can clean up
   // buckets created by pre-consolidation installations.
-  r2: /^([a-z][a-z0-9-]*)-(migration-releases|plugin-bundles|public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
+  r2: /^([a-z][a-z0-9-]*)-(migration-releases|plugin-bundles|public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details|log-archive)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
@@ -9421,6 +9530,7 @@ export interface DeleteOptions {
   knownQueueResources?: DeletionResourceIdentity[];
   /** Exact R2 provider generation and Setup ownership marker pinned in the environment lock. */
   knownR2Resources?: DeletionR2Identity[];
+  knownLogArchiveResource?: LogArchiveLock;
   /** Exact retired Pages provider identities pinned in the environment lock. */
   knownPagesResources?: DeletionPagesIdentity[];
   /** Final Worker identities pinned in the environment lock. */
@@ -11240,9 +11350,10 @@ export async function deleteQueue(queueId: string): Promise<boolean> {
   return result.status !== 'failed';
 }
 
-const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = Object.fromEntries(
-  R2_BUCKETS.map((bucket) => [bucket.binding, bucket.suffix])
-);
+const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = Object.fromEntries([
+  ...R2_BUCKETS.map((bucket) => [bucket.binding, bucket.suffix]),
+  ['LOG_ARCHIVE', 'log-archive'],
+]);
 
 interface ObjectCatalogR2Row {
   bucket_binding?: unknown;
@@ -12205,6 +12316,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     knownKVResources = [],
     knownQueueResources = [],
     knownR2Resources = [],
+    knownLogArchiveResource,
     knownPagesResources = [],
     onWorkerIdentityBackfill,
     knownDnsOwnership,
@@ -12648,6 +12760,28 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     }
   }
 
+  let deleteLogArchiveResources: (() => Promise<void>) | undefined;
+  if (!dependentDeletionBlocked && deleteR2 && knownLogArchiveResource) {
+    try {
+      const bucket = pinnedR2.find(
+        (resource) => resource.name === knownLogArchiveResource.bucketName
+      );
+      if (!bucket || !bucket.ownershipId || !bucket.ownershipMarkerKey || !bucket.creationDate)
+        throw new Error('log_archive_deletion_bucket_ownership_missing');
+      const accountId = await getAccountId();
+      const credential = await getCloudflareApiToken();
+      if (!accountId || !credential) throw new Error('log_archive_deletion_credentials_required');
+      deleteLogArchiveResources = await prepareLogArchiveDeletion(
+        knownLogArchiveResource,
+        new LogArchiveApi(accountId, credential.token)
+      );
+    } catch (error) {
+      errors.push(`Log archive ownership preflight failed: ${sanitizeError(error)}`);
+      dependentDeletionBlocked = true;
+      dependentDeletionReason = 'resource_identity';
+    }
+  }
+
   // Prove DNS ownership before the first destructive operation. A missing lock entry, changed
   // immutable ID, or changed value must not be discovered only after Workers have been removed.
   if (!dependentDeletionBlocked && fullDeletionRequested) {
@@ -12830,6 +12964,17 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       onProgress('  ⚠️ Untracked DNS was left unchanged for manual review.');
     }
     onProgress('');
+  }
+
+  if (!dependentDeletionBlocked && deleteLogArchiveResources) {
+    try {
+      await deleteLogArchiveResources();
+      onProgress('Log archive Pipeline, Stream, Sink and Catalog resources removed.');
+    } catch (error) {
+      errors.push(`Log archive deletion failed: ${sanitizeError(error)}`);
+      dependentDeletionBlocked = true;
+      dependentDeletionReason = 'r2_delete';
+    }
   }
 
   // Delete R2 buckets before D1 so object_catalog_objects can still identify stored objects.

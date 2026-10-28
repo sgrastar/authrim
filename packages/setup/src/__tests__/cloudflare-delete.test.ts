@@ -14,9 +14,7 @@ describe('Cloudflare environment deletion helpers', () => {
     expect(getObjectCatalogR2BucketName('single', 'SENSITIVE_DETAILS')).toBe(
       'single-sensitive-details'
     );
-    expect(getObjectCatalogR2BucketName('single', 'DIAGNOSTIC_LOGS')).toBe(
-      'single-diagnostic-logs'
-    );
+    expect(getObjectCatalogR2BucketName('single', 'LOG_ARCHIVE')).toBe('single-log-archive');
     expect(getObjectCatalogR2BucketName('single', 'UNKNOWN')).toBeNull();
   });
 

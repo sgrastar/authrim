@@ -13,6 +13,11 @@ import {
   type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
+import {
+  coreLogPublicationSource,
+  prepareCoreLogPublication,
+  type CoreLogPublicationSource,
+} from '@authrim/ar-lib-core/services/log-iceberg-core-publication';
 import { tenantCoreStores } from './compliance/tenant-stores';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
 import { transitionAccountLifecycle } from './account-status';
@@ -219,7 +224,7 @@ export async function resolveLifecycleSignalAccountOwner(
 
 export function createAccountSuspensionSignalService(
   c: Context<{ Bindings: Env }>,
-  metadata: DatabaseAdapter,
+  metadata: DatabaseAdapter | undefined,
   now: () => number = Date.now
 ): AccountSuspensionSignalService {
   const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
@@ -227,10 +232,14 @@ export function createAccountSuspensionSignalService(
     | undefined;
   const actor = getAdminActorAuditMetadata(adminAuth);
   return {
-    record: (tenantId, input, requestHash, completed) =>
-      recordAccountSuspensionSignal({
+    record: (tenantId, input, requestHash, completed) => {
+      const context = getTenantMetadataContextFromHono(c);
+      if (!metadata || !context || context.tenantId !== tenantId)
+        throw new Error('lifecycle_signal_metadata_required');
+      return recordAccountSuspensionSignal({
         env: c.env,
         metadata,
+        publicationSource: coreLogPublicationSource(c.env, context.route),
         tenantId,
         input,
         requestHash,
@@ -264,12 +273,14 @@ export function createAccountSuspensionSignalService(
             },
           });
         },
-      }),
+      });
+    },
   };
 }
 
 interface RecordOptions {
   env: Env;
+  publicationSource: CoreLogPublicationSource;
   metadata: DatabaseAdapter;
   tenantId: string;
   input: SuspensionSignalInput;
@@ -292,6 +303,8 @@ interface RecordOptions {
 export async function recordAccountSuspensionSignal(options: RecordOptions) {
   const { metadata, tenantId, input, requestHash } = options;
   requireSqlite(metadata);
+  if (!options.publicationSource || options.publicationSource.tenantId !== tenantId)
+    throw new Error('lifecycle_signal_publication_source_required');
   if (!/^[a-f0-9]{64}$/u.test(requestHash)) throw new Error('lifecycle_signal_hash_invalid');
   const observedAt = options.now();
   if (!Number.isSafeInteger(observedAt) || observedAt < 1)
@@ -336,13 +349,12 @@ export async function recordAccountSuspensionSignal(options: RecordOptions) {
       subject_id: string | null;
       target_id: string;
       decision: string;
-      target_type: string;
       source_event_id: string | null;
       reason_codes_json: string | null;
       created_at: number;
     }>(
-      `SELECT account_id, subject_id, target_id, decision, target_type, source_event_id, reason_codes_json, created_at
-       FROM provisioning_revocation_events WHERE tenant_id = ? AND id = ?`,
+      `SELECT account_id, subject_id, target_id, decision, source_event_id, reason_codes_json, created_at
+       FROM provisioning_revocation_receipts WHERE tenant_id = ? AND id = ?`,
       [tenantId, event.id + ':revocation'],
       PRIMARY
     );
@@ -485,7 +497,6 @@ export async function recordAccountSuspensionSignal(options: RecordOptions) {
       row.account_id === descriptor.owner.accountId &&
       row.subject_id === descriptor.owner.subjectId &&
       row.target_id === descriptor.targetId &&
-      row.target_type === 'account' &&
       row.decision === 'suspend_account' &&
       row.source_event_id === event.id &&
       row.reason_codes_json === JSON.stringify(REASONS) &&
@@ -502,6 +513,31 @@ export async function recordAccountSuspensionSignal(options: RecordOptions) {
     return { ...result, idempotent: true as const };
   }
   if (options.completedEventId !== undefined || event.processing_state !== 'processing') conflict();
+  const publication = await prepareCoreLogPublication(options.env, metadata, {
+    tenantId,
+    source: options.publicationSource,
+    sourceDataset: 'core.provisioning_revocation_events',
+    logType: 'audit',
+    eventAt: event.observed_at,
+    expiresAt: null,
+    overview: {
+      action: 'provisioning.revocation',
+      result: 'suspend_account',
+      subject_id: descriptor.owner.subjectId ?? descriptor.owner.accountId,
+    },
+    row: {
+      id: event.id + ':revocation',
+      tenant_id: tenantId,
+      subject_id: descriptor.owner.subjectId,
+      account_id: descriptor.owner.accountId,
+      source_event_id: event.id,
+      target_type: 'account',
+      target_id: descriptor.owner.accountId,
+      decision: 'suspend_account',
+      reason_codes_json: JSON.stringify(REASONS),
+      created_at: event.observed_at,
+    },
+  });
   const owner = await options.resolveOwner();
   if (!equal(pin(owner), descriptor.owner)) conflict();
   const canonicalEvidence = async () => {
@@ -581,50 +617,68 @@ export async function recordAccountSuspensionSignal(options: RecordOptions) {
     // Refuse a changed placement before recording completion; this is not a cross-store lease.
     if (!equal(pin(await options.resolveOwner()), descriptor.owner)) conflict();
     try {
-      await metadata.batch([
-        {
-          sql: `INSERT INTO provisioning_revocation_events (
-             id, tenant_id, subject_id, account_id, source_event_id, target_type, target_id, decision, reason_codes_json, created_at
-           ) VALUES (?, ?, ?, ?, ?, 'account', ?, 'suspend_account', ?, ?) ON CONFLICT(id) DO NOTHING`,
-          params: [
-            event.id + ':revocation',
-            tenantId,
-            owner.subjectId,
-            owner.accountId,
-            event.id,
-            owner.accountId,
-            JSON.stringify(REASONS),
-            event.observed_at,
-          ],
-        },
-        {
-          sql: `UPDATE external_lifecycle_signal_events SET processing_state = 'processed', updated_at = MAX(updated_at, ?)
+      await metadata.batch(
+        publication.wrapBusinessBatch(
+          [
+            {
+              sql: `INSERT INTO provisioning_revocation_receipts (
+             id, tenant_id, subject_id, account_id, source_event_id, target_id, decision, reason_codes_json, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 'suspend_account', ?, ?) ON CONFLICT(tenant_id,id) DO NOTHING`,
+              params: [
+                event.id + ':revocation',
+                tenantId,
+                owner.subjectId,
+                owner.accountId,
+                event.id,
+                owner.accountId,
+                JSON.stringify(REASONS),
+                event.observed_at,
+              ],
+            },
+            {
+              sql: `UPDATE external_lifecycle_signal_events SET processing_state = 'processed', updated_at = MAX(updated_at, ?)
                  WHERE tenant_id = ? AND id = ? AND processing_state = 'processing'
-                   AND EXISTS (SELECT 1 FROM provisioning_revocation_events r
+                   AND EXISTS (SELECT 1 FROM provisioning_revocation_receipts r
                      WHERE r.id = ? AND r.tenant_id = ? AND r.account_id = ? AND r.source_event_id = ?
-                       AND r.target_type = 'account' AND r.target_id = ? AND r.decision = 'suspend_account'
+                       AND r.target_id = ? AND r.decision = 'suspend_account'
                        AND r.reason_codes_json = ? AND r.created_at = ? AND r.subject_id IS ?)`,
-          params: [
-            event.observed_at,
-            tenantId,
-            event.id,
-            event.id + ':revocation',
-            tenantId,
-            owner.accountId,
-            event.id,
-            owner.accountId,
-            JSON.stringify(REASONS),
-            event.observed_at,
-            owner.subjectId,
+              params: [
+                event.observed_at,
+                tenantId,
+                event.id,
+                event.id + ':revocation',
+                tenantId,
+                owner.accountId,
+                event.id,
+                owner.accountId,
+                JSON.stringify(REASONS),
+                event.observed_at,
+                owner.subjectId,
+              ],
+            },
           ],
-        },
-      ]);
+          {
+            where: `EXISTS(SELECT 1 FROM external_lifecycle_signal_events e JOIN provisioning_revocation_receipts r ON r.tenant_id=e.tenant_id AND r.source_event_id=e.id WHERE e.tenant_id=? AND e.id=? AND e.processing_state='processed' AND r.id=? AND r.account_id=? AND r.subject_id IS ? AND r.target_id=? AND r.decision='suspend_account' AND r.reason_codes_json=? AND r.created_at=?)`,
+            params: [
+              tenantId,
+              event.id,
+              event.id + ':revocation',
+              owner.accountId,
+              owner.subjectId,
+              owner.accountId,
+              JSON.stringify(REASONS),
+              event.observed_at,
+            ],
+          }
+        )
+      );
     } catch (error) {
       const committed = await readEvent();
       if (committed?.processing_state !== 'processed' || !(await matchesCompletion())) throw error;
     }
     if ((await readEvent())?.processing_state !== 'processed' || !(await matchesCompletion()))
       conflict();
+    await publication.dispatch();
     try {
       await options.audit(event.id, descriptor, 'success');
     } catch {

@@ -1,8 +1,9 @@
+import { logProducerFixture } from './log-iceberg-producer-fixture';
 import {
   resolveBackupTenantDatabaseResources,
   backupDatabaseResourceDescriptor,
 } from '../tenant-portability/database-resources';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, TransactionContext } from '../../db/adapter';
 import type {
   TenantDatabaseActivePointer,
@@ -26,6 +27,13 @@ function createD1Binding() {
     batch: vi.fn(),
   } as unknown as D1Database;
 }
+
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
+const logClose: (() => void)[] = [];
+afterEach(() => logClose.splice(0).forEach((close) => close()));
 
 function createAdminAdapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
   let notificationLookupCount = 0;
@@ -883,12 +891,15 @@ describe('tenant-database-resolver', () => {
   });
 
   it('best-effort records security events when snapshot signature verification fails', async () => {
+    const f = await logProducerFixture('scheduled');
+    logClose.push(f.close);
     const { publicJwk } = await generateEd25519Jwks();
     const adminAdapter = createAdminAdapter();
 
     await expectResolverCode(
       resolveTenantDatabaseSourceFromRegistry(
         {
+          ...f.env,
           DB_ADMIN: adminAdapter,
           TENANT_RUNTIME_REGISTRY: {
             get: vi.fn(async () => JSON.stringify(createRuntimeRegistrySnapshot())),
@@ -905,16 +916,15 @@ describe('tenant-database-resolver', () => {
       'invalid_snapshot_signature'
     );
 
-    expect(adminAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining([
-        'tenant_runtime_registry_snapshot.verification_failed',
-        'tenant_runtime_registry_snapshot',
-        'tenant:tenant-a:runtime-registry:snapshot:tenant:edge-a',
-        'failure',
-        'unsigned_snapshot',
-      ])
-    );
+    expect(await f.rows('admin.admin_audit_log')).toMatchObject([
+      {
+        action: 'tenant_runtime_registry_snapshot.verification_failed',
+        resource_type: 'tenant_runtime_registry_snapshot',
+        resource_id: 'tenant:tenant-a:runtime-registry:snapshot:tenant:edge-a',
+        result: 'failure',
+        error_code: 'unsigned_snapshot',
+      },
+    ]);
     expect(adminAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO internal_notification_events'),
       expect.arrayContaining([

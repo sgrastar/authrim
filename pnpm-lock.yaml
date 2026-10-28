@@ -7,7 +7,7 @@ settings:
 overrides:
   '@peculiar/asn1-schema': 2.9.5
   '@humanfs/node@<0.16.8': 0.16.8
-  qs: 6.16.1
+  qs: 6.17.0
   ajv@<6.14.0: 6.15.0
   brace-expansion@<5.0.12: 5.0.12
   js-yaml@>=3.0.0 <3.15.2: 3.15.2
@@ -563,7 +563,7 @@ importers:
         version: 6.2.9
       mysql2:
         specifier: ^3.23.1
-        version: 3.24.3(@types/node@20.19.30)
+        version: 3.24.3(@types/node@22.19.7)
       pg:
         specifier: ^8.16.3
         version: 8.20.0
@@ -572,8 +572,8 @@ importers:
         specifier: ^5.20260903.1
         version: 5.20260903.1
       '@types/node':
-        specifier: ^20.19.25
-        version: 20.19.30
+        specifier: ^22.10.4
+        version: 22.19.7
       '@types/pg':
         specifier: ^8.15.6
         version: 8.20.0
@@ -609,6 +609,19 @@ importers:
         version: 2.9.1
 
   packages/ar-lib-logging:
+    dependencies:
+      hyparquet:
+        specifier: 1.31.5
+        version: 1.31.5
+      hyparquet-compressors:
+        specifier: 1.1.2
+        version: 1.1.2
+      hyparquet-writer:
+        specifier: 0.17.0
+        version: 0.17.0
+      icebird:
+        specifier: 0.9.2
+        version: 0.9.2
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260903.1
@@ -875,6 +888,9 @@ importers:
       jose:
         specifier: 6.2.9
         version: 6.2.9
+      squirreling:
+        specifier: 0.16.9
+        version: 0.16.9
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -1221,6 +1237,9 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
+      '@authrim/ar-lib-logging':
+        specifier: workspace:*
+        version: link:../ar-lib-logging
       '@types/node':
         specifier: ^22.10.4
         version: 22.19.7
@@ -4634,6 +4653,9 @@ packages:
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
+  fzstd@0.1.1:
+    resolution: {integrity: sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA==}
+
   generate-function@2.3.1:
     resolution: {integrity: sha512-eeB5GfMNeevm/GRYq20ShmsaGcmI81kIX2K9XQx5miC8KdHaC6Jm0qQ8ZNeGOi7wYB8OsdxKs+Y2oVuTFuVwKQ==}
 
@@ -4766,6 +4788,26 @@ packages:
   human-signals@8.0.1:
     resolution: {integrity: sha512-eKCa6bwnJhvxj14kZk5NCPc6Hb6BdsU9DZcOnmQKSnO1VKrfV0zCvtttPZUsBvjmNDn8rpcJfpwSYnHBjc95MQ==}
     engines: {node: '>=18.18.0'}
+
+  hyparquet-compressors@1.1.2:
+    resolution: {integrity: sha512-0Hx6w0ZpVpNCefKy5xBYLTp6rKeZn/tsUzuliNzfKqSCdLcTQSfwATEoeedS703Y17k1qNS61HwRME5aOeNkPg==}
+
+  hyparquet-writer@0.17.0:
+    resolution: {integrity: sha512-GZ4QeopztjSli/Sz1dSOP/TrSKtwG2ydP2yuPMxeiZnho+PCXF7x+wx8OIVtpQn8rcv559IH1EJMHnTbv0sn+Q==}
+
+  hyparquet@1.31.5:
+    resolution: {integrity: sha512-KPVfaxW8xOiO2/4fjeiBfFNEXhGVw9tfcb9ha2iNZdJ3J/yBjEwIeAnTyyuhllFFTb9YO9wg0DfRAOnm6KCvBg==}
+
+  hysnappy@1.1.1:
+    resolution: {integrity: sha512-/V9XcN2NtRyWjR4LYMfvnvasVVF8jbT/ej0eofBQjZel91E3D813FQ3mQC6gDSMMTCq/FJh28XHeyqr3I/oBRw==}
+
+  icebird@0.9.2:
+    resolution: {integrity: sha512-CnO9NdieOF9MiO03Umswh4l9Ti0hz2jsa9KFcGB5m+IE1uGT+QprqeCQwzeWbrIgK8UkpxRBura+Y5xw+30AdQ==}
+    peerDependencies:
+      '@aws-sdk/credential-providers': ^3.0.0
+    peerDependenciesMeta:
+      '@aws-sdk/credential-providers':
+        optional: true
 
   iconv-lite@0.4.24:
     resolution: {integrity: sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==}
@@ -5869,8 +5911,8 @@ packages:
     engines: {node: '>=10.13.0'}
     hasBin: true
 
-  qs@6.16.1:
-    resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
+  qs@6.17.0:
+    resolution: {integrity: sha512-5LK5BZ2XDHMvcUJaf0CQ5HL3aVgKbpklvByC7qLSxYkfE8COEEbJg5xCHWCTqzqi0Gs4Jn5Mv5v3R38W6edscA==}
     engines: {node: '>=0.6'}
 
   quansync@1.0.0:
@@ -6146,6 +6188,9 @@ packages:
   sql-escaper@1.5.1:
     resolution: {integrity: sha512-4toX5E1fQbBrpfXidaHnF0669nkAdETeIPTs2SUjxxD7RRIs9ICG4gtpmfc68JCEKehsdwLFqBu9VlQqZ1P1gg==}
     engines: {bun: '>=1.0.0', deno: '>=2.0.0', node: '>=12.0.0'}
+
+  squirreling@0.16.9:
+    resolution: {integrity: sha512-yXGcK9mBFK/TepuwjpxcPs7rE1E9XtM9OYVX8H+VB6keRry6ME+W29rRnT0mqHxVBAdlw3ZfcI4rBe5kdMq7TA==}
 
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
@@ -9684,7 +9729,7 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.4.24
       on-finished: 2.4.1
-      qs: 6.16.1
+      qs: 6.17.0
       raw-body: 2.5.3
       type-is: 1.6.18
       unpipe: 1.0.0
@@ -9699,7 +9744,7 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.7.3
       on-finished: 2.4.1
-      qs: 6.16.1
+      qs: 6.17.0
       raw-body: 3.0.2
       type-is: 2.1.0
     transitivePeerDependencies:
@@ -10486,7 +10531,7 @@ snapshots:
       parseurl: 1.3.3
       path-to-regexp: 0.1.13
       proxy-addr: 2.0.8
-      qs: 6.16.1
+      qs: 6.17.0
       range-parser: 1.2.1
       safe-buffer: 5.2.1
       send: 0.19.0
@@ -10521,7 +10566,7 @@ snapshots:
       once: 1.4.0
       parseurl: 1.3.3
       proxy-addr: 2.0.8
-      qs: 6.16.1
+      qs: 6.17.0
       range-parser: 1.2.1
       router: 2.2.0
       send: 1.2.1
@@ -10638,6 +10683,8 @@ snapshots:
     optional: true
 
   function-bind@1.1.2: {}
+
+  fzstd@0.1.1: {}
 
   generate-function@2.3.1:
     dependencies:
@@ -10789,6 +10836,26 @@ snapshots:
     optional: true
 
   human-signals@8.0.1: {}
+
+  hyparquet-compressors@1.1.2:
+    dependencies:
+      fzstd: 0.1.1
+      hysnappy: 1.1.1
+
+  hyparquet-writer@0.17.0:
+    dependencies:
+      hyparquet: 1.31.5
+
+  hyparquet@1.31.5: {}
+
+  hysnappy@1.1.1: {}
+
+  icebird@0.9.2:
+    dependencies:
+      hyparquet: 1.31.5
+      hyparquet-compressors: 1.1.2
+      hyparquet-writer: 0.17.0
+      squirreling: 0.16.9
 
   iconv-lite@0.4.24:
     dependencies:
@@ -11616,9 +11683,9 @@ snapshots:
 
   mute-stream@2.0.0: {}
 
-  mysql2@3.24.3(@types/node@20.19.30):
+  mysql2@3.24.3(@types/node@22.19.7):
     dependencies:
-      '@types/node': 20.19.30
+      '@types/node': 22.19.7
       aws-ssl-profiles: 1.1.2
       generate-function: 2.3.1
       iconv-lite: 0.7.3
@@ -12066,7 +12133,7 @@ snapshots:
       pngjs: 5.0.0
       yargs: 15.4.1
 
-  qs@6.16.1:
+  qs@6.17.0:
     dependencies:
       es-define-property: 1.0.1
       side-channel: 1.1.1
@@ -12455,6 +12522,8 @@ snapshots:
   sprintf-js@1.0.3: {}
 
   sql-escaper@1.5.1: {}
+
+  squirreling@0.16.9: {}
 
   stackback@0.0.2: {}
 

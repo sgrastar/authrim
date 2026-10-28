@@ -1,3 +1,9 @@
+import {
+  createLogIcebergPolicySnapshotObjectStore,
+  LOG_ICEBERG_POLICY_PREFIX,
+} from '@authrim/ar-lib-core/services/log-iceberg-policy-artifacts';
+import { createLogReadAdapter, logCoverageHeaders } from '../../log-read-adapter';
+import { logQueryErrorResponse } from '../../log-archive-query';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
@@ -7122,8 +7128,8 @@ loggingPoliciesRouter.get('/runtime/topology', async (c) => {
           db_pii: Boolean(c.env.DB_PII),
           logging_index_db: Boolean(c.env.LOGGING_INDEX_DB),
           authrim_config: Boolean(c.env.AUTHRIM_CONFIG),
-          diagnostic_logs: Boolean(c.env.DIAGNOSTIC_LOGS),
-          audit_archive: Boolean(c.env.AUDIT_ARCHIVE),
+          log_archive: Boolean(c.env.LOG_ARCHIVE),
+          log_archive_mode: c.env.AUTHRIM_LOG_ARCHIVE_MODE ?? null,
           sensitive_details: Boolean(c.env.SENSITIVE_DETAILS),
           logging_delivery_critical_queue: Boolean(c.env.LOGGING_DELIVERY_CRITICAL_QUEUE),
           logging_delivery_queue: Boolean(c.env.LOGGING_DELIVERY_QUEUE),
@@ -7176,7 +7182,11 @@ loggingPoliciesRouter.get('/runtime/verify', async (c) => {
   }
 
   try {
-    const pointerKey = buildRuntimeLoggingPolicySnapshotPointerKey({ scopeType, scopeId });
+    const pointerKey = buildRuntimeLoggingPolicySnapshotPointerKey({
+      scopeType,
+      scopeId,
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
+    });
     const pointerJson = c.env.AUTHRIM_CONFIG ? await c.env.AUTHRIM_CONFIG.get(pointerKey) : null;
     const parseJsonObjectOrNull = (value: string | null): Record<string, unknown> | null => {
       if (!value) {
@@ -7201,10 +7211,10 @@ loggingPoliciesRouter.get('/runtime/verify', async (c) => {
           ? await c.env.AUTHRIM_CONFIG.get(objectRef.slice('kv://'.length))
           : null;
         objectStatus = snapshotJson ? 'readable' : 'missing';
-      } else if (c.env.DIAGNOSTIC_LOGS?.get) {
-        const object = await c.env.DIAGNOSTIC_LOGS.get(objectRef);
+      } else if (c.env.LOG_ARCHIVE) {
+        const object = await createLogIcebergPolicySnapshotObjectStore(c.env).get!(objectRef);
         if (object) {
-          snapshotJson = await readR2ObjectTextWithLimit(object, 1024 * 1024).catch(() => null);
+          snapshotJson = await object.text();
           objectStatus = snapshotJson ? 'readable' : 'unreadable';
         } else {
           objectStatus = 'missing';
@@ -11037,10 +11047,12 @@ loggingPoliciesRouter.post('/drafts/:id/publish', async (c) => {
       ReturnType<typeof createRuntimeLoggingPolicySnapshot>
     >;
     const now = snapshot.synchronizedAt;
+    if (!c.env.LOG_ARCHIVE) throw new Error('logging_policy_store_unavailable');
     const publication = await publishRuntimeLoggingPolicySnapshot({
       snapshot,
       kv: c.env.AUTHRIM_CONFIG,
-      objectStore: c.env.DIAGNOSTIC_LOGS,
+      objectStore: c.env.LOG_ARCHIVE,
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
       now,
     });
 
@@ -11110,10 +11122,12 @@ loggingPoliciesRouter.post('/snapshots', async (c) => {
       parsed.value
     );
     const now = snapshot.synchronizedAt;
+    if (!c.env.LOG_ARCHIVE) throw new Error('logging_policy_store_unavailable');
     const publication = await publishRuntimeLoggingPolicySnapshot({
       snapshot,
       kv: c.env.AUTHRIM_CONFIG,
-      objectStore: c.env.DIAGNOSTIC_LOGS,
+      objectStore: c.env.LOG_ARCHIVE,
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
       now,
     });
 
@@ -12697,7 +12711,14 @@ adminLoggingRouter.get('/', async (c) => {
 
   try {
     const adapter = getAdminAdapter(c);
-    const auditSummary = await adapter.queryOne<Record<string, unknown>>(
+    const read = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'admin.admin_audit_log',
+      window: { fromMs: from },
+      onCoverage: logCoverageHeaders(c),
+    });
+    const auditSummary = await read.adapter.queryOne<Record<string, unknown>>(
       `SELECT
          COUNT(*) AS total,
          SUM(CASE WHEN result = 'failure' THEN 1 ELSE 0 END) AS failures,
@@ -12706,17 +12727,12 @@ adminLoggingRouter.get('/', async (c) => {
        WHERE tenant_id = ? AND created_at >= ?`,
       [tenantId, from]
     );
-    const archiveSummary = await adapter.query<Record<string, unknown>>(
-      `SELECT log_type, plane, status, COUNT(*) AS chunks, SUM(record_count) AS records
-       FROM log_object_catalog
-       WHERE created_at >= ? AND (
-         log_type IN ('admin_audit', 'audit')
-         OR plane = 'sensitive_detail'
-       )
-       GROUP BY log_type, plane, status
-       ORDER BY log_type ASC, plane ASC, status ASC`,
-      [from]
-    );
+    // Archive membership comes from the current Catalog snapshot, never the former JSON catalog.
+    const archiveSummary = {
+      format: 'iceberg',
+      has_archive: read.hasArchive(),
+      coverage: read.coverage(),
+    };
     const deliverySummary = await adapter.query<Record<string, unknown>>(
       `SELECT lane, status, SUM(batch_count) AS total
        FROM logging_delivery_event_aggregates
@@ -12725,11 +12741,11 @@ adminLoggingRouter.get('/', async (c) => {
        ORDER BY lane ASC, status ASC`,
       [from]
     );
-    const recentChanges = await adapter.query<Record<string, unknown>>(
+    const recentChanges = await read.adapter.query<Record<string, unknown>>(
       `SELECT id AS audit_id, admin_user_id AS actor_id, action, resource_type, resource_id,
               severity, created_at
        FROM admin_audit_log
-       WHERE created_at >= ?
+       WHERE tenant_id = ? AND created_at >= ?
          AND (
            severity = 'critical'
            OR action LIKE 'admin_logging.%'
@@ -12738,7 +12754,7 @@ adminLoggingRouter.get('/', async (c) => {
          )
        ORDER BY created_at DESC
        LIMIT 20`,
-      [from]
+      [tenantId, from]
     );
     const criticalPolicy = await loadAdminLoggingCriticalPolicy(c);
     const sensitiveDetailPolicy = await loadSensitiveDetailPolicy(c);
@@ -12750,13 +12766,19 @@ adminLoggingRouter.get('/', async (c) => {
         coverage: summarizeAdminAuditCoverage(LOGGING_ADMIN_AUDIT_COVERAGE_REGISTRY),
         critical_protection: criticalPolicy.summary,
         sensitive_detail: sensitiveDetailPolicy.summary,
-        audit: auditSummary ?? { total: 0, failures: 0, critical: 0 },
+        audit: {
+          total: Number(auditSummary?.total ?? 0),
+          failures: Number(auditSummary?.failures ?? 0),
+          critical: Number(auditSummary?.critical ?? 0),
+        },
         recent_changes: recentChanges,
         archive: archiveSummary,
         delivery: deliverySummary,
       })
     );
-  } catch {
+  } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

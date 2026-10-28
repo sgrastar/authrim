@@ -262,6 +262,7 @@ export interface DiagnosticLogQueryOptions {
  * Diagnostic log query result
  */
 export interface DiagnosticLogQueryResult {
+  consistency?: 'eventual' | 'snapshot' | 'local_hot_only';
   /** Log entries */
   entries: DiagnosticLogEntry[];
 

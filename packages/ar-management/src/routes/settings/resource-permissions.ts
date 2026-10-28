@@ -16,6 +16,7 @@ import {
   createPermissionChangeNotifier,
   createPermissionChangeEvent,
   getLogger,
+  type Env,
   type ResourcePermission,
   type ResourcePermissionRow,
   type ResourcePermissionInput,
@@ -167,10 +168,11 @@ export async function createResourcePermission(c: Context) {
 
     // Phase 8.3: Publish permission change event
     try {
+      const env = c.env as Env;
       const notifier = createPermissionChangeNotifier({
-        db: coreAdapter,
-        cache: c.env.REBAC_CACHE,
-        permissionChangeHub: c.env.PERMISSION_CHANGE_HUB,
+        env,
+        cache: env.REBAC_CACHE,
+        permissionChangeHub: env.PERMISSION_CHANGE_HUB,
       });
       await notifier.publish(
         createPermissionChangeEvent('grant', tenantId, body.subject_id, {
@@ -321,10 +323,11 @@ export async function deleteResourcePermission(c: Context) {
 
     // Phase 8.3: Publish permission change event
     try {
+      const env = c.env as Env;
       const notifier = createPermissionChangeNotifier({
-        db: coreAdapter,
-        cache: c.env.REBAC_CACHE,
-        permissionChangeHub: c.env.PERMISSION_CHANGE_HUB,
+        env,
+        cache: env.REBAC_CACHE,
+        permissionChangeHub: env.PERMISSION_CHANGE_HUB,
       });
       const actions = JSON.parse(existing.actions_json) as string[];
       await notifier.publish(

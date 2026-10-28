@@ -1,11 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Hono } from 'hono';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  icebergSnapshotFixture,
+  logProducerFixture,
+} from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { DatabaseSync, type SQLiteDatabase } from './test-sqlite';
 import { insertTenant, openCoreDatabase } from './helpers/core-database';
 import { d1OverSqlite } from './helpers/d1-over-sqlite';
+import {
+  createLogIcebergReadPort,
+  type LogIcebergReadScope,
+} from '@authrim/ar-lib-core/services/log-iceberg-read';
 
 /**
  * The workflows that keep admin jobs for the scheduled admin job run (tenant lifecycle validation,
@@ -47,6 +55,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
+// Real encrypted staging and a verified empty Catalog replace remote Cloudflare transport.
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-read', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core/services/log-iceberg-read')>()),
+  readLogIcebergDataset: (_env: Env, input: LogIcebergReadScope) => auditReader.readDataset(input),
+}));
+
 vi.mock('../admin-tenant-access', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../admin-tenant-access')>()),
   requirePlatformTenantManagementAuthority: vi.fn(async () => null),
@@ -82,6 +96,9 @@ function openAdminDatabase(): SQLiteDatabase {
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
+  db.exec(
+    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/053_log_iceberg_storage.sql'), 'utf8')
+  );
   return db;
 }
 
@@ -99,9 +116,23 @@ let inventory: SQLiteDatabase;
 let core: SQLiteDatabase;
 let admin: SQLiteDatabase;
 let env: Env;
+let logging: Awaited<ReturnType<typeof logProducerFixture>>;
+let snapshot: Awaited<ReturnType<typeof icebergSnapshotFixture>>;
+let auditReader: ReturnType<typeof createLogIcebergReadPort>;
+afterEach(() => {
+  logging?.close();
+  snapshot?.db.close();
+  inventory.close();
+  core.close();
+  admin.close();
+});
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  logging = await logProducerFixture('scheduled');
+  snapshot = await icebergSnapshotFixture();
+  logging.config.physicalFingerprint = snapshot.config.physicalFingerprint;
+  logging.env.AUTHRIM_LOG_ARCHIVE_PHYSICAL_FINGERPRINT = snapshot.config.physicalFingerprint;
   mocks.beforeTenantResolve = null;
   // The tenant inventory, where lifecycle commands and deletion move tenants.
   inventory = openCoreDatabase();
@@ -121,7 +152,17 @@ beforeEach(() => {
   admin = openAdminDatabase();
   mocks.coreSource = d1OverSqlite(core);
   mocks.core = ensureDatabaseAdapter(mocks.coreSource, 'test-core');
-  env = { DB: d1OverSqlite(inventory), DB_ADMIN: d1OverSqlite(admin) } as unknown as Env;
+  env = {
+    ...logging.env,
+    DB: d1OverSqlite(inventory),
+    DB_ADMIN: d1OverSqlite(admin),
+  } as unknown as Env;
+  auditReader = createLogIcebergReadPort(env, logging.config, {
+    admin: ensureDatabaseAdapter(env.DB_ADMIN),
+    catalog: snapshot.catalog,
+    store: () => snapshot.store,
+    tenantKey: (tenantId) => logging.env.LOG_ARCHIVE_WRITER!.resolveTenantKey(tenantId),
+  });
 });
 
 describe('tenant lifecycle validation', () => {
@@ -194,8 +235,22 @@ describe('tenant lifecycle validation', () => {
 
     await processPendingGenericAdminJobs(env, logger);
 
-    expect(jobsIn(admin)[0]?.status).toBe('completed');
+    expect(
+      jobsIn(admin)[0]?.status,
+      logger.error.mock.calls
+        .map((call) =>
+          call.map((value) => (value instanceof Error ? value.message : String(value))).join(':')
+        )
+        .join(';')
+    ).toBe('completed');
     expect(tenantRow().lifecycle_state).toBe('active');
+    expect(admin.prepare('SELECT count(*) n FROM admin_audit_receipts').get()).toMatchObject({
+      n: 1,
+    });
+    expect(admin.prepare('SELECT count(*) n FROM log_iceberg_records').get()).toMatchObject({
+      n: 1,
+    });
+    expect(admin.prepare('SELECT count(*) n FROM admin_audit_log').get()).toMatchObject({ n: 0 });
   });
 
   it('moves the tenant back when its job cannot be kept, so the request can be sent again', async () => {
@@ -274,7 +329,14 @@ describe('tenant lifecycle validation', () => {
     ]);
 
     await processPendingGenericAdminJobs(env, logger);
-    expect(jobsIn(admin)[0]?.status).toBe('completed');
+    expect(
+      jobsIn(admin)[0]?.status,
+      logger.error.mock.calls
+        .map((call) =>
+          call.map((value) => (value instanceof Error ? value.message : String(value))).join(':')
+        )
+        .join(';')
+    ).toBe('completed');
     expect(tenantRow().lifecycle_state).toBe('active');
 
     const after = await app.request('/api/admin/tenants/tenant-a/lifecycle/jobs', {}, env);

@@ -7,8 +7,38 @@
  * - Client management (CRUD operations)
  */
 
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
+const logReadRows = vi.hoisted(() => [] as Array<Record<string, string | number | null>>);
+const logReadError = vi.hoisted(() => ({ current: null as Error | null }));
+const readNewLogs = vi.hoisted(() => vi.fn());
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-read', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core/services/log-iceberg-read')>()),
+  readLogIcebergDataset: readNewLogs,
+}));
+const piiLogFailure = vi.hoisted(() => ({ next: false }));
+const piiLogRows = vi.hoisted(() => [] as Array<import('@authrim/ar-lib-core').PIIAuditLog>);
+vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original) => ({
+  ...(await original<typeof import('../../../ar-lib-core/dist/repositories/pii/audit-log')>()),
+  writePiiAccessAuditRows: async (
+    _env: unknown,
+    _tenantId: string,
+    rows: import('@authrim/ar-lib-core').PIIAuditLog[]
+  ) => {
+    if (piiLogFailure.next) {
+      piiLogFailure.next = false;
+      throw new Error('new log storage unavailable');
+    }
+    piiLogRows.push(...structuredClone(rows));
+  },
+}));
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
+let newLogFixture: Awaited<ReturnType<typeof logProducerFixture>>;
+const auditBackgroundWork: Promise<unknown>[] = [];
 import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { openAdminDatabase, sqliteAdapter } from './helpers/admin-authority-fixture';
 import { installGroupBoundaryFixture } from './helpers/group-boundary-fixture';
@@ -115,21 +145,15 @@ function boundParamsFor(db: any, fragment: string): unknown[] | undefined {
   return bindIndex < 0 ? undefined : (bind.calls[bindIndex] as unknown[]);
 }
 
-/** Every PII read record written to `db` (after the response's waitUntil work has run). */
-async function piiAccessRecords(c: any, db: any) {
+/** Every PII read record sent to the new audit port after response work runs. */
+async function piiAccessRecords(c: any, _db: any) {
   await Promise.all(
     c.executionCtx.waitUntil.mock.calls.map(([promise]: [Promise<unknown>]) => promise)
   );
-  const records: Array<{ params: unknown[]; details: Record<string, unknown> }> = [];
-  const bind = db._mockStatement.bind.mock;
-  (db.prepare.mock.calls as [string][]).forEach(([sql], index) => {
-    if (!sql.includes('INSERT INTO audit_log_pii')) return;
-    const preparedAt = db.prepare.mock.invocationCallOrder[index] as number;
-    const bindIndex = (bind.invocationCallOrder as number[]).findIndex((at) => at > preparedAt);
-    const params = bind.calls[bindIndex] as unknown[];
-    records.push({ params, details: JSON.parse(params[5] as string) });
-  });
-  return records;
+  return piiLogRows.map((row) => ({
+    row,
+    details: JSON.parse(row.details ?? 'null') as Record<string, unknown>,
+  }));
 }
 
 /** The email index a tombstone of `email` must carry (the deletion's own computation). */
@@ -885,6 +909,7 @@ function createMockContext(options: {
       header: vi.fn((name: string) => normalizedHeaders.get(name.toLowerCase())),
     },
     env: {
+      ...newLogFixture.env,
       DB: mockDB,
       DB_ADMIN: mockDB,
       DB_PII: mockDBPII, // Added for PII/Non-PII DB separation
@@ -911,7 +936,7 @@ function createMockContext(options: {
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
     executionCtx: {
-      waitUntil: vi.fn(),
+      waitUntil: vi.fn((promise: Promise<unknown>) => auditBackgroundWork.push(promise)),
     },
     _mockDB: mockDB,
     _mockDBPII: mockDBPII, // For test assertions
@@ -1168,7 +1193,27 @@ function createCustomClaimSchemaRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Admin API Handlers', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    newLogFixture = await logProducerFixture('scheduled', {
+      separateAdmin: true,
+      tenantId: 'default',
+    });
+    logReadRows.length = 0;
+    logReadError.current = null;
+    readNewLogs.mockImplementation(async (_env, scope) => {
+      if (logReadError.current) throw logReadError.current;
+      return {
+        rows: logReadRows.filter(
+          (row) => row.tenant_id === scope.tenantId && (!scope.eventId || row.id === scope.eventId)
+        ),
+        hasArchive: true,
+        consistency: 'snapshot',
+        pendingDeliveries: 0,
+      };
+    });
+    piiLogRows.length = 0;
+    piiLogFailure.next = false;
+
     vi.clearAllMocks();
     mockPostgresAdapterFactory.mockReset();
     canonicalRuntimeUsers.clear();
@@ -1245,7 +1290,9 @@ describe('Admin API Handlers', () => {
     }));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.allSettled(auditBackgroundWork.splice(0));
+    newLogFixture.close();
     vi.restoreAllMocks();
     for (const database of mappingUpdateDatabases.splice(0)) database.close();
     for (const database of groupBoundaryDatabases.splice(0)) database.close();
@@ -1702,7 +1749,7 @@ describe('Admin API Handlers', () => {
     });
   });
 
-  describe('archive-only audit hot query guard', () => {
+  describe('new Iceberg audit read boundary', () => {
     it('resolves the account data shard before filtering audit logs by user', async () => {
       const userId = '_WdnkLInMNDz8yJNZUlzA';
       const coreDb = createSqlAwareMockDB((sql, params, op) => {
@@ -1745,6 +1792,17 @@ describe('Admin API Handlers', () => {
         dbPII: piiDb,
       });
 
+      logReadRows.push({
+        id: 'event-1',
+        tenant_id: 'default',
+        anonymized_user_id: 'anon-user-1',
+        event_type: 'user.login',
+        event_category: 'auth',
+        result: 'success',
+        severity: 'info',
+        created_at: Date.now(),
+        details_json: '{}',
+      });
       const response = await adminAuditLogListHandler(c);
 
       expect(response.status).toBe(200);
@@ -1754,7 +1812,7 @@ describe('Admin API Handlers', () => {
       });
     });
 
-    it('rejects the legacy DIAGNOSTIC_LOGS archive list configuration', async () => {
+    it('does not read old JSON archive objects when the new dataset is empty', async () => {
       const archiveBucket = createMockR2Bucket([
         {
           key: 'audit/event/default/2026-04-30/evt-1.json',
@@ -1783,10 +1841,10 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminAuditLogListHandler(c);
-      expect(response.status).toBe(501);
+      expect(response.status).toBe(200);
     });
 
-    it('rejects the legacy DIAGNOSTIC_LOGS archive detail configuration', async () => {
+    it('does not find a detail that exists only in old JSON archive objects', async () => {
       const archiveBucket = createMockR2Bucket([
         {
           key: 'audit/event/default/2026-04-30/evt-1.json',
@@ -1816,10 +1874,10 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminAuditLogGetHandler(c);
-      expect(response.status).toBe(501);
+      expect(response.status).toBe(404);
     });
 
-    it('returns an empty audit log list when the hot audit table is not initialized', async () => {
+    it('does not query old hot tables when the new dataset is empty', async () => {
       const mockDB = createSqlAwareMockDB((sql) => {
         if (sql.includes('FROM event_log')) {
           throw new Error('no such table: event_log');
@@ -1832,14 +1890,13 @@ describe('Admin API Handlers', () => {
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
         entries: unknown[];
-        pagination: { total: number; totalPages: number };
+        pagination: { mode: string; has_more: boolean; next_cursor: string | null };
       };
       expect(body.entries).toEqual([]);
-      expect(body.pagination.total).toBe(0);
-      expect(body.pagination.totalPages).toBe(0);
+      expect(body.pagination).toMatchObject({ mode: 'cursor', has_more: false, next_cursor: null });
     });
 
-    it('returns pending_runtime_support for non-D1 primary audit profiles', async () => {
+    it('uses the new dataset regardless of the former primary profile', async () => {
       const c = createMockContext({
         envOverrides: {
           DEFAULT_AUDIT_PROFILE_ID: 'custom:audit:postgres-primary',
@@ -1847,15 +1904,12 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminAuditLogListHandler(c);
-      expect(response.status).toBe(501);
-      const body = (await response.json()) as {
-        error: string;
-        profile_id: string;
-        hot_query_status: string;
-      };
-      expect(body.error).toBe('not_supported');
-      expect(body.profile_id).toBe('custom:audit:postgres-primary');
-      expect(body.hot_query_status).toBe('pending_runtime_support');
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ entries: [] });
+      expect(readNewLogs).toHaveBeenCalledWith(
+        c.env,
+        expect.objectContaining({ tenantId: 'default', sourceDataset: 'core.event_log' })
+      );
     });
   });
 
@@ -1907,6 +1961,21 @@ describe('Admin API Handlers', () => {
         dbPII: mockDB,
       });
 
+      logReadRows.push({
+        id: 'audit-1',
+        tenant_id: 'default',
+        anonymized_user_id: 'anon-user-1',
+        event_type: 'auth.login',
+        event_category: 'auth',
+        result: 'success',
+        severity: 'info',
+        created_at: 1710000000000,
+        details_json: JSON.stringify({
+          method: 'passkey',
+          ip_address: '127.0.0.1',
+          user_agent: 'Vitest',
+        }),
+      });
       const response = await adminUserActivityLogHandler(c);
       expect(response.status).toBe(200);
       expect(resolveAccountDataContext).toHaveBeenCalledWith(c, 'user-1');
@@ -2015,7 +2084,7 @@ describe('Admin API Handlers', () => {
       }
     );
 
-    it('records, in the PII store each user came from, who was shown which personal fields', async () => {
+    it('records who was shown which personal fields without writing the origin PII store', async () => {
       const userId = 'user-read-record';
       canonicalRuntimeUsers.set(userId, {
         id: userId,
@@ -2066,7 +2135,12 @@ describe('Admin API Handlers', () => {
       const records = await piiAccessRecords(c, pii);
       expect(records).toHaveLength(1);
       // id, tenant_id, user_id (actor), action, target_user_id, details, created_at
-      expect(records[0].params.slice(1, 5)).toEqual(['default', 'admin-7', 'pii_accessed', userId]);
+      expect(records[0].row).toMatchObject({
+        tenant_id: 'default',
+        user_id: 'admin-7',
+        action: 'pii_accessed',
+        target_user_id: userId,
+      });
       expect(records[0].details).toEqual({
         fields: ['email', 'name'],
         operation: 'admin.users.list',
@@ -2074,8 +2148,8 @@ describe('Admin API Handlers', () => {
         actor_type: 'human',
       });
       // Never a value.
-      expect(JSON.stringify(records[0].params)).not.toContain('read-me@example.com');
-      expect(JSON.stringify(records[0].params)).not.toContain('Read Me');
+      expect(JSON.stringify(records[0].row)).not.toContain('read-me@example.com');
+      expect(JSON.stringify(records[0].row)).not.toContain('Read Me');
     });
 
     it('still answers when the read record cannot be written', async () => {
@@ -2110,7 +2184,7 @@ describe('Admin API Handlers', () => {
       });
       const core = createMockDB({ allResults: [] });
       const pii = createMockDB({ allResults: [] });
-      (pii as any).batch.mockRejectedValue(new Error('d1_unavailable'));
+      piiLogFailure.next = true;
       const c = createMockContext({
         db: core,
         dbPII: pii,
@@ -2124,8 +2198,8 @@ describe('Admin API Handlers', () => {
       const response = await adminUsersListHandler(c);
 
       expect(response.status).toBe(200);
-      await expect(piiAccessRecords(c, pii)).resolves.toHaveLength(1);
-      expect((pii as any).batch).toHaveBeenCalled();
+      await expect(piiAccessRecords(c, pii)).resolves.toHaveLength(0);
+      expect((pii as any).batch).not.toHaveBeenCalled();
     });
 
     it('uses exact routed search for shared-pool metadata without runtime sources', async () => {
@@ -2667,10 +2741,15 @@ describe('Admin API Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({ user: expect.objectContaining({ id: userId }) })
       );
-      // The read is recorded in the account's own PII store.
+      // The read is recorded through the new log writer, with no PII-store INSERT.
       const records = await piiAccessRecords(c, routedPii);
       expect(records).toHaveLength(1);
-      expect(records[0].params.slice(1, 5)).toEqual(['default', 'admin-8', 'pii_accessed', userId]);
+      expect(records[0].row).toMatchObject({
+        tenant_id: 'default',
+        user_id: 'admin-8',
+        action: 'pii_accessed',
+        target_user_id: userId,
+      });
       expect(records[0].details).toMatchObject({
         fields: ['email'],
         operation: 'admin.users.get',

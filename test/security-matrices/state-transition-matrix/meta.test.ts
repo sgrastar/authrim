@@ -258,7 +258,8 @@ export const IND_QL_VALUES: Record<string, readonly Scalar[]> = {
   tenant: ['matching', 'foreign'],
   dlqArchive: ['success', 'missing', 'throws'],
   payloadFamily: [
-    'chunk-write',
+    'iceberg-ingest',
+    'legacy-chunk-write',
     'delivery-fanout',
     'http-sink-batch',
     'dlq-replay',
@@ -555,26 +556,28 @@ export function independentCtExtra(row: Row): boolean {
 export function independentQaLegal(row: Row): boolean {
   const batchComposition = String(row.batchComposition);
   const attempt = String(row.attempt);
-  const delivery = String(row.delivery);
   const bindingState = String(row.bindingState);
   const dlqArchive = String(row.dlqArchive);
   const payloadFamily = String(row.payloadFamily);
 
   // attempts are only observable on the fanout path.
   if (attempt !== 'first' && payloadFamily !== 'fanout') return false;
-  // Only fanout touches the archive bucket.
+  // The fanout family covers encrypted HTTP retry-payload bucket faults.
   if (payloadFamily !== 'fanout' && dlqArchive !== 'success') return false;
   if (batchComposition === 'all-success') {
-    if (payloadFamily === 'unknown-audit' || bindingState !== 'present') return false;
+    if (payloadFamily === 'unknown-audit' || bindingState !== 'present' || dlqArchive !== 'success')
+      return false;
     if (payloadFamily === 'fanout' && dlqArchive !== 'success') return false;
   }
   if (batchComposition === 'all-fail') {
-    if (payloadFamily !== 'unknown-audit' && bindingState === 'present') return false;
+    if (payloadFamily !== 'unknown-audit' && bindingState === 'present' && dlqArchive === 'success')
+      return false;
     if (payloadFamily === 'fanout' && bindingState === 'present' && dlqArchive === 'success')
       return false;
   }
   if (batchComposition === 'mixed') {
-    if (payloadFamily === 'unknown-audit' || bindingState !== 'present') return false;
+    if (payloadFamily === 'unknown-audit' || bindingState !== 'present' || dlqArchive !== 'success')
+      return false;
   }
   return true;
 }
@@ -585,31 +588,23 @@ export function independentQaLegal(row: Row): boolean {
  * require a throwing binding or a throwing archive bucket.
  */
 export function independentQdLegal(row: Row): boolean {
-  const batchComposition = String(row.batchComposition);
-  const attempt = String(row.attempt);
-  const bindingState = String(row.bindingState);
-  const dlqArchive = String(row.dlqArchive);
-  if (batchComposition === 'mixed') return false;
-  if (attempt !== 'first' && bindingState !== 'present') return false;
-  if (batchComposition === 'all-fail') {
-    if (bindingState !== 'throws' && dlqArchive !== 'throws') return false;
-  }
-  return true;
+  if (row.attempt !== 'first' && row.bindingState !== 'present') return false;
+  const canArchive = row.bindingState === 'present' && row.dlqArchive === 'success';
+  return canArchive ? row.batchComposition === 'all-success' : row.batchComposition === 'all-fail';
 }
 
 /**
  * Q-L legality: logging-delivery consumer. Mixed batches only contain a future-schema
- * message plus a malformed one (healthy binding and archive); only the chunk-write
- * payload can succeed for a supported schema; schema versions are tied to the payload
+ * message plus a malformed one (healthy binding and encrypted payload bucket); only
+ * Iceberg ingestion succeeds for a supported schema; schema versions are tied to the payload
  * family; attempts are observable only through recorded attempt_count values
- * (chunk-write aggregates, future-schema DLQ save, fanout/sink delivery events); the
+ * (future-schema DLQ save and fanout/sink delivery events); the
  * fallback lane requires a missing binding and an all-fail batch.
  */
 export function independentQlLegal(row: Row): boolean {
   const batchComposition = String(row.batchComposition);
   const attempt = String(row.attempt);
   const schema = String(row.schema);
-  const delivery = String(row.delivery);
   const lane = String(row.lane);
   const bindingState = String(row.bindingState);
   const dlqArchive = String(row.dlqArchive);
@@ -622,16 +617,16 @@ export function independentQlLegal(row: Row): boolean {
   // attempts are observable only through recorded attempt_count values.
   if (
     attempt !== 'first' &&
-    !['chunk-write', 'future-schema', 'delivery-fanout', 'http-sink-batch'].includes(payloadFamily)
+    !['future-schema', 'delivery-fanout', 'http-sink-batch'].includes(payloadFamily)
   ) {
     return false;
   }
-  // Only the chunk-write payload succeeds for a supported schema in this environment;
+  // Only Iceberg ingestion succeeds for a supported schema in this environment;
   // the other supported families require real external destinations.
-  if (schema === 'supported' && bindingState === 'present' && payloadFamily !== 'chunk-write') {
+  if (schema === 'supported' && bindingState === 'present' && payloadFamily !== 'iceberg-ingest') {
     return false;
   }
-  if (batchComposition === 'all-success' && payloadFamily === 'chunk-write') {
+  if (batchComposition === 'all-success' && payloadFamily === 'iceberg-ingest') {
     if (bindingState !== 'present' || dlqArchive !== 'success') return false;
   }
   if (batchComposition === 'all-success' && payloadFamily === 'future-schema') {
@@ -639,13 +634,22 @@ export function independentQlLegal(row: Row): boolean {
   }
   if (batchComposition === 'all-success' && schema === 'malformed') return false;
   if (batchComposition === 'all-fail') {
-    const sinkLike = ['delivery-fanout', 'http-sink-batch', 'dlq-replay', 'rewrap-chunk'].includes(
-      payloadFamily
-    );
-    if (!(schema === 'malformed' || bindingState !== 'present' || sinkLike)) return false;
+    const sinkLike = [
+      'legacy-chunk-write',
+      'delivery-fanout',
+      'http-sink-batch',
+      'dlq-replay',
+      'rewrap-chunk',
+    ].includes(payloadFamily);
+    const unavailablePayload =
+      dlqArchive !== 'success' &&
+      (payloadFamily === 'iceberg-ingest' || payloadFamily === 'future-schema');
+    if (!(schema === 'malformed' || bindingState !== 'present' || sinkLike || unavailablePayload))
+      return false;
   }
   if ((payloadFamily === 'future-schema') !== (schema === 'future')) return false;
   if ((payloadFamily === 'malformed') !== (schema === 'malformed')) return false;
+  if (payloadFamily === 'iceberg-ingest' && lane !== 'default') return false;
   if (lane === 'fallback' && bindingState !== 'missing') return false;
   if (lane === 'fallback' && batchComposition !== 'all-fail') return false;
   if (
@@ -726,9 +730,9 @@ const EXPECTED_DS_PAIR_COUNT = 101;
 const EXPECTED_DT_PAIR_COUNT = 326;
 const EXPECTED_CS_PAIR_COUNT = 311;
 const EXPECTED_CT_PAIR_COUNT = 488;
-const EXPECTED_QA_PAIR_COUNT = 150;
-const EXPECTED_QD_PAIR_COUNT = 119;
-const EXPECTED_QL_PAIR_COUNT = 347;
+const EXPECTED_QA_PAIR_COUNT = 148;
+const EXPECTED_QD_PAIR_COUNT = 115;
+const EXPECTED_QL_PAIR_COUNT = 359;
 
 interface MatrixSpec {
   name: string;
@@ -1012,7 +1016,8 @@ describe('state-transition coverage (independent checker)', () => {
       });
       // The R matrix appends three dedicated rows that the greedy covering array never
       // selects but that are required to reach the theft/scope production edges.
-      const appended = spec.name === 'R' ? 3 : spec.name === 'Q-L' ? 1 : 0;
+      // Q-L adds the unsupported-schema success edge and four healthy-DB R2 fault witnesses.
+      const appended = spec.name === 'R' ? 3 : spec.name === 'Q-L' ? 5 : 0;
       expect(caseTableFor(spec.name).length, `${spec.name} case count`).toBe(
         regenerated.length + appended
       );
@@ -1162,9 +1167,13 @@ describe('state-transition coverage (independent checker)', () => {
     {
       matrix: 'Q-A',
       dimension: 'tenant',
-      effect: 'tenantId body + event_log param / derived R2 key',
+      effect: 'tenantId body + opaque derived HTTP payload key',
     },
-    { matrix: 'Q-A', dimension: 'dlqArchive', effect: 'AUDIT_ARCHIVE injection for fanout rows' },
+    {
+      matrix: 'Q-A',
+      dimension: 'dlqArchive',
+      effect: 'encrypted HTTP retry-payload bucket fault injection',
+    },
     { matrix: 'Q-A', dimension: 'payloadFamily', effect: 'message type + outcome + durable rows' },
     // Q-D
     {
@@ -1192,7 +1201,11 @@ describe('state-transition coverage (independent checker)', () => {
       dimension: 'tenant',
       effect: 'tenantId body + derived tenant key in dlq/lde params',
     },
-    { matrix: 'Q-D', dimension: 'dlqArchive', effect: 'AUDIT_ARCHIVE injection + R2 save' },
+    {
+      matrix: 'Q-D',
+      dimension: 'dlqArchive',
+      effect: 'SENSITIVE_DETAILS injection + encrypted R2 save',
+    },
     {
       matrix: 'Q-D',
       dimension: 'payloadFamily',
@@ -1230,7 +1243,11 @@ describe('state-transition coverage (independent checker)', () => {
       effect: 'D1/R2 binding injection + fail-closed retry',
     },
     { matrix: 'Q-L', dimension: 'tenant', effect: 'tenant_key body + derived key in durable rows' },
-    { matrix: 'Q-L', dimension: 'dlqArchive', effect: 'AUDIT_ARCHIVE injection + R2 save' },
+    {
+      matrix: 'Q-L',
+      dimension: 'dlqArchive',
+      effect: 'SENSITIVE_DETAILS injection + encrypted R2 save',
+    },
     { matrix: 'Q-L', dimension: 'payloadFamily', effect: 'payload_type + outcome + durable rows' },
   ];
 
@@ -1310,7 +1327,6 @@ import {
   type RefreshDecision,
   type DeviceDecision,
   type CibaDecision,
-  type QueueDecision,
 } from './cases';
 import { queueDecisionFor as queueDecisionForImpl } from './queue-observation';
 import { messageCallCounts } from './harness';
@@ -1681,10 +1697,10 @@ describe('state-transition mutation witnesses connected to real observations', (
         const ids = batchIds(entry);
         const { logger } = await runQueueRow(kit, ledger, entry);
         const observed = await buildQueueObservation(kit, ledger, entry, ids, logger);
-        const expected = queueDecisionForImpl(entry) as QueueDecision;
+        const expected = queueDecisionForImpl(entry);
         expect(observed, `${mapping.id} real queue observation must pass`).toEqual(expected);
         mapping.assertProductionPath(entry, observed);
-        const mutant = queueMutationCandidate(entry, mapping.id) as QueueDecision;
+        const mutant = queueMutationCandidate(entry, mapping.id);
         expect(JSON.stringify(mutant), `${mapping.id} mutation must be discriminating`).not.toBe(
           JSON.stringify(expected)
         );

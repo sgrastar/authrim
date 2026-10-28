@@ -4,6 +4,17 @@
  * effect scheduling are explicit seams; signed route verification and DO internals have their
  * own integration suites. No account context is injected into these admin requests.
  */
+const piiLogRows = vi.hoisted(() => [] as Array<import('@authrim/ar-lib-core').PIIAuditLog>);
+vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original) => ({
+  ...(await original<typeof import('../../../ar-lib-core/dist/repositories/pii/audit-log')>()),
+  writePiiAccessAuditRows: async (
+    _env: unknown,
+    _tenantId: string,
+    rows: import('@authrim/ar-lib-core').PIIAuditLog[]
+  ) => {
+    piiLogRows.push(...structuredClone(rows));
+  },
+}));
 import { readdirSync, readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -105,9 +116,9 @@ vi.mock('@authrim/ar-lib-core', async (original) => {
     schedulePiiAccessLog: async (
       _env: unknown,
       execution: { waitUntil(promise: Promise<unknown>): void } | undefined,
-      access: { write(): Promise<unknown> }
+      access: { write(env: unknown): Promise<unknown> }
     ) => {
-      const promise = access.write();
+      const promise = access.write(_env);
       execution?.waitUntil(promise);
       await promise;
     },
@@ -290,6 +301,8 @@ for (const topology of ['shared_pool', 'tenant_exclusive', 'single'] as const) {
       return response;
     }
     beforeEach(async () => {
+      piiLogRows.length = 0;
+
       vi.clearAllMocks();
       state.routes.clear();
       state.authState.clear();
@@ -399,7 +412,7 @@ for (const topology of ['shared_pool', 'tenant_exclusive', 'single'] as const) {
           lifecycle_operation_id: transition.operationId,
         });
         if (topology !== 'single') expect(coreStatus(metadata)).toBe('active');
-        expect(state.operational.mock.calls[0]?.[0]).toBe(metadata.adapter);
+        expect(state.operational.mock.calls[0]?.[0]).toBe(env);
         expect(state.audit).toHaveBeenCalledWith(
           expect.anything(),
           `user.${action}`,
@@ -566,12 +579,12 @@ for (const topology of ['shared_pool', 'tenant_exclusive', 'single'] as const) {
             ['user-2', 'user-2@example.test'],
           ])
         );
-        expect(pii.db.prepare('SELECT target_user_id FROM audit_log_pii').all()).toEqual([
+        expect(piiLogRows.map((row) => ({ target_user_id: row.target_user_id }))).toEqual([
           { target_user_id: USER },
-        ]);
-        expect(secondPii.db.prepare('SELECT target_user_id FROM audit_log_pii').all()).toEqual([
           { target_user_id: 'user-2' },
         ]);
+        expect(pii.db.prepare('SELECT id FROM audit_log_pii').all()).toEqual([]);
+        expect(secondPii.db.prepare('SELECT id FROM audit_log_pii').all()).toEqual([]);
         expect(defaultPii.db.prepare('SELECT id FROM audit_log_pii').all()).toEqual([]);
       });
       it('refuses a mismatched contact route before either PII database is read', async () => {
@@ -599,9 +612,8 @@ for (const topology of ['shared_pool', 'tenant_exclusive', 'single'] as const) {
       expect(await response.json()).toMatchObject({
         session: { userEmail: `${USER}@example.test`, userName: `Name ${USER}` },
       });
-      const audit = pii.db
-        .prepare('SELECT target_user_id,details FROM audit_log_pii')
-        .all() as Array<{ target_user_id: string; details: string }>;
+      const audit = piiLogRows;
+      expect(pii.db.prepare('SELECT id FROM audit_log_pii').all()).toEqual([]);
       expect(audit).toHaveLength(1);
       expect(audit[0]?.target_user_id).toBe(USER);
       expect(audit[0]?.details).toContain('user_email');

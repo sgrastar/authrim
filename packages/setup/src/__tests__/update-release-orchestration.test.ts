@@ -943,3 +943,25 @@ describe('release update orchestration', () => {
     expect(databaseOnlyVerified.releaseUpdate?.phase).toBe('database_only_verified');
   });
 });
+
+describe('release update archive verification gate', () => {
+  it('persists a fresh Worker-bound attempt and requires the signed roundtrip before either successful release completion', async () => {
+    const source = await readFile(new URL('../cli/commands/update.ts', import.meta.url), 'utf8');
+    const start = source.indexOf('const verifyUpdatedLogArchive = async');
+    const end = source.indexOf('// The migration plan addresses', start);
+    const gate = source.slice(start, end).replace(/\s+/gu, '');
+    expect(gate).toContain('options.databaseOnly||options.dryRun');
+    expect(gate).toContain('prepareLogArchiveReadinessAttempt(archive,owned,workingLock.workers)');
+    expect(gate.indexOf('awaitsaveLockFile(workingLock,lockPath)')).toBeLessThan(
+      gate.indexOf('awaitwaitForLogArchiveReadiness')
+    );
+    expect(gate).toContain('pendingRuntimeProbe:undefined,runtimeProof:proof');
+    expect(source.match(/await verifyUpdatedLogArchive\(\);/g)).toHaveLength(2);
+    for (const part of source.split('await verifyUpdatedLogArchive();').slice(1))
+      expect(part.indexOf('completeControlManagedReleaseRollout')).toBeLessThan(
+        part.indexOf("phase: options.databaseOnly ? 'database_only_verified' : 'verified'") < 0
+          ? part.indexOf("phase: 'verified'")
+          : part.indexOf("phase: options.databaseOnly ? 'database_only_verified' : 'verified'")
+      );
+  });
+});
