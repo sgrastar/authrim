@@ -50,6 +50,61 @@ async function tenantState(f: ReturnType<typeof transitionFixture>, tenant: stri
 }
 
 describe('statement consent same-database closure and effect evidence (real SQLite/FK ON)', () => {
+  it.each(['tenant', 'statement'])(
+    'keeps the %s guard account binding immutable',
+    async (scope) => {
+      const f = await setup();
+      await expect(
+        f.adapter.execute('UPDATE statement_consent_guards SET account_id=? WHERE scope_kind=?', [
+          'other-account',
+          scope,
+        ])
+      ).rejects.toThrow('statement_consent_guard_monotonic');
+    }
+  );
+  it('reopens only a statement at a newer definition generation and keeps tenant closure terminal', async () => {
+    const f = await setup();
+    await f.adapter.execute(
+      "UPDATE statement_consent_guards SET mode='closed',definition_generation=1,closed_generation=1 WHERE scope_kind='statement'"
+    );
+    await expect(
+      f.adapter.execute(
+        "UPDATE statement_consent_guards SET mode='enforced' WHERE scope_kind='statement'"
+      )
+    ).rejects.toThrow('statement_consent_guard_monotonic');
+    await f.adapter.execute(
+      "UPDATE statement_consent_guards SET mode='enforced',definition_generation=2 WHERE scope_kind='statement'"
+    );
+    expect(
+      await f.adapter.queryOne(
+        "SELECT mode,definition_generation,closed_generation FROM statement_consent_guards WHERE scope_kind='statement'"
+      )
+    ).toEqual({ mode: 'enforced', definition_generation: 2, closed_generation: 1 });
+    await expect(
+      f.adapter.execute(
+        "UPDATE statement_consent_guards SET closed_generation=0 WHERE scope_kind='statement'"
+      )
+    ).rejects.toThrow('statement_consent_guard_monotonic');
+    await f.adapter.execute(
+      "UPDATE statement_consent_guards SET mode='closed' WHERE scope_kind='tenant'"
+    );
+    await expect(
+      f.adapter.execute(
+        "UPDATE statement_consent_guards SET mode='enforced',definition_generation=2 WHERE scope_kind='tenant'"
+      )
+    ).rejects.toThrow('statement_consent_guard_monotonic');
+  });
+  it('admits a metadata snapshot without definition rows in the account database', async () => {
+    const f = await setup();
+    // PR7 removes these FKs; this test isolates the cross-database admission predicate.
+    f.db.exec(
+      'PRAGMA foreign_keys=OFF; DELETE FROM consent_statement_versions; DELETE FROM consent_statements;'
+    );
+    expect(await applyStatementConsentTransition(f.capability, transitionInput())).toMatchObject({
+      outcome: 'applied',
+      revision: 1,
+    });
+  });
   it('applies one record/history/revision, recovers transport loss, and does not retain UA/IP in receipt', async () => {
     const f = await setup();
     const input = transitionInput();

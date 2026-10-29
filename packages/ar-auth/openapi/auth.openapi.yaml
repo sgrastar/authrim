@@ -919,8 +919,30 @@ paths:
         Accepts a JSON body only and returns the authorization continuation as `redirect_url`.
         Managed browser challenges require the authenticated session bound at authorization time.
         Acting-as requests require the feature to be enabled and a current delegated relationship.
+        Approvals with statement items must send consent_item_versions, keyed by statement ID,
+        containing version_id and content_hash for every displayed item, including optional items.
+        Changed or missing snapshots return 409 document_changed. Use refresh_consent or the
+        replacement consent_challenge_id in error_details to display updated documents; expired
+        requests require a fresh authorization. Omitted optional decisions continue to mean withdrawal/refusal.
       requestBody:
-        $ref: '#/components/requestBodies/JsonObject'
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              properties:
+                consent_item_versions:
+                  type: object
+                  description: Required for every displayed statement item when approving.
+                  additionalProperties:
+                    type: object
+                    required: [version_id, content_hash]
+                    properties:
+                      version_id:
+                        type: string
+                      content_hash:
+                        type: [string, 'null']
       responses:
         '200':
           $ref: '#/components/responses/Ok'
@@ -930,6 +952,18 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: document_changed; obtain a fresh consent screen before submitting again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Statement consent atomic writes are unavailable on the configured backend.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/sessions:
     post:
       tags:

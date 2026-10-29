@@ -155,6 +155,10 @@
             {
               "path": "035_statement_consent_split_foundation.sql",
               "checksum": "cc8db5e1ba76e84cc59d7e3f83c0659e0e9f575e405d770e162f85e0cd4853de"
+            },
+            {
+              "path": "036_statement_consent_atomic_foundation.sql",
+              "checksum": "17de2ecc7aa43d50350ddc32408395541f4bea838875947f996a0eee0179c809"
             }
           ]
         },
@@ -640,6 +644,10 @@
             {
               "path": "018_statement_consent_split_foundation.sql",
               "checksum": "e3f71c5f4a3dbd3fc020fa1dac66ff6420a209ee0468b4b9509e9bc5985ef3fa"
+            },
+            {
+              "path": "019_statement_consent_atomic_foundation.sql",
+              "checksum": "8bafc68f2a804c19ef7806611f176515d57556eca4de99852415528c13c96986"
             }
           ]
         },
@@ -836,6 +844,10 @@
         {
           "path": "035_statement_consent_split_foundation.sql",
           "checksum": "cc8db5e1ba76e84cc59d7e3f83c0659e0e9f575e405d770e162f85e0cd4853de"
+        },
+        {
+          "path": "036_statement_consent_atomic_foundation.sql",
+          "checksum": "17de2ecc7aa43d50350ddc32408395541f4bea838875947f996a0eee0179c809"
         }
       ]
     },
@@ -1345,6 +1357,10 @@
         {
           "path": "018_statement_consent_split_foundation.sql",
           "checksum": "e3f71c5f4a3dbd3fc020fa1dac66ff6420a209ee0468b4b9509e9bc5985ef3fa"
+        },
+        {
+          "path": "019_statement_consent_atomic_foundation.sql",
+          "checksum": "8bafc68f2a804c19ef7806611f176515d57556eca4de99852415528c13c96986"
         }
       ]
     },

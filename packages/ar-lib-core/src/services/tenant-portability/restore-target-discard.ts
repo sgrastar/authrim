@@ -82,6 +82,8 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
     // publication/recovery even after its restored user state is discarded.
     log_iceberg_core_publications: null,
     guest_core_mutation_epoch: null,
+    statement_consent_guards: byTenantId,
+    statement_consent_projection_jobs: byTenantId,
     account_routing_outbox: byTenantId,
     contact_point_search_indexes: byTenantId,
     identity_binding_lookup_indexes: byTenantId,

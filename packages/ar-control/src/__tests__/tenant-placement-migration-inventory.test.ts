@@ -80,6 +80,7 @@ describe('tenant placement migration inventory', () => {
       'tenant_backup_preimages',
       'tenant_backup_restore_targets',
       'guest_core_mutation_epoch',
+      'statement_consent_guards',
     ]) {
       expect(result.tables.find((entry) => entry.table === table)).toMatchObject({
         disposition: 'retain_target_local',

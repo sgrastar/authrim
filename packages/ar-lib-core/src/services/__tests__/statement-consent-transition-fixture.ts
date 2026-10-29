@@ -55,7 +55,7 @@ export function transitionFixture() {
   const db: unknown = fixture.db;
   if (!isConsentFixtureDatabase(db)) throw new Error('actual_sqlite_fixture_methods_missing');
   db.exec('PRAGMA foreign_keys=ON; PRAGMA recursive_triggers=OFF;');
-  db.exec(stepASchema('d1'));
+  db.exec(stepASchema('d1').slice(stepASchema('d1').indexOf('CREATE TRIGGER')));
   const capability: StatementConsentAtomicCapability = {
     dialect: 'd1',
     readOperation: (sql, params) =>
@@ -78,8 +78,8 @@ export function transitionFixture() {
       ['statement', `statement-${tenant}`],
     ]) {
       await fixture.adapter.execute(
-        `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,physical_id,restore_epoch,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`,
-        [tenant, kind, key, mode, 'physical-source', 'epoch-source', 1, 1]
+        `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,physical_id,restore_epoch,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+        [tenant, kind, key, mode, `account-${tenant}`, 'physical-source', 'epoch-source', 1, 1]
       );
     }
     await fixture.adapter.execute(
@@ -137,6 +137,7 @@ export function transitionInput(
     consent_settings_snapshot_at: now,
     record_retention_days_snapshot: 0,
     reconsent_interval_days_snapshot: null,
+    content_hash: 'b'.repeat(64),
   };
   const history: StatementConsentRawHistory = {
     id: statementConsentHistoryId(tenant, operationId),
@@ -162,8 +163,19 @@ export function transitionInput(
     consent_settings_snapshot_at: now,
     record_retention_days_snapshot: 0,
     reconsent_interval_days_snapshot: null,
+    content_hash_after: after.content_hash,
   };
   return {
+    definition: {
+      tenant_id: tenant,
+      statement_id: after.statement_id,
+      version_id: after.version_id,
+      version: after.version,
+      content_hash: after.content_hash,
+      definition_generation: 0,
+      is_active: 1,
+      version_status: 'active',
+    },
     operationId,
     actor: { id: `user-${tenant}`, type: 'user' },
     owner: {

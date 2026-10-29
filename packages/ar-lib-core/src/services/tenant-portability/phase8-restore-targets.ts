@@ -46,8 +46,8 @@ const CORE_USERS_DATASETS_IN_METADATA: ReadonlySet<string> = new Set([
 
 /**
  * Map one logical SQL dataset to its target database role. Core user rows are kept on the users
- * shard, except those the runtime keeps in the tenant metadata database; every other Core
- * partition belongs to the default shard. Physical source shard identity never controls the
+ * shard, except those the runtime keeps in the tenant metadata database. Consent item history
+ * follows its account records. Every other Core partition belongs to the default shard. Physical source shard identity never controls the
  * target placement (an export reads each dataset from the stores of this role only).
  */
 export function phase8SqliteRestoreTargetRole(
@@ -58,7 +58,8 @@ export function phase8SqliteRestoreTargetRole(
   if (family === 'admin') return 'admin';
   if (family === 'pii') return 'tenant_pii';
   if (family === 'core')
-    return dataset.kind === 'users' && !CORE_USERS_DATASETS_IN_METADATA.has(dataset.id)
+    return (dataset.kind === 'users' && !CORE_USERS_DATASETS_IN_METADATA.has(dataset.id)) ||
+      dataset.id === 'core.consent_item_history'
       ? 'tenant_core/users'
       : 'tenant_core/default';
   return invalid();
