@@ -77,7 +77,16 @@ describe('admin consent statement lifecycle', () => {
     mocks.adapter.execute.mockReset();
     mocks.adapter.batch.mockReset();
     mocks.adapter.batch.mockImplementation(async (statements: PreparedStatement[]) =>
-      statements.map(() => ({ success: true, rowsAffected: 1 }))
+      Promise.all(
+        statements.map(async (statement) =>
+          statement.sql.includes('consent_statement_localizations')
+            ? ((await mocks.adapter.execute(statement.sql, statement.params)) as {
+                success: boolean;
+                rowsAffected: number;
+              })
+            : { success: true, rowsAffected: 1 }
+        )
+      )
     );
     mocks.account.query.mockReset();
     mocks.account.execute.mockReset();
@@ -228,16 +237,17 @@ describe('admin consent statement lifecycle', () => {
     expect((await adminConsentStatementUpdateHandler(context({ body: {} }))).status).toBe(500);
   });
 
-  it.each([[[]], [[{ id: 'statement-1' }]]])('deletes statement graph result %#', async (rows) => {
+  it.each([[[]], [[{ id: 'statement-1' }]]])('retires statement result %#', async (rows) => {
     mocks.adapter.query.mockResolvedValueOnce(rows);
     const response = await adminConsentStatementDeleteHandler(context());
     expect(response.status).toBe(rows.length ? 200 : 404);
-    expect(mocks.adapter.execute).toHaveBeenCalledTimes(rows.length ? 8 : 0);
+    expect(mocks.adapter.batch).toHaveBeenCalledTimes(rows.length ? 1 : 0);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
   });
 
-  it('handles statement cascade deletion failures', async () => {
+  it('handles statement retirement enqueue failures', async () => {
     mocks.adapter.query.mockResolvedValueOnce([{ id: 'statement-1' }]);
-    mocks.adapter.execute.mockRejectedValueOnce(new Error('failure'));
+    mocks.adapter.batch.mockRejectedValueOnce(new Error('failure'));
     expect((await adminConsentStatementDeleteHandler(context())).status).toBe(500);
   });
 
@@ -432,6 +442,7 @@ describe('admin consent statement lifecycle', () => {
     await expect((await adminConsentLocalizationsListHandler(context())).json()).resolves.toEqual({
       localizations: [{ language: 'en' }],
     });
+    mocks.adapter.query.mockResolvedValueOnce([{ status: 'draft' }]);
     expect((await adminConsentLocalizationDeleteHandler(context())).status).toBe(200);
     expect(mocks.adapter.execute).toHaveBeenCalledWith(expect.stringContaining('DELETE FROM'), [
       'vid',
@@ -451,7 +462,7 @@ describe('admin consent statement lifecycle', () => {
     'inserts localization with public link %#',
     async (document_url) => {
       mocks.adapter.query
-        .mockResolvedValueOnce([{ id: 'vid' }])
+        .mockResolvedValueOnce([{ id: 'vid', status: 'draft' }])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ id: 'localization-1' }]);
       const response = await adminConsentLocalizationUpsertHandler(
@@ -473,12 +484,12 @@ describe('admin consent statement lifecycle', () => {
 
   it('updates an existing localization and falls back for legacy schemas', async () => {
     mocks.adapter.query
-      .mockResolvedValueOnce([{ id: 'vid' }])
+      .mockResolvedValueOnce([{ id: 'vid', status: 'draft' }])
       .mockResolvedValueOnce([{ id: 'localization-1' }])
       .mockResolvedValueOnce([{ id: 'localization-1' }]);
     mocks.adapter.execute
       .mockRejectedValueOnce(new Error('no column named withdrawal_impact'))
-      .mockResolvedValueOnce({ success: true });
+      .mockResolvedValueOnce({ success: true, rowsAffected: 1 });
     expect(
       (
         await adminConsentLocalizationUpsertHandler(
@@ -508,7 +519,7 @@ describe('admin consent statement lifecycle', () => {
   });
 
   it('does not hide unrelated localization persistence failures', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'vid' }]);
+    mocks.adapter.query.mockResolvedValueOnce([{ id: 'vid', status: 'draft' }]);
     mocks.adapter.execute.mockRejectedValueOnce(new Error('D1 unavailable'));
     expect(
       (

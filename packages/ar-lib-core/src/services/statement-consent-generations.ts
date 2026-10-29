@@ -8,15 +8,22 @@ import {
 export function enqueueStatementConsentProjection(
   tenantId: string,
   statementId: string,
-  now: number
+  now: number,
+  activation?: { versionId: string; token: string }
 ): PreparedStatement {
   return {
     sql: `INSERT INTO statement_consent_projection_jobs(tenant_id,statement_id,definition_generation,closed_generation,mode,targets_json,cursor_binding_ref,updated_at)
       SELECT tenant_id,id,definition_generation,closed_generation,CASE WHEN is_active=0 OR retired_at IS NOT NULL THEN 'closed' ELSE 'enforced' END,NULL,NULL,?
       FROM consent_statements WHERE tenant_id=? AND id=?
+      ${activation ? 'AND EXISTS (SELECT 1 FROM consent_statement_versions v WHERE v.tenant_id=consent_statements.tenant_id AND v.statement_id=consent_statements.id AND v.id=? AND v.current_statement_guard=?)' : ''}
       ON CONFLICT(tenant_id,statement_id) DO UPDATE SET definition_generation=excluded.definition_generation,
       closed_generation=excluded.closed_generation,mode=excluded.mode,targets_json=NULL,cursor_binding_ref=NULL,updated_at=excluded.updated_at`,
-    params: [now, tenantId, statementId],
+    params: [
+      now,
+      tenantId,
+      statementId,
+      ...(activation ? [activation.versionId, activation.token] : []),
+    ],
   };
 }
 

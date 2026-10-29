@@ -1,84 +1,103 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import { openCoreStore } from './helpers/core-schema-sqlite';
 
-const { adapter, listEnvironmentTenantDefaultStores } = vi.hoisted(() => {
-  const adapter = {
-    query: vi.fn(),
-    execute: vi.fn(),
-  };
-  return {
-    adapter,
-    listEnvironmentTenantDefaultStores: vi.fn(async () => [
-      { tenantId: 'default', store: { source: {}, bindingRef: 'TDB_DEFAULT' } },
-    ]),
-  };
-});
-
-vi.mock('@authrim/ar-lib-core', () => ({
-  ensureDatabaseAdapter: () => adapter,
-  listEnvironmentTenantDefaultStores,
+const mocks = vi.hoisted(() => ({
+  metadata: null as DatabaseAdapter | null,
+  stores: [] as Array<{ bindingRef: string; adapter: DatabaseAdapter }>,
+  directory: vi.fn(),
 }));
-
+vi.mock('@authrim/ar-lib-core', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core')>()),
+  listEnvironmentTenantDefaultStores: mocks.directory,
+}));
+vi.mock('../compliance/tenant-stores', () => ({
+  tenantCoreStores: vi.fn(async () => mocks.stores),
+}));
 import { processConsentRetentionJobs } from '../consent-retention-jobs';
-
-describe('processConsentRetentionJobs', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    listEnvironmentTenantDefaultStores.mockResolvedValue([
-      { tenantId: 'default', store: { source: {}, bindingRef: 'TDB_DEFAULT' } },
-    ]);
+import { processStatementConsentReferenceAuditJobs } from '../statement-consent-reference-audit';
+import { readConsentJob } from '../statement-consent-job-state';
+const opened: ReturnType<typeof openCoreStore>[] = [];
+afterEach(() => {
+  for (const s of opened.splice(0)) s.db.close();
+  vi.restoreAllMocks();
+});
+function core() {
+  const s = openCoreStore();
+  opened.push(s);
+  return s;
+}
+const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.stores = [];
+});
+function config() {
+  const values = new Map<string, string>();
+  return {
+    get: vi.fn(async (key: string) => values.get(key) ?? null),
+    put: vi.fn(async (key: string, value: string) => {
+      values.set(key, value);
+    }),
+  };
+}
+function setup(routed = true) {
+  const metadata = core(),
+    account = core();
+  mocks.metadata = metadata.adapter;
+  mocks.stores = [{ bindingRef: 'account-a', adapter: account.adapter }];
+  mocks.directory.mockResolvedValue([
+    { tenantId: 'tenant-a', store: { source: metadata.adapter, bindingRef: 'metadata' } },
+  ]);
+  const kv = config();
+  const env = {
+    DB: metadata.adapter,
+    AUTHRIM_CONFIG: kv,
+    ...(routed ? { TENANT_RUNTIME_REGISTRY: {} } : {}),
+  } as unknown as Env;
+  return { metadata, account, kv, env };
+}
+describe('consent maintenance scheduler routing', () => {
+  it('purges snapshot evidence in account shards even with no metadata definition', async () => {
+    const f = setup();
+    f.account.db.exec(`PRAGMA foreign_keys=OFF;
+      INSERT INTO user_consent_records(id,tenant_id,user_id,statement_id,version_id,version,status,consent_settings_snapshot_at,retain_until,created_at,updated_at)
+      VALUES('r','tenant-a','u','absent','absent','20261029','denied',1,2,1,1)`);
+    await processConsentRetentionJobs(f.env, log);
+    await processConsentRetentionJobs(f.env, log);
+    expect(await f.account.adapter.query('SELECT * FROM user_consent_records')).toEqual([]);
+    expect((await readConsentJob(f.metadata.adapter, 'tenant-a', 'retention'))?.status).toBe(
+      'completed'
+    );
+    expect(mocks.directory).toHaveBeenCalledWith(f.env, { limit: 4, afterTenantId: '' });
   });
-
-  it('purges expired terminal consent records and history per statement retention', async () => {
-    adapter.query.mockImplementation(async (sql: string) => {
-      if (sql.includes('SELECT id, record_retention_days')) {
-        return [{ id: 'stmt-1', record_retention_days: 30 }];
-      }
-      return [];
-    });
-    adapter.execute.mockResolvedValue(undefined);
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-
-    const config = { get: vi.fn(async () => null), put: vi.fn(async () => undefined) };
-    await processConsentRetentionJobs({ AUTHRIM_CONFIG: config } as never, log);
-
-    expect(listEnvironmentTenantDefaultStores).toHaveBeenCalledWith(
-      expect.objectContaining({ AUTHRIM_CONFIG: config }),
-      { limit: 32, afterTenantId: undefined, concurrency: 4 }
+  it('fails closed before accessing a store when the routed directory is unavailable', async () => {
+    const f = setup();
+    const query = vi.spyOn(f.metadata.adapter, 'query');
+    mocks.directory.mockRejectedValueOnce(new Error('environment_tenant_directory_unavailable'));
+    await expect(processConsentRetentionJobs(f.env, log)).rejects.toThrow(
+      'environment_tenant_directory_unavailable'
     );
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('DELETE FROM consent_item_history'),
-      expect.arrayContaining(['default', 'stmt-1'])
-    );
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining("active_record.status = 'granted'"),
-      expect.arrayContaining(['default', 'stmt-1'])
-    );
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('retain_until < ?'),
-      expect.arrayContaining(['default', 'stmt-1'])
-    );
-    expect(adapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining("status IN ('withdrawn', 'denied', 'expired')"),
-      expect.arrayContaining(['default', 'stmt-1'])
-    );
-    expect(log.info).toHaveBeenCalledWith('Consent retention cleanup completed', {
-      tenantCount: 1,
-    });
-    expect(config.put).toHaveBeenCalledWith('jobs:consent-retention:tenant-cursor', '');
+    expect(query).not.toHaveBeenCalled();
+    expect(f.kv.put).not.toHaveBeenCalled();
   });
-
-  it('fails closed before touching a database when the signed tenant directory is unavailable', async () => {
-    listEnvironmentTenantDefaultStores.mockRejectedValueOnce(
-      new Error('environment_tenant_directory_unavailable')
+  it('works without routing and configures bounded pages with environment over KV over defaults', async () => {
+    const f = setup(false);
+    const env = {
+      ...f.env,
+      CONSENT_REFERENCE_AUDIT_ROW_PAGE_SIZE: '1',
+      KV: { get: vi.fn(async () => '2') },
+    } as unknown as Env;
+    await processStatementConsentReferenceAuditJobs(env, log);
+    expect((await readConsentJob(f.metadata.adapter, 'tenant-a', 'reference-audit'))?.status).toBe(
+      'completed'
     );
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-
+    expect(mocks.directory).not.toHaveBeenCalled();
     await expect(
-      processConsentRetentionJobs(
-        { AUTHRIM_CONFIG: { get: vi.fn(async () => null), put: vi.fn() } } as never,
+      processStatementConsentReferenceAuditJobs(
+        { ...env, CONSENT_REFERENCE_AUDIT_ROW_PAGE_SIZE: '0' } as unknown as Env,
         log
       )
-    ).rejects.toThrow('environment_tenant_directory_unavailable');
-    expect(adapter.query).not.toHaveBeenCalled();
+    ).rejects.toThrow('statement_consent_job_setting_invalid');
   });
 });

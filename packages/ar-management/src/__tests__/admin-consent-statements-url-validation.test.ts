@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env, PreparedStatement } from '@authrim/ar-lib-core';
 
 const mocked = vi.hoisted(() => ({
   getTenantIdFromContext: vi.fn(),
@@ -28,8 +28,8 @@ function createMockAdapter(
   } = {}
 ): DatabaseAdapter {
   const query = vi.fn(async <T>(sql: string): Promise<T[]> => {
-    if (sql.includes('SELECT id FROM consent_statement_versions')) {
-      return [{ id: 'version-1' }] as T[];
+    if (sql.includes('SELECT id, status FROM consent_statement_versions')) {
+      return [{ id: 'version-1', status: 'draft' }] as T[];
     }
     if (sql.includes('SELECT id FROM consent_statement_localizations')) {
       return (options.localizationExists ? [{ id: 'loc-1' }] : []) as T[];
@@ -50,12 +50,18 @@ function createMockAdapter(
   ): Promise<T> =>
     (await fn({} as Parameters<Parameters<DatabaseAdapter['transaction']>[0]>[0])) as T;
 
+  const execute: DatabaseAdapter['execute'] = vi
+    .fn()
+    .mockResolvedValue({ success: true, rowsAffected: 1 });
   return {
     query: query as unknown as DatabaseAdapter['query'],
     queryOne: vi.fn().mockResolvedValue(null),
-    execute: vi.fn().mockResolvedValue({ rowsAffected: 1, insertId: undefined }),
+    execute,
     transaction: vi.fn(transactionImpl) as unknown as DatabaseAdapter['transaction'],
-    batch: vi.fn().mockResolvedValue([]),
+    batch: vi.fn(async (statements: PreparedStatement[]) => [
+      { success: true, rowsAffected: 1 },
+      await execute(statements[1].sql, statements[1].params),
+    ]),
     isHealthy: vi.fn().mockResolvedValue(true),
     getType: vi.fn().mockReturnValue('mock'),
     close: vi.fn().mockResolvedValue(undefined),

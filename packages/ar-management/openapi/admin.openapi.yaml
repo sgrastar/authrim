@@ -8740,16 +8740,75 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/consent-statements/reference-audit:
+    get:
+      tags:
+        - Consent
+      operationId: getApiAdminConsentStatementsReferenceAudit
+      summary: Read the tenant's recurring consent reference audit.
+      description: >-
+        Requires consent settings read permission. Reports unresolved statement/version references
+        from account shards without deleting evidence. Current progress and the last complete pass
+        are durable; inspect last_completed after DR. Samples are bounded and samples_truncated
+        indicates that unresolved exceeds the sample list. A version under another statement or
+        tenant is unresolved. The endpoint does not start repairs.
+      responses:
+        '200':
+          description: Current pass and last complete report, or not_started before the first scan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, current, last_completed]
+                properties:
+                  status:
+                    type: string
+                    enum: [not_started, processing, completed]
+                  current:
+                    type: object
+                    nullable: true
+                    description: Pass cursor, start time, scanned/unresolved counts and bounded samples.
+                    additionalProperties: true
+                  last_completed:
+                    type: object
+                    nullable: true
+                    description: Last completed pass, including completed_at, scanned, unresolved, samples and samples_truncated.
+                    additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/consent-statements/{id}':
     delete:
       tags:
         - Consent
       operationId: deleteApiAdminConsentStatementsById
-      summary: Deactivate a consent statement.
-      description: Soft-deactivates a consent statement by setting `is_active` to 0.
+      summary: Retire a consent statement and retain evidence.
+      description: >-
+        Sets is_active=0 and retired_at, advances definition/closed generations and enqueues closed
+        projection. Records, history, versions and bodies are retained. Replaces the former evidence
+        cascade deletion. Physical deletion is limited to provably never-active drafts with zero
+        record/history references across every account shard; unreadable shards abort deletion.
       responses:
         '200':
-          $ref: '#/components/responses/ConsentDelete'
+          description: Retirement or removal of an unreferenced never-active draft.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, disposition]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  disposition:
+                    type: string
+                    enum: [retired, deleted]
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -8804,7 +8863,7 @@ paths:
         - Consent
       operationId: putApiAdminConsentStatementsById
       summary: Update a consent statement.
-      description: Updates mutable consent statement metadata. At least one field must be supplied.
+      description: Updates mutable consent statement metadata. At least one field must be supplied. Retired statements cannot be reactivated (409).
       responses:
         '200':
           $ref: '#/components/responses/ConsentStatement'
@@ -8815,6 +8874,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -9020,6 +9081,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: Document changed during activation; reload the draft and retry.
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -9080,7 +9143,7 @@ paths:
         - Consent
       operationId: deleteApiAdminConsentStatementsBySidVersionsByVidLocalizationsByLang
       summary: Delete a consent statement localization.
-      description: Deletes localization content for a language on a consent statement version.
+      description: Deletes localization content only on a draft version of this tenant and statement. Active and archived versions are immutable (409); create a new version to change content.
       responses:
         '200':
           $ref: '#/components/responses/ConsentDelete'
@@ -9089,6 +9152,10 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -9121,7 +9188,8 @@ paths:
       summary: Upsert a consent statement localization.
       description: >-
         Creates or replaces localization content for a language. `title` and `description` are
-        required; `document_url` must be a public URL when supplied.
+        required; `document_url` must be a public URL when supplied. Only draft versions of this
+        tenant and statement can be edited. Active and archived versions return 409.
       responses:
         '200':
           $ref: '#/components/responses/ConsentLocalization'
@@ -9130,6 +9198,10 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
