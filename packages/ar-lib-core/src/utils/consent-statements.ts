@@ -1056,8 +1056,12 @@ export async function activateVersion(
   versionId: string
 ): Promise<void> {
   // Validate: version exists and belongs to this statement
-  const versionRows = await adapter.query<{ id: string; status: string }>(
-    `SELECT id, status FROM consent_statement_versions
+  const versionRows = await adapter.query<{
+    id: string;
+    status: string;
+    updated_at: number | string;
+  }>(
+    `SELECT id, status, updated_at FROM consent_statement_versions
      WHERE id = ? AND statement_id = ? AND tenant_id = ?`,
     [versionId, statementId, tenantId]
   );
@@ -1066,39 +1070,57 @@ export async function activateVersion(
   }
 
   // Validate: at least one localization exists (D8)
-  const locCount = await adapter.query<{ cnt: number }>(
+  const locCount = await adapter.query<{ cnt: number | string }>(
     `SELECT COUNT(*) as cnt
        FROM consent_statement_localizations
       WHERE tenant_id = ? AND version_id = ?`,
     [tenantId, versionId]
   );
-  if (locCount[0].cnt === 0) {
+  const localizationCount = Number(locCount[0]?.cnt);
+  if (!Number.isSafeInteger(localizationCount) || localizationCount < 1) {
     throw new Error('Cannot activate version without at least one localization');
   }
 
   // Compute content hash (D11)
   const contentHash = await computeContentHash(adapter, versionId, tenantId);
 
-  const now = Date.now();
+  const revision = Number(versionRows[0].updated_at);
+  if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER)
+    throw new Error('statement_consent_version_revision_invalid');
+  const now = Math.max(Date.now(), revision + 1);
+  const token = `activation:${crypto.randomUUID()}`;
+  const reserved = `EXISTS (SELECT 1 FROM consent_statement_versions v
+    WHERE v.tenant_id=? AND v.statement_id=? AND v.id=? AND v.current_statement_guard=?)`;
+  const proof = [tenantId, statementId, versionId, token];
+  // Reserve the version row before touching the old current. Draft edits co-commit a monotone
+  // updated_at revision, so a hash read before such an edit cannot activate afterwards. The
+  // transient token is visible only inside this batch and also serializes PostgreSQL writers.
   const result = await adapter.batch([
     {
-      sql: `UPDATE consent_statement_versions SET is_current=0,current_statement_guard=NULL,status='archived',updated_at=?
-        WHERE statement_id=? AND tenant_id=? AND is_current=1`,
-      params: [now, statementId, tenantId],
+      sql: `UPDATE consent_statement_versions SET current_statement_guard=? WHERE tenant_id=? AND statement_id=? AND id=? AND updated_at=? AND status=?`,
+      params: [token, tenantId, statementId, versionId, revision, versionRows[0].status],
     },
+    {
+      sql: `UPDATE consent_statement_versions SET is_current=0,current_statement_guard=NULL,status='archived',updated_at=?
+      WHERE statement_id=? AND tenant_id=? AND is_current=1 AND id<>? AND ${reserved}`,
+      params: [now, statementId, tenantId, versionId, ...proof],
+    },
+    {
+      sql: `UPDATE consent_statements SET definition_generation=definition_generation+1,updated_at=?
+      WHERE tenant_id=? AND id=? AND ${reserved}`,
+      params: [now, tenantId, statementId, ...proof],
+    },
+    enqueueStatementConsentProjection(tenantId, statementId, now, { versionId, token }),
     {
       sql: `UPDATE consent_statement_versions SET is_current=1,current_statement_guard=statement_id,status='active',content_hash=?,updated_at=?
-        WHERE id=? AND statement_id=? AND tenant_id=?`,
-      params: [contentHash, now, versionId, statementId, tenantId],
+      WHERE tenant_id=? AND statement_id=? AND id=? AND current_statement_guard=?`,
+      params: [contentHash, now, ...proof],
     },
-    {
-      sql: 'UPDATE consent_statements SET definition_generation=definition_generation+1,updated_at=? WHERE tenant_id=? AND id=?',
-      params: [now, tenantId, statementId],
-    },
-    enqueueStatementConsentProjection(tenantId, statementId, now),
   ]);
-  if (result.length !== 4 || result.some((entry) => !entry.success))
+  if (result.length !== 5 || result.some((entry) => !entry.success))
     throw new Error('statement_consent_activation_result_unknown');
+  if (result[0].rowsAffected !== 1 || result[4].rowsAffected !== 1)
+    throw new Error('document_changed');
 }
 
 // =============================================================================

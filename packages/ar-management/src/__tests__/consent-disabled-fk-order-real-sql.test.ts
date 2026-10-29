@@ -158,25 +158,19 @@ describe('disabled consent split: preserve the existing delayed-grant safeguard'
       method: 'DELETE',
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ success: true });
+    expect(await response.json()).toEqual({ success: true, disposition: 'retired' });
     expect(messages.error).not.toHaveBeenCalled();
-    expect(await state(adapter)).toEqual({
-      statements: [],
-      versions: [],
-      records: [],
-      history: [],
-      orphanGranted: [],
-    });
+    const retired = await state(adapter);
+    expect(retired.statements).toHaveLength(1);
+    expect(retired.statements[0]).toMatchObject({ is_active: 0, retired_at: NOW });
+    expect(retired.versions).toEqual(positive.versions);
+    expect(retired.records).toEqual(positive.records);
+    expect(retired.history).toEqual(positive.history);
+    expect(retired.orphanGranted).toEqual([]);
 
-    // The unmodified producer receives exactly the targets obtained before DELETE.
+    // The unmodified producer receives exactly the targets obtained before retirement.
     await expect(grant(DELAYED_USER)).rejects.toThrow(/document_changed/iu);
-    expect(await state(adapter)).toEqual({
-      statements: [],
-      versions: [],
-      records: [],
-      history: [],
-      orphanGranted: [],
-    });
+    expect(await state(adapter)).toEqual(retired);
     expect(await adapter.query('PRAGMA foreign_key_check')).toEqual([]);
     expect(await adapter.queryOne('PRAGMA foreign_keys')).toEqual({ foreign_keys: 1 });
     expect(await adapter.query(schemaSql)).toEqual(beforeSchema);
