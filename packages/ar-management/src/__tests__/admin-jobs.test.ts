@@ -179,7 +179,7 @@ function createTestApp(envOverrides: Partial<Env> = {}) {
     (c as any).set('adminAuth', {
       adminId: 'admin-1',
       userId: 'admin-1',
-      roles: ['system_admin'],
+      roles: ['ar_super_admin'],
       permissions,
     });
     await next();

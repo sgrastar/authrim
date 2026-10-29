@@ -712,8 +712,8 @@ describe('tenant restore discard after a partially written import', () => {
       VALUES ('restored-admin','tenant-a','restored@example.test','Restored','x',1,'active',1,1),
         ('platform-admin','default','platform@example.test','Platform','x',1,'active',1,1);
       INSERT INTO admin_role_assignments(id,tenant_id,admin_user_id,admin_role_id,scope_type,scope_id,assigned_by,created_at)
-      VALUES ('restored-assignment','tenant-a','restored-admin','role_admin','tenant','tenant-a','x',1),
-        ('platform-assignment','default','platform-admin','role_super_admin','global',NULL,'setup',1);
+      VALUES ('restored-assignment','tenant-a','restored-admin','role_ar_tenant_admin','tenant','tenant-a','x',1),
+        ('platform-assignment','default','platform-admin','role_ar_super_admin','global',NULL,'setup',1);
     `);
     try {
       await env.store.release(env.lease, env.applying.revision, 'queued', env.now.value);

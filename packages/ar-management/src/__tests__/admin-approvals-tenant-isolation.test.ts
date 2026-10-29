@@ -62,7 +62,7 @@ function signInTo(db: SQLiteDatabase, tenantId: string): { userId: string; cooki
   // Signing in takes one of the standard roles; the custom role above carries the approvals.
   db.prepare(
     `INSERT INTO admin_role_assignments (id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, created_at)
-     VALUES (?, ?, ?, 'role_viewer', 'tenant', ?, ?)`
+     VALUES (?, ?, ?, 'role_ar_viewer', 'tenant', ?, ?)`
   ).run(`${userId}-viewer`, tenantId, userId, tenantId, now);
   return { userId, cookie: `authrim_admin_session=${sessionId}` };
 }

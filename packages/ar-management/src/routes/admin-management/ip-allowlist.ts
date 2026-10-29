@@ -5,7 +5,7 @@
  * When the allowlist is empty, all IPs are allowed (default behavior).
  * When entries exist, only matching IPs can access the Admin panel.
  *
- * Requires super_admin role or admin:ip_allowlist:* permission.
+ * Requires the admin:ip_allowlist:* permission.
  */
 
 import { Hono } from 'hono';

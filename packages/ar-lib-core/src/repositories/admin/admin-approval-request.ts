@@ -243,12 +243,12 @@ export class ApprovalRequestRepository extends BaseRepository<ApprovalRequestEnt
    * notifications, receipts and audit entries), so it is only ever looked up within a tenant.
    */
   async getApprovalRequestByPublicId(
-    tenantId: string,
-    publicRequestId: string
+    publicRequestId: string,
+    tenantId: string
   ): Promise<ApprovalRequest | null> {
     const row = await this.adapter.queryOne<ApprovalRequestEntity>(
-      'SELECT * FROM approval_requests WHERE tenant_id = ? AND public_request_id = ?',
-      [requireTenantId(tenantId, 'Approval request lookup'), publicRequestId]
+      'SELECT * FROM approval_requests WHERE public_request_id = ? AND tenant_id = ?',
+      [publicRequestId, requireTenantId(tenantId, 'Approval request lookup')]
     );
     return row ? this.entityToApprovalRequest(row) : null;
   }
@@ -759,12 +759,12 @@ export class ElevationGrantRepository extends BaseRepository<ElevationGrantEntit
   }
 
   async getElevationGrantByPublicId(
-    tenantId: string,
-    publicGrantId: string
+    publicGrantId: string,
+    tenantId: string
   ): Promise<ElevationGrant | null> {
     const row = await this.adapter.queryOne<ElevationGrantEntity>(
-      'SELECT * FROM elevation_grants WHERE tenant_id = ? AND public_grant_id = ?',
-      [requireTenantId(tenantId, 'Elevation grant lookup'), publicGrantId]
+      'SELECT * FROM elevation_grants WHERE public_grant_id = ? AND tenant_id = ?',
+      [publicGrantId, requireTenantId(tenantId, 'Elevation grant lookup')]
     );
     return row ? this.entityToGrant(row) : null;
   }

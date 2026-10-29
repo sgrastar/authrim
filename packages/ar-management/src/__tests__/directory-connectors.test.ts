@@ -87,8 +87,8 @@ function createContext(
       if (name !== 'adminAuth') return undefined;
       return {
         userId: 'admin-1',
-        roles: ['system_admin'],
-        globalRoles: ['system_admin'],
+        roles: ['ar_super_admin'],
+        globalRoles: ['ar_super_admin'],
         permissions: ['admin:settings:read', 'admin:settings:write'],
         globalPermissions: ['admin:settings:read', 'admin:settings:write'],
         tenantScope: ['*'],

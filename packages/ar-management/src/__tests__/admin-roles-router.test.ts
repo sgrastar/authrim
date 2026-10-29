@@ -156,14 +156,14 @@ describe('adminRolesRouter', () => {
       {
         id: 'role_super_admin__first',
         tenant_id: 'first',
-        name: 'super_admin',
+        name: 'ar_super_admin',
         hierarchy_level: 100,
         is_system: true,
       },
       {
         id: 'role_security_admin__first',
         tenant_id: 'first',
-        name: 'security_admin',
+        name: 'ar_tenant_admin',
         hierarchy_level: 90,
         is_system: true,
       },
@@ -177,21 +177,21 @@ describe('adminRolesRouter', () => {
     ]);
     repoMocks.getSystemRoles.mockResolvedValue([
       {
-        id: 'role_super_admin',
+        id: 'role_ar_super_admin',
         tenant_id: 'default',
-        name: 'super_admin',
+        name: 'ar_super_admin',
         hierarchy_level: 100,
         is_system: true,
       },
       {
-        id: 'role_security_admin',
+        id: 'role_ar_tenant_admin',
         tenant_id: 'default',
-        name: 'security_admin',
+        name: 'ar_tenant_admin',
         hierarchy_level: 90,
         is_system: true,
       },
       {
-        id: 'role_viewer',
+        id: 'role_ar_viewer',
         tenant_id: 'default',
         name: 'viewer',
         hierarchy_level: 20,
@@ -214,14 +214,16 @@ describe('adminRolesRouter', () => {
     expect(response.status).toBe(200);
     expect(body.total).toBe(4);
     expect(body.items.map((role) => role.name)).toEqual([
-      'super_admin',
-      'security_admin',
+      'ar_super_admin',
+      'ar_tenant_admin',
       'billing_admin',
       'viewer',
     ]);
-    expect(body.items.find((role) => role.name === 'super_admin')?.id).toBe('role_super_admin');
-    expect(body.items.find((role) => role.name === 'security_admin')?.id).toBe(
-      'role_security_admin'
+    expect(body.items.find((role) => role.name === 'ar_super_admin')?.id).toBe(
+      'role_ar_super_admin'
+    );
+    expect(body.items.find((role) => role.name === 'ar_tenant_admin')?.id).toBe(
+      'role_ar_tenant_admin'
     );
   });
 
@@ -246,7 +248,7 @@ describe('adminRolesRouter', () => {
       tenant_id: 'system',
       is_system: true,
       permissions: ['*'],
-      name: 'super_admin',
+      name: 'ar_super_admin',
     });
     repoMocks.getUsersByRole.mockResolvedValue(['admin_1']);
 
@@ -260,7 +262,7 @@ describe('adminRolesRouter', () => {
 
   it('should list role assignments inside the caller tenant scope', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       permissions: ['admin:users:read'],
@@ -271,7 +273,7 @@ describe('adminRolesRouter', () => {
         id: 'assignment_1',
         tenant_id: 'tenant_123',
         admin_user_id: 'admin_1',
-        admin_role_id: 'role_support',
+        admin_role_id: 'role_ar_support',
         scope_type: 'tenant',
         scope_id: 'tenant_123',
         expires_at: null,
@@ -288,17 +290,21 @@ describe('adminRolesRouter', () => {
     ]);
 
     const { app, env } = createTestApp();
-    const response = await app.request('/api/admin/admin-roles/role_support/assignments', {}, env);
+    const response = await app.request(
+      '/api/admin/admin-roles/role_ar_support/assignments',
+      {},
+      env
+    );
     const body = (await response.json()) as ErrorResponseBody;
 
     expect(response.status).toBe(200);
     expect(body.total).toBe(1);
-    expect(repoMocks.getAssignmentsByRole).toHaveBeenCalledWith('role_support', false);
+    expect(repoMocks.getAssignmentsByRole).toHaveBeenCalledWith('role_ar_support', false);
   });
 
   it('should create a tenant-scoped role assignment', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       permissions: ['admin:users:read'],
@@ -315,7 +321,7 @@ describe('adminRolesRouter', () => {
       id: 'assignment_1',
       tenant_id: 'tenant_123',
       admin_user_id: 'admin_2',
-      admin_role_id: 'role_support',
+      admin_role_id: 'role_ar_support',
       scope_type: 'tenant',
       scope_id: 'tenant_123',
       expires_at: null,
@@ -325,7 +331,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments',
+      '/api/admin/admin-roles/role_ar_support/assignments',
       {
         method: 'POST',
         headers: {
@@ -349,7 +355,7 @@ describe('adminRolesRouter', () => {
       expect.objectContaining({
         tenant_id: 'tenant_123',
         admin_user_id: 'admin_2',
-        admin_role_id: 'role_support',
+        admin_role_id: 'role_ar_support',
         scope_type: 'tenant',
         scope_id: 'tenant_123',
       })
@@ -358,7 +364,7 @@ describe('adminRolesRouter', () => {
 
   it('should reject duplicate role assignments for the same scope binding', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       permissions: ['admin:users:read'],
@@ -374,7 +380,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments',
+      '/api/admin/admin-roles/role_ar_support/assignments',
       {
         method: 'POST',
         headers: {
@@ -398,7 +404,7 @@ describe('adminRolesRouter', () => {
 
   it('should reject tenant-scoped role assignment for another tenant', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       permissions: ['admin:users:read'],
@@ -413,7 +419,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments',
+      '/api/admin/admin-roles/role_ar_support/assignments',
       {
         method: 'POST',
         headers: {
@@ -438,7 +444,7 @@ describe('adminRolesRouter', () => {
 
   it('should reject global role assignment without platform authority', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       permissions: ['admin:users:read'],
@@ -453,7 +459,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments',
+      '/api/admin/admin-roles/role_ar_support/assignments',
       {
         method: 'POST',
         headers: {
@@ -477,7 +483,7 @@ describe('adminRolesRouter', () => {
 
   it('should allow global role assignment with platform authority', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       permissions: ['admin:users:read'],
@@ -494,7 +500,7 @@ describe('adminRolesRouter', () => {
       id: 'assignment_global',
       tenant_id: 'tenant_123',
       admin_user_id: 'admin_2',
-      admin_role_id: 'role_support',
+      admin_role_id: 'role_ar_support',
       scope_type: 'global',
       scope_id: null,
       expires_at: null,
@@ -504,7 +510,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments',
+      '/api/admin/admin-roles/role_ar_support/assignments',
       {
         method: 'POST',
         headers: {
@@ -536,7 +542,7 @@ describe('adminRolesRouter', () => {
 
   it('should reject org-scoped admin role assignment creation for now', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       permissions: ['admin:users:read'],
@@ -551,7 +557,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments',
+      '/api/admin/admin-roles/role_ar_support/assignments',
       {
         method: 'POST',
         headers: {
@@ -576,7 +582,7 @@ describe('adminRolesRouter', () => {
 
   it('should update role assignment scope binding', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       permissions: ['admin:users:read'],
@@ -587,7 +593,7 @@ describe('adminRolesRouter', () => {
       id: 'assignment_1',
       tenant_id: 'tenant_123',
       admin_user_id: 'admin_2',
-      admin_role_id: 'role_support',
+      admin_role_id: 'role_ar_support',
       scope_type: 'tenant',
       scope_id: 'tenant_123',
       expires_at: null,
@@ -599,7 +605,7 @@ describe('adminRolesRouter', () => {
       id: 'assignment_1',
       tenant_id: 'tenant_123',
       admin_user_id: 'admin_2',
-      admin_role_id: 'role_support',
+      admin_role_id: 'role_ar_support',
       scope_type: 'tenant',
       scope_id: 'tenant_123',
       expires_at: 2000,
@@ -609,7 +615,7 @@ describe('adminRolesRouter', () => {
 
     const { app, env } = createTestApp();
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      '/api/admin/admin-roles/role_ar_support/assignments/assignment_1',
       {
         method: 'PATCH',
         headers: {
@@ -633,7 +639,8 @@ describe('adminRolesRouter', () => {
         scope_type: 'tenant',
         scope_id: 'tenant_123',
         expires_at: 2000,
-      })
+      }),
+      undefined
     );
   });
 
@@ -653,7 +660,7 @@ describe('adminRolesRouter', () => {
 
     beforeEach(() => {
       repoMocks.getRole.mockResolvedValue({
-        id: 'role_support',
+        id: 'role_ar_support',
         tenant_id: 'tenant_123',
         is_system: false,
         permissions: ['admin:users:read'],
@@ -663,7 +670,7 @@ describe('adminRolesRouter', () => {
       repoMocks.findAdminUserByTenantAndId.mockResolvedValue({ id: 'admin_2' });
       repoMocks.getAssignment.mockResolvedValue({
         id: 'assignment_1',
-        admin_role_id: 'role_support',
+        admin_role_id: 'role_ar_support',
         admin_user_id: 'admin_2',
         scope_type: 'tenant',
         scope_id: 'tenant_123',
@@ -677,7 +684,7 @@ describe('adminRolesRouter', () => {
     ])('refuses %s to create a global assignment', async (_name, headers) => {
       const { app, env } = createTestApp();
       const response = await app.request(
-        '/api/admin/admin-roles/role_support/assignments',
+        '/api/admin/admin-roles/role_ar_support/assignments',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...headers },
@@ -696,7 +703,7 @@ describe('adminRolesRouter', () => {
     ])('refuses %s to widen an assignment to global', async (_name, headers) => {
       const { app, env } = createTestApp();
       const response = await app.request(
-        '/api/admin/admin-roles/role_support/assignments/assignment_1',
+        '/api/admin/admin-roles/role_ar_support/assignments/assignment_1',
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...headers },
@@ -713,7 +720,7 @@ describe('adminRolesRouter', () => {
       repoMocks.updateAssignment.mockResolvedValue({ id: 'assignment_1', scope_type: 'global' });
       const { app, env } = createTestApp();
       const response = await app.request(
-        '/api/admin/admin-roles/role_support/assignments/assignment_1',
+        '/api/admin/admin-roles/role_ar_support/assignments/assignment_1',
         {
           method: 'PATCH',
           headers: {
@@ -849,7 +856,7 @@ describe('adminRolesRouter', () => {
       tenant_id: 'tenant_123',
       is_system: true,
       role_type: 'builtin',
-      name: 'super_admin',
+      name: 'ar_super_admin',
     });
 
     const { app, env } = createTestApp();
@@ -901,18 +908,18 @@ describe('adminRolesRouter', () => {
 
   it('should return effective permissions only for a tenant-accessible role', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       name: 'support',
       permissions: ['admin:users:read'],
-      inherits_from: 'role_viewer',
+      inherits_from: 'role_ar_viewer',
     });
     repoMocks.getEffectivePermissions.mockResolvedValue(['admin:users:read', 'admin:clients:read']);
     const { app, env } = createTestApp();
 
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/effective-permissions',
+      '/api/admin/admin-roles/role_ar_support/effective-permissions',
       {},
       env
     );
@@ -1124,14 +1131,14 @@ describe('adminRolesRouter', () => {
 
   it('should remove a non-platform assignment and leave audit evidence', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
       name: 'support',
     });
     repoMocks.getAssignment.mockResolvedValue({
       id: 'assignment_1',
-      admin_role_id: 'role_support',
+      admin_role_id: 'role_ar_support',
       admin_user_id: 'admin_2',
       scope_type: 'tenant',
       scope_id: 'tenant_123',
@@ -1140,33 +1147,33 @@ describe('adminRolesRouter', () => {
     const { app, env } = createTestApp();
 
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      '/api/admin/admin-roles/role_ar_support/assignments/assignment_1',
       { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
       env
     );
 
     expect(response.status).toBe(200);
-    expect(repoMocks.removeAssignmentById).toHaveBeenCalledWith('assignment_1');
+    expect(repoMocks.removeAssignmentById).toHaveBeenCalledWith('assignment_1', undefined);
     expect(repoMocks.createAuditLog).toHaveBeenCalled();
   });
 
   it('should protect the final platform role assignment from deletion', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_super_admin',
+      id: 'role_ar_super_admin',
       tenant_id: 'default',
       is_system: true,
-      name: 'super_admin',
+      name: 'ar_super_admin',
     });
     repoMocks.getAssignment.mockResolvedValue({
       id: 'assignment_1',
-      admin_role_id: 'role_super_admin',
+      admin_role_id: 'role_ar_super_admin',
       admin_user_id: 'admin_2',
     });
     repoMocks.adminAdapterQueryOne.mockResolvedValue({ count: 1 });
     const { app, env } = createTestApp();
 
     const response = await app.request(
-      '/api/admin/admin-roles/role_super_admin/assignments/assignment_1',
+      '/api/admin/admin-roles/role_ar_super_admin/assignments/assignment_1',
       { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
       env
     );
@@ -1176,12 +1183,12 @@ describe('adminRolesRouter', () => {
   });
 
   it.each([
-    ['POST', '/api/admin/admin-roles/role_support/assignments'],
-    ['PATCH', '/api/admin/admin-roles/role_support/assignments/assignment_1'],
-    ['DELETE', '/api/admin/admin-roles/role_support/assignments/assignment_1'],
+    ['POST', '/api/admin/admin-roles/role_ar_support/assignments'],
+    ['PATCH', '/api/admin/admin-roles/role_ar_support/assignments/assignment_1'],
+    ['DELETE', '/api/admin/admin-roles/role_ar_support/assignments/assignment_1'],
     ['POST', '/api/admin/admin-roles'],
-    ['PATCH', '/api/admin/admin-roles/role_support'],
-    ['DELETE', '/api/admin/admin-roles/role_support'],
+    ['PATCH', '/api/admin/admin-roles/role_ar_support'],
+    ['DELETE', '/api/admin/admin-roles/role_ar_support'],
   ])('should reject %s %s without role-write authority', async (method, path) => {
     const { app, env } = createTestApp();
     const response = await app.request(
@@ -1208,28 +1215,28 @@ describe('adminRolesRouter', () => {
     ],
     [
       'missing user id',
-      { id: 'role_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
+      { id: 'role_ar_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
       {},
       null,
       400,
     ],
     [
       'foreign user',
-      { id: 'role_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
+      { id: 'role_ar_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
       { admin_user_id: 'admin_foreign' },
       null,
       404,
     ],
     [
       'peer hierarchy role',
-      { id: 'role_support', tenant_id: 'tenant_123', hierarchy_level: 50 },
+      { id: 'role_ar_support', tenant_id: 'tenant_123', hierarchy_level: 50 },
       { admin_user_id: 'admin_2' },
       { id: 'admin_2' },
       403,
     ],
     [
       'invalid expiry',
-      { id: 'role_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
+      { id: 'role_ar_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
       { admin_user_id: 'admin_2', expires_at: 0 },
       { id: 'admin_2' },
       400,
@@ -1240,7 +1247,7 @@ describe('adminRolesRouter', () => {
     const { app, env } = createTestApp();
 
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments',
+      '/api/admin/admin-roles/role_ar_support/assignments',
       {
         method: 'POST',
         headers: {
@@ -1261,17 +1268,17 @@ describe('adminRolesRouter', () => {
     ['missing role', null, null, {}, 404],
     [
       'assignment for another role',
-      { id: 'role_support', tenant_id: 'tenant_123' },
+      { id: 'role_ar_support', tenant_id: 'tenant_123' },
       { id: 'assignment_1', admin_role_id: 'other', admin_user_id: 'admin_2' },
       {},
       404,
     ],
     [
       'foreign tenant scope',
-      { id: 'role_support', tenant_id: 'tenant_123' },
+      { id: 'role_ar_support', tenant_id: 'tenant_123' },
       {
         id: 'assignment_1',
-        admin_role_id: 'role_support',
+        admin_role_id: 'role_ar_support',
         admin_user_id: 'admin_2',
         scope_type: 'tenant',
         scope_id: 'tenant_123',
@@ -1281,10 +1288,10 @@ describe('adminRolesRouter', () => {
     ],
     [
       'global escalation',
-      { id: 'role_support', tenant_id: 'tenant_123' },
+      { id: 'role_ar_support', tenant_id: 'tenant_123' },
       {
         id: 'assignment_1',
-        admin_role_id: 'role_support',
+        admin_role_id: 'role_ar_support',
         admin_user_id: 'admin_2',
         scope_type: 'tenant',
         scope_id: 'tenant_123',
@@ -1294,10 +1301,10 @@ describe('adminRolesRouter', () => {
     ],
     [
       'invalid expiry',
-      { id: 'role_support', tenant_id: 'tenant_123' },
+      { id: 'role_ar_support', tenant_id: 'tenant_123' },
       {
         id: 'assignment_1',
-        admin_role_id: 'role_support',
+        admin_role_id: 'role_ar_support',
         admin_user_id: 'admin_2',
         scope_type: 'tenant',
         scope_id: 'tenant_123',
@@ -1311,7 +1318,7 @@ describe('adminRolesRouter', () => {
     const { app, env } = createTestApp();
 
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      '/api/admin/admin-roles/role_ar_support/assignments/assignment_1',
       {
         method: 'PATCH',
         headers: {
@@ -1329,13 +1336,13 @@ describe('adminRolesRouter', () => {
 
   it('should reject an assignment update that duplicates another scope binding', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       hierarchy_level: 10,
     });
     repoMocks.getAssignment.mockResolvedValue({
       id: 'assignment_1',
-      admin_role_id: 'role_support',
+      admin_role_id: 'role_ar_support',
       admin_user_id: 'admin_2',
       scope_type: 'tenant',
       scope_id: 'tenant_123',
@@ -1344,7 +1351,7 @@ describe('adminRolesRouter', () => {
     const { app, env } = createTestApp();
 
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      '/api/admin/admin-roles/role_ar_support/assignments/assignment_1',
       {
         method: 'PATCH',
         headers: {
@@ -1363,7 +1370,7 @@ describe('adminRolesRouter', () => {
 
   it('should pass the explicit expired-assignment flag to the tenant-scoped repository', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       is_system: false,
     });
@@ -1371,24 +1378,24 @@ describe('adminRolesRouter', () => {
     const { app, env } = createTestApp();
 
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments?include_expired=true',
+      '/api/admin/admin-roles/role_ar_support/assignments?include_expired=true',
       {},
       env
     );
 
     expect(response.status).toBe(200);
-    expect(repoMocks.getAssignmentsByRole).toHaveBeenCalledWith('role_support', true);
+    expect(repoMocks.getAssignmentsByRole).toHaveBeenCalledWith('role_ar_support', true);
   });
 
   it('should report a concurrently removed assignment instead of claiming an update', async () => {
     repoMocks.getRole.mockResolvedValue({
-      id: 'role_support',
+      id: 'role_ar_support',
       tenant_id: 'tenant_123',
       hierarchy_level: 10,
     });
     repoMocks.getAssignment.mockResolvedValue({
       id: 'assignment_1',
-      admin_role_id: 'role_support',
+      admin_role_id: 'role_ar_support',
       admin_user_id: 'admin_2',
       scope_type: 'tenant',
       scope_id: 'tenant_123',
@@ -1398,7 +1405,7 @@ describe('adminRolesRouter', () => {
     const { app, env } = createTestApp();
 
     const response = await app.request(
-      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      '/api/admin/admin-roles/role_ar_support/assignments/assignment_1',
       {
         method: 'PATCH',
         headers: {

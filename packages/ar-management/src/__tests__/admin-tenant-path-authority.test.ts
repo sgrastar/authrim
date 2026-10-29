@@ -15,8 +15,8 @@ import {
 /**
  * A path that names a tenant (`/tenants/{id}/settings/...`) is judged on the roles the caller holds
  * for that tenant. `adminAuth.roles` adds up the global assignments and the ones for the tenant the
- * request arrived on, so for any other tenant only the global assignments count: a super_admin for
- * one tenant, or a viewer for every tenant next to a super_admin for one, must not reach another.
+ * request arrived on, so for any other tenant only the global assignments count: a ar_super_admin for
+ * one tenant, or a viewer for every tenant next to a ar_super_admin for one, must not reach another.
  *
  * These run the real admin-auth middleware, route access and Settings API on the real Admin schema.
  * A PATCH without `ifMatch` answers 400 once it is authorized, so 403 vs 400 tells the verdict.
@@ -55,7 +55,7 @@ const settingsPath = (tenant: string, category = 'session') =>
   `/api/admin/tenants/${tenant}/settings/${category}`;
 
 describe('tenant settings of another tenant', () => {
-  it('refuses a super_admin of one tenant on the settings of another tenant', async () => {
+  it('refuses a ar_super_admin of one tenant on the settings of another tenant', async () => {
     const context = setup();
     const admin = signIn(context.db, TENANT_SUPER_ADMIN);
 
@@ -66,7 +66,7 @@ describe('tenant settings of another tenant', () => {
     expect(write.status).toBe(403);
   });
 
-  it('lets that super_admin through to the settings of its own tenant', async () => {
+  it('lets that ar_super_admin through to the settings of its own tenant', async () => {
     const context = setup();
     const admin = signIn(context.db, TENANT_SUPER_ADMIN);
 
@@ -78,7 +78,7 @@ describe('tenant settings of another tenant', () => {
     expect(read.status).not.toBe(403);
   });
 
-  it('refuses a global viewer who is a super_admin of one tenant on editing another tenant', async () => {
+  it('refuses a global viewer who is a ar_super_admin of one tenant on editing another tenant', async () => {
     const context = setup();
     const admin = signIn(context.db, GLOBAL_VIEWER_TENANT_SUPER_ADMIN);
 
@@ -90,14 +90,14 @@ describe('tenant settings of another tenant', () => {
     });
 
     expect(otherWrite.status).toBe(403);
-    // The tenant it is a super_admin of is its own.
+    // The tenant it is a ar_super_admin of is its own.
     expect(ownWrite.status).toBe(400);
   });
 
   it('refuses a viewer of one tenant on another tenant, and lets a global viewer read it', async () => {
     const context = setup();
-    const tenantViewer = signIn(context.db, [{ role: 'role_viewer', scope: 'tenant' }]);
-    const globalViewer = signIn(context.db, [{ role: 'role_viewer', scope: 'global' }]);
+    const tenantViewer = signIn(context.db, [{ role: 'role_ar_viewer', scope: 'tenant' }]);
+    const globalViewer = signIn(context.db, [{ role: 'role_ar_viewer', scope: 'global' }]);
 
     const refused = await context.call(tenantViewer.cookie, 'GET', settingsPath(OTHER));
     const allowed = await context.call(globalViewer.cookie, 'GET', settingsPath(OTHER));
@@ -108,7 +108,7 @@ describe('tenant settings of another tenant', () => {
     expect(ownRead.status).not.toBe(403);
   });
 
-  it('lets a global super_admin through to its own tenant and to another', async () => {
+  it('lets a global ar_super_admin through to its own tenant and to another', async () => {
     const context = setup();
     const admin = signIn(context.db, GLOBAL_SUPER_ADMIN);
 
@@ -147,12 +147,12 @@ describe('canAccessTenant on what the real middleware builds', () => {
     const tenantSuperAdmin = await authOf(TENANT_SUPER_ADMIN);
     const globalSuperAdmin = await authOf(GLOBAL_SUPER_ADMIN);
     const globalViewerTenantSuperAdmin = await authOf(GLOBAL_VIEWER_TENANT_SUPER_ADMIN);
-    const tenantViewer = await authOf([{ role: 'role_viewer', scope: 'tenant' }]);
+    const tenantViewer = await authOf([{ role: 'role_ar_viewer', scope: 'tenant' }]);
 
     expect(canAccessTenant(tenantSuperAdmin, TENANT)).toBe(true);
     expect(canAccessTenant(tenantSuperAdmin, OTHER)).toBe(false);
     expect(canAccessTenant(globalSuperAdmin, OTHER)).toBe(true);
-    // The global part is only a viewer: it may look at another tenant, but the super_admin is not
+    // The global part is only a viewer: it may look at another tenant, but the ar_super_admin is not
     // one there.
     expect(canAccessTenant(globalViewerTenantSuperAdmin, TENANT)).toBe(true);
     expect(canAccessTenant(tenantViewer, TENANT)).toBe(true);

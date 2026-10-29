@@ -33,6 +33,13 @@ export function openAdminDatabase(): SQLiteDatabase {
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
+  // The standard roles the baseline seeds are replaced by the `ar_` roles.
+  db.exec(
+    readFileSync(
+      resolve(REPO_ROOT, 'migrations/admin/d1/054_admin_roles_ar_prefix.sql'),
+      'utf8'
+    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+  );
   db.exec(
     readFileSync(
       resolve(REPO_ROOT, 'migrations/admin/d1/050_identity_mapping_level_history.sql'),
@@ -59,7 +66,7 @@ export interface AdapterHooks {
   beforeBatch?: () => Promise<void>;
   /** Runs once, right before the next read whose SQL matches, to put a change in the middle of a request's reads. */
   beforeQuery?: { match: RegExp; run: () => Promise<void> };
-  /** The same for a write (`execute`): runs once, right before the next one whose SQL matches. */
+  /** Runs once, right before the next write whose SQL matches: another request between a request's reads and its write. */
   beforeExecute?: { match: RegExp; run: () => Promise<void> };
 }
 
@@ -69,6 +76,13 @@ export function sqliteAdapter(db: SQLiteDatabase, hooks: AdapterHooks = {}): Dat
     const hook = hooks.beforeQuery;
     if (hook?.match.test(sql)) {
       hooks.beforeQuery = undefined;
+      await hook.run();
+    }
+  };
+  const interleaveWrite = async (sql: string) => {
+    const hook = hooks.beforeExecute;
+    if (hook?.match.test(sql)) {
+      hooks.beforeExecute = undefined;
       await hook.run();
     }
   };
@@ -82,11 +96,7 @@ export function sqliteAdapter(db: SQLiteDatabase, hooks: AdapterHooks = {}): Dat
       return db.prepare(sql).get(...bind(params)) ?? null;
     },
     async execute(sql: string, params?: unknown[]) {
-      const hook = hooks.beforeExecute;
-      if (hook?.match.test(sql)) {
-        hooks.beforeExecute = undefined;
-        await hook.run();
-      }
+      await interleaveWrite(sql);
       const result = db.prepare(sql).run(...bind(params));
       return { rowsAffected: Number(result.changes), success: true };
     },
@@ -127,11 +137,11 @@ let sessions = 0;
 
 export type Assignment = { role: string; scope: 'global' | 'tenant' };
 
-export const TENANT_SUPER_ADMIN: Assignment[] = [{ role: 'role_super_admin', scope: 'tenant' }];
-export const GLOBAL_SUPER_ADMIN: Assignment[] = [{ role: 'role_super_admin', scope: 'global' }];
+export const TENANT_SUPER_ADMIN: Assignment[] = [{ role: 'role_ar_super_admin', scope: 'tenant' }];
+export const GLOBAL_SUPER_ADMIN: Assignment[] = [{ role: 'role_ar_super_admin', scope: 'global' }];
 /** A global assignment that is only a viewer, with the wildcard held for the tenant alone. */
 export const GLOBAL_VIEWER_TENANT_SUPER_ADMIN: Assignment[] = [
-  { role: 'role_viewer', scope: 'global' },
+  { role: 'role_ar_viewer', scope: 'global' },
   ...TENANT_SUPER_ADMIN,
 ];
 

@@ -5,6 +5,7 @@
  */
 
 import type { SettingMeta, CategoryMeta } from '../../utils/settings-manager';
+import { ADMIN_ROLES } from '../../constants/admin-roles';
 
 export type { SettingMeta, CategoryMeta };
 
@@ -41,16 +42,16 @@ export interface ScopedCategoryMeta extends CategoryMeta {
  */
 export const DEFAULT_SCOPE_PERMISSIONS: Record<SettingScopeLevel, ScopePermission> = {
   platform: {
-    viewRoles: ['system_admin', 'admin', 'viewer'],
-    editRoles: ['system_admin'],
+    viewRoles: [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.TENANT_ADMIN, ADMIN_ROLES.VIEWER],
+    editRoles: [ADMIN_ROLES.SUPER_ADMIN],
   },
   tenant: {
-    viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin', 'viewer'],
-    editRoles: ['system_admin', 'distributor_admin', 'admin'],
+    viewRoles: [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.TENANT_ADMIN, ADMIN_ROLES.VIEWER],
+    editRoles: [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.TENANT_ADMIN],
   },
   client: {
-    viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin', 'viewer'],
-    editRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin'],
+    viewRoles: [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.TENANT_ADMIN, ADMIN_ROLES.VIEWER],
+    editRoles: [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.TENANT_ADMIN],
   },
 };
 

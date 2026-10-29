@@ -476,8 +476,8 @@ async function getSupportOpsApprovalWorkflowState(
   const requestRepo = new ApprovalRequestRepository(adminAdapter);
   const approvalRepo = new ApprovalRequestApprovalRepository(adminAdapter);
   const request = await requestRepo.getApprovalRequestByPublicId(
-    expected.tenantId,
-    approvalRequestId
+    approvalRequestId,
+    expected.tenantId
   );
   if (!request) {
     return { approved: false, approvedBy: [], bound: false };

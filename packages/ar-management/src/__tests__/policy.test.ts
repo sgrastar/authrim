@@ -14,7 +14,7 @@
  * - GET /api/admin/effective-policy/options - Get available options
  *
  * Security tests:
- * - RBAC authorization (system_admin, org_admin, admin)
+ * - RBAC authorization (ar_super_admin, org_admin, admin)
  * - Tenant isolation
  * - Client ownership validation via D1
  * - Optimistic locking (ifMatch)

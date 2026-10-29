@@ -75,7 +75,7 @@ function signIn(db: SQLiteDatabase): { userId: string; cookie: string } {
   ).run(roleId, TENANT, `approver_${counter}`, JSON.stringify(PERMISSIONS), now, now);
   for (const [suffix, role] of [
     ['custom', roleId],
-    ['viewer', 'role_viewer'],
+    ['viewer', 'role_ar_viewer'],
   ] as const) {
     db.prepare(
       `INSERT INTO admin_role_assignments (id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, created_at)
@@ -630,8 +630,8 @@ describe('a machine credential is one subject, however it is recorded', () => {
         request.id
       );
       const refresh = (await new ApprovalRequestRepository(adapter).getApprovalRequestByPublicId(
-        TENANT,
-        request.public_request_id
+        request.public_request_id,
+        TENANT
       ))!;
 
       await expect(

@@ -6,11 +6,11 @@ import { Meta } from '@storybook/addon-docs/blocks';
 
 Admins see and change different things. The console shows each of them only what they can use.
 
-| Kind                      | Runs                                    | Example role                  |
-| ------------------------- | --------------------------------------- | ----------------------------- |
-| **Platform admin**        | the whole installation, every tenant    | `super_admin` (platform-wide) |
-| **Tenant admin**          | one tenant: users, apps, settings       | `admin`                       |
-| **Limited** (in a tenant) | one job: helping users, or only reading | `support`, `viewer`           |
+| Kind                      | Runs                                    | Example role                     |
+| ------------------------- | --------------------------------------- | -------------------------------- |
+| **Platform admin**        | the whole installation, every tenant    | `ar_super_admin` (platform-wide) |
+| **Tenant admin**          | one tenant: users, apps, settings       | `ar_tenant_admin`                |
+| **Limited** (in a tenant) | one job: helping users, or only reading | `ar_support`, `ar_viewer`        |
 
 Use the **Admin** toolbar to look at any page as each of them. The personas carry the
 permissions of the built-in roles, so what a story shows matches what that role gets from the
@@ -37,7 +37,7 @@ Every request is checked by the Admin API. `access.ts` mirrors those checks so t
 not offer what would fail, and keeps them in one file:
 
 - **Settings are opened by role name**, not by permission (`admin:settings:*` alone does not
-  open them); `super_admin` and `system_admin` open every category.
+  open them); `ar_super_admin` opens every category.
 - **A category no role may edit at a scope is read-only there for everyone** (infrastructure
   and encryption on the platform: they are set when deploying).
 - Other areas are checked by permission (`admin:users:read`, wildcards included).

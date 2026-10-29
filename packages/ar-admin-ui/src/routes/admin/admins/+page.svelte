@@ -112,9 +112,8 @@
 
 		if (roleResult.status === 'fulfilled') {
 			availableRoles = roleResult.value.items;
-			if (!newAdminRoleId && availableRoles.length > 0) {
-				newAdminRoleId =
-					availableRoles.find((role) => role.name === 'admin')?.id ?? availableRoles[0].id;
+			if (!newAdminRoleId) {
+				newAdminRoleId = defaultNewAdminRoleId();
 			}
 		} else if (canReadRoles) {
 			availableRoles = [];
@@ -201,11 +200,21 @@
 		}
 	}
 
+	// The role an invitation starts with: a tenant administrator, else a viewer. Never whichever role
+	// happens to be first in the list, which could be the super admin; with neither the field stays
+	// empty and the form asks for a choice.
+	function defaultNewAdminRoleId(): string {
+		return (
+			availableRoles.find((role) => role.name === 'ar_tenant_admin')?.id ??
+			availableRoles.find((role) => role.name === 'ar_viewer')?.id ??
+			''
+		);
+	}
+
 	function openCreateDialog() {
 		newAdminEmail = '';
 		newAdminName = '';
-		newAdminRoleId =
-			availableRoles.find((role) => role.name === 'admin')?.id ?? availableRoles[0]?.id ?? '';
+		newAdminRoleId = defaultNewAdminRoleId();
 		ipRestrictionEnabled = false;
 		allowedIpRanges = [''];
 		createError = '';
@@ -240,7 +249,7 @@
 				email: newAdminEmail.trim(),
 				name: newAdminName.trim() || undefined,
 				role_id: newAdminRoleId,
-				scope_type: role?.name === 'super_admin' ? 'global' : 'tenant',
+				scope_type: role?.name === 'ar_super_admin' ? 'global' : 'tenant',
 				ip_restriction_enabled: ipRestrictionEnabled,
 				allowed_ip_ranges: ranges
 			});

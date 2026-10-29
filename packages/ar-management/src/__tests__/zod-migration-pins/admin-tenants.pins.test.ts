@@ -80,8 +80,8 @@ function adapter(
 
 const ADMIN_AUTH = {
   userId: 'platform-admin',
-  roles: ['system_admin'],
-  globalRoles: ['system_admin'],
+  roles: ['ar_super_admin'],
+  globalRoles: ['ar_super_admin'],
   tenantScope: ['*'],
   permissions: [],
 };

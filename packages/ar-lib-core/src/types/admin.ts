@@ -86,7 +86,7 @@ export interface AdminAuthContext {
   correlationId?: string;
   /** Tenant scope carried by a machine access token */
   tenantScope?: string[];
-  /** User roles (e.g., ['admin', 'super_admin']) */
+  /** User roles (e.g., ['ar_tenant_admin']) */
   roles: string[];
   /**
    * The part of `roles` that comes from a global assignment (or, for a machine token, from a

@@ -2968,13 +2968,20 @@ describe('LoginUI runtime Flow handlers', () => {
       // The metadata database (the request's core adapter) defines the role, nothing more.
       mocks.coreAdapter.query.mockImplementation(async (sql: string) =>
         sql.includes('FROM roles') && !sql.includes('user_roles')
-          ? [{ id: 'role_admin', name: 'admin', permissions_json: '[]' }]
+          ? [{ id: 'role_ar_tenant_admin', name: 'admin', permissions_json: '[]' }]
           : []
       );
       const account = {
         query: vi.fn(async (sql: string) =>
           sql.includes('FROM role_assignments')
-            ? [{ id: 'ra_1', role_id: 'role_admin', scope_type: 'global', scope_target: '' }]
+            ? [
+                {
+                  id: 'ra_1',
+                  role_id: 'role_ar_tenant_admin',
+                  scope_type: 'global',
+                  scope_target: '',
+                },
+              ]
             : []
         ),
         queryOne: vi.fn(),

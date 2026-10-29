@@ -205,7 +205,7 @@ async function loadPendingApprovalArtifactState(
   const adapter = getAdminAdapter(env);
   const requestRepo = new ApprovalRequestRepository(adapter);
   const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
-  const request = await requestRepo.getApprovalRequestByPublicId(tenantId, artifact.request_id);
+  const request = await requestRepo.getApprovalRequestByPublicId(artifact.request_id, tenantId);
   const approval = await approvalRepo.getApprovalById(artifact.approval_id);
 
   if (!request || !approval || approval.approval_request_id !== request.id) {

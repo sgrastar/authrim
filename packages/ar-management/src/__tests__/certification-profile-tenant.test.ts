@@ -51,7 +51,7 @@ function app(tenantId = 'fapi2') {
     c.set('adminAuth', {
       userId: 'admin-1',
       authMethod: 'session',
-      roles: ['system_admin'],
+      roles: ['ar_super_admin'],
       // The roles are the ones held for the tenant the request arrived on.
       tenantId,
     } as AdminAuthContext);

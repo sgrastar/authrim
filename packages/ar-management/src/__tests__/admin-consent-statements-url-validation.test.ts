@@ -28,6 +28,9 @@ function createMockAdapter(
   } = {}
 ): DatabaseAdapter {
   const query = vi.fn(async <T>(sql: string): Promise<T[]> => {
+    if (sql.includes('SELECT id FROM consent_statement_versions')) {
+      return [{ id: 'version-1' }] as T[];
+    }
     if (sql.includes('SELECT id FROM consent_statement_localizations')) {
       return (options.localizationExists ? [{ id: 'loc-1' }] : []) as T[];
     }
@@ -137,6 +140,7 @@ describe('admin consent statement URL validation', () => {
       expect.any(Number),
       'ver-1',
       'en',
+      'default',
     ]);
   });
 
@@ -172,6 +176,7 @@ describe('admin consent statement URL validation', () => {
       expect.any(Number),
       'ver-1',
       'en',
+      'default',
     ]);
   });
 

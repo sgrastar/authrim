@@ -249,6 +249,11 @@ agentTemplatesRouter.get('/:id/:version/copies', async (c) => {
   if (!Number.isSafeInteger(itemVersion) || itemVersion < 1) {
     return error(c, 400, 'AGENT_TEMPLATE_INVALID_VERSION');
   }
+  // A template is looked up by ID alone; only the tenant that published it sees its copies.
+  const template = await repositories(c).baseline.getTemplate(c.req.param('id'), itemVersion);
+  if (!template || template.sourceTenantId !== controlTenant(c)) {
+    return error(c, 404, 'AGENT_TEMPLATE_NOT_FOUND');
+  }
   return c.json({
     copies: await repositories(c).baseline.listTemplateCopies(c.req.param('id'), itemVersion),
   });
@@ -286,7 +291,7 @@ agentTemplatesRouter.post('/:id/:version/copies', async (c) => {
   }
   const { baseline, bulk } = repositories(c);
   const template = await baseline.getTemplate(c.req.param('id'), itemVersion);
-  if (!template || template.status !== 'active') {
+  if (!template || template.status !== 'active' || template.sourceTenantId !== controlTenant(c)) {
     return error(c, 404, 'AGENT_TEMPLATE_NOT_FOUND');
   }
   const plan = await bulk.get(controlTenant(c), bulkPlanId, bulkPlanVersion);

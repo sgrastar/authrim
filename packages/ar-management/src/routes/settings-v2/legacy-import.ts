@@ -18,6 +18,7 @@ import {
   hasGlobalAdminRole,
   type AdminAuthContext,
   type Env,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import { LegacyImportStateError, runLegacySettingsImport } from '../../legacy-settings-import';
 import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
@@ -28,7 +29,7 @@ type ImportContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuth
 
 const legacyImport = new Hono<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>();
 
-const PLATFORM_ADMIN_ROLES = ['super_admin', 'system_admin'];
+const PLATFORM_ADMIN_ROLES = ADMIN_ROLE_GROUPS.platform;
 
 // The import covers the whole environment, so the role has to come from a global assignment:
 // `roles` also holds what is given for one tenant only.

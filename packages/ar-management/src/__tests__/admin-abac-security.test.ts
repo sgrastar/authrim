@@ -224,6 +224,16 @@ describe('admin ABAC security boundaries', () => {
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 
+  it('does not remove the values of a system attribute shared by every tenant', async () => {
+    mocks.getAttribute.mockResolvedValue(attribute({ is_system: true }));
+
+    expect((await jsonRequest('/api/admin/admin-attributes/attr-a', 'DELETE')).status).toBe(404);
+
+    expect(mocks.deleteAllByAttribute).not.toHaveBeenCalled();
+    expect(mocks.deleteAttribute).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
   it('returns not-found without auditing when an attribute disappears during mutation', async () => {
     mocks.getAttribute.mockResolvedValueOnce(null);
     expect(

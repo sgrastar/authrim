@@ -11,7 +11,7 @@
  * - Client ownership validation via D1 database
  * - Scoped KV keys with environment prefix
  * - Generalized error messages to prevent information leakage
- * - RBAC: Requires system_admin or org_admin role
+ * - RBAC: Requires the ar_tenant_admin role
  * - Audit logging for all contract modifications
  * - Status transition validation for lifecycle management
  *
@@ -83,6 +83,7 @@ import {
   createAuditLogEntry,
   createLogger,
   resolveEffectiveSettings,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -531,7 +532,7 @@ const policyRouter = new Hono<{
 // unrelated routes that are registered after this sub-router (for example Agent-safe read
 // operations). Keep the guard explicitly scoped to the paths owned by this router.
 // Note: adminAuthMiddleware is already applied at the parent router level.
-const policyAdminRoles = ['system_admin', 'org_admin', 'admin'];
+const policyAdminRoles = [...ADMIN_ROLE_GROUPS.tenantAdmin];
 for (const path of [
   '/tenant-policy',
   '/tenant-policy/*',
