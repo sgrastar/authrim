@@ -13,6 +13,7 @@
 
 import type { DatabaseAdapter } from '../../db/adapter';
 import { requireTenantId } from '../tenant';
+import { guardClause, type AdminWriteGuard } from './write-guard';
 import {
   BaseRepository,
   type BaseEntity,
@@ -161,9 +162,15 @@ export class AdminUserRepository extends BaseRepository<AdminUserEntity> {
    *
    * @param id - Admin user ID
    * @param input - Update input
+   * @param guard - A condition the database checks in the same statement; nothing is updated
+   *   (and null is returned) when it no longer holds
    * @returns Updated Admin user or null if not found
    */
-  async updateAdminUser(id: string, input: AdminUserUpdateInput): Promise<AdminUser | null> {
+  async updateAdminUser(
+    id: string,
+    input: AdminUserUpdateInput,
+    guard?: AdminWriteGuard
+  ): Promise<AdminUser | null> {
     const existing = await this.findById(id);
     if (!existing) {
       return null;
@@ -211,10 +218,14 @@ export class AdminUserRepository extends BaseRepository<AdminUserEntity> {
 
     updates.push('updated_at = ?');
     values.push(getCurrentTimestamp());
-    values.push(id);
+    const condition = guardClause(guard);
+    values.push(id, ...condition.params);
 
-    const sql = `UPDATE admin_users SET ${updates.join(', ')} WHERE id = ?`;
-    await this.adapter.execute(sql, values);
+    const sql = `UPDATE admin_users SET ${updates.join(', ')} WHERE id = ?${condition.sql}`;
+    const result = await this.adapter.execute(sql, values);
+    if (guard && result.rowsAffected === 0) {
+      return null;
+    }
 
     const updated = await this.findById(id);
     return updated ? this.entityToAdminUser(updated) : null;
@@ -416,13 +427,33 @@ export class AdminUserRepository extends BaseRepository<AdminUserEntity> {
    * Suspend an Admin account
    *
    * @param id - Admin user ID
+   * @param guard - A condition the database checks in the same statement; nothing is suspended
+   *   (and false is returned) when it no longer holds
    * @returns True if suspended
    */
-  async suspendAccount(id: string): Promise<boolean> {
+  async suspendAccount(id: string, guard?: AdminWriteGuard): Promise<boolean> {
     const now = getCurrentTimestamp();
+    const condition = guardClause(guard);
     const result = await this.adapter.execute(
-      `UPDATE admin_users SET status = 'suspended', updated_at = ? WHERE id = ?`,
-      [now, id]
+      `UPDATE admin_users SET status = 'suspended', updated_at = ? WHERE id = ?${condition.sql}`,
+      [now, id, ...condition.params]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /**
+   * Deactivate (soft delete) an Admin account
+   *
+   * @param id - Admin user ID
+   * @param guard - A condition the database checks in the same statement; nothing is deactivated
+   *   (and false is returned) when it no longer holds
+   * @returns True if deactivated
+   */
+  async deactivateAccount(id: string, guard?: AdminWriteGuard): Promise<boolean> {
+    const condition = guardClause(guard);
+    const result = await this.adapter.execute(
+      `UPDATE admin_users SET is_active = 0, updated_at = ? WHERE id = ?${condition.sql}`,
+      [getCurrentTimestamp(), id, ...condition.params]
     );
     return result.rowsAffected > 0;
   }

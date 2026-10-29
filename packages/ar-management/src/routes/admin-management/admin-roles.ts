@@ -26,6 +26,7 @@ import {
   hasGlobalAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
   ADMIN_ROLES,
+  allOfGuards,
   type AdminRole,
   type AdminRoleAssignmentScopeType,
 } from '@authrim/ar-lib-core';
@@ -40,7 +41,16 @@ import {
   mayRemoveAssignment,
   roleReachesGlobalAssignment,
 } from './admin-role-authority';
-import { ensureTenantKeepsAdmin } from './last-tenant-admin';
+import {
+  ensureTenantKeepsAdmin,
+  lastTenantAdminResponse,
+  tenantKeepsAdminGuard,
+} from './last-tenant-admin';
+import {
+  countActiveRoleHolders,
+  lastPlatformAdminResponse,
+  roleKeepsHolderGuard,
+} from './last-platform-admin';
 
 // Create router
 export const adminRolesRouter = new Hono<{
@@ -127,26 +137,12 @@ function normalizeAssignmentScope(
   return null;
 }
 
-async function countActiveRoleAssignees(
+function countActiveRoleAssignees(
   adapter: ReturnType<typeof getAdminAdapter>,
   tenantId: string,
   roleId: string
 ): Promise<number> {
-  const now = Date.now();
-  const row = await adapter.queryOne<{ count: number }>(
-    `SELECT COUNT(DISTINCT au.id) as count
-     FROM admin_role_assignments ra
-     JOIN admin_users au
-       ON au.id = ra.admin_user_id
-      AND au.tenant_id = ra.tenant_id
-     WHERE ra.tenant_id = ?
-       AND ra.admin_role_id = ?
-       AND au.is_active = 1
-       AND au.status = 'active'
-       AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-    [tenantId, roleId, now]
-  );
-  return Number(row?.count ?? 0);
+  return countActiveRoleHolders(adapter, tenantId, roleId, false);
 }
 
 /**
@@ -454,15 +450,20 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
 
     // An expiry ends the assignment (now, or later by itself), so it is held to the rule for
     // removing one.
-    if (role.name === ADMIN_ROLES.TENANT_ADMIN && typeof body.expires_at === 'number') {
-      const lastTenantAdminResponse = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
-        assignmentId,
-        // An expiry still to come keeps the account an administrator for now; only a permanent
-        // one that gains an expiry loses what it kept.
-        stillCurrent: body.expires_at > Date.now(),
-      });
-      if (lastTenantAdminResponse) {
-        return lastTenantAdminResponse;
+    const expiring =
+      role.name === ADMIN_ROLES.TENANT_ADMIN && typeof body.expires_at === 'number'
+        ? {
+            assignmentId,
+            // An expiry still to come keeps the account an administrator for now; only a permanent
+            // one that gains an expiry loses what it kept.
+            stillCurrent: body.expires_at > Date.now(),
+            newExpiresAt: body.expires_at,
+          }
+        : null;
+    if (expiring) {
+      const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, expiring);
+      if (tenantAdminRefusal) {
+        return tenantAdminRefusal;
       }
     }
 
@@ -477,14 +478,21 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
-    const updated = await roleAssignmentRepo.updateAssignment(assignmentId, {
-      scope_type: normalizedScope.scopeType,
-      scope_id: normalizedScope.scopeId,
-      expires_at: body.expires_at,
-    });
+    const updated = await roleAssignmentRepo.updateAssignment(
+      assignmentId,
+      {
+        scope_type: normalizedScope.scopeType,
+        scope_id: normalizedScope.scopeId,
+        expires_at: body.expires_at,
+      },
+      expiring ? tenantKeepsAdminGuard(tenantId, expiring) : undefined
+    );
 
     if (!updated) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // Gone, or the last administrator by the time the write ran: another request got there first.
+      return expiring && (await roleAssignmentRepo.getAssignment(assignmentId))
+        ? lastTenantAdminResponse(c)
+        : createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     await createAuditLog(c, 'admin_role.assignment_update', assignmentId, 'success', {
@@ -538,14 +546,7 @@ adminRolesRouter.delete('/:id/assignments/:assignmentId', async (c) => {
     if (isPlatformAdminRole(role.name)) {
       const activeAssignees = await countActiveRoleAssignees(adapter, tenantId, id);
       if (activeAssignees <= 1) {
-        return c.json(
-          {
-            error: 'last_platform_admin',
-            error_description:
-              'At least one active platform administrator must remain. Assign another platform administrator before removing this role.',
-          },
-          409
-        );
+        return lastPlatformAdminResponse(c, 'role');
       }
 
       if (assignment.admin_user_id === authContext.userId) {
@@ -553,16 +554,31 @@ adminRolesRouter.delete('/:id/assignments/:assignmentId', async (c) => {
       }
     }
 
-    const lastTenantAdminResponse = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+    const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
       assignmentId,
     });
-    if (lastTenantAdminResponse) {
-      return lastTenantAdminResponse;
+    if (tenantAdminRefusal) {
+      return tenantAdminRefusal;
     }
 
-    const removed = await roleAssignmentRepo.removeAssignmentById(assignmentId);
+    const removed = await roleAssignmentRepo.removeAssignmentById(
+      assignmentId,
+      allOfGuards(
+        isPlatformAdminRole(role.name) ? roleKeepsHolderGuard(tenantId, id, false) : undefined,
+        role.name === ADMIN_ROLES.TENANT_ADMIN
+          ? tenantKeepsAdminGuard(tenantId, { assignmentId })
+          : undefined
+      )
+    );
     if (!removed) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // Gone, or the last administrator by the time the write ran: another request got there first.
+      if (!(await roleAssignmentRepo.getAssignment(assignmentId))) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      return isPlatformAdminRole(role.name) &&
+        (await countActiveRoleAssignees(adapter, tenantId, id)) <= 1
+        ? lastPlatformAdminResponse(c, 'role')
+        : lastTenantAdminResponse(c);
     }
 
     await createAuditLog(c, 'admin_role.assignment_remove', assignmentId, 'success', {

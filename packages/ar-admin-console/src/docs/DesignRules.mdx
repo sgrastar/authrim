@@ -37,7 +37,10 @@ See _Patterns → Save scope_ and _Save model (toggle vs save)_.
 
 Every page uses one start-aligned frame, at most 1100px wide, for settings, forms, lists,
 tables and dashboards. Cards fill that frame; a page or card does not choose a wider or
-content-sized width. The frame shrinks to fit a smaller viewport, and wide data tables
+content-sized width. The one exception is a page with a flow diagram beside its settings (a
+service flow's page, `Page` `withFlow`): it hides the left nav and so starts at the screen's edge,
+and its frame is wider by the nav's width (`--sidebar-w`, 252px). Its right edge is then where
+every other page's frame ends, and the badges in the title row line up from page to page. The frame shrinks to fit a smaller viewport, and wide data tables
 scroll inside it when needed. Its content edge stays in place when the left nav changes.
 
 ## Back and forward
@@ -195,6 +198,16 @@ actual weights (400, 500, 600, 700); line heights from `--lh-*`, sharing three v
 | Empty state   | title `--fs-heading` (14px, semibold), description `--fs-body` (13px) | `--icon-xl` (22px) in a 44px tile                                    |
 | Code and time | editable code and identifiers `--fs-body` (13px)                      | compact code labels and secondary time zone `--fs-caption` (12px)    |
 
+- **What a box is, in a line, goes behind a "?"**: a card's explanation of how to read it (what the
+  list is, what the rules are for) is `Card` `info`, a "?" beside the title, not a paragraph under
+  it. A page's own description (`PageHeader`) stays visible: it says what the page is. What a
+  person needs in order to **decide or recover** is never behind a "?": a warning, what a button
+  will do, why something is locked stay in a callout or a hint under the field.
+- **Identifiers (a key, an ID, a route) are monospace at the size of the text beside them**
+  (`--fs-body`, 13px), in a table as in a form. Monospace tells `email` from `email_verified` at a
+  glance, keeps the underscores and digits readable, and says this is a value to copy as it is. It
+  is not made smaller than the name next to it: only a compact code label inside a badge or a
+  secondary line is `--fs-caption`.
 - An explanatory `InfoTip` uses a 16px SVG icon (its drawn circle is about 13px) centred
   in a 24 × 24px button. The button sits beside the first line of its label. Use it only
   for short, plain-text explanations that would crowd the layout. Keep information
@@ -242,13 +255,30 @@ actual weights (400, 500, 600, 700); line heights from `--lh-*`, sharing three v
 - **A setting whose value is short is a row**: its name on the start side, the control on the end
   side (the same two columns as the settings pages, `FieldRow`). This holds for every short
   control: a dropdown (`SelectRow`), a short text field (`TextRow`), a few checkboxes
-  (`CheckboxRow`), an on/off switch (`ToggleRow`).
+  (`CheckboxRow`), one checkbox (`CheckRow`), an on/off switch (`ToggleRow`). A setting
+  confirmed with Save or a dialog's button is a checkbox; a switch is only for what takes effect
+  at once.
 - A value that is **long** keeps the control full width with its label above: an address list,
-  a pasted document, a block of metadata, a table of values.
+  a pasted document, a block of metadata, a table of values. **A few lines of text** (a
+  description, a note) is a row (`TextAreaRow`): as wide as the other controls, three lines tall.
+- **What a setting means goes behind a "?" beside its name** (`info` on the row), not in a line
+  under the control. A hint under the field stays for what is needed to fill it in correctly (a
+  format, a limit) and to decide (what cannot be undone). A switch keeps its line saying what
+  _on_ means.
 - A required setting has a red `*` after its name (never a badge: see Required). The name is
   shown by the row and read with the control; the control keeps it as its own, hidden, label.
 - Rows in a form are a field gap apart (`--space-field`, 16px), without dividing lines. A table of
   settings, where the lines are wanted, uses `FieldRow` itself.
+- **A box of independent settings saved with the page** (the settings of one attribute, of one
+  app) is `<RowStack ruled>`: a line between the rows, each with its own vertical space, as in the
+  settings pages. The fields of one thing being made or edited (a dialog, a short form) have no
+  lines. Lines are what lead the eye from a name on the start side to its control across the gap.
+- **Rows in a box are stacked with `RowStack`**, never spaced by the page. A page that spaces them
+  with a token of its own can name one that does not exist; it computes to nothing, and the rows
+  touch. `pnpm run lint` rejects a `var(--x)` that is defined nowhere (`check-css-vars`).
+- **A range is two columns** (`Columns`): a minimum next to its maximum, with the label above each
+  field; so are short settings made together. The
+  columns drop to one on a narrow box.
 - On a narrow screen the name moves above the control.
 - A switch always has a line saying what **on** means. The setting's name again is not one.
 
@@ -275,6 +305,22 @@ actual weights (400, 500, 600, 700); line heights from `--lh-*`, sharing three v
 - A setting that may come from a wider scope (the platform default) wraps its control in
   **InheritedSetting**, so the admin sees which value applies and can switch.
 - A list is narrowed with a **FilterBar** above it: search first, then filters, all `sm`.
+- **A list is one table, not a box per group or per kind**: a grouping that has no use beyond
+  looking (nothing reads it) is not offered at all. Where there is one, it is a column of its own,
+  so the table keeps one set of column widths and everything lines up and can be scanned and
+  filtered as a whole.
+- A list page names how many rows a page holds (the attribute schema: up to 250, with page
+  controls for more). What the API gives at once may be smaller; the page puts a page together
+  from several calls rather than showing less.
+- A list's columns that people look things up by are **sortable** (`sortable`, bound `sort`): the
+  key and name, the kind, the type, the flags and the status. The list begins sorted by its key
+  (ascending); a click on another column sorts by that, a second click reverses. Sorting is on the page's rows
+  (`sortRows`) only when the API has no sort of its own **and every row is on the page**: a sort of one page of several is not the sort of the list, so the headers are not sortable then.
+- A list whose rows can be acted on together has **selectable rows** (`DataTable` `selectable`):
+  a checkbox column, and the page's bulk actions in the bar that shows while rows are selected.
+  Only with write access; read-only, the checkbox column is not there.
+- In a list, **required / optional are badges**: `RequiredBadge` for required, a neutral `Badge`
+  saying optional. Not text, and not a check mark.
 - Options people rarely change fold away in a **Disclosure**; one that is looked for often
   does not.
 - Fields that can hold something that cannot be saved (NumberField, DurationField,

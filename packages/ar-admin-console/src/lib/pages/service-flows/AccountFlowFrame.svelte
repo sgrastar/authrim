@@ -29,7 +29,7 @@
 </script>
 
 {#key `${flow}:${filled}`}
-	<Page>
+	<Page withFlow>
 		<AccountFlowDetail {flow} bind:form />
 	</Page>
 {/key}
