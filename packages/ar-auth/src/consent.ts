@@ -58,6 +58,8 @@ import {
   recordConsentHistory,
   // Consent Management
   getConsentItemsForScreen,
+  StatementConsentAccountReadError,
+  type StatementConsentStores,
   processConsentItemDecisions,
   hashIpAddress,
   upsertOAuthClientConsent,
@@ -554,7 +556,7 @@ async function handleJsonConsentGet(
     }
 
     consentItems = await getConsentItemsForScreen(
-      authCtx.coreAdapter,
+      statementConsentStores(c, tenantId),
       tenantId,
       clientRow.client_id,
       userId,
@@ -570,6 +572,11 @@ async function handleJsonConsentGet(
     );
     consentManagementEnabled = mgmtEnabled || (consentItems?.length ?? 0) > 0;
   } catch (err) {
+    // The account's records are the only evidence of what was agreed to: when they cannot be
+    // read the screen neither asks again nor skips a required item.
+    if (err instanceof StatementConsentAccountReadError) {
+      return consentRecordsUnavailable(c, err);
+    }
     // Non-blocking: consent management items are optional
   }
 
@@ -597,6 +604,36 @@ async function handleJsonConsentGet(
   return c.json(responseData);
 }
 
+/**
+ * Statement definitions are the tenant's (metadata database); the subject's consent records live
+ * with the subject's account (resolved by the caller before this is used).
+ */
+function statementConsentStores(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): StatementConsentStores {
+  return {
+    metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+    account: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+  };
+}
+
+function consentRecordsUnavailable(
+  c: Context<{ Bindings: Env }>,
+  error: StatementConsentAccountReadError
+): Response {
+  getLogger(c)
+    .module('CONSENT')
+    .error('Consent records are unavailable', { action: 'consent_records_read' }, error);
+  return c.json(
+    {
+      error: 'temporarily_unavailable',
+      error_description: 'Consent records are temporarily unavailable',
+    },
+    503
+  );
+}
+
 async function loadConsentScreenItems(
   c: Context<{ Bindings: Env }>,
   params: {
@@ -608,10 +645,9 @@ async function loadConsentScreenItems(
     defaultLanguage?: string;
   }
 ): Promise<ConsentScreenItem[]> {
-  const authCtx = createAccountAuthContextFromHono(c, params.tenantId);
   const piiCtx = createPIIContextFromHono(c, params.tenantId);
   return getConsentItemsForScreen(
-    authCtx.coreAdapter,
+    statementConsentStores(c, params.tenantId),
     params.tenantId,
     params.clientId,
     params.userId,
@@ -1194,6 +1230,11 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     );
     return response;
   } catch (error) {
+    // The screen's items are rebuilt on submit; unreadable account records are a temporary outage,
+    // not a failed submission, and nothing was recorded.
+    if (error instanceof StatementConsentAccountReadError) {
+      return consentRecordsUnavailable(c, error);
+    }
     log.error('Consent post error', { action: 'post_consent' }, error as Error);
     return c.json(
       {
