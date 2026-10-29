@@ -4,6 +4,8 @@ import { enCompliance } from './compliance/en';
 import { enMappingConsole } from './mapping-console/en';
 import { enServiceFlows } from './service-flows/en';
 import { enAccountFlows } from './account-flows/en';
+import { enSchemaSetting } from './schema-setting/en';
+import { enTenantGeneral } from './tenant-general/en';
 
 export const en = {
 	...enSettings,
@@ -11,6 +13,8 @@ export const en = {
 	...enMappingConsole,
 	...enServiceFlows,
 	...enAccountFlows,
+	...enSchemaSetting,
+	...enTenantGeneral,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',

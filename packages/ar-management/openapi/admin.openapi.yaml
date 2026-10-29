@@ -42948,7 +42948,7 @@ components:
             hierarchy:
               description: Cache mode is determined in the following order
               order:
-                - '1. Client-specific mode (v1:cache-mode:client:{clientId})'
+                - '1. Client-specific mode (v1:cache-mode:client:{tenantId}:{clientId})'
                 - '2. Platform-level mode (v1:cache-mode:platform)'
                 - 3. Default mode (fixed)
             kv_key_version: v1

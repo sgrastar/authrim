@@ -28,7 +28,6 @@ const PLATFORM_ONLY_PREFIXES = [
   '/api/admin/external-token-refresh/config',
   '/api/admin/logout-failures',
   '/api/admin/iat-tokens',
-  '/api/admin/clients/:clientId/cache-mode',
 ];
 
 const source = readFileSync(resolve(__dirname, '../index.ts'), 'utf8');
@@ -37,11 +36,8 @@ const registrations = [
 ].map((match) => ({ method: match[1], path: match[2], rest: match[3] }));
 
 describe('platform-wide legacy settings routes', () => {
-  const platform = registrations.filter(
-    ({ method, path }) =>
-      // A client's mode can be read by its own tenant; only setting it is the platform's.
-      !(path === '/api/admin/clients/:clientId/cache-mode' && method === 'get') &&
-      PLATFORM_ONLY_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+  const platform = registrations.filter(({ path }) =>
+    PLATFORM_ONLY_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
   );
 
   it('finds the routes it is meant to guard', () => {
@@ -53,6 +49,21 @@ describe('platform-wide legacy settings routes', () => {
       expect(route.rest).toContain('requireSystemAdmin()');
     });
   }
+});
+
+describe("a client's cache mode", () => {
+  // The mode is kept per tenant and client and the handlers check the client belongs to the
+  // request's tenant, so a tenant administrator sets its own clients' mode: no platform gate.
+  const clientModeRoutes = registrations.filter(
+    ({ path }) => path === '/api/admin/clients/:clientId/cache-mode'
+  );
+
+  it('is read and set by the tenant, not behind the platform gate', () => {
+    expect(clientModeRoutes.map(({ method }) => method).sort()).toEqual(['get', 'post']);
+    for (const route of clientModeRoutes) {
+      expect(route.rest).not.toContain('requireSystemAdmin()');
+    }
+  });
 });
 
 describe('test endpoints', () => {

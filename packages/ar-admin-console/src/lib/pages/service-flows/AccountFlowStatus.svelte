@@ -24,10 +24,15 @@
 {/if}
 
 <style>
+	/* The badges stay whole; when the cell is narrow (a longer language) the second goes under. */
 	.status {
 		display: inline-flex;
-		white-space: nowrap;
+		flex-wrap: wrap;
 		gap: var(--space-related);
 		align-items: center;
+	}
+
+	.status :global(.badge) {
+		white-space: nowrap;
 	}
 </style>

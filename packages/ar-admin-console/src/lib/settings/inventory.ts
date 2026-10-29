@@ -69,7 +69,7 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{ id: 'access/relationships', scope: 'tenant' },
 	{ id: 'access/policies', scope: 'tenant' },
 	{ id: 'access/roles', scope: 'tenant' },
-	{ id: 'access/schema', scope: 'tenant' },
+	{ id: 'access/schema-setting', scope: 'tenant' },
 	{
 		id: 'access/mapping-sets',
 		scope: 'tenant',
@@ -431,7 +431,7 @@ place('access/policies', 'Policies', {
 place('access/roles', 'Roles in tokens', {
 	advanced: ['tokens.rbac_id_token_claims', 'tokens.rbac_access_token_claims']
 });
-place('access/schema', 'Custom claims', {
+place('access/schema-setting', 'Custom claims', {
 	advanced: [
 		'feature.enable_custom_claim_schemas',
 		'feature.enable_custom_claim_schemas_introspection',
@@ -466,6 +466,7 @@ place('users/support', 'Approvals', {
 
 place('customization/branding', 'Brand', {
 	primary: [
+		'tenant.logo_uri',
 		'login-ui.brand_name',
 		'login-ui.logo_url',
 		'login-ui.logo_display',
@@ -647,9 +648,6 @@ place(
 // ---------------------------------------------------------------------------------------------
 // Tenant settings
 
-place('settings/general', 'Tenant', {
-	primary: ['tenant.logo_uri']
-});
 place('settings/domains', 'Domains and origins', {
 	primary: ['tenant.allowed_domains'],
 	advanced: [
