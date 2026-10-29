@@ -18,7 +18,7 @@
  *
  * // Quick role check
  * const subject = subjectFromClaims(tokenClaims);
- * if (hasRole(subject, 'system_admin')) {
+ * if (hasRole(subject, 'admin')) {
  *   // Allow access
  * }
  *
@@ -76,8 +76,6 @@ export {
   hasAnyRole,
   hasAllRoles,
   isAdmin,
-  isSystemAdmin,
-  isOrgAdmin,
   getActiveRoles,
   subjectFromClaims,
 } from './role-checker';

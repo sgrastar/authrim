@@ -43,7 +43,7 @@ function cacheFixture(overrides: Partial<CompositeRBACCache> = {}): CompositeRBA
     scoped_roles: [{ name: 'editor', scope: 'organization', scopeTarget: 'org-1' }],
     permissions: ['users:read'],
     organizations: [{ id: 'org-1', name: 'Acme', type: 'enterprise', is_primary: true }],
-    user_type: 'system_admin',
+    user_type: 'admin',
     plan: 'professional',
     org_id: 'org-1',
     org_name: 'Acme',
@@ -109,7 +109,7 @@ describe('RBAC token claims', () => {
     expect(all).toEqual({
       authrim_roles: ['admin'],
       authrim_scoped_roles: [{ name: 'editor', scope: 'organization', scopeTarget: 'org-1' }],
-      authrim_user_type: 'system_admin',
+      authrim_user_type: 'admin',
       authrim_org_id: 'org-1',
       authrim_org_name: 'Acme',
       authrim_plan: 'professional',
@@ -139,7 +139,7 @@ describe('RBAC token claims', () => {
         empty,
         'roles,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary'
       )
-    ).toEqual({ authrim_user_type: 'system_admin' });
+    ).toEqual({ authrim_user_type: 'admin' });
   });
 
   it('extracts configured access-token authorization data and omits empty data', () => {
@@ -171,7 +171,7 @@ describe('RBAC token claims', () => {
   });
 
   it.each([
-    ['admin', 'system_admin'],
+    ['admin', 'admin'],
     ['service_account', 'end_user'],
     ['user', 'end_user'],
     [null, 'end_user'],
