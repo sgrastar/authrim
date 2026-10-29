@@ -153,7 +153,7 @@ async function findMatchingGrant(
     c.req.query('grant_id') ?? c.req.header('X-Authrim-Elevation-Grant') ?? null;
 
   if (explicitGrantId) {
-    const grant = await grantRepo.getElevationGrantByPublicId(explicitGrantId);
+    const grant = await grantRepo.getElevationGrantByPublicId(tenantId, explicitGrantId);
     if (!grant) {
       return null;
     }

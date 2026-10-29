@@ -500,7 +500,7 @@ export async function resolveElevationGrantSubjectToken(input: {
 
   const grantRepo = new ElevationGrantRepository(adapter);
   const requestRepo = new ApprovalRequestRepository(adapter);
-  const grant = await grantRepo.getElevationGrantByPublicId(publicGrantId);
+  const grant = await grantRepo.getElevationGrantByPublicId(tenantId, publicGrantId);
   if (!grant) {
     throw new Error('Elevation grant not found');
   }

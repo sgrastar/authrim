@@ -59,6 +59,8 @@ export interface AdapterHooks {
   beforeBatch?: () => Promise<void>;
   /** Runs once, right before the next read whose SQL matches, to put a change in the middle of a request's reads. */
   beforeQuery?: { match: RegExp; run: () => Promise<void> };
+  /** The same for a write (`execute`): runs once, right before the next one whose SQL matches. */
+  beforeExecute?: { match: RegExp; run: () => Promise<void> };
 }
 
 export function sqliteAdapter(db: SQLiteDatabase, hooks: AdapterHooks = {}): DatabaseAdapter {
@@ -80,6 +82,11 @@ export function sqliteAdapter(db: SQLiteDatabase, hooks: AdapterHooks = {}): Dat
       return db.prepare(sql).get(...bind(params)) ?? null;
     },
     async execute(sql: string, params?: unknown[]) {
+      const hook = hooks.beforeExecute;
+      if (hook?.match.test(sql)) {
+        hooks.beforeExecute = undefined;
+        await hook.run();
+      }
       const result = db.prepare(sql).run(...bind(params));
       return { rowsAffected: Number(result.changes), success: true };
     },
