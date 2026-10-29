@@ -7016,7 +7016,11 @@ paths:
       summary: List guest accounts.
       description: >-
         Lists browser guest accounts for the current tenant, excluding accounts without an active
-        resume credential unless requested.
+        resume credential unless requested. Routed storage uses cursor pagination; offset must be
+        zero. Results are ordered by last use descending, then user id and shard order. Continuations
+        expire after 15 minutes and are invalidated by changes to the query or account storage
+        inventory. Any unavailable account shard fails the request with 503; partial results are
+        never returned.
       responses:
         '200':
           $ref: '#/components/responses/GuestUserList'
@@ -7026,6 +7030,10 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: Guest read cursor is invalid, expired, or no longer matches the query or storage inventory.
+        '503':
+          description: Guest account storage or continuation storage is unavailable.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -7042,7 +7050,7 @@ paths:
         - name: offset
           in: query
           required: false
-          description: Pagination offset.
+          description: Pagination offset for direct storage only; routed storage requires zero.
           schema:
             type: integer
             minimum: 0
@@ -7054,6 +7062,12 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque next_cursor from the previous page; bound to this tenant and query.
+          schema:
+            type: string
   '/api/admin/guest-users/{id}':
     delete:
       tags:
@@ -7098,7 +7112,8 @@ paths:
       summary: Get a guest account.
       description: >-
         Returns a guest account, its browser resume credentials, and the latest upgrade summary when
-        present. Non-guest users are rejected.
+        present. Non-guest users are rejected. Reads use the account storage and return no personal
+        field values. Unavailable or ambiguous account storage fails the request with 503.
       responses:
         '200':
           $ref: '#/components/responses/GuestUserDetail'
@@ -7110,6 +7125,8 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '503':
+          description: Guest account storage is unavailable or account ownership is ambiguous.
       parameters:
         - name: id
           in: path
@@ -7128,7 +7145,10 @@ paths:
       summary: List guest account upgrades.
       description: >-
         Returns upgrade-history records where the supplied user id was either the guest source
-        user or upgraded target user.
+        user or upgraded target user, including history whose source account has been deleted.
+        Pages are ordered by upgrade time descending, then record id and shard order. Continuations
+        expire after 15 minutes and are bound to the tenant, requested user, and account storage
+        inventory. Any unavailable account shard fails the request with 503.
       responses:
         '200':
           $ref: '#/components/responses/GuestUserUpgradeList'
@@ -7138,11 +7158,30 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: Guest read cursor is invalid, expired, or no longer matches the query or storage inventory.
+        '503':
+          description: Guest account storage or continuation storage is unavailable.
       parameters:
         - name: id
           in: path
           required: true
           description: Guest or upgraded user id.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum upgrade records to return, clamped to 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque next_cursor from the previous page for this user.
           schema:
             type: string
       security:
@@ -54786,6 +54825,11 @@ components:
         offset:
           type: integer
           minimum: 0
+        next_cursor:
+          description: Routed storage continuation, or null when complete; absent for direct offset pagination.
+          type:
+            - string
+            - 'null'
         users:
           type: array
           items:
@@ -54902,9 +54946,15 @@ components:
       required:
         - user_id
         - upgrades
+        - next_cursor
       properties:
         user_id:
           type: string
+        next_cursor:
+          description: Continuation for this user, or null when complete.
+          type:
+            - string
+            - 'null'
         upgrades:
           type: array
           items:

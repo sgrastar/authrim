@@ -112,7 +112,7 @@
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@authrim/ar-lib-logging": "workspace:*",
     "hono": "4.13.2",
-    "jose": "^6.2.9",
+    "jose": "^6.2.13",
     "mysql2": "^3.23.1",
     "pg": "^8.23.1"
   },

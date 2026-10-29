@@ -25,7 +25,7 @@
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@xmldom/xmldom": "^0.8.15",
     "hono": "4.13.2",
-    "jose": "^6.2.9",
+    "jose": "^6.2.13",
     "pako": "^3.0.2",
     "saxes": "6.0.0",
     "xml-crypto": "^6.0.0"
@@ -36,7 +36,7 @@
     "fast-check": "^4.5.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
-    "wrangler": "^4.148.0",
+    "wrangler": "^4.152.0",
     "yaml": "2.9.1"
   }
 }

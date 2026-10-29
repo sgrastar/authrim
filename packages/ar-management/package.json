@@ -25,7 +25,7 @@
     "@authrim/ar-saml": "workspace:^",
     "@simplewebauthn/server": "^14.0.2",
     "hono": "4.13.2",
-    "jose": "^6.2.9",
+    "jose": "^6.2.13",
     "squirreling": "0.16.9",
     "zod": "^4.6.7"
   },
@@ -33,7 +33,7 @@
     "@cloudflare/workers-types": "^5.20260903.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
-    "wrangler": "^4.148.0",
+    "wrangler": "^4.152.0",
     "yaml": "2.9.1"
   }
 }
