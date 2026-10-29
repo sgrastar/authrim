@@ -2,7 +2,7 @@
 -- Run as one migration transaction. Failure preserves the old table and its data.
 PRAGMA defer_foreign_keys = ON;
 CREATE TABLE __authrim_rebuild_consent_check (valid INTEGER NOT NULL CHECK(valid=1), expected_rows INTEGER NOT NULL);
-INSERT INTO __authrim_rebuild_consent_check SELECT CASE WHEN
+INSERT INTO __authrim_rebuild_consent_check (valid, expected_rows) VALUES (CASE WHEN
   (SELECT replace(replace(replace(replace(lower(sql),char(10),''),char(13),''),char(9),''),' ','') FROM sqlite_schema WHERE type='table' AND name='user_consent_records')='createtable"user_consent_records"(idtextprimarykeynotnull,tenant_idtextnotnulldefault''default'',user_idtextnotnull,statement_idtextnotnull,version_idtextnotnull,versiontextnotnull,statustextnotnulldefault''granted'',granted_atinteger,withdrawn_atinteger,expires_atinteger,client_idtext,ip_address_hashtext,user_agenttext,receipt_idtext,created_atintegernotnull,updated_atintegernotnull,retain_untilinteger,consent_settings_snapshot_atinteger,record_retention_days_snapshotinteger,reconsent_interval_days_snapshotinteger,content_hashtext,foreignkey(statement_id)referencesconsent_statements(id),foreignkey(version_id)referencesconsent_statement_versions(id),unique(tenant_id,user_id,statement_id))'
   AND (SELECT count(*) FROM sqlite_schema WHERE tbl_name='user_consent_records' AND type='index' AND sql IS NOT NULL)=5
   AND (SELECT replace(replace(replace(replace(lower(sql),char(10),''),char(13),''),char(9),''),' ','') FROM sqlite_schema WHERE type='index' AND name='idx_ucr_expires')='createindexidx_ucr_expiresonuser_consent_records(expires_at)'
@@ -14,7 +14,7 @@ INSERT INTO __authrim_rebuild_consent_check SELECT CASE WHEN
   AND NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='view' AND lower(sql) LIKE '%user_consent_records%')
   AND NOT EXISTS(SELECT 1 FROM sqlite_schema t JOIN pragma_foreign_key_list(t.name) f WHERE t.type='table' AND f."table"='user_consent_records')
   AND NOT EXISTS(SELECT 1 FROM pragma_foreign_key_check('user_consent_records'))
-  THEN 1 ELSE 0 END, (SELECT count(*) FROM user_consent_records);
+  THEN 1 ELSE 0 END, (SELECT count(*) FROM user_consent_records));
 CREATE TABLE "__authrim_rebuild_user_consent_records" (
   id TEXT PRIMARY KEY
  NOT NULL
@@ -41,11 +41,11 @@ CREATE TABLE "__authrim_rebuild_user_consent_records" (
   UNIQUE (tenant_id, user_id, statement_id)
 );
 INSERT INTO __authrim_rebuild_user_consent_records ("rowid","id","tenant_id","user_id","statement_id","version_id","version","status","granted_at","withdrawn_at","expires_at","client_id","ip_address_hash","user_agent","receipt_id","created_at","updated_at","retain_until","consent_settings_snapshot_at","record_retention_days_snapshot","reconsent_interval_days_snapshot","content_hash") SELECT "rowid","id","tenant_id","user_id","statement_id","version_id","version","status","granted_at","withdrawn_at","expires_at","client_id","ip_address_hash","user_agent","receipt_id","created_at","updated_at","retain_until","consent_settings_snapshot_at","record_retention_days_snapshot","reconsent_interval_days_snapshot","content_hash" FROM user_consent_records;
-INSERT INTO __authrim_rebuild_consent_check SELECT CASE WHEN
+INSERT INTO __authrim_rebuild_consent_check (valid, expected_rows) VALUES (CASE WHEN
   (SELECT count(*) FROM __authrim_rebuild_user_consent_records)=(SELECT expected_rows FROM __authrim_rebuild_consent_check LIMIT 1)
   AND NOT EXISTS(SELECT "rowid","id","tenant_id","user_id","statement_id","version_id","version","status","granted_at","withdrawn_at","expires_at","client_id","ip_address_hash","user_agent","receipt_id","created_at","updated_at","retain_until","consent_settings_snapshot_at","record_retention_days_snapshot","reconsent_interval_days_snapshot","content_hash" FROM user_consent_records EXCEPT SELECT "rowid","id","tenant_id","user_id","statement_id","version_id","version","status","granted_at","withdrawn_at","expires_at","client_id","ip_address_hash","user_agent","receipt_id","created_at","updated_at","retain_until","consent_settings_snapshot_at","record_retention_days_snapshot","reconsent_interval_days_snapshot","content_hash" FROM __authrim_rebuild_user_consent_records)
   AND NOT EXISTS(SELECT "rowid","id","tenant_id","user_id","statement_id","version_id","version","status","granted_at","withdrawn_at","expires_at","client_id","ip_address_hash","user_agent","receipt_id","created_at","updated_at","retain_until","consent_settings_snapshot_at","record_retention_days_snapshot","reconsent_interval_days_snapshot","content_hash" FROM __authrim_rebuild_user_consent_records EXCEPT SELECT "rowid","id","tenant_id","user_id","statement_id","version_id","version","status","granted_at","withdrawn_at","expires_at","client_id","ip_address_hash","user_agent","receipt_id","created_at","updated_at","retain_until","consent_settings_snapshot_at","record_retention_days_snapshot","reconsent_interval_days_snapshot","content_hash" FROM user_consent_records)
-  THEN 1 ELSE 0 END, (SELECT count(*) FROM user_consent_records);
+  THEN 1 ELSE 0 END, (SELECT count(*) FROM user_consent_records));
 DROP TABLE user_consent_records;
 ALTER TABLE __authrim_rebuild_user_consent_records RENAME TO user_consent_records;
 CREATE INDEX idx_ucr_expires ON user_consent_records(expires_at);
@@ -53,10 +53,10 @@ CREATE INDEX idx_ucr_retain_until ON user_consent_records(retain_until);
 CREATE INDEX idx_ucr_statement ON user_consent_records(tenant_id, statement_id);
 CREATE INDEX idx_ucr_status ON user_consent_records(status);
 CREATE INDEX idx_ucr_user ON user_consent_records(tenant_id, user_id);
-INSERT INTO __authrim_rebuild_consent_check SELECT CASE WHEN
+INSERT INTO __authrim_rebuild_consent_check (valid, expected_rows) VALUES (CASE WHEN
   NOT EXISTS(SELECT 1 FROM pragma_foreign_key_list('user_consent_records'))
   AND (SELECT count(*) FROM user_consent_records)=(SELECT expected_rows FROM __authrim_rebuild_consent_check LIMIT 1)
-  THEN 1 ELSE 0 END, (SELECT count(*) FROM user_consent_records);
+  THEN 1 ELSE 0 END, (SELECT count(*) FROM user_consent_records));
 DROP TABLE __authrim_rebuild_consent_check;
 PRAGMA defer_foreign_keys = OFF;
 

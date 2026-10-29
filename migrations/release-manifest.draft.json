@@ -162,7 +162,7 @@
             },
             {
               "path": "037_statement_consent_enforcement.sql",
-              "checksum": "43d1a56ee51bb846929c5786f5bad52349dbc378a8bdc8c7235db2558a25a9b4"
+              "checksum": "8a7c895cf08541e14462d2d7dad9a3a6362637754161ebdf0d79570362eea9fe"
             }
           ]
         },
@@ -859,7 +859,7 @@
         },
         {
           "path": "037_statement_consent_enforcement.sql",
-          "checksum": "43d1a56ee51bb846929c5786f5bad52349dbc378a8bdc8c7235db2558a25a9b4"
+          "checksum": "8a7c895cf08541e14462d2d7dad9a3a6362637754161ebdf0d79570362eea9fe"
         }
       ]
     },
