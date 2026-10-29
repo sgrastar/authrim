@@ -311,11 +311,16 @@ function ownedAtBoundary(
   ))`;
 }
 
-/** Capture the first preimage. JSON mode exists only for legacy-format compatibility checks. */
-export function sqliteSnapshotTriggers(
+/**
+ * The three capture triggers of a table, one complete `CREATE TRIGGER ... END;` statement each, in
+ * insert, update, delete order. Capture planning needs them separately; building them as three
+ * values spares it from joining them into a script and lexing that script back apart, which cost
+ * more than the whole rest of planning for a schema of hundreds of tables.
+ */
+export function sqliteSnapshotTriggerStatements(
   schema: CaptureSchema,
   representation: 'packed' | 'json' = 'packed'
-): string {
+): readonly [insertTrigger: string, updateTrigger: string, deleteTrigger: string] {
   validateSchema(schema);
   const table = identifier(schema.table);
   // DB NOT NULL is mandatory. This additional capture guard prevents OR IGNORE /
@@ -368,14 +373,22 @@ export function sqliteSnapshotTriggers(
   // This adapter requires an explicit, non-null key known to BEFORE INSERT; rowid
   // autoallocation and non-unique keys need a different adapter. The checked activation
   // statement requires DB-enforced non-null primary keys; nullable schemas are refused.
-  return `
-CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_insert`)} BEFORE INSERT ON ${table}
-BEGIN ${guard} ${partitionGuard} ${captureConflicts} ${capture('NEW', false)} END;
-CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_update`)} BEFORE UPDATE ON ${table}
-BEGIN ${guard} ${partitionGuard} ${capture('OLD', true)} ${captureConflicts} ${capture('NEW', false)} END;
-CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_delete`)} BEFORE DELETE ON ${table}
-BEGIN ${capture('OLD', true)} END;
-`;
+  return [
+    `CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_insert`)} BEFORE INSERT ON ${table}
+BEGIN ${guard} ${partitionGuard} ${captureConflicts} ${capture('NEW', false)} END;`,
+    `CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_update`)} BEFORE UPDATE ON ${table}
+BEGIN ${guard} ${partitionGuard} ${capture('OLD', true)} ${captureConflicts} ${capture('NEW', false)} END;`,
+    `CREATE TRIGGER ${identifier(`tenant_backup_${schema.table}_delete`)} BEFORE DELETE ON ${table}
+BEGIN ${capture('OLD', true)} END;`,
+  ];
+}
+
+/** Capture the first preimage. JSON mode exists only for legacy-format compatibility checks. */
+export function sqliteSnapshotTriggers(
+  schema: CaptureSchema,
+  representation: 'packed' | 'json' = 'packed'
+): string {
+  return `\n${sqliteSnapshotTriggerStatements(schema, representation).join('\n')}\n`;
 }
 
 /**
