@@ -20,6 +20,15 @@ import {
   encodeGuestCleanupCursor,
   guestCleanupInventoryDigest,
 } from '../guest-cleanup-cursor';
+import {
+  GUEST_READ_DEFAULT_LIMIT,
+  GUEST_READ_MAX_LIMIT,
+  guestReadInteger,
+  guestReadNullableInteger,
+  guestReadLastLoginAt,
+  guestReadFailure,
+  readGuestPage,
+} from '../guest-read-pagination';
 import { createGuestPiiErasurePort } from '@authrim/ar-lib-core/services/guest-pii-erasure';
 import {
   guestStoresFromContext,
@@ -35,10 +44,8 @@ import {
   guestErasureBoundaryId,
 } from '../guest-deletion-route';
 import {
-  createAuthContextFromHono,
-  createPIIContextFromHono,
-  CanonicalRuntimeUserStore,
   GuestLifecycleRepository,
+  runtimeTimestampToIso,
   getTenantIdFromContext,
   getLogger,
   getSessionRevocationStore,
@@ -54,16 +61,6 @@ import {
   requireGuestDeletionAuditTask,
   writeGuestDeletionAudit,
 } from '../guest-deletion-audit-outbox';
-
-function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string) {
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const piiCtx = createPIIContextFromHono(c, tenantId);
-  return new CanonicalRuntimeUserStore({
-    coreAdapter: authCtx.coreAdapter,
-    piiAdapter: piiCtx.defaultPiiAdapter,
-    tenantId,
-  });
-}
 
 function parseIntegerQuery(
   value: string | undefined,
@@ -88,16 +85,21 @@ function invalidRequest(c: Context<{ Bindings: Env }>, description: string): Res
  *
  * Query params:
  * - limit: number (default: 50, max: 100)
- * - offset: number (default: 0)
+ * - offset: number (default: 0, direct storage only)
+ * - cursor: opaque persisted continuation for routed storage
  * - include_expired: boolean (default: false)
  */
 export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('GuestUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const limit = parseIntegerQuery(c.req.query('limit'), 50, 1, 100);
+    const limit = parseIntegerQuery(
+      c.req.query('limit'),
+      GUEST_READ_DEFAULT_LIMIT,
+      1,
+      GUEST_READ_MAX_LIMIT
+    );
     const offset = parseIntegerQuery(c.req.query('offset'), 0, 0);
     const includeExpiredValue = c.req.query('include_expired');
     if (
@@ -111,6 +113,12 @@ export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
     }
     const includeExpired = includeExpiredValue === 'true';
 
+    const stores = await guestStoresFromContext(c, tenantId);
+    if (!stores.length) throw new Error('guest_read_inventory_unavailable');
+    const paged = stores.some((store) => store.pin !== null) || c.req.query('cursor') !== undefined;
+    if (paged && offset !== 0)
+      return invalidRequest(c, 'Use cursor pagination for routed guest accounts');
+    stores.sort((left, right) => compareGuestCleanupKey(left.bindingRef, right.bindingRef));
     const now = Date.now();
 
     // Build query based on include_expired flag
@@ -120,49 +128,81 @@ export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
       AND uc.account_type = 'user'
       AND uc.registration_state = 'guest'
       AND uc.deleted_at IS NULL`;
-    const params: unknown[] = [tenantId];
 
     if (!includeExpired) {
-      whereClause += ' AND ad.is_active = 1 AND (ad.expires_at IS NULL OR ad.expires_at > ?)';
-      params.push(now);
+      whereClause += ' AND ad.is_active = TRUE AND (ad.expires_at IS NULL OR ad.expires_at > ?)';
     }
 
-    // Get total count
-    const countResult = await authCtx.coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(DISTINCT ad.user_id) as count
-       FROM guest_devices ad
-       ${guestAccountJoin}
-       ${whereClause}`,
-      params
-    );
-
-    // Get one row per guest account with browser-resume credential counts.
-    const users = await authCtx.coreAdapter.query<{
+    const counts: number[] = [];
+    type GuestListRow = {
       user_id: string;
       credential_count: number;
       active_credential_count: number;
       next_credential_expiry: number | null;
       created_at: number;
       last_used_at: number;
-    }>(
-      `SELECT
-        ad.user_id,
-        COUNT(*) as credential_count,
-        SUM(CASE WHEN ad.is_active = 1 AND (ad.expires_at IS NULL OR ad.expires_at > ?) THEN 1 ELSE 0 END) as active_credential_count,
-        MIN(CASE WHEN ad.is_active = 1 THEN ad.expires_at ELSE NULL END) as next_credential_expiry,
-        MIN(ad.created_at) as created_at,
-        MAX(ad.last_used_at) as last_used_at
-      FROM guest_devices ad
-      ${guestAccountJoin}
-      ${whereClause}
-      GROUP BY ad.user_id
-      ORDER BY last_used_at DESC
-      LIMIT ? OFFSET ?`,
-      [now, ...params, limit, offset]
-    );
+    };
+    const read = async (
+      store: GuestCoreStore,
+      after: { at: number; id: string } | null,
+      observedAt: number
+    ) => {
+      const idOrder =
+        store.adapter.getType() === 'postgres'
+          ? 'ad.user_id COLLATE "C"'
+          : 'ad.user_id COLLATE BINARY';
+      const pageParams = includeExpired ? [tenantId] : [tenantId, observedAt];
+      // Count every shard using the page's observation time; never return partial results.
+      const count = await store.adapter.queryOne<{ count: number | string }>(
+        `SELECT COUNT(DISTINCT ad.user_id) as count
+         FROM guest_devices ad ${guestAccountJoin} ${whereClause}`,
+        pageParams,
+        { consistencyClass: 'primary_required' }
+      );
+      counts.push(guestReadInteger(count?.count ?? 0));
+      const rows = await store.adapter.query<GuestListRow>(
+        `SELECT ad.user_id, COUNT(*) as credential_count,
+          SUM(CASE WHEN ad.is_active = TRUE AND (ad.expires_at IS NULL OR ad.expires_at > ?) THEN 1 ELSE 0 END) as active_credential_count,
+          MIN(CASE WHEN ad.is_active = TRUE THEN ad.expires_at ELSE NULL END) as next_credential_expiry,
+          MIN(ad.created_at) as created_at, MAX(ad.last_used_at) as last_used_at
+        FROM guest_devices ad ${guestAccountJoin} ${whereClause}
+        GROUP BY ad.user_id
+        ${after ? `HAVING MAX(ad.last_used_at) < ? OR (MAX(ad.last_used_at) = ? AND ${idOrder} > ?)` : ''}
+        ORDER BY last_used_at DESC, ${idOrder} ASC LIMIT ?${paged ? '' : ' OFFSET ?'}`,
+        [
+          observedAt,
+          ...pageParams,
+          ...(after ? [after.at, after.at, after.id] : []),
+          paged ? limit + 1 : limit,
+          ...(paged ? [] : [offset]),
+        ],
+        { consistencyClass: 'primary_required' }
+      );
+      return rows.map((row) => {
+        const value = {
+          ...row,
+          credential_count: guestReadInteger(row.credential_count),
+          active_credential_count: guestReadInteger(row.active_credential_count),
+          next_credential_expiry: guestReadNullableInteger(row.next_credential_expiry),
+          created_at: guestReadInteger(row.created_at),
+          last_used_at: guestReadInteger(row.last_used_at),
+        };
+        return { at: value.last_used_at, id: value.user_id, value };
+      });
+    };
+    const page = paged
+      ? await readGuestPage(
+          c,
+          stores,
+          { kind: 'users', filter: String(includeExpired), limit },
+          read
+        )
+      : { items: (await read(stores[0], null, now)).map((row) => row.value), nextCursor: null };
+    const users = page.items;
 
     return c.json({
-      total: countResult?.count || 0,
+      total: guestReadInteger(counts.reduce((total, count) => total + count, 0)),
+      ...(paged ? { next_cursor: page.nextCursor } : {}),
       limit,
       offset,
       users: users.map((u) => ({
@@ -177,13 +217,7 @@ export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
     });
   } catch (error) {
     log.error('Error listing users', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to list guest accounts',
-      },
-      500
-    );
+    return guestReadFailure(c, error);
   }
 }
 
@@ -195,7 +229,6 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('GuestUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('id');
 
     if (!userId) {
@@ -208,11 +241,28 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const user = await createRuntimeUserStore(c, tenantId).findById(userId, {
-      includeInactive: true,
+    const stores = await guestStoresFromContext(c, tenantId);
+    if (!stores.length) throw new Error('guest_read_inventory_unavailable');
+    const candidates = await guestMapStores(stores, async (store) => {
+      const user = await store.adapter.queryOne<{
+        account_type: string;
+        registration_state: string;
+        created_at: number | string;
+        metadata_json: string | null;
+      }>(
+        `SELECT account_type, registration_state, created_at, metadata_json FROM identity_accounts
+         WHERE tenant_id = ? AND legacy_user_id = ? LIMIT 1`,
+        [tenantId, userId],
+        { consistencyClass: 'primary_required' }
+      );
+      return user ? { user, core: store.adapter } : null;
     });
+    const owners = candidates.filter((candidate) => candidate !== null);
+    if (owners.length > 1) throw new Error('guest_read_owner_ambiguous');
+    const user = owners[0]?.user;
+    const core = owners[0]?.core;
 
-    if (!user) {
+    if (!user || !core) {
       return c.json(
         {
           error: 'not_found',
@@ -222,7 +272,7 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (user.registration_state !== 'guest') {
+    if (user.account_type !== 'user' || user.registration_state !== 'guest') {
       return c.json(
         {
           error: 'invalid_request',
@@ -233,7 +283,7 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
     }
 
     // Get all browser-resume credentials for this user.
-    const resumeCredentials = await authCtx.coreAdapter.query<{
+    const resumeCredentials = await core.query<{
       id: string;
       expires_at: number | null;
       created_at: number;
@@ -244,11 +294,12 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
        FROM guest_devices
        WHERE tenant_id = ? AND user_id = ?
        ORDER BY last_used_at DESC`,
-      [tenantId, userId]
+      [tenantId, userId],
+      { consistencyClass: 'primary_required' }
     );
 
     // Check if user has been upgraded
-    const upgrade = await authCtx.coreAdapter.queryOne<{
+    const upgrade = await core.queryOne<{
       id: string;
       upgraded_user_id: string;
       upgrade_method: string;
@@ -258,9 +309,10 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
       `SELECT id, upgraded_user_id, upgrade_method, upgraded_at, preserve_sub
        FROM guest_account_upgrades
        WHERE tenant_id = ? AND guest_user_id = ?
-       ORDER BY upgraded_at DESC
+       ORDER BY upgraded_at DESC, id ASC
        LIMIT 1`,
-      [tenantId, userId]
+      [tenantId, userId],
+      { consistencyClass: 'primary_required' }
     );
 
     const now = Date.now();
@@ -269,34 +321,28 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
       user_id: userId,
       user_type: 'end_user',
       registration_state: 'guest',
-      created_at: Date.parse(user.created_at),
-      last_login_at: user.last_login_at,
+      created_at: Date.parse(runtimeTimestampToIso(user.created_at)),
+      last_login_at: guestReadLastLoginAt(user.metadata_json),
       resume_credentials: resumeCredentials.map((credential) => ({
         id: credential.id,
-        expires_at: credential.expires_at,
-        is_expired: credential.expires_at !== null && credential.expires_at < now,
-        created_at: credential.created_at,
-        last_used_at: credential.last_used_at,
-        is_active: credential.is_active === 1,
+        expires_at: guestReadNullableInteger(credential.expires_at),
+        is_expired: credential.expires_at !== null && guestReadInteger(credential.expires_at) < now,
+        created_at: guestReadInteger(credential.created_at),
+        last_used_at: guestReadInteger(credential.last_used_at),
+        is_active: Number(credential.is_active) === 1,
       })),
       upgrade: upgrade
         ? {
             upgraded_user_id: upgrade.upgraded_user_id,
             method: upgrade.upgrade_method,
-            upgraded_at: upgrade.upgraded_at,
-            preserve_sub: upgrade.preserve_sub === 1,
+            upgraded_at: guestReadInteger(upgrade.upgraded_at),
+            preserve_sub: Number(upgrade.preserve_sub) === 1,
           }
         : null,
     });
   } catch (error) {
     log.error('Error getting user', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to get guest account',
-      },
-      500
-    );
+    return guestReadFailure(c, error);
   }
 }
 
@@ -308,7 +354,6 @@ export async function getGuestUserUpgrades(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('GuestUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('id');
 
     if (!userId) {
@@ -321,47 +366,67 @@ export async function getGuestUserUpgrades(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get all upgrades related to this user (as guest source or registered target).
-    const upgrades = await authCtx.coreAdapter.query<{
-      id: string;
-      guest_user_id: string;
-      upgraded_user_id: string;
-      upgrade_method: string;
-      provider_id: string | null;
-      preserve_sub: number;
-      upgraded_at: number;
-      data_migrated: number;
-    }>(
-      `SELECT id, guest_user_id, upgraded_user_id, upgrade_method, provider_id,
-              preserve_sub, upgraded_at, data_migrated
-       FROM guest_account_upgrades
-       WHERE tenant_id = ? AND (guest_user_id = ? OR upgraded_user_id = ?)
-       ORDER BY upgraded_at DESC`,
-      [tenantId, userId, userId]
+    const limit = parseIntegerQuery(
+      c.req.query('limit'),
+      GUEST_READ_DEFAULT_LIMIT,
+      1,
+      GUEST_READ_MAX_LIMIT
     );
+    if (limit === null) return invalidRequest(c, 'Invalid pagination query');
+    const stores = await guestStoresFromContext(c, tenantId);
+    stores.sort((left, right) => compareGuestCleanupKey(left.bindingRef, right.bindingRef));
+    const page = await readGuestPage(
+      c,
+      stores,
+      { kind: 'upgrades', filter: userId, limit },
+      async (store, after) => {
+        const idOrder =
+          store.adapter.getType() === 'postgres' ? 'id COLLATE "C"' : 'id COLLATE BINARY';
+        const upgrades = await store.adapter.query<{
+          id: string;
+          guest_user_id: string;
+          upgraded_user_id: string;
+          upgrade_method: string;
+          provider_id: string | null;
+          preserve_sub: number;
+          upgraded_at: number;
+          data_migrated: number;
+        }>(
+          `SELECT id, guest_user_id, upgraded_user_id, upgrade_method, provider_id,
+                preserve_sub, upgraded_at, data_migrated
+         FROM guest_account_upgrades
+         WHERE tenant_id = ? AND (guest_user_id = ? OR upgraded_user_id = ?)
+           ${after ? `AND (upgraded_at < ? OR (upgraded_at = ? AND ${idOrder} > ?))` : ''}
+         ORDER BY upgraded_at DESC, ${idOrder} ASC LIMIT ?`,
+          [tenantId, userId, userId, ...(after ? [after.at, after.at, after.id] : []), limit + 1],
+          { consistencyClass: 'primary_required' }
+        );
+        return upgrades.map((row) => ({
+          at: guestReadInteger(row.upgraded_at),
+          id: row.id,
+          value: row,
+        }));
+      }
+    );
+    const upgrades = page.items;
 
     return c.json({
       user_id: userId,
+      next_cursor: page.nextCursor,
       upgrades: upgrades.map((u) => ({
         id: u.id,
         guest_user_id: u.guest_user_id,
         upgraded_user_id: u.upgraded_user_id,
         method: u.upgrade_method,
         provider_id: u.provider_id,
-        preserve_sub: u.preserve_sub === 1,
-        upgraded_at: u.upgraded_at,
-        data_migrated: u.data_migrated === 1,
+        preserve_sub: Number(u.preserve_sub) === 1,
+        upgraded_at: guestReadInteger(u.upgraded_at),
+        data_migrated: Number(u.data_migrated) === 1,
       })),
     });
   } catch (error) {
     log.error('Error getting upgrades', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to get upgrade history',
-      },
-      500
-    );
+    return guestReadFailure(c, error);
   }
 }
 
