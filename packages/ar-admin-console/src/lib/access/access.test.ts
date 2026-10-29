@@ -18,7 +18,8 @@ describe('permissions', () => {
 	it('lets wildcards cover what is under them, as the API does', () => {
 		expect(hasPermission(platform, 'admin:users:delete')).toBe(true);
 		expect(hasPermission(tenant, 'admin:users:delete')).toBe(true);
-		expect(hasPermission(tenant, 'admin:admin_users:read')).toBe(false);
+		expect(hasPermission(support, 'admin:admin_users:read')).toBe(false);
+		expect(hasPermission(tenant, 'admin:control_plane:read')).toBe(false);
 		expect(hasPermission(NO_ACCESS, 'admin:users:read')).toBe(false);
 	});
 
@@ -57,13 +58,13 @@ describe('settings, as the settings API decides it for a person', () => {
 
 	it('shows the institution of a tenant to its own admins as read-only, and lets the platform change it', () => {
 		// The tenant admin edits other tenant settings, but the scopes and names of the institution
-		// are the platform's to set (the API refuses the tenant's own super_admin as well).
+		// are the platform's to set (the API refuses a super admin role that is not held globally as well).
 		expect(settingsLevel(tenant, 'session', 'tenant')).toBe('edit');
 		expect(settingsLevel(tenant, 'institution', 'tenant')).toBe('view');
 		expect(settingsLevel(viewer, 'institution', 'tenant')).toBe('view');
 		expect(settingsLevel(support, 'institution', 'tenant')).toBe('none');
 		expect(settingsLevel(platform, 'institution', 'tenant')).toBe('edit');
-		const tenantSuperAdmin = { platform: false, roles: ['super_admin'], permissions: ['*'] };
+		const tenantSuperAdmin = { platform: false, roles: ['ar_super_admin'], permissions: ['*'] };
 		expect(settingsLevel(tenantSuperAdmin, 'institution', 'tenant')).toBe('view');
 		// It is a tenant category only.
 		expect(settingsLevel(platform, 'institution', 'platform')).toBe('none');
