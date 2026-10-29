@@ -125,7 +125,7 @@ bundle beyond it are refused with `backup_restore_authority_required`:
 
 A tenant administrator can therefore restore none of these; a platform operator's DR restore
 keeps them. Unlike a new global assignment through the API, a restore may give a role **at** the
-requester's own global level (so a super_admin can restore a global super_admin, and a DR restore
+requester's own global level (so an ar_super_admin can restore a global ar_super_admin, and a DR restore
 of the tenant the platform administrators belong to keeps their access). Every restored global
 assignment is written to `admin_audit_log` first, as `tenant_backup.global_admin_assignment_restored`
 with severity `critical` (requester, assignment, admin, role and scope); if that entry cannot be
