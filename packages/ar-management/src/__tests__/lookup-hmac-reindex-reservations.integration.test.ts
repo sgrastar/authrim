@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync, type StatementSync } from 'node:sqlite';
+import { DatabaseSync, type SQLiteDatabase } from './test-sqlite';
 import { fileURLToPath } from 'node:url';
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import {
@@ -36,6 +35,7 @@ import { resetLookupHmacRuntimeKeyCacheForTest } from '../lookup-hmac-runtime';
  * reindex processor, the real removal coordinator and the real reservation service.
  */
 
+type StatementSync = ReturnType<SQLiteDatabase['prepare']>;
 type SqlValue = string | number | null | Uint8Array;
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
@@ -103,7 +103,7 @@ class PreparedStatement {
 }
 
 function d1(
-  database: DatabaseSync,
+  database: SQLiteDatabase,
   hook?: { current?: PrepareHook },
   beforeFirst?: { current?: FirstHook }
 ): D1Database {
@@ -151,9 +151,9 @@ function operation(): ControlLookupHmacRotationView {
 }
 
 describe('HMAC reindex and the reservations of the new generation', () => {
-  let core: DatabaseSync;
-  let lookup: DatabaseSync;
-  let pii: DatabaseSync;
+  let core: SQLiteDatabase;
+  let lookup: SQLiteDatabase;
+  let pii: SQLiteDatabase;
   let privateJwk: JWK;
   let publicJwk: JWK;
   let registry: Map<string, string>;
@@ -164,6 +164,8 @@ describe('HMAC reindex and the reservations of the new generation', () => {
   /** The Control stub of the latest reindex call, also when that call rejected. */
   let lastControl: Record<string, ReturnType<typeof vi.fn>>;
   const piiFirst: { current?: FirstHook } = {};
+  const coreFirst: { current?: FirstHook } = {};
+  const lookupFirst: { current?: FirstHook } = {};
 
   beforeAll(async () => {
     const pair = await generateKeyPair('EdDSA', { extractable: true });
@@ -175,6 +177,8 @@ describe('HMAC reindex and the reservations of the new generation', () => {
     resetLookupHmacRuntimeKeyCacheForTest();
     hook.current = undefined;
     piiFirst.current = undefined;
+    coreFirst.current = undefined;
+    lookupFirst.current = undefined;
     core = new DatabaseSync(':memory:');
     lookup = new DatabaseSync(':memory:');
     pii = new DatabaseSync(':memory:');
@@ -449,9 +453,9 @@ describe('HMAC reindex and the reservations of the new generation', () => {
       LOOKUP_HMAC_KEY_SLOT_B: KEY_B,
       TENANT_RUNTIME_REGISTRY: { get: async (key: string) => registry.get(key) ?? null },
       TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
-      TDB_USERS_1: d1(core),
+      TDB_USERS_1: d1(core, undefined, coreFirst),
       TDB_PII_1: d1(pii, undefined, piiFirst),
-      LOOKUP_DB_1: d1(lookup, hook),
+      LOOKUP_DB_1: d1(lookup, hook, lookupFirst),
       CONTROL: control,
     } as unknown as Env;
   }
@@ -462,7 +466,8 @@ describe('HMAC reindex and the reservations of the new generation', () => {
       dataRole: 'tenant_core/users',
       shardId: 'users-1',
       bindingRef: 'TDB_USERS_1',
-    }
+    },
+    checkpointFailure = false
   ) {
     const control = {
       claimNextLookupHmacRotation: vi.fn(async () => operation()),
@@ -477,7 +482,10 @@ describe('HMAC reindex and the reservations of the new generation', () => {
         completedAt: null,
         updatedAt: NOW_SECONDS,
       })),
-      checkpointLookupHmacRotationSource: vi.fn(async (input) => ({ ...input })),
+      checkpointLookupHmacRotationSource: vi.fn(async (input: Record<string, unknown>) => {
+        if (checkpointFailure) throw new Error('checkpoint_unavailable');
+        return { ...input };
+      }),
       beginLookupHmacRotationVerification: vi.fn(),
       getNextLookupHmacRotationVerificationShard: vi.fn(),
       checkpointLookupHmacRotationVerificationShard: vi.fn(),
@@ -509,6 +517,111 @@ describe('HMAC reindex and the reservations of the new generation', () => {
     };
     return () => fired;
   }
+
+  it('finishes a checkpoint retry when the source reservation is released after the source scan', async () => {
+    await expect(reindex(undefined, true)).rejects.toThrow('checkpoint_unavailable');
+    expect(currentReservation()).toMatchObject({ reservation_state: 'committed' });
+    let fired = false;
+    hook.current = (sql) => {
+      if (!fired && sql.includes('SELECT account_id, reservation_state, created_at')) {
+        fired = true;
+        unlinkPasskey();
+        lookup
+          .prepare(
+            `UPDATE lookup_identifier_reservations SET reservation_state = 'released', released_at = 1 WHERE hmac_key_generation = 1`
+          )
+          .run();
+      }
+    };
+    const { result, control } = await reindex();
+    expect(fired).toBe(true);
+    expect(result.processedRows).toBe(1);
+    expect(control.checkpointLookupHmacRotationSource).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceRowCount: 0, complete: true })
+    );
+    expect(currentReservation()).toMatchObject({ reservation_state: 'released' });
+    expect(currentRoute()).toEqual({ account_id: ACCOUNT, lifecycle_state: 'disabled' });
+  });
+
+  it('finishes a stale checkpoint retry whose candidate reservation was already released', async () => {
+    await expect(reindex(undefined, true)).rejects.toThrow('checkpoint_unavailable');
+    lookup
+      .prepare(
+        `UPDATE lookup_identifier_reservations SET reservation_state = 'released', released_at = 1 WHERE hmac_key_generation = 2`
+      )
+      .run();
+    const fired = beforeReservationUpsert(() => {
+      unlinkPasskey();
+      lookup
+        .prepare(
+          `UPDATE lookup_identifier_reservations SET reservation_state = 'released', released_at = 1 WHERE hmac_key_generation = 1`
+        )
+        .run();
+    });
+    await expect(reindex()).resolves.toMatchObject({ result: { processedRows: 1 } });
+    expect(fired()).toBe(true);
+    expect(lastControl.checkpointLookupHmacRotationSource).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceRowCount: 0, complete: true })
+    );
+    expect(currentReservation()).toMatchObject({ reservation_state: 'released' });
+    expect(currentRoute()).toEqual({ account_id: ACCOUNT, lifecycle_state: 'disabled' });
+  });
+
+  it('still fails a source ownership conflict while the authority has the link', async () => {
+    lookup
+      .prepare(
+        `UPDATE lookup_identifier_reservations SET reservation_state = 'released', released_at = 1`
+      )
+      .run();
+    await expect(reindex()).rejects.toThrow('lookup_hmac_reindex_source_reservation_invalid');
+    expect(lastControl.checkpointLookupHmacRotationSource).not.toHaveBeenCalled();
+    expect(currentRoute()).toBeUndefined();
+  });
+
+  it("does not take another account's candidate reservation when the source is still authoritative", async () => {
+    await reindex();
+    lookup
+      .prepare(
+        `UPDATE lookup_identifier_reservations SET account_id = 'account:other', operation_id = 'other-add' WHERE hmac_key_generation = 2`
+      )
+      .run();
+    const reservation = currentReservation();
+    const route = currentRoute();
+    await expect(reindex()).rejects.toThrow('lookup_hmac_reindex_reservation_conflict');
+    expect(currentReservation()).toEqual(reservation);
+    expect(currentRoute()).toEqual(route);
+    expect(lastControl.checkpointLookupHmacRotationSource).not.toHaveBeenCalled();
+  });
+
+  it('does not hide a storage failure even if the source was unlinked', async () => {
+    const fired = beforeReservationUpsert(() => {
+      unlinkPasskey();
+      throw new Error('lookup_storage_unavailable');
+    });
+    await expect(reindex()).rejects.toThrow('lookup_storage_unavailable');
+    expect(fired()).toBe(true);
+    expect(lastControl.checkpointLookupHmacRotationSource).not.toHaveBeenCalled();
+  });
+
+  it('does not finish a conflict when its primary authority recheck is unavailable', async () => {
+    const fired = beforeReservationUpsert(() => {
+      unlinkPasskey();
+      lookup
+        .prepare(
+          `INSERT INTO lookup_identifier_reservations (
+        virtual_bucket, tenant_id, index_kind, normalization_version, hmac_key_generation,
+        identifier_blind_digest, account_id, reservation_state, operation_id, created_at, updated_at, released_at
+      ) VALUES (?, 'tenant-a', 'external_subject', 1, 2, ?, ?, 'released', 'hmac-reindex:hmac-operation-1', 1, 1, 1)`
+        )
+        .run(currentIndex.virtualBucket, currentIndex.digest, ACCOUNT);
+    });
+    coreFirst.current = async (sql) => {
+      if (sql.includes('SELECT id FROM passkeys')) throw new Error('authority_unavailable');
+    };
+    await expect(reindex()).rejects.toThrow('authority_unavailable');
+    expect(fired()).toBe(true);
+    expect(lastControl.checkpointLookupHmacRotationSource).not.toHaveBeenCalled();
+  });
 
   it('gives the new generation the time the source reservation was acquired, not the time of the reindex', async () => {
     await reindex();
@@ -559,7 +672,8 @@ describe('HMAC reindex and the reservations of the new generation', () => {
     await reindex();
     expect(removal).toBeDefined();
     // The removal runs after the reindex, in either order of finishing it must end released.
-    await expect(runRemoval(removal!)).resolves.toMatchObject({ status: 201 });
+    if (!removal) throw new Error('removal_hook_not_called');
+    await expect(runRemoval(removal)).resolves.toMatchObject({ status: 201 });
     expect(currentReservation()).toMatchObject({ reservation_state: 'released' });
     expect(currentRoute()).toEqual({ account_id: ACCOUNT, lifecycle_state: 'disabled' });
     // The identifier can be linked again straight away, by the same account and by another.
@@ -584,7 +698,8 @@ describe('HMAC reindex and the reservations of the new generation', () => {
     });
     await reindex();
     expect(currentReservation()).toMatchObject({ reservation_state: 'released' });
-    await expect(runRemoval(removal!)).resolves.toMatchObject({ status: 201 });
+    if (!removal) throw new Error('removal_hook_not_called');
+    await expect(runRemoval(removal)).resolves.toMatchObject({ status: 201 });
     await expect(reserveAgain('readd-1')).resolves.toEqual({ reservedCount: 1 });
   });
 
@@ -881,6 +996,36 @@ describe('HMAC reindex and the reservations of the new generation', () => {
               AND identifier_blind_digest = ?`
         )
         .get(oldGen2.digest) as Record<string, unknown> | undefined;
+
+    it('preserves an unfinished replacement after a retry finds its source reservation releasing', async () => {
+      await reindex(sourceShard);
+      await startReplacement([oldGen1, oldGen2], [newGen1, newGen2]);
+      let fired = false;
+      let held: unknown;
+      lookupFirst.current = async (sql) => {
+        if (!fired && sql.includes('SELECT account_id, reservation_state, created_at')) {
+          fired = true;
+          await expect(
+            resume(
+              replacement(async () => {
+                throw new Error('revoke_down');
+              })
+            )
+          ).rejects.toThrow('revoke_down');
+          held = oldReservation();
+        }
+      };
+      const { control } = await reindex(sourceShard);
+      expect(fired).toBe(true);
+      expect(replacementState()).toBe('revocation_pending');
+      expect(oldReservation()).toEqual(held);
+      expect(oldReservation()).toMatchObject({ reservation_state: 'releasing', released_at: null });
+      expect(control.checkpointLookupHmacRotationSource).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceRowCount: 0, complete: true })
+      );
+      await expect(resume()).resolves.toEqual({ state: 'completed' });
+      expect(oldReservation()).toMatchObject({ reservation_state: 'released' });
+    });
 
     /** Another account adds the old address (the reservation of the generation 2 digest). */
     async function otherAccountAddsOldAddress() {
