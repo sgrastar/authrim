@@ -33,7 +33,9 @@ describe('encrypted DSQL identity fixture', () => {
     fixtures.push(fixture);
     expect(fixture.trustedReceiptDigest).toMatch(/^[a-f0-9]{64}$/u);
     expect(fixture.backup.manifest.source.issuer).toBe('https://identity.example.test');
-    expect(fixture.backup.manifest.datasets).toHaveLength(18);
+    expect(fixture.backup.manifest.datasets.map((dataset) => dataset.id)).toEqual(
+      POSTGRES_RESTORE_TABLE_CONTRACTS.map((spec) => spec.datasetId)
+    );
     expect(Object.values(fixture.expectedRows).filter((count) => count !== 0)).toEqual([2, 2, 2]);
     const selected: Record<string, PortableSqliteRow[]> = {};
     for (const spec of POSTGRES_RESTORE_TABLE_CONTRACTS) {
