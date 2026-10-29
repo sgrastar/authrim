@@ -148,17 +148,22 @@ export async function publishAccountExternalSubjectRemoval(
 
 export async function buildAccountExternalSubjectAddition(
   env: Env,
-  input: AccountExternalSubjectAdditionInput
+  input: AccountExternalSubjectAdditionInput,
+  tenantCoreUsers?: DatabaseAdapter
 ): Promise<AccountDirectoryPublication> {
-  return buildAccountIdentifierAddition(env, {
-    operationId: input.operationId,
-    idempotencyKey: input.idempotencyKey,
-    tenantId: input.tenantId,
-    accountId: input.accountId,
-    identifierKind: 'external_subject',
-    identifier: input.externalSubject,
-    routeProjection: input.routeProjection,
-  });
+  return buildAccountIdentifierAddition(
+    env,
+    {
+      operationId: input.operationId,
+      idempotencyKey: input.idempotencyKey,
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      identifierKind: 'external_subject',
+      identifier: input.externalSubject,
+      routeProjection: input.routeProjection,
+    },
+    tenantCoreUsers
+  );
 }
 
 async function buildAccountIdentifierAddition(
@@ -171,10 +176,42 @@ async function buildAccountIdentifierAddition(
     identifierKind: 'email_exact' | 'external_subject';
     identifier: string | { issuer: string; subject: string };
     routeProjection: AccountRouteProjection;
-  }
+  },
+  tenantCoreUsers?: DatabaseAdapter
 ): Promise<AccountDirectoryPublication> {
-  const keys = (await loadLookupHmacRuntimeKeys(env)).writeKeys;
-  return validateAccountDirectoryPublication({
+  const existing = tenantCoreUsers
+    ? await tenantCoreUsers.queryOne<OutboxReflection>(
+        `SELECT payload_json, status FROM account_routing_outbox
+      WHERE outbox_id = ? AND tenant_id = ? AND account_id = ? AND event_kind = 'identifier_added'`,
+        [accountDirectoryOutboxId(input.operationId), input.tenantId, input.accountId],
+        { consistencyClass: 'primary_required' }
+      )
+    : null;
+  const runtimeKeys = await loadLookupHmacRuntimeKeys(env);
+  let keys = runtimeKeys.writeKeys;
+  if (existing) {
+    if (!['prepared', 'pending', 'leased', 'retry', 'succeeded'].includes(existing.status)) {
+      throw new Error('account_identifier_addition_outbox_conflict');
+    }
+    let persisted: AccountDirectoryPublication;
+    try {
+      persisted = await validateAccountDirectoryPublication(
+        JSON.parse(existing.payload_json) as AccountDirectoryPublication
+      );
+    } catch {
+      throw new Error('account_identifier_addition_outbox_conflict');
+    }
+    // The outbox pins this add's generations. A key switch must not turn a retry into a new
+    // reservation (which a reindex may already own). Recompute the complete payload from the
+    // caller's input using those keys; never accept a different identifier from a stored claim.
+    keys = [];
+    for (const generation of new Set(persisted.indexes.map((index) => index.hmacKeyGeneration))) {
+      const key = runtimeKeys.readKeys.find((candidate) => candidate.generation === generation);
+      if (!key) throw new Error('account_identifier_addition_outbox_conflict');
+      keys.push(key);
+    }
+  }
+  const publication = await validateAccountDirectoryPublication({
     operationId: input.operationId,
     tenantId: input.tenantId,
     accountId: input.accountId,
@@ -185,21 +222,30 @@ async function buildAccountIdentifierAddition(
       ...(await createLookupBlindIndexes(input.identifierKind, input.identifier, keys)),
     ],
   });
+  if (existing && existing.payload_json !== JSON.stringify(publication)) {
+    throw new Error('account_identifier_addition_outbox_conflict');
+  }
+  return publication;
 }
 
 export async function buildAccountEmailAddition(
   env: Env,
-  input: AccountEmailAdditionInput
+  input: AccountEmailAdditionInput,
+  tenantCoreUsers?: DatabaseAdapter
 ): Promise<AccountDirectoryPublication> {
-  return buildAccountIdentifierAddition(env, {
-    operationId: input.operationId,
-    idempotencyKey: input.idempotencyKey,
-    tenantId: input.tenantId,
-    accountId: input.accountId,
-    identifierKind: 'email_exact',
-    identifier: input.email,
-    routeProjection: input.routeProjection,
-  });
+  return buildAccountIdentifierAddition(
+    env,
+    {
+      operationId: input.operationId,
+      idempotencyKey: input.idempotencyKey,
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      identifierKind: 'email_exact',
+      identifier: input.email,
+      routeProjection: input.routeProjection,
+    },
+    tenantCoreUsers
+  );
 }
 
 async function publishAccountIdentifierAddition(
@@ -222,12 +268,17 @@ async function publishAccountIdentifierAddition(
   const finished = await dependencies.tenantCoreUsers.queryOne<OutboxReflection>(
     `SELECT payload_json, status FROM account_routing_outbox
       WHERE outbox_id = ? AND tenant_id = ? AND account_id = ? AND event_kind = 'identifier_added'`,
-    [outboxId, publication.tenantId, publication.accountId]
+    [outboxId, publication.tenantId, publication.accountId],
+    { consistencyClass: 'primary_required' }
   );
+  if (
+    finished &&
+    (finished.payload_json !== payload ||
+      !['prepared', 'pending', 'leased', 'retry', 'succeeded'].includes(finished.status))
+  ) {
+    throw new Error('account_identifier_addition_outbox_conflict');
+  }
   if (finished?.status === 'succeeded') {
-    if (finished.payload_json !== payload) {
-      throw new Error('account_identifier_addition_outbox_conflict');
-    }
     return {
       status: 201,
       operationId: publication.operationId,
@@ -310,7 +361,7 @@ export async function publishAccountExternalSubjectAddition(
   return runTenantBackupCoveredEffect(env, { tenantId: input.tenantId }, async () => {
     const publication = dependencies.preparedPublication
       ? await validatePreparedAddition(dependencies.preparedPublication, input)
-      : await buildAccountExternalSubjectAddition(env, input);
+      : await buildAccountExternalSubjectAddition(env, input, dependencies.tenantCoreUsers);
     return publishAccountIdentifierAddition(env, publication, dependencies);
   });
 }
@@ -323,7 +374,7 @@ export async function publishAccountEmailAddition(
   return runTenantBackupCoveredEffect(env, { tenantId: input.tenantId }, async () => {
     const publication = dependencies.preparedPublication
       ? await validatePreparedAddition(dependencies.preparedPublication, input)
-      : await buildAccountEmailAddition(env, input);
+      : await buildAccountEmailAddition(env, input, dependencies.tenantCoreUsers);
     return publishAccountIdentifierAddition(env, publication, dependencies);
   });
 }

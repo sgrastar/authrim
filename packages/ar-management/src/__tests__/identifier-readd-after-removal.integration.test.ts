@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync, type StatementSync } from 'node:sqlite';
+import { DatabaseSync, type SQLiteDatabase } from './test-sqlite';
 import { fileURLToPath } from 'node:url';
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import {
@@ -18,6 +17,7 @@ import { AccountDirectoryCoordinator } from '../account-directory-coordinator';
 import {
   publishAccountExternalSubjectAddition,
   publishAccountExternalSubjectRemoval,
+  publishAccountEmailAddition,
 } from '../account-identifier-addition';
 import { InitialAccountIdentifierReservationService } from '../account-directory-reservation';
 import { AccountDirectoryRemovalCoordinator } from '../account-directory-removal';
@@ -32,12 +32,20 @@ import { AccountDirectoryRemovalCoordinator } from '../account-directory-removal
 const shared = vi.hoisted(() => ({
   lookup: undefined as unknown,
   key: { generation: 1, secret: '0123456789abcdef0123456789abcdef' },
+  currentKey: { generation: 1, secret: '0123456789abcdef0123456789abcdef' },
+  previousAvailable: true,
 }));
 
 // The production path (publishAccountExternalSubjectAddition / Removal) reads its keys and its
 // Lookup binding from the runtime; here both are the test's own.
 vi.mock('../lookup-hmac-runtime', () => ({
-  loadLookupHmacRuntimeKeys: async () => ({ readKeys: [shared.key], writeKeys: [shared.key] }),
+  loadLookupHmacRuntimeKeys: async () => ({
+    readKeys:
+      shared.currentKey.generation === 1 || !shared.previousAvailable
+        ? [shared.currentKey]
+        : [shared.currentKey, shared.key],
+    writeKeys: [shared.currentKey],
+  }),
 }));
 vi.mock('../lookup-bucket-write-route', () => ({
   createLookupBucketWriteResolver: async () => async () => shared.lookup,
@@ -48,6 +56,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
     effect(),
 }));
 
+type StatementSync = ReturnType<SQLiteDatabase['prepare']>;
 type SqlValue = string | number | null | Uint8Array;
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const KEY = { generation: 1, secret: '0123456789abcdef0123456789abcdef' };
@@ -99,7 +108,7 @@ class BoundStatement {
 class UnboundStatement {
   constructor(
     private readonly sql: string,
-    private readonly database: DatabaseSync
+    private readonly database: SQLiteDatabase
   ) {}
 
   bind(...values: unknown[]): BoundStatement {
@@ -108,7 +117,7 @@ class UnboundStatement {
 }
 
 class SqliteD1 {
-  constructor(readonly database: DatabaseSync) {}
+  constructor(readonly database: SQLiteDatabase) {}
 
   readonly binding = {
     prepare: (sql: string) => new UnboundStatement(sql, this.database),
@@ -163,8 +172,8 @@ const ROUTE = {
 };
 
 describe('adding an identifier again after it was removed', () => {
-  let tenantDatabase: DatabaseSync;
-  let lookupDatabase: DatabaseSync;
+  let tenantDatabase: SQLiteDatabase;
+  let lookupDatabase: SQLiteDatabase;
   let tenant: SqliteD1;
   let lookup: SqliteD1;
   let didIndex: LookupBlindIndex;
@@ -193,6 +202,8 @@ describe('adding an identifier again after it was removed', () => {
     tenant = new SqliteD1(tenantDatabase);
     lookup = new SqliteD1(lookupDatabase);
     shared.lookup = lookup.binding;
+    shared.currentKey = shared.key;
+    shared.previousAvailable = true;
     didIndex = await createLookupBlindIndex('external_subject', DID, KEY);
     clock = 1000;
     for (const accountId of ['account-a', 'account-b']) {
@@ -321,7 +332,7 @@ describe('adding an identifier again after it was removed', () => {
     const bind = (params: unknown[] = []) => sqlValues(params);
     return {
       queryOne: async (sql: string, params?: unknown[]) =>
-        (tenantDatabase.prepare(sql).get(...bind(params)) as unknown) ?? null,
+        tenantDatabase.prepare(sql).get(...bind(params)) ?? null,
       execute: async (sql: string, params?: unknown[]) => ({
         success: true,
         rowsAffected: Number(tenantDatabase.prepare(sql).run(...bind(params)).changes),
@@ -1235,6 +1246,171 @@ describe('adding an identifier again after it was removed', () => {
       await expect(productionAdd('account-a', 'op-x')).resolves.toMatchObject({ status: 201 });
       expect(await resolveAccounts()).toEqual(['account-a']);
       expect(outboxStatus('op-x')).toBe('succeeded');
+    });
+  });
+
+  describe('addition retries across an HMAC key switch', () => {
+    const rotate = () => {
+      shared.currentKey = { generation: 2, secret: 'abcdef0123456789abcdef0123456789' };
+    };
+    const storedPayload = () =>
+      tenantDatabase
+        .prepare(
+          `SELECT payload_json, status FROM account_routing_outbox WHERE outbox_id = 'account-routing:op-x'`
+        )
+        .get();
+
+    it.each(['email', 'external_subject'])(
+      'resumes a pending %s addition using its persisted generation after publication failure',
+      async (kind) => {
+        const publish = () =>
+          kind === 'email'
+            ? publishAccountEmailAddition(
+                {} as Env,
+                {
+                  ...productionInput('account-a', 'op-x'),
+                  email: 'person@example.test',
+                },
+                productionDependencies()
+              )
+            : productionAdd('account-a', 'op-x');
+        const original = productionDependencies();
+        const input = productionInput('account-a', 'op-x');
+        const failing = {
+          ...original,
+          directory: {
+            publishAccountDirectory: async () => {
+              throw new Error('directory_unavailable');
+            },
+          },
+        };
+        const result =
+          kind === 'email'
+            ? await publishAccountEmailAddition(
+                {} as Env,
+                { ...input, email: 'person@example.test' },
+                failing
+              )
+            : await publishAccountExternalSubjectAddition({} as Env, input, failing);
+        expect(result.status).toBe(202);
+        const before = storedPayload() as { payload_json: string; status: string };
+        expect(before.status).toBe('pending');
+        rotate();
+        await expect(publish()).resolves.toMatchObject({ status: 201 });
+        expect(storedPayload()).toEqual({ ...before, status: 'succeeded' });
+        expect(
+          lookupDatabase
+            .prepare(
+              `SELECT hmac_key_generation, reservation_state, operation_id FROM lookup_identifier_reservations`
+            )
+            .all()
+        ).toEqual([
+          { hmac_key_generation: 1, reservation_state: 'committed', operation_id: 'op-x' },
+        ]);
+      }
+    );
+
+    it('answers a finished add after a key switch without creating another reservation or route', async () => {
+      await productionAdd('account-a', 'op-x');
+      await productionRemove('account-a', 'rm-x');
+      const before = reservationRow();
+      const routes = routeRows();
+      const count = publicationCount();
+      rotate();
+      await expect(productionAdd('account-a', 'op-x')).resolves.toMatchObject({ status: 201 });
+      expect(reservationRow()).toEqual(before);
+      expect(routeRows()).toEqual(routes);
+      expect(publicationCount()).toBe(count);
+      expect(
+        lookupDatabase.prepare(`SELECT COUNT(*) AS count FROM lookup_identifier_reservations`).get()
+      ).toEqual({ count: 1 });
+    });
+
+    it('does not take a candidate-generation reservation from the reindex during a pending retry', async () => {
+      const publication = await addition('account-a', 'op-x');
+      await reservations().reserve(publication);
+      rotate();
+      const candidate = await createLookupBlindIndex('external_subject', DID, shared.currentKey);
+      lookupDatabase
+        .prepare(
+          `INSERT INTO lookup_identifier_reservations (
+           virtual_bucket, tenant_id, index_kind, normalization_version, hmac_key_generation,
+           identifier_blind_digest, account_id, reservation_state, operation_id,
+           created_at, updated_at, committed_at
+         ) VALUES (?, 'tenant-a', 'external_subject', 1, 2, ?, 'account-a', 'committed',
+                   'hmac-reindex:rotation', 1000, 1000, 1000)`
+        )
+        .run(candidate.virtualBucket, candidate.digest);
+      const before = lookupDatabase
+        .prepare(`SELECT * FROM lookup_identifier_reservations WHERE hmac_key_generation = 2`)
+        .get();
+      await expect(productionAdd('account-a', 'op-x')).resolves.toMatchObject({ status: 201 });
+      expect(
+        lookupDatabase
+          .prepare(`SELECT * FROM lookup_identifier_reservations WHERE hmac_key_generation = 2`)
+          .get()
+      ).toEqual(before);
+      expect(await resolveAccounts()).toEqual(['account-a']);
+    });
+
+    it('fails closed when a pinned key has been retired', async () => {
+      await productionAdd('account-a', 'op-x');
+      const before = lookupDatabase.prepare(`SELECT * FROM lookup_identifier_reservations`).all();
+      const outbox = storedPayload();
+      rotate();
+      shared.previousAvailable = false;
+      await expect(productionAdd('account-a', 'op-x')).rejects.toThrow(
+        'account_identifier_addition_outbox_conflict'
+      );
+      expect(lookupDatabase.prepare(`SELECT * FROM lookup_identifier_reservations`).all()).toEqual(
+        before
+      );
+      expect(storedPayload()).toEqual(outbox);
+    });
+
+    it('rejects a terminal outbox before renewing its reservation lease', async () => {
+      const publication = await addition('account-a', 'op-x');
+      await reservations().reserve(publication);
+      tenantDatabase
+        .prepare(
+          `UPDATE account_routing_outbox SET status = 'blocked' WHERE outbox_id = 'account-routing:op-x'`
+        )
+        .run();
+      const before = reservationRow();
+      clock += 10;
+      await expect(productionAdd('account-a', 'op-x')).rejects.toThrow(
+        'account_identifier_addition_outbox_conflict'
+      );
+      expect(reservationRow()).toEqual(before);
+    });
+
+    it('rejects a different identifier before reserving it for an existing pending operation', async () => {
+      await publishAccountExternalSubjectAddition({} as Env, productionInput('account-a', 'op-x'), {
+        ...productionDependencies(),
+        directory: {
+          publishAccountDirectory: async () => {
+            throw new Error('directory_unavailable');
+          },
+        },
+      });
+      const reservationsBefore = lookupDatabase
+        .prepare(`SELECT * FROM lookup_identifier_reservations`)
+        .all();
+      const outboxBefore = storedPayload();
+      await expect(
+        publishAccountExternalSubjectAddition(
+          {} as Env,
+          {
+            ...productionInput('account-a', 'op-x'),
+            externalSubject: { issuer: 'did', subject: 'did:key:other' },
+          },
+          productionDependencies()
+        )
+      ).rejects.toThrow('account_identifier_addition_outbox_conflict');
+      expect(lookupDatabase.prepare(`SELECT * FROM lookup_identifier_reservations`).all()).toEqual(
+        reservationsBefore
+      );
+      expect(storedPayload()).toEqual(outboxBefore);
     });
   });
 

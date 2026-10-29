@@ -53,6 +53,14 @@ The reindex also writes (or re-activates) a route only while the reservation is 
 `committed`, checked in the same batch as the write: a reservation released between the
 check and the write (by a removal, or by the replacement's completion) leaves no route behind.
 
+Closed retry gap: if a batch checkpoint fails, a retry can read a source row just before
+its unlink releases the source or candidate reservation. The reindex now rechecks that
+exact link in the primary authority after a source-reservation or candidate-reservation
+conflict. If the link is gone, it runs the same guarded stale cleanup and advances the
+cursor without counting the row as authoritative. A live link's conflict still fails the
+batch; storage errors or an unavailable authority still leave the cursor unchanged.
+Other operations' reservations and unfinished email replacements retain the protections above.
+
 Remaining: rows an older build already left in `releasing` with an `operation_id` starting
 with `hmac-reindex:`. They are **not** taken over by an add: an email replacement also puts
 rows of any operation (reindex rows included) into `releasing` and keeps the operation id, so
@@ -60,7 +68,7 @@ a stuck reindex leftover cannot be told apart from a replacement that is still r
 looking at the reservation. Repair them by hand (below). Unlinking the identifier through the
 product also releases such a row, if the link still exists.
 
-### 2. Replay of an add from two or more removal cycles ago (mitigated)
+### 2. Replay of an add from two or more removal cycles ago (mitigated; key-switch retry gap closed)
 
 `reserve()` refuses to re-acquire a released row only from the operation that released it
 last. The sequence add X, remove, add Y, remove, replay X used to succeed, and the
@@ -70,9 +78,26 @@ reservation with no link behind them).
 Now: the identifier addition path reads the add's own outbox row first; if it already
 `succeeded`, it returns the success without reserving or publishing anything. For DIDs and
 external IdPs this replay was practically unreachable anyway (the operation id is derived
-from the link row, and the RPC checks that the link exists). Not covered: the producers
-that call `reserve()` directly (account creation, guest upgrade, guest lifecycle); they
-add new account ids and cannot hit it in practice.
+from the link row, and the RPC checks that the link exists). This outbox guard does not
+cover direct callers of `reserve()`: account creation allocates a new account id, while
+guest upgrade uses the existing guest account and its own operation state and pinned
+publication. Guest lifecycle cleanup calls `release()`, not `reserve()`. None of these
+guards gives the reservation table a history of older operations.
+
+Closed retry gaps: email and external-subject additions now rebuild retries with the HMAC
+generations pinned in their own outbox, while those keys remain readable. Previously a key
+switch rebuilt the same operation with different digests: it either conflicted with a
+reindex reservation or reserved a new-generation identifier before rejecting the changed
+outbox payload. The complete payload is recomputed from the caller's identifier, account,
+tenant, idempotency key and route projection and compared byte-for-byte with the stored
+payload before any reservation write. A mismatched or terminal outbox is rejected before
+reserving or extending a lease. A succeeded add still returns success without touching
+reservations or routes, including after a key switch or an unlink.
+
+Remaining: a retired pinned key cannot validate the caller's identifier and the retry
+fails closed; it does not reserve under a new key instead. A new challenge/operation for
+an already-held email is not an exact retry and still conflicts. These changes do not
+give `reserve()` per-link ownership or a history of previous operations.
 
 ### 3. Removal and re-add within the same second (open)
 
@@ -420,15 +445,20 @@ During a key rotation the reindex job can fail a source row with one of three er
 - `lookup_hmac_reindex_source_reservation_invalid`: the reservation of the **source**
   (old) generation is missing, not committed, or held by another account.
 
-The row is not skipped. The job keeps its cursor and tries the same batch again on every
+While the exact link remains authoritative, the row is not skipped. The job keeps its cursor
+and tries the same batch again on every
 run (every cron tick), so the rotation waits there and does not reach verification. That is
 deliberate: a link without a route in the new generation would otherwise go unnoticed,
 because the verification compares counts and a different account's new route can make up for
 a missing one.
 
-`not_committed` is a race and usually clears by itself: if the authority row is gone by the
-next run the row is treated as stale and finished, and an email replacement that is still
-completing does the same when it switches the address. Wait a few runs first. If the same
+After `source_reservation_invalid` or `conflict`, the reindex rechecks the exact source
+link in the primary authority. If it has gone, the row is treated as stale and finished
+with the guarded cleanup from limit 1. An unfinished email replacement keeps its reservation
+and route. `not_committed` is also a race: a later scan normally stops selecting an unlinked
+row, and an email replacement that is still completing does the same when it switches the
+address. None of these paths takes over or re-commits a released reservation for a live
+link. Wait a few runs first. If the same
 code (or `conflict`) stays, find the row:
 
 1. Confirm the job's last error (read only):
@@ -526,7 +556,7 @@ code (or `conflict`) stays, find the row:
 
    | Source reservation                         | Candidate reservation               | Error                                                                           | What to do                                                                                                                                                                                                                                                                        |
    | ------------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | missing, not committed, or another account | any                                 | `source_reservation_invalid`                                                    | The directory lost the link's old-generation reservation. If the authority still has the link, unlink and link it again through the product; if not, the row is stale and cannot be finished by the reindex: repair per "Repair" after confirming with step 2 of the diagnostics. |
+   | missing, not committed, or another account | any                                 | `source_reservation_invalid`                                                    | The directory lost the link's old-generation reservation. If the authority still has the link, unlink and link it again through the product. A source row captured before an unlink is finished as stale after the primary authority recheck; unexplained leftovers still require the diagnostics and Repair section. |
    | committed, same account                    | none                                | none                                                                            | The reindex creates it.                                                                                                                                                                                                                                                           |
    | committed, same account                    | `committed`, same account           | none                                                                            | Done.                                                                                                                                                                                                                                                                             |
    | committed, same account                    | `committed`, **another account**    | `reservation_conflict`                                                          | Another account holds the identifier in the new generation (a link added after the rotation started took it). Find which of the two the authority has (step 2 of the diagnostics for both accounts); the other is the orphan to repair.                                           |

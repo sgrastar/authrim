@@ -374,3 +374,16 @@ The implementation must include behavior tests, not source-text presence checks.
 Before publishing a product release, the setup package tests, lint, typecheck, monorepo typecheck,
 release-manifest validation, and the policy/entry-point/topology matrices above must pass. Passing unit
 tests alone is not evidence that all mutation entry points obey this specification.
+
+### Statement consent compatibility boundary
+
+The additive Core D1 036 / PostgreSQL 019 schema must reach every metadata and physical account
+store before the statement consent writer is deployed. It installs guards, key states, operations
+and admissions, plus metadata-owned durable projection jobs, without enabling database triggers. D1 record-to-definition foreign keys remain
+until the separate PR7 rebuild; routed D1 writes cannot be rolled out before that boundary.
+
+Statement consent key states, terminal operations and admissions are users datasets. Guards and projection jobs are
+rebuild state and never portable authority. Source admissions and executing operations are held
+on restore. `core.consent_item_history` retains its history/log-window selection but is exported
+from and restored into `tenant_core/users`. A different physical restore target requires explicit
+identity rebinding before writes, including restored key states; PR7 owns that operation.

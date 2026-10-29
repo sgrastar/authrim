@@ -1,6 +1,11 @@
 /** Physical foreign keys for Phase 8 datasets, pinned from the reviewed migration schemas. */
 export const PHASE8_SQLITE_FOREIGN_KEY_RULES = [
   {
+    from: 'core.statement_consent_operations',
+    columns: ['tenant_id', 'operation_id', 'required_terminal'],
+    to: 'core.statement_consent_operations',
+  },
+  {
     from: 'admin.admin_agent_grants',
     columns: ['delegator_id'],
     to: 'admin.admin_users',
