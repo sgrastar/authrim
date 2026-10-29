@@ -1086,37 +1086,14 @@ function hasRole(
 export function createDefaultPolicyEngine(): PolicyEngine {
   const engine = new PolicyEngine({ defaultDecision: 'deny' });
 
-  // System admin can do anything
+  // The preset admin role can do anything
   engine.addRule({
-    id: 'system_admin_full_access',
-    name: 'System Admin Full Access',
-    description: 'System administrators have full access to all resources',
+    id: 'admin_full_access',
+    name: 'Admin Full Access',
+    description: 'Administrators have full access to all resources',
     priority: 1000,
     effect: 'allow',
-    conditions: [{ type: 'has_role', params: { role: 'system_admin' } }],
-  });
-
-  // Distributor admin has high-level access
-  engine.addRule({
-    id: 'distributor_admin_access',
-    name: 'Distributor Admin Access',
-    description: 'Distributor administrators have broad access',
-    priority: 900,
-    effect: 'allow',
-    conditions: [{ type: 'has_role', params: { role: 'distributor_admin' } }],
-  });
-
-  // Org admin can manage their organization
-  engine.addRule({
-    id: 'org_admin_same_org',
-    name: 'Org Admin Same Organization',
-    description: 'Organization administrators can manage resources in their organization',
-    priority: 800,
-    effect: 'allow',
-    conditions: [
-      { type: 'has_role', params: { role: 'org_admin' } },
-      { type: 'same_organization', params: {} },
-    ],
+    conditions: [{ type: 'has_role', params: { role: 'admin' } }],
   });
 
   // Resource owners can manage their own resources

@@ -51,6 +51,8 @@ import {
   listOrganizationMembersPage,
   listRoleAssignmentsPage,
   MergedPageTooDeepError,
+  DEFAULT_ROLES,
+  isReservedAdminRoleName,
 } from '@authrim/ar-lib-core';
 import {
   accountStoreHolding,
@@ -2364,19 +2366,10 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // System roles cannot be created
-    const systemRoles = [
-      'super_admin',
-      'system_admin',
-      'security_admin',
-      'distributor_admin',
-      'tenant_admin',
-      'admin',
-      'support',
-      'viewer',
-      'user',
-    ];
-    if (systemRoles.includes(body.name.toLowerCase())) {
+    // The preset roles cannot be created, and the `ar_` prefix belongs to the Admin roles of the
+    // people who run Authrim, so a role of the service's users must not look like one of them.
+    const presetRoles: string[] = Object.values(DEFAULT_ROLES);
+    if (presetRoles.includes(body.name.toLowerCase()) || isReservedAdminRoleName(body.name)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'name', reason: 'Cannot create system roles' },
       });
