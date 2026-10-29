@@ -8,6 +8,7 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import { requireTenantId } from '../tenant';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
+import { guardClause, type AdminWriteGuard } from './write-guard';
 import type {
   AdminRole,
   AdminRoleCreateInput,
@@ -428,13 +429,16 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
    * @param adminRoleId - Admin role ID
    * @param scopeType - Scope type
    * @param scopeId - Scope ID (optional)
+   * @param guard - A condition the database checks in the same statement; nothing is removed
+   *   (and false is returned) when it no longer holds
    * @returns True if removed
    */
   async removeAssignment(
     adminUserId: string,
     adminRoleId: string,
     scopeType?: AdminRoleAssignmentScopeType,
-    scopeId?: string
+    scopeId?: string,
+    guard?: AdminWriteGuard
   ): Promise<boolean> {
     let sql =
       'DELETE FROM admin_role_assignments WHERE tenant_id = ? AND admin_user_id = ? AND admin_role_id = ?';
@@ -448,6 +452,9 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
       sql += ' AND scope_id = ?';
       params.push(scopeId);
     }
+    const condition = guardClause(guard);
+    sql += condition.sql;
+    params.push(...condition.params);
 
     const result = await this.adapter.execute(sql, params);
     return result.rowsAffected > 0;
@@ -471,12 +478,15 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
    * Remove a role assignment by ID inside the repository tenant boundary.
    *
    * @param assignmentId - Assignment ID
+   * @param guard - A condition the database checks in the same statement; nothing is removed
+   *   (and false is returned) when it no longer holds
    * @returns True if removed
    */
-  async removeAssignmentById(assignmentId: string): Promise<boolean> {
+  async removeAssignmentById(assignmentId: string, guard?: AdminWriteGuard): Promise<boolean> {
+    const condition = guardClause(guard);
     const result = await this.adapter.execute(
-      'DELETE FROM admin_role_assignments WHERE tenant_id = ? AND id = ?',
-      [this.tenantId, assignmentId]
+      `DELETE FROM admin_role_assignments WHERE tenant_id = ? AND id = ?${condition.sql}`,
+      [this.tenantId, assignmentId, ...condition.params]
     );
     return result.rowsAffected > 0;
   }
@@ -531,6 +541,8 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
    *
    * @param assignmentId - Assignment ID
    * @param input - Assignment updates
+   * @param guard - A condition the database checks in the same statement; nothing is updated
+   *   (and null is returned) when it no longer holds
    * @returns Updated assignment or null
    */
   async updateAssignment(
@@ -539,7 +551,8 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
       scope_type?: AdminRoleAssignmentScopeType;
       scope_id?: string | null;
       expires_at?: number | null;
-    }
+    },
+    guard?: AdminWriteGuard
   ): Promise<AdminRoleAssignment | null> {
     const updates: string[] = [];
     const values: unknown[] = [];
@@ -561,12 +574,16 @@ export class AdminRoleAssignmentRepository extends BaseRepository<AdminRoleAssig
       return this.getAssignment(assignmentId);
     }
 
-    values.push(this.tenantId, assignmentId);
+    const condition = guardClause(guard);
+    values.push(this.tenantId, assignmentId, ...condition.params);
 
-    await this.adapter.execute(
-      `UPDATE admin_role_assignments SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?`,
+    const result = await this.adapter.execute(
+      `UPDATE admin_role_assignments SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?${condition.sql}`,
       values
     );
+    if (guard && result.rowsAffected === 0) {
+      return null;
+    }
 
     return this.getAssignment(assignmentId);
   }
