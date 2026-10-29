@@ -33,7 +33,7 @@ overrides:
   '@sveltejs/kit': '>=2.70.2'
   rollup: '>=4.59.0'
   hono: 4.13.12
-  jose: 6.2.9
+  jose: 6.2.13
   '@hono/node-server': 2.1.3
   fast-uri: 3.1.9
   body-parser@<1.20.9: 1.20.9
@@ -69,8 +69,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
     optionalDependencies:
       '@esbuild/linux-x64':
         specifier: ^0.25.12
@@ -401,8 +401,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260903.1
@@ -441,8 +441,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
       resend:
         specifier: ^6.5.2
         version: 6.8.0
@@ -475,8 +475,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
       tslib:
         specifier: ^2.8.1
         version: 2.8.1
@@ -534,8 +534,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260903.1
@@ -559,14 +559,14 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
       mysql2:
         specifier: ^3.23.1
         version: 3.24.3(@types/node@22.19.7)
       pg:
-        specifier: ^8.16.3
-        version: 8.20.0
+        specifier: ^8.23.1
+        version: 8.23.1
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260903.1
@@ -575,8 +575,8 @@ importers:
         specifier: ^22.10.4
         version: 22.19.7
       '@types/pg':
-        specifier: ^8.15.6
-        version: 8.20.0
+        specifier: ^8.23.1
+        version: 8.23.1
       fast-check:
         specifier: ^4.5.3
         version: 4.5.3
@@ -886,8 +886,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
       squirreling:
         specifier: 0.16.9
         version: 0.16.9
@@ -927,8 +927,8 @@ importers:
         specifier: ^22.19.7
         version: 22.19.7
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -1025,15 +1025,15 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       pg:
-        specifier: ^8.16.3
-        version: 8.20.0
+        specifier: ^8.23.1
+        version: 8.23.1
     devDependencies:
       '@types/node':
         specifier: ^20.19.25
         version: 20.19.30
       '@types/pg':
-        specifier: ^8.15.6
-        version: 8.20.0
+        specifier: ^8.23.1
+        version: 8.23.1
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
@@ -1059,8 +1059,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
       pako:
         specifier: ^3.0.2
         version: 3.0.2
@@ -1105,8 +1105,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260903.1
@@ -1127,8 +1127,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260903.1
@@ -1158,8 +1158,8 @@ importers:
         specifier: 4.13.12
         version: 4.13.12
       jose:
-        specifier: 6.2.9
-        version: 6.2.9
+        specifier: 6.2.13
+        version: 6.2.13
       tslib:
         specifier: ^2.8.1
         version: 2.8.1
@@ -1244,8 +1244,8 @@ importers:
         specifier: ^22.10.4
         version: 22.19.7
       '@types/tar':
-        specifier: ^6.1.13
-        version: 6.1.13
+        specifier: ^7.0.87
+        version: 7.0.87
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
@@ -3269,8 +3269,8 @@ packages:
   '@types/node@22.19.7':
     resolution: {integrity: sha512-MciR4AKGHWl7xwxkBa6xUGxQJ4VBOmPTF7sL+iGzuahOFaO0jHCsuEfS80pan1ef4gWId1oWOweIhrDEYLuaOw==}
 
-  '@types/pg@8.20.0':
-    resolution: {integrity: sha512-bEPFOaMAHTEP1EzpvHTbmwR8UsFyHSKsRisLIHVMXnpNefSbGA1bD6CVy+qKjGSqmZqNqBDV2azOBo8TgkcVow==}
+  '@types/pg@8.23.1':
+    resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
   '@types/qrcode@1.5.6':
     resolution: {integrity: sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw==}
@@ -3278,8 +3278,9 @@ packages:
   '@types/react@19.3.0':
     resolution: {integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==}
 
-  '@types/tar@6.1.13':
-    resolution: {integrity: sha512-IznnlmU5f4WcGTh2ltRu/Ijpmk8wiWXfF0VA4s+HPjHZgvFggk1YaIkbo5krX/zUCzWF8N/l4+W/LNxnvAJ8nw==}
+  '@types/tar@7.0.87':
+    resolution: {integrity: sha512-3IxNBV8LeY5oi2ZFpvAhOtW1+mHswkzM7BuisVrwJgPv67GBO2rkLPQlEKtzfHuLdhDDczhkCZeT+RuizMay4A==}
+    deprecated: This is a stub types definition. tar provides its own type definitions, so you do not need this installed.
 
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
@@ -4993,8 +4994,8 @@ packages:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
 
-  jose@6.2.9:
-    resolution: {integrity: sha512-XrchZOFZUl/T3vTwRe8XK+cJrGtMF4th1ARnDfwbBXFKThGhlsxEE4Zu03AD/bjJSt/9jT/mxrOCkJWOg77aPA==}
+  jose@6.2.13:
+    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
 
   jpeg-js@0.4.4:
     resolution: {integrity: sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg==}
@@ -5458,10 +5459,6 @@ packages:
   minimist@1.2.8:
     resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
 
-  minipass@4.2.8:
-    resolution: {integrity: sha512-fNzuVyifolSLFL4NzpF+wEF4qrgqaaKX0haXPQEdQ7NKAN+WecoKMHV09YcuL/DHxrUsYQOK3MiuDf7Ip2OXfQ==}
-    engines: {node: '>=8'}
-
   minipass@7.1.3:
     resolution: {integrity: sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==}
     engines: {node: '>=16 || 14 >=14.17'}
@@ -5746,30 +5743,30 @@ packages:
   perfect-debounce@2.0.0:
     resolution: {integrity: sha512-fkEH/OBiKrqqI/yIgjR92lMfs2K8105zt/VT6+7eTjNwisrsh47CeIED9z58zI7DfKdH3uHAn25ziRZn3kgAow==}
 
-  pg-cloudflare@1.3.0:
-    resolution: {integrity: sha512-6lswVVSztmHiRtD6I8hw4qP/nDm1EJbKMRhf3HCYaqud7frGysPv7FYJ5noZQdhQtN2xJnimfMtvQq21pdbzyQ==}
+  pg-cloudflare@1.4.1:
+    resolution: {integrity: sha512-6PQbsFWZcp9EmJEwy5cGQ2La+AMWpP46lgbb8X+U/XsHIUweYDNCpeuKck5RxL2MdVFi7krbbEi5nX4Zh7JhrQ==}
 
-  pg-connection-string@2.12.0:
-    resolution: {integrity: sha512-U7qg+bpswf3Cs5xLzRqbXbQl85ng0mfSV/J0nnA31MCLgvEaAo7CIhmeyrmJpOr7o+zm0rXK+hNnT5l9RHkCkQ==}
+  pg-connection-string@2.14.1:
+    resolution: {integrity: sha512-qR3kGNPBLpCNtz0evbKA0Y/MRFXwSSdT+pTJvYp/bXTcReZbvX1kzF0IyTc1QnxqF7AZbOeBhNL8R5mYQZV/MA==}
 
   pg-int8@1.0.1:
     resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
     engines: {node: '>=4.0.0'}
 
-  pg-pool@3.13.0:
-    resolution: {integrity: sha512-gB+R+Xud1gLFuRD/QgOIgGOBE2KCQPaPwkzBBGC9oG69pHTkhQeIuejVIk3/cnDyX39av2AxomQiyPT13WKHQA==}
+  pg-pool@3.14.0:
+    resolution: {integrity: sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==}
     peerDependencies:
       pg: '>=8.0'
 
-  pg-protocol@1.13.0:
-    resolution: {integrity: sha512-zzdvXfS6v89r6v7OcFCHfHlyG/wvry1ALxZo4LqgUoy7W9xhBDMaqOuMiF3qEV45VqsN6rdlcehHrfDtlCPc8w==}
+  pg-protocol@1.16.1:
+    resolution: {integrity: sha512-p9VOFMiHB/ZbJATetbg+99PxssTVSQRnyuPSQ67mN1+1KBOjZaZ83ZQzltnxPhJwSsC3nwVjJ10DVJlerbFzLg==}
 
   pg-types@2.2.0:
     resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
     engines: {node: '>=4'}
 
-  pg@8.20.0:
-    resolution: {integrity: sha512-ldhMxz2r8fl/6QkXnBD3CR9/xg694oT6DZQ2s6c/RI28OjtSOpxnPrUCGOBJ46RCUxcWdx3p6kw/xnDHjKvaRA==}
+  pg@8.23.1:
+    resolution: {integrity: sha512-aL96AHANtWjPLDOLqnhx+ngp9+UK7ETEU8VJrDCGvsSSi/mGLcWYsS6Herg7lmaBJe4uwrfqsa7gTEFaSizDoQ==}
     engines: {node: '>= 16.0.0'}
     peerDependencies:
       pg-native: '>=3.0.1'
@@ -8123,7 +8120,7 @@ snapshots:
       cross-spawn: 7.0.6
       eventsource: 3.0.7
       eventsource-parser: 3.1.0
-      jose: 6.2.9
+      jose: 6.2.13
       pkce-challenge: 5.0.1
       zod: 4.6.7
 
@@ -8134,7 +8131,7 @@ snapshots:
       commander: 14.0.3
       eventsource-parser: 3.1.0
       express: 5.2.1
-      jose: 6.2.9
+      jose: 6.2.13
       undici: 8.12.3
       yaml: 2.8.3
       zod: 4.6.7
@@ -8159,7 +8156,7 @@ snapshots:
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
       hono: 4.13.12
-      jose: 6.2.9
+      jose: 6.2.13
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
@@ -9093,10 +9090,10 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@types/pg@8.20.0':
+  '@types/pg@8.23.1':
     dependencies:
       '@types/node': 22.19.7
-      pg-protocol: 1.13.0
+      pg-protocol: 1.16.1
       pg-types: 2.2.0
 
   '@types/qrcode@1.5.6':
@@ -9107,10 +9104,9 @@ snapshots:
     dependencies:
       csstype: 3.2.3
 
-  '@types/tar@6.1.13':
+  '@types/tar@7.0.87':
     dependencies:
-      '@types/node': 22.19.7
-      minipass: 4.2.8
+      tar: 7.5.22
 
   '@types/trusted-types@2.0.7': {}
 
@@ -11042,7 +11038,7 @@ snapshots:
 
   jiti@2.6.1: {}
 
-  jose@6.2.9: {}
+  jose@6.2.13: {}
 
   jpeg-js@0.4.4: {}
 
@@ -11683,8 +11679,6 @@ snapshots:
 
   minimist@1.2.8: {}
 
-  minipass@4.2.8: {}
-
   minipass@7.1.3: {}
 
   minizlib@3.1.0:
@@ -11993,18 +11987,18 @@ snapshots:
 
   perfect-debounce@2.0.0: {}
 
-  pg-cloudflare@1.3.0:
+  pg-cloudflare@1.4.1:
     optional: true
 
-  pg-connection-string@2.12.0: {}
+  pg-connection-string@2.14.1: {}
 
   pg-int8@1.0.1: {}
 
-  pg-pool@3.13.0(pg@8.20.0):
+  pg-pool@3.14.0(pg@8.23.1):
     dependencies:
-      pg: 8.20.0
+      pg: 8.23.1
 
-  pg-protocol@1.13.0: {}
+  pg-protocol@1.16.1: {}
 
   pg-types@2.2.0:
     dependencies:
@@ -12014,15 +12008,15 @@ snapshots:
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
 
-  pg@8.20.0:
+  pg@8.23.1:
     dependencies:
-      pg-connection-string: 2.12.0
-      pg-pool: 3.13.0(pg@8.20.0)
-      pg-protocol: 1.13.0
+      pg-connection-string: 2.14.1
+      pg-pool: 3.14.0(pg@8.23.1)
+      pg-protocol: 1.16.1
       pg-types: 2.2.0
       pgpass: 1.0.5
     optionalDependencies:
-      pg-cloudflare: 1.3.0
+      pg-cloudflare: 1.4.1
 
   pgpass@1.0.5:
     dependencies:
