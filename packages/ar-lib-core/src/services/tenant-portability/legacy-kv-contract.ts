@@ -98,9 +98,16 @@ export function classifyLegacyKvKey(
     }
     if (sharedConfigKeys.has(key)) return { kind: 'shared_setting_dependency' };
     if (placementKeys.has(key)) return { kind: 'placement_dependency' };
-    const client = /^v1:cache-mode:client:([a-zA-Z0-9_-]{1,128})$/.exec(key)?.[1];
-    if (client && context.clientIds.has(client))
-      return { kind: 'client_setting', clientId: client };
+    // A client's cache mode is kept per tenant. The former un-tenanted `v1:cache-mode:client:<id>`
+    // key is no longer read at runtime, and its tenant cannot be told, so it stays unsupported.
+    const cacheMode = /^v1:cache-mode:client:([a-zA-Z0-9_-]{1,128}):([a-zA-Z0-9_-]{1,128})$/.exec(
+      key
+    );
+    if (cacheMode) {
+      const [, tenant, client] = cacheMode;
+      if (tenant !== context.tenantId) return { kind: 'foreign_tenant' };
+      if (context.clientIds.has(client)) return { kind: 'client_setting', clientId: client };
+    }
   }
   if (binding === 'KV') {
     const tenant = /^consent:ip_salt:([a-zA-Z0-9_-]{1,128})$/.exec(key)?.[1];

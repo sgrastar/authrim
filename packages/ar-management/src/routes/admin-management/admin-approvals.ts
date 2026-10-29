@@ -56,12 +56,14 @@ import { resolveApprovalNotificationTransport } from '../../approval-notificatio
 import {
   APPROVAL_PRESETS,
   getApprovalNotificationCooldownMs,
-  getApprovalPresetExpiry,
   resolveApprovalEffectivePolicy,
+  resolveApprovalRequestExpiry,
 } from '../../approval-policy-presets';
 import {
+  ApprovalRequesterError,
   ApprovalStepResolutionError,
   previewApprovalRequestResolution,
+  resolveApprovalRequester,
   resolveApprovalSteps,
 } from '../../approval-request-preview';
 import { resolveApprovalStepGuide } from '../../approval-step-guide';
@@ -561,11 +563,14 @@ adminApprovalsRouter.post('/preview', async (c) => {
     const body = ApprovalRequestCreateSchema.parse(await c.req.json());
     const tenantId = getTenantIdFromContext(c);
     const adminAuth = (c as AdminContext).get('adminAuth');
+    const requester = resolveApprovalRequester(adminAuth, {
+      type: body.requester_subject_type,
+      id: body.requester_subject_id,
+    });
     const preview = await previewApprovalRequestResolution(c as AdminContext, {
       tenantId,
-      requesterSubjectType:
-        body.requester_subject_type ?? (adminAuth?.userId ? 'admin_user' : 'service_principal'),
-      requesterSubjectId: body.requester_subject_id ?? adminAuth?.userId ?? 'system',
+      requesterSubjectType: requester.type,
+      requesterSubjectId: requester.id,
       body,
     });
 
@@ -577,6 +582,11 @@ adminApprovalsRouter.post('/preview', async (c) => {
           field: error.issues[0]?.path.join('.') || 'body',
           reason: error.issues[0]?.message || 'Invalid approval preview payload',
         },
+      });
+    }
+    if (error instanceof ApprovalRequesterError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'requester_subject_id', reason: error.message },
       });
     }
     if (error instanceof ApprovalStepResolutionError) {
@@ -628,12 +638,21 @@ adminApprovalsRouter.post('/', async (c) => {
       attributes: body.attributes as Record<string, ApprovalScopeJson | undefined> | undefined,
     });
 
+    const requester = resolveApprovalRequester(adminAuth, {
+      type: body.requester_subject_type,
+      id: body.requester_subject_id,
+    });
+    const expiresAt = resolveApprovalRequestExpiry(body.policy_preset, body.expires_at);
+    if (expiresAt <= Date.now()) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'expires_at', reason: 'expires_at must be in the future' },
+      });
+    }
     const request = await requestRepo.createApprovalRequest({
       tenant_id: tenantId,
       investigation_id: scope.normalized.investigation_id ?? generateInvestigationId(),
-      requester_subject_type:
-        body.requester_subject_type ?? (adminAuth?.userId ? 'admin_user' : 'service_principal'),
-      requester_subject_id: body.requester_subject_id ?? adminAuth?.userId ?? 'system',
+      requester_subject_type: requester.type,
+      requester_subject_id: requester.id,
       target_subject_type: body.target_subject_type,
       target_subject_id: body.target_subject_id,
       request_surface: body.request_surface,
@@ -651,7 +670,7 @@ adminApprovalsRouter.post('/', async (c) => {
       policy_preset: body.policy_preset,
       reuse_scope: body.reuse_scope,
       partial_access_allowed: body.partial_access_allowed,
-      expires_at: body.expires_at ?? getApprovalPresetExpiry(body.policy_preset),
+      expires_at: expiresAt,
     });
 
     const resolvedSteps = await resolveApprovalSteps(c as AdminContext, request, body.approvals);
@@ -683,7 +702,7 @@ adminApprovalsRouter.post('/', async (c) => {
           notification_count: 0,
           last_notification_action: null,
           last_notified_at: null,
-          expires_at: step.expires_at ?? request.expires_at,
+          expires_at: Math.min(step.expires_at ?? request.expires_at, request.expires_at),
         });
       })
     );
@@ -743,6 +762,11 @@ adminApprovalsRouter.post('/', async (c) => {
           field: error.issues[0]?.path.join('.') || 'body',
           reason: error.issues[0]?.message || 'Invalid approval request payload',
         },
+      });
+    }
+    if (error instanceof ApprovalRequesterError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'requester_subject_id', reason: error.message },
       });
     }
     if (error instanceof ApprovalStepResolutionError) {

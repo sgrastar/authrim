@@ -3,6 +3,8 @@ import { jaCompliance } from './compliance/ja';
 import { jaMappingConsole } from './mapping-console/ja';
 import { jaServiceFlows } from './service-flows/ja';
 import { jaAccountFlows } from './account-flows/ja';
+import { jaSchemaSetting } from './schema-setting/ja';
+import { jaTenantGeneral } from './tenant-general/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -14,6 +16,8 @@ export const ja = {
 	...jaMappingConsole,
 	...jaServiceFlows,
 	...jaAccountFlows,
+	...jaSchemaSetting,
+	...jaTenantGeneral,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
