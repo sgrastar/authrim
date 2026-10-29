@@ -73,23 +73,18 @@ function createSettingsContextStore() {
 	function getPermissionForScope(scope: SettingScopeLevel, userRoles: string[]): PermissionLevel {
 		// Permission mapping based on roles
 		const rolePermissions: Record<string, Record<SettingScopeLevel, PermissionLevel>> = {
-			// Super admin / system admin has full access to everything
-			super_admin: { platform: 'edit', tenant: 'edit', client: 'edit' },
-			superadmin: { platform: 'edit', tenant: 'edit', client: 'edit' },
-			system_admin: { platform: 'edit', tenant: 'edit', client: 'edit' },
-			admin: { platform: 'view', tenant: 'edit', client: 'edit' },
-			// Distributor admin can view platform, edit tenant/client
-			distributor_admin: { platform: 'view', tenant: 'edit', client: 'edit' },
-			// Org admin can only view tenant, edit client
-			org_admin: { platform: 'none', tenant: 'view', client: 'edit' },
-			// Viewer has read-only access
-			viewer: { platform: 'view', tenant: 'view', client: 'view' }
+			// The super admin has full access to everything
+			ar_super_admin: { platform: 'edit', tenant: 'edit', client: 'edit' },
+			// The tenant admin can view the platform, edit tenant/client
+			ar_tenant_admin: { platform: 'view', tenant: 'edit', client: 'edit' },
+			// The viewer has read-only access
+			ar_viewer: { platform: 'view', tenant: 'view', client: 'view' }
 		};
 
 		// Find highest permission from user's roles
 		let highestPermission: PermissionLevel = 'none';
 		for (const role of userRoles) {
-			// Normalize role name (handle variations like "Super Admin" -> "super_admin")
+			// Normalize role name (handle variations like "Ar Tenant Admin" -> "ar_tenant_admin")
 			const normalizedRole = role.toLowerCase().replace(/[\s-]+/g, '_');
 			const perms = rolePermissions[normalizedRole] || rolePermissions[role];
 			if (perms) {

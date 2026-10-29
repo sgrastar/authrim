@@ -488,7 +488,7 @@ describe('who may see every tenant', () => {
 
   it.each([
     ['a super admin of one tenant', TENANT_SUPER_ADMIN],
-    ['an admin of one tenant', [{ role: 'role_admin', scope: 'tenant' }] as Assignment[]],
+    ['an admin of one tenant', [{ role: 'role_ar_tenant_admin', scope: 'tenant' }] as Assignment[]],
   ])('is not %s', async (_name, assignments) => {
     const t = setup();
     const response = await t.list('', t.cookie(assignments));

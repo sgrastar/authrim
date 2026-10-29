@@ -83,7 +83,7 @@ const systemPolicy: Record<string, unknown> = {
   resource_pattern: '*',
   actions_json: JSON.stringify(['*']),
   conditions_json: JSON.stringify({
-    roles: ['super_admin'],
+    roles: ['ar_super_admin'],
   }),
   is_active: 1,
   is_system: 1,

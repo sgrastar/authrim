@@ -96,7 +96,7 @@ const tenantAdmin = {
   tenantId: 'tenant-a',
   authMethod: 'session',
   actorType: 'human',
-  roles: ['super_admin'],
+  roles: ['ar_super_admin'],
   globalRoles: [],
   tenantScope: ['tenant-a'],
   permissions: ['*'],
@@ -107,7 +107,7 @@ const tenantAdmin = {
 const platformOperator = {
   ...tenantAdmin,
   userId: 'platform-admin',
-  globalRoles: ['super_admin'],
+  globalRoles: ['ar_super_admin'],
   tenantScope: ['*'],
   globalPermissions: ['*'],
   globalHierarchyLevel: 100,
@@ -253,14 +253,14 @@ beforeEach(async () => {
   admin = freshDatabase('admin');
   logFixture = await logProducerFixture('scheduled');
   policies = new Map((await realPolicies()).map((policy) => [policy.dataset.id, policy]));
-  // What the shared Admin database already holds: the platform's own global super_admin, an
+  // What the shared Admin database already holds: the platform's own global ar_super_admin, an
   // institution document the platform set for this provisioning tenant, and a custom role the
   // bundle restored earlier in the sequence.
   admin.exec(`
     INSERT INTO admin_users(id,tenant_id,email,name,password_hash,is_active,status,created_at,updated_at)
     VALUES ('platform-admin','default','platform@example.test','Platform','x',1,'active',1,1);
     INSERT INTO admin_role_assignments(id,tenant_id,admin_user_id,admin_role_id,scope_type,scope_id,assigned_by,created_at)
-    VALUES ('platform-assignment','default','platform-admin','role_super_admin','global',NULL,'setup',1);
+    VALUES ('platform-assignment','default','platform-admin','role_ar_super_admin','global',NULL,'setup',1);
     INSERT INTO tenant_settings_documents(
       tenant_id,scope_type,scope_id,category,document_json,version,revision,projection_state,updated_at
     ) VALUES ('tenant-a','tenant','tenant-a','institution','{}','sha256:${'c'.repeat(16)}',1,'pending',1);
@@ -274,7 +274,7 @@ afterEach(() => {
 });
 
 describe('what an import requester may grant', () => {
-  it('records no platform-only settings or global Admin authority for a tenant-only super_admin', () => {
+  it('records no platform-only settings or global Admin authority for a tenant-only ar_super_admin', () => {
     expect(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin')).toEqual({
       actorId: 'tenant-admin',
       platformSettingsCategories: [],
@@ -293,7 +293,7 @@ describe('what an import requester may grant', () => {
   it('records no global Admin authority without the global wildcard', () => {
     const globalAdmin = {
       ...platformOperator,
-      globalRoles: ['admin'],
+      globalRoles: ['ar_tenant_admin'],
       globalPermissions: [ADMIN_PERMISSIONS.BACKUPS_IMPORT],
       globalHierarchyLevel: 80,
     } as unknown as AdminAuthContext;
@@ -354,7 +354,7 @@ describe('global Admin role assignments', () => {
   it('refuses a tenant-only requester a global assignment at validation and restore', async () => {
     const context = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
     const policy = guarded().get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!;
-    const row = assignmentRow('global', 'role_super_admin');
+    const row = assignmentRow('global', 'role_ar_super_admin');
     await expect(policy.admitRow!.admit(context, row)).rejects.toThrow(REFUSED);
     await expect(policy.restoreTransform!.transform(context, row, 'write')).rejects.toThrow(
       REFUSED
@@ -366,7 +366,7 @@ describe('global Admin role assignments', () => {
     const written = await restore(
       ADMIN_ROLE_ASSIGNMENTS_DATASET,
       context,
-      assignmentRow('tenant', 'role_super_admin')
+      assignmentRow('tenant', 'role_ar_super_admin')
     );
     // The Admin mapping still applies before the check.
     expect(JSON.parse(written).admin_user_id).toEqual(['text', 'mapped-source-admin']);
@@ -376,7 +376,7 @@ describe('global Admin role assignments', () => {
     const context = await importRequest(
       tenantBackupImportAuthority(platformOperator, 'platform-admin')
     );
-    for (const roleId of ['role_admin', 'restored-operator'])
+    for (const roleId of ['role_ar_tenant_admin', 'restored-operator'])
       expect(
         JSON.parse(
           await restore(ADMIN_ROLE_ASSIGNMENTS_DATASET, context, assignmentRow('global', roleId))
@@ -384,11 +384,11 @@ describe('global Admin role assignments', () => {
       ).toEqual(['text', roleId]);
   });
 
-  it('lets a super_admin requester restore a global super_admin assignment, and audits it', async () => {
+  it('lets a ar_super_admin requester restore a global ar_super_admin assignment, and audits it', async () => {
     const context = await importRequest(
       tenantBackupImportAuthority(platformOperator, 'platform-admin')
     );
-    const row = assignmentRow('global', 'role_super_admin');
+    const row = assignmentRow('global', 'role_ar_super_admin');
     const policy = guarded().get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!;
     await restore(ADMIN_ROLE_ASSIGNMENTS_DATASET, context, row);
     // A retried write records it once; verification records nothing.
@@ -405,17 +405,17 @@ describe('global Admin role assignments', () => {
       admin_user_id: 'platform-admin',
       action: 'tenant_backup.global_admin_assignment_restored',
       resource_type: 'admin_role_assignment',
-      resource_id: 'assignment-global-role_super_admin',
+      resource_id: 'assignment-global-role_ar_super_admin',
       result: 'success',
       severity: 'critical',
       metadata_json: {
         operationId: (context as { lease: { operationId: string } }).lease.operationId,
         requesterLevel: 100,
-        assignmentId: 'assignment-global-role_super_admin',
+        assignmentId: 'assignment-global-role_ar_super_admin',
         adminUserId: 'mapped-source-admin',
         sourceAdminUserId: 'source-admin',
-        roleId: 'role_super_admin',
-        roleName: 'super_admin',
+        roleId: 'role_ar_super_admin',
+        roleName: 'ar_super_admin',
         roleLevel: 100,
         scopeType: 'global',
         scopeId: null,
@@ -423,7 +423,7 @@ describe('global Admin role assignments', () => {
     });
   });
 
-  it('refuses a global admin below super_admin a global super_admin assignment', async () => {
+  it('refuses a global admin below ar_super_admin a global ar_super_admin assignment', async () => {
     // The global wildcard through a lower role: may restore global assignments up to its level.
     const lower = {
       ...platformOperator,
@@ -432,18 +432,22 @@ describe('global Admin role assignments', () => {
     } as unknown as AdminAuthContext;
     const context = await importRequest(tenantBackupImportAuthority(lower, 'platform-admin'));
     const policy = guarded().get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!;
-    const above = assignmentRow('global', 'role_super_admin');
+    const above = assignmentRow('global', 'role_ar_super_admin');
     await expect(policy.admitRow!.admit(context, above)).resolves.toBeUndefined();
     await expect(policy.restoreTransform!.transform(context, above, 'write')).rejects.toThrow(
       REFUSED
     );
-    await restore(ADMIN_ROLE_ASSIGNMENTS_DATASET, context, assignmentRow('global', 'role_admin'));
+    await restore(
+      ADMIN_ROLE_ASSIGNMENTS_DATASET,
+      context,
+      assignmentRow('global', 'role_ar_tenant_admin')
+    );
     // A global admin without the wildcard may restore none.
     const withoutWildcard = await importRequest(
       tenantBackupImportAuthority(
         {
           ...platformOperator,
-          globalRoles: ['admin'],
+          globalRoles: ['ar_tenant_admin'],
           globalPermissions: ['admin:users:*'],
           globalHierarchyLevel: 80,
         } as unknown as AdminAuthContext,
@@ -451,11 +455,13 @@ describe('global Admin role assignments', () => {
       )
     );
     await expect(
-      policy.admitRow!.admit(withoutWildcard, assignmentRow('global', 'role_viewer'))
+      policy.admitRow!.admit(withoutWildcard, assignmentRow('global', 'role_ar_viewer'))
     ).rejects.toThrow(REFUSED);
     // Nothing refused was audited.
     expect(
-      (await auditRows()).filter((row) => row.resource_id === 'assignment-global-role_super_admin')
+      (await auditRows()).filter(
+        (row) => row.resource_id === 'assignment-global-role_ar_super_admin'
+      )
     ).toHaveLength(0);
   });
 
@@ -482,7 +488,11 @@ describe('global Admin role assignments', () => {
       loadBundleRoles: async () => [],
     }).wrap([policies.get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!])[0];
     await expect(
-      failing.restoreTransform!.transform(context, assignmentRow('global', 'role_admin'), 'write')
+      failing.restoreTransform!.transform(
+        context,
+        assignmentRow('global', 'role_ar_tenant_admin'),
+        'write'
+      )
     ).rejects.toThrow('backup_restore_authority_audit_failed');
   });
 
@@ -523,10 +533,10 @@ describe('Admin roles named like a system role', () => {
     await policy.restoreTransform!.transform(context, rowJson, 'write');
   };
 
-  it('refuses a tenant-only requester a low-level role named super_admin or another reserved name', async () => {
+  it('refuses a tenant-only requester a low-level role named ar_super_admin or another reserved name', async () => {
     const context = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
     const policy = guarded().get(ADMIN_ROLES_DATASET)!;
-    for (const name of ['super_admin', 'admin', 'tenant_admin']) {
+    for (const name of ['ar_super_admin', 'ar_tenant_admin', 'ar_unknown']) {
       await expect(policy.admitRow!.admit(context, roleRow(name)), name).rejects.toThrow(REFUSED);
       await expect(
         policy.restoreTransform!.transform(context, roleRow(name), 'write'),
@@ -536,7 +546,7 @@ describe('Admin roles named like a system role', () => {
     await admitted(context, roleRow('operator'));
   });
 
-  it('refuses a wildcard global admin below super_admin a role named super_admin', async () => {
+  it('refuses a wildcard global admin below ar_super_admin a role named ar_super_admin', async () => {
     const lower = {
       ...platformOperator,
       globalRoles: ['wildcard_operator'],
@@ -544,23 +554,44 @@ describe('Admin roles named like a system role', () => {
     } as unknown as AdminAuthContext;
     const context = await importRequest(tenantBackupImportAuthority(lower, 'platform-admin'));
     const policy = guarded().get(ADMIN_ROLES_DATASET)!;
-    await expect(policy.admitRow!.admit(context, roleRow('super_admin'))).rejects.toThrow(REFUSED);
+    await expect(policy.admitRow!.admit(context, roleRow('ar_super_admin'))).rejects.toThrow(
+      REFUSED
+    );
     // A system name at or below its own level is kept.
-    await admitted(context, roleRow('admin'));
+    await admitted(context, roleRow('ar_tenant_admin'));
   });
 
-  it('keeps system-named roles in a super_admin DR restore', async () => {
+  it('does not let a bundle lower the level of a standard name by declaring the row a system role', async () => {
+    const lower = {
+      ...platformOperator,
+      globalRoles: ['wildcard_operator'],
+      globalHierarchyLevel: 90,
+    } as unknown as AdminAuthContext;
+    const context = await importRequest(tenantBackupImportAuthority(lower, 'platform-admin'));
+    const policy = guarded().get(ADMIN_ROLES_DATASET)!;
+    const declaredSystem = JSON.stringify({
+      ...JSON.parse(roleRow('ar_super_admin', 1)),
+      is_system: ['integer', '1'],
+    });
+
+    await expect(policy.admitRow!.admit(context, declaredSystem)).rejects.toThrow(REFUSED);
+    await expect(
+      policy.restoreTransform!.transform(context, declaredSystem, 'write')
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it('keeps system-named roles in a ar_super_admin DR restore', async () => {
     const context = await importRequest(
       tenantBackupImportAuthority(platformOperator, 'platform-admin')
     );
-    for (const name of ['super_admin', 'tenant_admin', 'operator'])
+    for (const name of ['ar_super_admin', 'ar_tenant_admin', 'operator'])
       await admitted(context, roleRow(name, 100));
   });
 });
 
 describe('Admin roles that an existing global assignment leads to', () => {
   // A tenant role assigned globally names a parent that no longer exists; a bundle role taking
-  // that id would pass what it inherits (here super_admin's "*") to every tenant.
+  // that id would pass what it inherits (here ar_super_admin's "*") to every tenant.
   beforeEach(() => {
     admin.exec(`
       INSERT INTO admin_users(id,tenant_id,email,name,password_hash,is_active,status,created_at,updated_at)
@@ -578,7 +609,7 @@ describe('Admin roles that an existing global assignment leads to', () => {
     permissions_json: ['text', '[]'],
     hierarchy_level: ['integer', '1'],
     is_system: ['integer', '0'],
-    inherits_from: ['text', 'role_super_admin'],
+    inherits_from: ['text', 'role_ar_super_admin'],
   });
 
   it('refuses a tenant-only requester or a lower global admin the missing parent', async () => {
@@ -600,7 +631,7 @@ describe('Admin roles that an existing global assignment leads to', () => {
     }
   });
 
-  it('keeps it in a super_admin DR restore, and leaves unreached roles to the tenant', async () => {
+  it('keeps it in a ar_super_admin DR restore, and leaves unreached roles to the tenant', async () => {
     const platform = await importRequest(
       tenantBackupImportAuthority(platformOperator, 'platform-admin')
     );
@@ -635,8 +666,8 @@ describe('global assignments of roles defined by the bundle', () => {
     expect(JSON.parse(String(written?.metadata_json)).roleLevel).toBe(50);
   });
 
-  it('refuses, while the restore can still be cleaned up, a low role inheriting super_admin', async () => {
-    bundleRoles = [bundleRole('bundle-low', 1, 'role_super_admin')];
+  it('refuses, while the restore can still be cleaned up, a low role inheriting ar_super_admin', async () => {
+    bundleRoles = [bundleRole('bundle-low', 1, 'role_ar_super_admin')];
     const lower = {
       ...platformOperator,
       globalRoles: ['wildcard_operator'],
@@ -704,7 +735,7 @@ describe('role chains and system roles the restore itself brings', () => {
 
   it('refuses a chain longer than it judges instead of judging part of it', async () => {
     bundleRoles = Array.from({ length: 70 }, (_, index) =>
-      chainRole(`link-${index}`, 1, index === 69 ? 'role_super_admin' : `link-${index + 1}`)
+      chainRole(`link-${index}`, 1, index === 69 ? 'role_ar_super_admin' : `link-${index + 1}`)
     );
     const lower = {
       ...platformOperator,
@@ -733,11 +764,11 @@ describe('role chains and system roles the restore itself brings', () => {
     await expect(policy.restoreTransform!.transform(context, above, 'write')).rejects.toThrow(
       REFUSED
     );
-    // The platform's own super_admin, as the bundle has it: kept, and verification after the
+    // The platform's own ar_super_admin, as the bundle has it: kept, and verification after the
     // restore wrote it gives the same answer.
     const superAdmin = JSON.stringify({
-      ...JSON.parse(chainRole('role_super_admin', 100, null, 'default', 1)),
-      name: ['text', 'super_admin'],
+      ...JSON.parse(chainRole('role_ar_super_admin', 100, null, 'default', 1)),
+      name: ['text', 'ar_super_admin'],
     });
     bundleRoles = [superAdmin];
     const fresh = guarded().get(ADMIN_ROLES_DATASET)!;
@@ -775,7 +806,7 @@ describe('the cost and value range of the checks', () => {
       INSERT INTO admin_users(id,tenant_id,email,name,password_hash,is_active,status,created_at,updated_at)
       VALUES ('global-operator','tenant-a','operator@example.test','Operator','x',1,'active',1,1);
       INSERT INTO admin_role_assignments(id,tenant_id,admin_user_id,admin_role_id,scope_type,scope_id,assigned_by,created_at)
-      VALUES ('existing-global-assignment','tenant-a','global-operator','role_admin','global',NULL,'platform-admin',1);
+      VALUES ('existing-global-assignment','tenant-a','global-operator','role_ar_tenant_admin','global',NULL,'platform-admin',1);
     `);
     const context = await importRequest(tenantBackupImportAuthority(tenantAdmin, 'tenant-admin'));
     let queries = 0;
@@ -848,7 +879,7 @@ describe('the cost and value range of the checks', () => {
     }).wrap([policies.get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!])[0];
     for (let index = 0; index < 300; index++) {
       const row = JSON.stringify({
-        ...JSON.parse(assignmentRow('global', 'role_admin')),
+        ...JSON.parse(assignmentRow('global', 'role_ar_tenant_admin')),
         id: ['text', `global-${index}`],
       });
       await policy.restoreTransform!.transform(context, row, 'write');
@@ -878,7 +909,7 @@ describe('the cost and value range of the checks', () => {
       await expect(
         policy.admitRow!.admit(
           context,
-          JSON.stringify({ ...JSON.parse(roleRow('super_admin')), hierarchy_level: level })
+          JSON.stringify({ ...JSON.parse(roleRow('ar_super_admin')), hierarchy_level: level })
         )
       ).rejects.toThrow(REFUSED);
     // A stored role with a fractional or missing level is a valid global assignment target.
@@ -907,10 +938,14 @@ describe('the critical audit of a restored global assignment', () => {
         `INSERT INTO admin_audit_receipts(id,tenant_id,payload_hmac,recorded_at)
          VALUES (?,'tenant-a','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1)`
       )
-      .run(`tenant-backup-global-grant:${operationId}:assignment-global-role_admin`);
+      .run(`tenant-backup-global-grant:${operationId}:assignment-global-role_ar_tenant_admin`);
     const policy = guarded().get(ADMIN_ROLE_ASSIGNMENTS_DATASET)!;
     await expect(
-      policy.restoreTransform!.transform(context, assignmentRow('global', 'role_admin'), 'write')
+      policy.restoreTransform!.transform(
+        context,
+        assignmentRow('global', 'role_ar_tenant_admin'),
+        'write'
+      )
     ).rejects.toThrow('backup_restore_authority_audit_failed');
   });
 });

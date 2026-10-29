@@ -164,17 +164,17 @@ describe('who may change the institution of a tenant', () => {
     outcome: 'changes' | 'refused';
   }> = [
     {
-      name: 'a platform administrator (global super_admin)',
+      name: 'a platform administrator (global ar_super_admin)',
       assignments: GLOBAL_SUPER_ADMIN,
       outcome: 'changes',
     },
     {
-      name: 'the tenant’s own super_admin (held for the tenant alone)',
+      name: 'the tenant’s own ar_super_admin (held for the tenant alone)',
       assignments: TENANT_SUPER_ADMIN,
       outcome: 'refused',
     },
     {
-      name: 'a global viewer who is the super_admin of the tenant',
+      name: 'a global viewer who is the ar_super_admin of the tenant',
       assignments: GLOBAL_VIEWER_TENANT_SUPER_ADMIN,
       outcome: 'refused',
     },
@@ -204,16 +204,16 @@ describe('who may change the institution of a tenant', () => {
 
   it('refuses a tenant administrator whose role does change the other settings of the tenant', async () => {
     const t = await setup();
-    // A role the tenant settings API lets edit the other settings of its tenant (distributor_admin).
+    // A role the tenant settings API lets edit the other settings of its tenant (ar_tenant_admin).
     insertRole(t.db, {
       id: 'role_settings_admin',
-      name: 'distributor_admin',
+      name: 'ar_tenant_admin',
       permissions: ['admin:settings:read', 'admin:settings:write'],
       hierarchy: 50,
     });
     const who = t.cookie([
       { role: 'role_settings_admin', scope: 'tenant' },
-      { role: 'role_viewer', scope: 'tenant' },
+      { role: 'role_ar_viewer', scope: 'tenant' },
     ]);
 
     const session = await t.call(who, 'GET', `/api/admin/tenants/${TENANT}/settings/limits`);
@@ -253,14 +253,19 @@ describe('who may change the institution of a tenant', () => {
     const t = await setup();
     await t.patch(t.cookie(GLOBAL_SUPER_ADMIN), registration);
 
-    for (const who of [TENANT_SUPER_ADMIN, GLOBAL_SUPER_ADMIN]) {
+    // The tenant's administrators are stopped by the platform gate of the rollback itself, the
+    // platform's by the category, which the history does not take.
+    for (const [who, status] of [
+      [TENANT_SUPER_ADMIN, 403],
+      [GLOBAL_SUPER_ADMIN, 400],
+    ] as const) {
       const rollback = await t.call(
         t.cookie(who),
         'POST',
         '/api/admin/settings/institution/rollback',
         { targetVersion: 1 }
       );
-      expect(rollback.status).toBe(400);
+      expect(rollback.status).toBe(status);
     }
     expect((await t.saved()).scopes.state).toBe('set');
   });
@@ -286,7 +291,7 @@ describe('the check itself', () => {
     ({
       userId: 'admin-x',
       tenantId: TENANT,
-      roles: ['super_admin'],
+      roles: ['ar_super_admin'],
       globalRoles: [],
       tenantScope: [TENANT],
       permissions: ['*'],
@@ -297,7 +302,7 @@ describe('the check itself', () => {
 
   it('asks for platform authority to edit, and nothing more to view', () => {
     const tenantAdmin = auth({});
-    const platformAdmin = auth({ globalRoles: ['super_admin'], tenantScope: ['*'] });
+    const platformAdmin = auth({ globalRoles: ['ar_super_admin'], tenantScope: ['*'] });
 
     expect(hasTenantSettingsPermission(tenantAdmin, 'institution', 'view', TENANT)).toBe(true);
     expect(hasTenantSettingsPermission(tenantAdmin, 'institution', 'edit', TENANT)).toBe(false);

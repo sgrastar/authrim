@@ -175,7 +175,7 @@ async function setup(env: Record<string, unknown> = {}, options: { realD1?: bool
       const how = c.req.header('x-test-narrow');
       const get = c as unknown as { get(k: string): any; set(k: string, v: unknown): void };
       const auth = get.get('adminAuth');
-      if (how === 'roles') get.set('adminAuth', { ...auth, roles: ['viewer'] });
+      if (how === 'roles') get.set('adminAuth', { ...auth, roles: ['ar_viewer'] });
       if (how === 'agent') get.set('adminAuth', { ...auth, actorType: 'agent' });
       await next();
     });
@@ -344,25 +344,25 @@ const resultFor = (json: Record<string, any>, tenantId: string) =>
 
 describe('who may use the bulk apply', () => {
   const kinds: Array<{ name: string; assignments: Assignment[]; outcome: 'allowed' | 'denied' }> = [
-    { name: 'a global super_admin', assignments: GLOBAL_SUPER_ADMIN, outcome: 'allowed' },
+    { name: 'a global ar_super_admin', assignments: GLOBAL_SUPER_ADMIN, outcome: 'allowed' },
     {
-      name: 'a super_admin limited to one tenant',
+      name: 'a ar_super_admin limited to one tenant',
       assignments: TENANT_SUPER_ADMIN,
       outcome: 'denied',
     },
     {
-      name: 'a global viewer who is also a tenant super_admin',
+      name: 'a global viewer who is also a tenant ar_super_admin',
       assignments: GLOBAL_VIEWER_TENANT_SUPER_ADMIN,
       outcome: 'denied',
     },
     {
       name: 'a global viewer',
-      assignments: [{ role: 'role_viewer', scope: 'global' }],
+      assignments: [{ role: 'role_ar_viewer', scope: 'global' }],
       outcome: 'denied',
     },
     {
       name: 'a viewer of one tenant',
-      assignments: [{ role: 'role_viewer', scope: 'tenant' }],
+      assignments: [{ role: 'role_ar_viewer', scope: 'tenant' }],
       outcome: 'denied',
     },
   ];
@@ -450,7 +450,7 @@ describe('who may use the bulk apply', () => {
     const { findAdminRouteAccessRule } = await import('../admin-route-access');
     expect(findAdminRouteAccessRule('POST', BULK)).toMatchObject({
       permissions: ['admin:settings:write'],
-      roles: ['super_admin', 'system_admin'],
+      roles: ['ar_super_admin'],
     });
   });
 });

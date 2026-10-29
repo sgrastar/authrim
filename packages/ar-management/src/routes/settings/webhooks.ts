@@ -11,7 +11,7 @@
  * POST   /api/admin/webhooks/:id/replay   - Replay a failed delivery (Phase 3)
  *
  * Security:
- * - RBAC: tenant_admin or higher required
+ * - RBAC: ar_tenant_admin or higher required
  * - Rate limit: lenient profile
  * - Audit logging for all mutations
  *

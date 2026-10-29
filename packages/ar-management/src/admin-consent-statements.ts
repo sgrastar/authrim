@@ -92,7 +92,7 @@ async function executeLocalizationUpsert(params: {
         `UPDATE consent_statement_localizations
          SET title = ?, description = ?, processing_purpose = ?, withdrawal_impact = ?,
              document_url = ?, inline_content = ?, updated_at = ?
-         WHERE version_id = ? AND language = ?`,
+         WHERE version_id = ? AND language = ? AND tenant_id = ?`,
         [
           params.title,
           params.description,
@@ -103,6 +103,7 @@ async function executeLocalizationUpsert(params: {
           params.now,
           params.versionId,
           params.language,
+          params.tenantId,
         ]
       );
       return;
@@ -136,7 +137,7 @@ async function executeLocalizationUpsert(params: {
       await params.adapter.execute(
         `UPDATE consent_statement_localizations
          SET title = ?, description = ?, document_url = ?, inline_content = ?, updated_at = ?
-         WHERE version_id = ? AND language = ?`,
+         WHERE version_id = ? AND language = ? AND tenant_id = ?`,
         [
           params.title,
           params.description,
@@ -145,6 +146,7 @@ async function executeLocalizationUpsert(params: {
           params.now,
           params.versionId,
           params.language,
+          params.tenantId,
         ]
       );
       return;
@@ -855,12 +857,21 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
       return invalidPublicLinkUrlResponse(c, documentUrl.fieldName);
     }
 
+    // The version must be one of this tenant's, and belong to the statement in the path.
+    const version = await authCtx.coreAdapter.query(
+      `SELECT id FROM consent_statement_versions WHERE id = ? AND statement_id = ? AND tenant_id = ?`,
+      [vid, c.req.param('sid')!, tenantId]
+    );
+    if (version.length === 0) {
+      return c.json({ error: 'not_found', error_description: 'Version not found' }, 404);
+    }
+
     const now = Date.now();
 
     // Check if existing
     const existing = await authCtx.coreAdapter.query(
-      `SELECT id FROM consent_statement_localizations WHERE version_id = ? AND language = ?`,
-      [vid, lang]
+      `SELECT id FROM consent_statement_localizations WHERE version_id = ? AND language = ? AND tenant_id = ?`,
+      [vid, lang, tenantId]
     );
 
     await executeLocalizationUpsert({
@@ -880,8 +891,8 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
     });
 
     const result = await authCtx.coreAdapter.query(
-      `SELECT * FROM consent_statement_localizations WHERE version_id = ? AND language = ?`,
-      [vid, lang]
+      `SELECT * FROM consent_statement_localizations WHERE version_id = ? AND language = ? AND tenant_id = ?`,
+      [vid, lang, tenantId]
     );
 
     log.info('Upserted localization', {

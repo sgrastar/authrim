@@ -195,7 +195,7 @@ describe('admin-info tenant base URL resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
       get: vi.fn((key: string) =>
-        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+        key === 'adminAuth' ? { roles: ['ar_super_admin'], tenantScope: ['*'] } : undefined
       ),
     } as any);
 
@@ -231,7 +231,7 @@ describe('admin-info tenant base URL resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
       get: vi.fn((key: string) =>
-        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
+        key === 'adminAuth' ? { roles: ['ar_super_admin'], tenantScope: ['*'] } : undefined
       ),
     } as any);
 
@@ -269,7 +269,7 @@ describe('admin-info tenant base URL resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
       get: vi.fn((key: string) => {
-        if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
+        if (key === 'adminAuth') return { roles: ['ar_super_admin'], tenantScope: ['*'] };
         return undefined;
       }),
     } as any);
@@ -335,7 +335,7 @@ describe('admin-info tenant base URL resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
       get: vi.fn((key: string) => {
-        if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
+        if (key === 'adminAuth') return { roles: ['ar_super_admin'], tenantScope: ['*'] };
         if (key === 'tenantMetadataContext') {
           return { tenantId: 'default', coreDb: env.DB, route: {} };
         }
@@ -374,7 +374,7 @@ describe('admin-info tenant base URL resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
       get: vi.fn((key: string) => {
-        if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
+        if (key === 'adminAuth') return { roles: ['ar_super_admin'], tenantScope: ['*'] };
         if (key === 'tenantMetadataContext') {
           return { tenantId: 'default', coreDb: env.DB, route: {} };
         }
@@ -419,7 +419,7 @@ describe('admin-info tenant base URL resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
       get: vi.fn((key: string) => {
-        if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
+        if (key === 'adminAuth') return { roles: ['ar_super_admin'], tenantScope: ['*'] };
         if (key === 'tenantMetadataContext') {
           return { tenantId: 'default', coreDb: env.DB, route: {} };
         }

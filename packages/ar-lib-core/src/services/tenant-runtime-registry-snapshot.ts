@@ -6,6 +6,7 @@ import type {
   TenantRuntimeCacheGenerationRow,
 } from '../repositories/admin/tenant-database-registry';
 import { CompactSign, compactVerify, decodeProtectedHeader, importJWK, type JWK } from 'jose';
+import { ADMIN_ROLES } from '../constants/admin-roles';
 
 export const RUNTIME_REGISTRY_SNAPSHOT_VERSION = 4;
 export const DEFAULT_RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS = 30 * 60;
@@ -234,8 +235,8 @@ export async function purgeTenantRuntimeRegistrySnapshot(
 ): Promise<PurgeTenantRuntimeRegistrySnapshotResult> {
   const deploymentTarget = options.deploymentTarget?.trim() || 'default';
   const reason = options.reason.trim();
-  if (!options.actorRoles.includes('system_admin')) {
-    throw new Error('tenant_runtime_registry_purge_requires_system_admin');
+  if (!options.actorRoles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
+    throw new Error('tenant_runtime_registry_purge_requires_super_admin');
   }
   if (options.breakGlassConfirmation !== TENANT_RUNTIME_REGISTRY_EMERGENCY_PURGE_CONFIRMATION) {
     throw new Error('tenant_runtime_registry_purge_requires_break_glass_confirmation');

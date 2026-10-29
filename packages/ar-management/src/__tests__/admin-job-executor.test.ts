@@ -682,7 +682,7 @@ describe('generic admin job executor', () => {
           progress: null,
           config: JSON.stringify({
             manifest_object_catalog_id: 'catalog-manifest',
-            actor_roles: ['system_admin'],
+            actor_roles: ['ar_super_admin'],
             break_glass_confirmation: 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN',
             reason: 'validate backup before restore planning',
           }),
@@ -767,7 +767,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           manifest_object_catalog_id: 'catalog-manifest',
-          actor_roles: ['tenant_admin'],
+          actor_roles: ['ar_tenant_admin'],
           break_glass_confirmation: 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN',
           reason: 'validate backup',
         }),
@@ -789,7 +789,7 @@ describe('generic admin job executor', () => {
     const finalUpdate = mockAdapter.execute.mock.calls.at(-1);
     expect(finalUpdate?.[0]).toEqual(expect.stringContaining("SET status = 'pending'"));
     expect((finalUpdate?.[1] as unknown[])[0]).toContain(
-      'tenant_database_restore_dry_run_requires_system_admin'
+      'tenant_database_restore_dry_run_requires_super_admin'
     );
   });
 
@@ -875,7 +875,7 @@ describe('generic admin job executor', () => {
         config: JSON.stringify({
           manifest_object_catalog_id: 'catalog-manifest',
           validation_mode: 'temporary_database_schema_import',
-          actor_roles: ['system_admin'],
+          actor_roles: ['ar_super_admin'],
           break_glass_confirmation: 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN',
           reason: 'validate future import path',
         }),
@@ -912,7 +912,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           source_export_job_id: 'job-backup',
-          actor_roles: ['system_admin'],
+          actor_roles: ['ar_super_admin'],
           break_glass_confirmation: 'PURGE_TENANT_DATABASE_BACKUP',
           reason: 'retention elapsed',
         }),
@@ -974,7 +974,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           source_export_job_id: 'job-backup',
-          actor_roles: ['system_admin'],
+          actor_roles: ['ar_super_admin'],
           break_glass_confirmation: 'PURGE_TENANT_DATABASE_BACKUP',
           reason: 'too early',
         }),

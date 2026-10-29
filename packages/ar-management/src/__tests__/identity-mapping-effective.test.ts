@@ -44,7 +44,7 @@ const EFFECTIVE = '/api/admin/identity-mapping/effective';
 const TENANT_DOC = `settings:tenant:${TENANT}:identity-mapping`;
 const PLATFORM_DOC = 'settings:platform:identity-mapping';
 
-const TENANT_VIEWER: Assignment[] = [{ role: 'role_viewer', scope: 'tenant' }];
+const TENANT_VIEWER: Assignment[] = [{ role: 'role_ar_viewer', scope: 'tenant' }];
 
 function setup(options: { unreadableSettings?: boolean; implicitActivation?: boolean } = {}) {
   const store = new Map<string, string>();
@@ -443,7 +443,7 @@ describe('who may ask', () => {
 
   it('is refused to an admin who cannot read settings (support can read apps, not settings)', async () => {
     const t = setup();
-    const who = t.cookie([{ role: 'role_support', scope: 'tenant' }]);
+    const who = t.cookie([{ role: 'role_ar_support', scope: 'tenant' }]);
 
     expect((await t.get('', who)).status).toBe(403);
   });

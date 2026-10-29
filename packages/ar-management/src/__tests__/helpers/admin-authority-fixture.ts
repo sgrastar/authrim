@@ -33,6 +33,13 @@ export function openAdminDatabase(): SQLiteDatabase {
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
+  // The standard roles the baseline seeds are replaced by the `ar_` roles.
+  db.exec(
+    readFileSync(
+      resolve(REPO_ROOT, 'migrations/admin/d1/054_admin_roles_ar_prefix.sql'),
+      'utf8'
+    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+  );
   db.exec(
     readFileSync(
       resolve(REPO_ROOT, 'migrations/admin/d1/050_identity_mapping_level_history.sql'),
@@ -120,11 +127,11 @@ let sessions = 0;
 
 export type Assignment = { role: string; scope: 'global' | 'tenant' };
 
-export const TENANT_SUPER_ADMIN: Assignment[] = [{ role: 'role_super_admin', scope: 'tenant' }];
-export const GLOBAL_SUPER_ADMIN: Assignment[] = [{ role: 'role_super_admin', scope: 'global' }];
+export const TENANT_SUPER_ADMIN: Assignment[] = [{ role: 'role_ar_super_admin', scope: 'tenant' }];
+export const GLOBAL_SUPER_ADMIN: Assignment[] = [{ role: 'role_ar_super_admin', scope: 'global' }];
 /** A global assignment that is only a viewer, with the wildcard held for the tenant alone. */
 export const GLOBAL_VIEWER_TENANT_SUPER_ADMIN: Assignment[] = [
-  { role: 'role_viewer', scope: 'global' },
+  { role: 'role_ar_viewer', scope: 'global' },
   ...TENANT_SUPER_ADMIN,
 ];
 
