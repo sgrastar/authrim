@@ -124,7 +124,13 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
         { datasetId: 'pii.users_pii', rowCount: 5 },
         { datasetId: 'core.passkeys', rowCount: 5 },
       ]);
-      expect(receipt.omittedDatasets).toHaveLength(15);
+      const restored = new Set(plan.tables.map((table) => table.datasetId));
+      expect(receipt.omittedDatasets).toEqual(
+        fixture.backup.manifest.datasets
+          .filter((dataset) => !restored.has(dataset.id))
+          .map((dataset) => dataset.id)
+          .sort()
+      );
       expect(
         await db.queryOne(
           `SELECT COUNT(*)::text AS count, MAX((chunk_json::jsonb->>'rows')::integer) AS max_rows,

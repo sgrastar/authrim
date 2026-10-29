@@ -18,6 +18,7 @@ import {
 } from '../postgres-restore';
 import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../postgres-restore-table-contract';
 import { POSTGRES_RESTORE_EXTENSION_CONTRACTS } from '../postgres-restore-extension-contract';
+import { expectPostgresRestoreReceiptTables } from './postgres-restore-receipt-expectations';
 
 const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
 const run = databaseUrl ? it : it.skip;
@@ -714,7 +715,10 @@ run(
         connectionString,
       });
       expect(receipt.projectionVersion).toBe(2);
-      expect(receipt.tables).toHaveLength(59);
+      expectPostgresRestoreReceiptTables(
+        receipt,
+        source.backup.manifest.datasets.map((dataset) => dataset.id)
+      );
       expect(await verifyPostgresFamilyStagingRows({ connectionString, targetId })).toEqual(
         receipt
       );

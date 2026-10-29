@@ -711,6 +711,7 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
       'created_at',
       'updated_at',
       'succeeded_at',
+      'execution_progress_json',
     ],
     sqliteIntegerColumns: [
       'attempt_count',

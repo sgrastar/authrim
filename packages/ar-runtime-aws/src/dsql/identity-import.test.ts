@@ -13,6 +13,7 @@ import {
   type DsqlIdentityImportInput,
 } from './identity-import';
 import { DsqlOperationError } from './adapter';
+import { createDsqlIdentitySchemaPlan } from './identity-schema';
 
 const schema = `authrim_dsql_identity_${'a'.repeat(32)}`;
 type Row = Record<string, unknown>;
@@ -322,7 +323,15 @@ describe('bounded native DSQL identity subset import', () => {
       scope: 'three-table-identity-evaluation',
     });
     expect(receipt.tables.map((entry) => entry.rowCount)).toEqual([3, 3, 3]);
-    expect(receipt.omittedDatasets).toHaveLength(15);
+    const restored = new Set(
+      createDsqlIdentitySchemaPlan(schema).tables.map((table) => table.datasetId)
+    );
+    expect(receipt.omittedDatasets).toEqual(
+      fixture.backup.manifest.datasets
+        .filter((dataset) => !restored.has(dataset.id))
+        .map((dataset) => dataset.id)
+        .sort()
+    );
     expect(db.state.native.users_core[0].email_verified).toBe(true);
     expect(db.state.native.users_pii[0].custom_attributes_json).toMatchObject({
       purpose: 'DSQL適合試験',
