@@ -4,6 +4,11 @@ import {
   type TenantBackupOperationCleanupAdapter,
 } from '@authrim/ar-lib-core/services/tenant-portability/operation-cleanup';
 import type { TenantBackupOperationHandlers } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
+import type {
+  TenantBackupStepResult,
+  TenantBackupStepContext,
+} from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { runTenantBackupScheduler } from '@authrim/ar-lib-core/services/tenant-portability/operation-scheduler';
 import {
   runTenantBackupExportOperationStep,
@@ -24,19 +29,26 @@ export interface TenantBackupInstalledOperationAdapter {
   cleanup: TenantBackupOperationCleanupAdapter;
   /** Refresh the durable operation revision while retaining one live lease's installed plan. */
   bindContext?(context: Parameters<TenantBackupOperationHandlers['run']>[0]): void;
+  /** Installed production coordinator: its actual held tenant fence replaces a writer permit. */
+  runExclusiveImportActivation?(
+    context: TenantBackupStepContext,
+    now: () => number
+  ): Promise<TenantBackupStepResult>;
 }
 
 export type TenantBackupInstalledOperationAdapterResolver =
   | TenantBackupInstalledOperationAdapter
   | ((
-      context: Parameters<TenantBackupOperationHandlers['run']>[0]
+      context: Parameters<TenantBackupOperationHandlers['run']>[0],
+      scopedEnv: Env
     ) => Promise<TenantBackupInstalledOperationAdapter>);
 
 function resolveAdapter(
   resolver: TenantBackupInstalledOperationAdapterResolver,
-  context: Parameters<TenantBackupOperationHandlers['run']>[0]
+  context: Parameters<TenantBackupOperationHandlers['run']>[0],
+  scopedEnv: Env
 ) {
-  return typeof resolver === 'function' ? resolver(context) : Promise.resolve(resolver);
+  return typeof resolver === 'function' ? resolver(context, scopedEnv) : Promise.resolve(resolver);
 }
 
 /** Join the common durable scheduler to kind-specific phase and cancellation dispatchers. */
@@ -50,17 +62,25 @@ export function createTenantBackupOperationHandlers(
     | {
         key: string;
         adapter: Promise<TenantBackupInstalledOperationAdapter>;
+        environment: Env;
       }
     | undefined;
-  const installedFor = (context: Parameters<TenantBackupOperationHandlers['run']>[0]) => {
+  const installedFor = (
+    context: Parameters<TenantBackupOperationHandlers['run']>[0],
+    scopedEnv: Env
+  ) => {
     const key = [
       context.lease.operationId,
       context.lease.tenantId,
       context.lease.owner,
       context.lease.fencingToken,
     ].join(':');
-    if (!cached || cached.key !== key) {
-      cached = { key, adapter: resolveAdapter(adapter, context) };
+    if (!cached || cached.key !== key || cached.environment !== scopedEnv) {
+      cached = {
+        key,
+        environment: scopedEnv,
+        adapter: resolveAdapter(adapter, context, scopedEnv),
+      };
       return cached.adapter;
     }
     return cached.adapter.then((installed) => {
@@ -70,19 +90,33 @@ export function createTenantBackupOperationHandlers(
   };
   return {
     async run(context) {
-      const installed = await installedFor(context);
-      return context.operation.kind === 'export'
-        ? runTenantBackupExportOperationStep(env, context, installed.export, now)
-        : runTenantBackupImportOperationStep(env, context, installed.import, now);
+      if (context.operation.kind === 'export') {
+        const installed = await installedFor(context, env);
+        return runTenantBackupExportOperationStep(env, context, installed.export, now);
+      }
+      if (context.operation.phase === 'activate_restore') {
+        const installed = await installedFor(context, env);
+        if (installed.runExclusiveImportActivation)
+          return installed.runExclusiveImportActivation(context, now);
+        // A strict production activation must install its control-fence coordinator.
+        if (env.ENABLE_SAML_DR_EXPORT === 'true')
+          throw new Error('backup_import_activation_coordinator_unavailable');
+      }
+      return runSamlDrCoveredOperation(env, undefined, async (covered) => {
+        const installed = await installedFor(context, covered);
+        return runTenantBackupImportOperationStep(covered, context, installed.import, now);
+      });
     },
     async cleanup(context) {
-      const installed = await installedFor(context);
-      return runTenantBackupOperationCleanupStep({
-        database,
-        context,
-        adapter: installed.cleanup,
-        artifactBucket: env.EXPORT_ARTIFACTS,
-        now,
+      return runSamlDrCoveredOperation(env, undefined, async (covered) => {
+        const installed = await installedFor(context, covered);
+        return runTenantBackupOperationCleanupStep({
+          database,
+          context,
+          adapter: installed.cleanup,
+          artifactBucket: covered.EXPORT_ARTIFACTS,
+          now,
+        });
       });
     },
   };

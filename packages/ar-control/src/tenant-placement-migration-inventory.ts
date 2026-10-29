@@ -78,6 +78,7 @@ const COMMON_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule
 };
 
 const CORE_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {
+  guest_core_mutation_epoch: { kind: 'shard_local' },
   tenants: { kind: 'tenant_row', column: 'id' },
   did_document_cache: { kind: 'global_reference' },
   directory_auth_release_advisories: { kind: 'global_reference' },
@@ -123,6 +124,7 @@ const CORE_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>>
 };
 
 const PII_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {
+  guest_pii_mutation_epoch: { kind: 'shard_local' },
   pairwise_subject_identifiers: {
     kind: 'parent',
     foreignKeyColumn: 'user_id',

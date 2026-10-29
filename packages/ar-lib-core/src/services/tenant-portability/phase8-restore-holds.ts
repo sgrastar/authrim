@@ -46,6 +46,9 @@ export const PHASE8_RESTORE_HOLD_RULES: Readonly<Record<string, HoldRule>> = {
     column: 'status',
     holdValues: ['pending', 'retry'],
   },
+  // Lifecycle rows are source execution authority, including a registered upgrade whose
+  // cross-store finalization has not yet completed. The composite predicate is checked below.
+  'core.guest_account_lifecycle': { reason: 'source_guest_workflow', all: true },
   'core.internal_notification_delivery_attempts': {
     reason: 'source_delivery',
     column: 'status',
@@ -84,6 +87,11 @@ export const PHASE8_RESTORE_HOLD_RULES: Readonly<Record<string, HoldRule>> = {
     reason: 'source_authentication_workflow',
     column: 'state',
     holdValues: ['awaiting_proof', 'verified', 'committing'],
+  },
+  'pii.guest_pii_erasure_markers': {
+    reason: 'source_guest_erasure',
+    column: 'state',
+    holdValues: ['erasing'],
   },
   'pii.identity_identifier_replacement_challenges': {
     reason: 'source_authentication_challenge',
@@ -163,6 +171,36 @@ function parsed(rowJson: string): PortableSqliteRow {
 
 /** Return a stable reason only when this row must stay outside the live target table. */
 export function phase8RestoreHoldReason(datasetId: string, rowJson: string): string | null {
+  if (datasetId === 'core.guest_account_lifecycle') {
+    const row = parsed(rowJson);
+    const phase = row.phase;
+    const finalized = row.upgrade_finalized_at;
+    if (
+      phase?.[0] !== 'text' ||
+      !['active', 'upgrading', 'registered', 'deleting', 'deleted'].includes(phase[1] ?? '') ||
+      !finalized ||
+      !(
+        (finalized[0] === 'null' && finalized[1] === null) ||
+        (finalized[0] === 'integer' &&
+          /^[1-9][0-9]*$/u.test(finalized[1] ?? '') &&
+          Number.isSafeInteger(Number(finalized[1])))
+      )
+    )
+      throw new Error('backup_phase8_restore_hold_invalid');
+    if (
+      phase[1] === 'upgrading' ||
+      phase[1] === 'deleting' ||
+      (phase[1] === 'registered' && finalized[0] === 'null')
+    )
+      return 'source_guest_workflow';
+    return null;
+  }
+  if (datasetId === 'pii.guest_pii_erasure_markers') {
+    const state = parsed(rowJson).state;
+    if (state?.[0] !== 'text' || !['erasing', 'deleted'].includes(state[1] ?? ''))
+      throw new Error('backup_phase8_restore_hold_invalid');
+    return state[1] === 'erasing' ? 'source_guest_erasure' : null;
+  }
   if (datasetId === 'core.idempotency_keys') {
     const row = parsed(rowJson);
     const id = row.id;

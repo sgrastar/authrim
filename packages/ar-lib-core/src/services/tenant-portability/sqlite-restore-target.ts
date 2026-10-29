@@ -3,6 +3,11 @@ import { backupOwnershipPredicate, type BackupRowOwnership } from './row-ownersh
 import { TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES } from './container-dataset-reader';
 import { readSqliteRestoreSeedFingerprint } from './sqlite-restore-seed';
 import type { DatabaseAdapter } from '../../db/adapter';
+import {
+  normalizeGuestPiiDeletedMarker,
+  prepareRestoredGuestPiiDeletedMarker,
+  type GuestPiiDeletedMarker,
+} from '../guest-pii-erasure-marker';
 import type { TenantBundleManifest } from './bundle-manifest';
 import {
   cloneSqliteDatasetInspectionPolicy,
@@ -10,6 +15,11 @@ import {
   type SqliteDatasetInspectionPolicy,
 } from './sqlite-dataset-inspector';
 import { sqliteSnapshotRowInsert } from './sqlite-row-codec';
+import {
+  loadGuestRestoreHoldGuards,
+  type GuestRestoreHoldGuard,
+  type PreparedGuestRestoreRow,
+} from './guest-restore-hold-guard';
 
 type Database = Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> &
   Partial<Pick<DatabaseAdapter, 'batch'>>;
@@ -351,6 +361,43 @@ export class SqliteRestoreTarget {
     if (!(await this.database.queryOne(`SELECT 1 AS live WHERE ${this.guardSql()}`, this.guard())))
       throw error();
   }
+  /** Monotonic current denial state; historical input can never replace a target marker. */
+  async mergeCurrentGuestDeletedMarkers(values: readonly GuestPiiDeletedMarker[]): Promise<void> {
+    if (this.mode !== 'write' || values.length > 16 || !this.database.batch) throw error();
+    const markers = values.map((value) => normalizeGuestPiiDeletedMarker(structuredClone(value)));
+    if (markers.some((value) => value.tenant_id !== this.identity.tenantId)) throw error();
+    await this.assertLive();
+    for (const marker of markers) {
+      const existing = await this.database.query<{ [key: string]: unknown }>(
+        'SELECT * FROM guest_pii_erasure_markers WHERE tenant_id=? AND (user_id=? OR account_id=?)',
+        [marker.tenant_id, marker.user_id, marker.account_id],
+        { consistencyClass: 'primary_required' }
+      );
+      if (
+        existing.length === 1 &&
+        JSON.stringify(normalizeGuestPiiDeletedMarker(existing[0])) === JSON.stringify(marker)
+      )
+        continue;
+      const result = await this.database.batch(
+        prepareRestoredGuestPiiDeletedMarker(marker, {
+          where: this.guardSql(),
+          params: this.guard(),
+        })
+      );
+      if (result.some((value) => !value.success)) throw error();
+      const stored = await this.database.query<{ [key: string]: unknown }>(
+        'SELECT * FROM guest_pii_erasure_markers WHERE tenant_id=? AND (user_id=? OR account_id=?)',
+        [marker.tenant_id, marker.user_id, marker.account_id],
+        { consistencyClass: 'primary_required' }
+      );
+      if (
+        stored.length !== 1 ||
+        JSON.stringify(normalizeGuestPiiDeletedMarker(stored[0])) !== JSON.stringify(marker)
+      )
+        throw error();
+    }
+    await this.assertLive();
+  }
   /** No replacement/upsert: exact retries succeed, conflicting pre-existing rows stop the restore. */
   async writeRow(
     policy: SqliteDatasetInspectionPolicy,
@@ -406,6 +453,19 @@ export class SqliteRestoreTarget {
       throw error();
     await this.assertLive();
     const statements = [];
+    const guestHoldGuard = await loadGuestRestoreHoldGuards(
+      this.database,
+      this.identity.tenantId,
+      datasets.flatMap(({ policy, rowJsons }) =>
+        rowJsons.map((rowJson) => ({ table: policy.schema.table, rowJson }))
+      )
+    );
+    const precedingRows: PreparedGuestRestoreRow[] = [];
+    const activeHolds: Array<{
+      guard: GuestRestoreHoldGuard;
+      policy: SqliteDatasetInspectionPolicy;
+      rowJson: string;
+    }> = [];
     const seedKeys = new Map<
       string,
       {
@@ -448,8 +508,13 @@ export class SqliteRestoreTarget {
         const predicate = currentPolicy.schema.primaryKey
           .map((column, index) => `"${column}" IS ${expressions[index]}`)
           .join(' AND ');
+        const holdGuard = guestHoldGuard(currentPolicy.schema.table, storedRowJson, precedingRows);
+        if (holdGuard)
+          activeHolds.push({ guard: holdGuard, policy: currentPolicy, rowJson: storedRowJson });
+        precedingRows.push({ table: currentPolicy.schema.table, rowJson: storedRowJson });
         const insertSelect =
-          insert.sql.replace(' VALUES (', ' SELECT ').slice(0, -1) + ` WHERE ${this.guardSql()}`;
+          insert.sql.replace(' VALUES (', ' SELECT ').slice(0, -1) +
+          ` WHERE ${this.guardSql()}${holdGuard ? ` AND ${holdGuard.sql}` : ''}`;
         const preserved = new Set(currentPolicy.restorePreservedSeedColumns ?? []);
         const replaceSeed = currentPolicy.restoreReplacesInstalledSeedRows === true;
         const nonKeyColumns = currentPolicy.schema.columns.filter(
@@ -491,26 +556,73 @@ export class SqliteRestoreTarget {
                 params: [
                   ...insert.params,
                   ...this.guard(),
+                  ...(holdGuard?.params ?? []),
                   ...(preserved.size ? keyInsert.params : []),
                   ...seedOwner.params,
                 ],
               }
             : {
                 sql: `${insertSelect} AND NOT EXISTS (SELECT 1 FROM "${currentPolicy.schema.table}" WHERE ${predicate})`,
-                params: [...insert.params, ...this.guard(), ...keyInsert.params],
+                params: [
+                  ...insert.params,
+                  ...this.guard(),
+                  ...(holdGuard?.params ?? []),
+                  ...keyInsert.params,
+                ],
               }
         );
       }
     }
     for (const { table, owner, keys } of seedKeys.values())
       await this.assertSeedKeysOwned(table, keys, owner);
+    // A parent/hold group must preserve dependency order in the same atomic DB transaction.
+    if (activeHolds.length && !this.database.batch) throw error();
     await this.authorize();
     const results = this.database.batch
       ? await this.database.batch(statements)
       : await samlDrAll(statements.map(({ sql, params }) => this.database.execute(sql, params)));
     if (results.length !== statements.length || results.some(({ success }) => !success))
       throw error();
+    await this.assertRestoredActiveHolds(activeHolds);
     await this.assertLive();
+  }
+
+  private async assertRestoredActiveHolds(
+    holds: readonly {
+      guard: GuestRestoreHoldGuard;
+      policy: SqliteDatasetInspectionPolicy;
+      rowJson: string;
+    }[]
+  ): Promise<void> {
+    const clauses = holds.map(({ guard, policy, rowJson }) => {
+      const matches = this.rowMatchClauses(policy, rowJson);
+      if (matches.length !== 1) throw error();
+      return {
+        sql: `SELECT 1 FROM "${policy.schema.table}" WHERE ${matches[0].sql} AND ${guard.sql}`,
+        params: [...matches[0].params, ...guard.params],
+      };
+    });
+    for (let offset = 0; offset < clauses.length; ) {
+      const group = [];
+      let parameters = 0;
+      while (
+        offset < clauses.length &&
+        parameters + clauses[offset].params.length <=
+          VERIFY_GROUP_PARAMETERS - VERIFY_GUARD_PARAMETERS_MAX
+      ) {
+        const clause = clauses[offset++];
+        parameters += clause.params.length;
+        group.push(clause);
+      }
+      if (!group.length) throw error();
+      const matched = await this.database.queryOne<{ matches: number }>(
+        `SELECT COUNT(*) AS matches FROM (${group.map(({ sql }) => sql).join(' UNION ALL ')})
+          WHERE ${this.guardSql()}`,
+        [...group.flatMap(({ params }) => params), ...this.guard()],
+        { consistencyClass: 'primary_required' }
+      );
+      if (Number(matched?.matches) !== group.length) throw error();
+    }
   }
 
   /**
@@ -973,8 +1085,15 @@ export class SqliteRestoreTarget {
       const predicate = policy.schema.primaryKey
         .map((column, i) => `"${column}" IS ${expressions[i]}`)
         .join(' AND ');
+      const guestHoldGuard = await loadGuestRestoreHoldGuards(
+        this.database,
+        this.identity.tenantId,
+        [{ table: policy.schema.table, rowJson: storedRowJson }]
+      );
+      const holdGuard = guestHoldGuard(policy.schema.table, storedRowJson, []);
       const insertSelect =
-        insert.sql.replace(' VALUES (', ' SELECT ').slice(0, -1) + ` WHERE ${this.guardSql()}`;
+        insert.sql.replace(' VALUES (', ' SELECT ').slice(0, -1) +
+        ` WHERE ${this.guardSql()}${holdGuard ? ` AND ${holdGuard.sql}` : ''}`;
       const replaceSeed = policy.restoreReplacesInstalledSeedRows === true;
       const nonKeyColumns = policy.schema.columns.filter(
         (column) =>
@@ -1009,11 +1128,16 @@ export class SqliteRestoreTarget {
         const result = await this.database.execute(sql, [
           ...insert.params,
           ...this.guard(),
+          ...(holdGuard?.params ?? []),
           ...(!replaceSeed || targetOwnedSeedColumns.size ? keyInsert.params : []),
           ...(seedOwner?.params ?? []),
         ]);
         if (!result.success) throw error();
       }
+      if (holdGuard)
+        await this.assertRestoredActiveHolds([
+          { guard: holdGuard, policy, rowJson: storedRowJson },
+        ]);
     }
     if (!(await this.rowMatches(policy, storedRowJson, targetOwnedSeedColumns))) throw error();
     await this.assertLive();

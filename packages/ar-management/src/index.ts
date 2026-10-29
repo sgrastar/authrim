@@ -4269,7 +4269,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       const startedAt = Date.now();
       const operations = await processTenantBackupOperations(
         env,
-        (context) => createProductionTenantBackupExportAdapter(env, context),
+        (context, covered) => createProductionTenantBackupExportAdapter(covered, context),
         new AbortController().signal,
         Date.now,
         env.ENABLE_SAML_DR_EXPORT === 'true' ? ['export'] : ['export', 'import'],
@@ -4285,17 +4285,17 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
           operations.advanced -
           operations.failures * TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT;
         if (remainingTime > 0 && remainingTransitions > 0) {
-          await runSamlDrCoveredOperation(env, undefined, (covered) =>
-            processTenantBackupOperations(
-              covered,
-              (context) => createProductionTenantBackupExportAdapter(covered, context),
-              new AbortController().signal,
-              Date.now,
-              ['import'],
-              Math.min(TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT, remainingTransitions),
-              remainingTime,
-              remainingTransitions
-            )
+          // The durable coordinator owns lease/cursor bookkeeping. Effect handlers acquire
+          // writer coverage individually; Guest activation installs its actual held fence.
+          await processTenantBackupOperations(
+            env,
+            (context, covered) => createProductionTenantBackupExportAdapter(covered, context),
+            new AbortController().signal,
+            Date.now,
+            ['import'],
+            Math.min(TENANT_BACKUP_SCHEDULED_TRANSITION_LIMIT, remainingTransitions),
+            remainingTime,
+            remainingTransitions
           );
         }
       }

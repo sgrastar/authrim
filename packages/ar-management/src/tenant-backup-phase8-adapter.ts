@@ -15,7 +15,10 @@ import type { PlannedInstalledSqliteDataset } from '@authrim/ar-lib-core/service
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
 import { tenantDatasetSelectionRule } from '@authrim/ar-lib-core/services/tenant-portability/selection-contract';
 import { createPhase8SqliteInspectionPolicies } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-references';
-import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
+import type {
+  PortableSqliteRow,
+  SqliteDatasetInspectionPolicy,
+} from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import {
   normalizePortableTenantKeyRow,
   PORTABLE_TENANT_KEY_SQLITE_DATASETS,
@@ -67,11 +70,15 @@ import {
   ADMIN_ROLES_DATASET,
   createTenantBackupRestoreAuthorityGuard,
 } from './tenant-backup-restore-authority';
+import { createTenantBackupGuestAuthority } from './tenant-backup-guest-authority';
+import type { createProductionGuestRestoreAuthority } from './tenant-backup-guest-authority-production';
 
 export interface Phase8InstalledAdapterPorts extends Omit<
   Phase5InstalledAdapterPorts,
   'recordSnapshots' | 'rowTransform' | 'otherStores' | 'import'
 > {
+  /** Production provides an authenticated live source; test adapters may install their own port. */
+  guestAuthority?: ReturnType<typeof createProductionGuestRestoreAuthority>;
   icebergLogs: ReturnType<typeof createTenantBackupIcebergLogSnapshotPorts>;
   resolveCoreRestoreDatabase(
     context: TenantBackupStepContext,
@@ -83,8 +90,13 @@ export interface Phase8InstalledAdapterPorts extends Omit<
   ): Promise<boolean>;
   import: Omit<
     Phase5InstalledAdapterPorts['import'],
-    'restoreTargets' | 'loadValidatedDataset' | 'assertValidatedUnpublishedPlan'
+    'restoreTargets' | 'loadValidatedDataset' | 'assertValidatedUnpublishedPlan' | 'activate'
   > & {
+    activate(
+      context: TenantBackupStepContext,
+      planDigest: string,
+      admission?: { deadlineAt: number; assertHeld: () => Promise<void>; scopedEnv: Env }
+    ): Promise<void>;
     planRestoreTargets(
       context: TenantBackupStepContext,
       datasets: readonly Phase8ValidatedSqliteRestoreDataset[]
@@ -325,8 +337,47 @@ export function createPhase8TenantBackupInstalledAdapter(
       }
     },
   });
+  const guestPort = input.ports.guestAuthority;
+  const guestAuthority = guestPort
+    ? createTenantBackupGuestAuthority({
+        source: guestPort.source,
+        authorize: guestPort.authorize,
+        save: (context, witness) =>
+          restoreHolds.writeGuestCurrentDenyWitness({
+            witness,
+            encryptionKey,
+            keyVersion,
+            now: now(),
+            authorize: () => guestPort.authorize(context),
+          }),
+        load: (context, planDigest, assertCurrentSource) =>
+          restoreHolds.readGuestCurrentDenyWitness({
+            tenantId: context.lease.tenantId,
+            operationId: context.lease.operationId,
+            planDigest,
+            encryptionKey,
+            keyVersion,
+            authorize: () => guestPort.authorize(context),
+            assertCurrentSource,
+          }),
+        apply: async (context, planDigest, markers) => {
+          if (!markers.length) return;
+          const source = await loadValidatedSqlite(
+            context,
+            planDigest,
+            'restore',
+            'pii.guest_pii_erasure_markers'
+          );
+          await source.target.mergeCurrentGuestDeletedMarkers(markers);
+        },
+      })
+    : undefined;
+  const wrapPolicies = (policies: readonly SqliteDatasetInspectionPolicy[]) => {
+    const wrapped = restoreAuthority.wrap(policies);
+    return guestAuthority ? guestAuthority.wrap(wrapped) : wrapped;
+  };
   const policies = input.planned
-    ? restoreAuthority.wrap(createPhase8SqliteInspectionPolicies(input.planned, policyInput))
+    ? wrapPolicies(createPhase8SqliteInspectionPolicies(input.planned, policyInput))
     : null;
   let dynamicPolicies: Promise<ReturnType<typeof createPhase8SqliteInspectionPolicies>> | undefined;
   const loadPlanned = input.loadPlanned;
@@ -459,6 +510,8 @@ export function createPhase8TenantBackupInstalledAdapter(
         ...validatedInput,
         restoreTargets,
         prepareActivation: async (context, planDigest) => {
+          if (guestAuthority && guestPort && (await guestPort.enabled(context)))
+            await guestAuthority.ready(context, planDigest);
           // Users-only DR may carry an approved pending purge without selecting any
           // PII log bodies. Rebuild its discovery scope before publishing the target.
           const datasets = await validatedInput.loadValidatedSqliteDatasets(context);
@@ -473,6 +526,24 @@ export function createPhase8TenantBackupInstalledAdapter(
             await icebergRestores.registerRestoredPiiPurgeScope(context, head.chain_digest);
           }
           await input.ports.import.prepareActivation(context, planDigest);
+        },
+        async activate(context, planDigest) {
+          if (!guestAuthority || !guestPort || !(await guestPort.enabled(context)))
+            return input.ports.import.activate(context, planDigest);
+          const witness = await guestAuthority.ready(context, planDigest);
+          await guestPort.withHeldBoundary(
+            context,
+            witness,
+            async (deadlineAt, assertHeld, scopedEnv) => {
+              await guestAuthority.assertCurrent(context, witness);
+              await assertHeld();
+              await input.ports.import.activate(context, planDigest, {
+                deadlineAt,
+                assertHeld,
+                scopedEnv,
+              });
+            }
+          );
         },
         async verifyActivation(context, planDigest) {
           await input.ports.import.verifyActivation(context, planDigest);
@@ -489,7 +560,7 @@ export function createPhase8TenantBackupInstalledAdapter(
             loadPolicies: async (context: TenantBackupStepContext) => {
               if (!loadPlanned) throw new Error('backup_phase8_plan_loader');
               dynamicPolicies ??= loadInstalledPlan(context).then((planned) =>
-                restoreAuthority.wrap(createPhase8SqliteInspectionPolicies(planned, policyInput))
+                wrapPolicies(createPhase8SqliteInspectionPolicies(planned, policyInput))
               );
               return dynamicPolicies;
             },
@@ -561,7 +632,57 @@ export function createPhase8TenantBackupInstalledAdapter(
           done: false,
         };
       },
-      otherStores: createPhase8OtherStoreHandlers(input.env, otherStores),
+      otherStores: (() => {
+        const handlers = createPhase8OtherStoreHandlers(input.env, otherStores);
+        return {
+          ...handlers,
+          async restoreOtherStores(
+            context: TenantBackupStepContext,
+            planDigest: string,
+            cursor: string | null
+          ) {
+            if (!guestAuthority || !guestPort || !(await guestPort.enabled(context)))
+              return handlers.restoreOtherStores(context, planDigest, cursor);
+            if (cursor?.startsWith('{"guestCurrentDeny":')) {
+              const value: unknown = JSON.parse(cursor);
+              if (
+                !value ||
+                typeof value !== 'object' ||
+                Array.isArray(value) ||
+                Object.keys(value).join(',') !== 'guestCurrentDeny' ||
+                !(
+                  (value as Record<string, unknown>).guestCurrentDeny === null ||
+                  typeof (value as Record<string, unknown>).guestCurrentDeny === 'string'
+                )
+              )
+                throw new Error('backup_guest_current_deny_witness_invalid');
+              const result = await guestAuthority.page(
+                context,
+                planDigest,
+                (value as { guestCurrentDeny: string | null }).guestCurrentDeny
+              );
+              return {
+                done: result.done,
+                cursor: result.done ? null : JSON.stringify({ guestCurrentDeny: result.cursor }),
+              };
+            }
+            const result = await handlers.restoreOtherStores(context, planDigest, cursor);
+            return result.done
+              ? { done: false, cursor: JSON.stringify({ guestCurrentDeny: null }) }
+              : result;
+          },
+          async verifyOtherStores(
+            context: TenantBackupStepContext,
+            planDigest: string,
+            cursor: string | null
+          ) {
+            const result = await handlers.verifyOtherStores(context, planDigest, cursor);
+            if (result.done && guestAuthority && guestPort && (await guestPort.enabled(context)))
+              await guestAuthority.ready(context, planDigest);
+            return result;
+          },
+        };
+      })(),
       recordSnapshots: [
         ...ICEBERG_LOG_RECORDS_DATASETS.map((dataset) => ({
           dataset,

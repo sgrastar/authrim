@@ -300,6 +300,10 @@ export async function runTenantBackupSqliteInputValidationSequenceStep(
       const recordCount = batchRecords.length;
       const referenceCount = batchReferences.length;
       let overBudget = false;
+      if (candidatePolicy.admitRow?.prepareRows) {
+        await candidatePolicy.admitRow.prepareRows(context, rows);
+        await authorize();
+      }
       for (let rowOrdinal = 0; rowOrdinal < rows.length; rowOrdinal++) {
         await inspectSqliteInputRow({
           context,

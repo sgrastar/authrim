@@ -33,6 +33,7 @@ interface OwnedOperation {
   environments: Set<object>;
   pending: Set<Promise<unknown>>;
   active: boolean;
+  coverage: TenantBackupMutationCoverage;
 }
 // Async-local ownership is isolated between simultaneous RPCs, even on the same DO instance.
 const ownedOperation = new AsyncLocalStorage<OwnedOperation>();
@@ -96,7 +97,59 @@ export function samlDrWaitUntil(
 /** True only inside this process-owned operation, never from RPC input. */
 export function isSamlDrCoveredOperation(env: object): boolean {
   const current = ownedOperation.getStore();
-  return Boolean(current?.active && current.environments.has(env));
+  return Boolean(
+    current?.active && current.environments.has(env) && 'environment' in current.coverage
+  );
+}
+
+async function runOwnedOperation<
+  T,
+  E extends SamlDrWriterEnv,
+  C extends Pick<ExecutionContext, 'waitUntil'>,
+>(
+  env: E,
+  context: C | undefined,
+  coverage: TenantBackupMutationCoverage | undefined,
+  operation: (env: E, context: C | undefined) => Promise<T>
+): Promise<T> {
+  const covered = withReplicationStorageBindings(
+    coverage ? withTenantBackupMutationCoverage(env, coverage) : env
+  );
+  const owner: OwnedOperation = {
+    environments: new Set([env, covered]),
+    pending: new Set(),
+    active: true,
+    coverage: coverage ?? { environment: true },
+  };
+  return ownedOperation.run(owner, async () => {
+    let result!: T;
+    let failed = false;
+    let failure: unknown;
+    try {
+      result = await operation(covered, trackedContext(context, owner));
+    } catch (error) {
+      failed = true;
+      failure = error;
+    }
+    try {
+      while (owner.pending.size) {
+        const batch = [...owner.pending];
+        const results = await Promise.allSettled(batch);
+        for (let index = 0; index < batch.length; index++) {
+          owner.pending.delete(batch[index]);
+          const observed = results[index];
+          if (observed.status === 'rejected' && !failed) {
+            failed = true;
+            failure = observed.reason;
+          }
+        }
+      }
+      if (failed) throw failure;
+      return result;
+    } finally {
+      owner.active = false;
+    }
+  });
 }
 
 /** Keep the permit until every request-owned deferred storage effect settles. */
@@ -114,50 +167,14 @@ export async function runSamlDrCoveredOperation<
   if (backupEnabled && !env.SAML_DR_MUTATION_CONTROL) throw new Error('saml_dr_writer_unavailable');
   const current = ownedOperation.getStore();
   if (current?.active && current.environments.has(env)) {
+    if (!('environment' in current.coverage)) throw new Error('saml_dr_environment_scope_required');
     const effect = Promise.resolve().then(() => operation(env, trackedContext(context, current)));
     current.pending.add(effect.catch(() => undefined));
     return effect;
   }
   const coverage: TenantBackupMutationCoverage = { environment: true };
-  const runOwned = async () => {
-    const covered = withReplicationStorageBindings(
-      backupEnabled ? withTenantBackupMutationCoverage(env, coverage) : env
-    );
-    const owner: OwnedOperation = {
-      environments: new Set([env, covered]),
-      pending: new Set(),
-      active: true,
-    };
-    return ownedOperation.run(owner, async () => {
-      let result!: T;
-      let failed = false;
-      let failure: unknown;
-      try {
-        result = await operation(covered, trackedContext(context, owner));
-      } catch (error) {
-        failed = true;
-        failure = error;
-      }
-      try {
-        while (owner.pending.size) {
-          const batch = [...owner.pending];
-          const results = await Promise.allSettled(batch);
-          for (let index = 0; index < batch.length; index++) {
-            owner.pending.delete(batch[index]);
-            const observed = results[index];
-            if (observed.status === 'rejected' && !failed) {
-              failed = true;
-              failure = observed.reason;
-            }
-          }
-        }
-        if (failed) throw failure;
-        return result;
-      } finally {
-        owner.active = false;
-      }
-    });
-  };
+  const runOwned = () =>
+    runOwnedOperation(env, context, backupEnabled ? coverage : undefined, operation);
   // The backup admission comes first. Its refusal happens before any write, while an exception
   // inside the replication permit is kept as an unconfirmed write: a refusal that came after
   // the permit would leave it open and block a later switch of the primary.
@@ -168,6 +185,36 @@ export async function runSamlDrCoveredOperation<
         () => runReplicationWriterOperation(env, runOwned)
       )
     : runReplicationWriterOperation(env, runOwned);
+}
+
+/** Internal installed coordinator only. The callback must enforce the held deadline on writes.
+ * No ordinary writer permit is opened under a held tenant gate. The live assertion is mandatory;
+ * a request/config value cannot supply this process-local callback or mutation coverage marker.
+ */
+export async function runSamlDrHeldTenantOperation<
+  T,
+  E extends SamlDrWriterEnv,
+  C extends Pick<ExecutionContext, 'waitUntil'>,
+>(
+  env: E,
+  context: C | undefined,
+  authority: { tenantId: string; assertHeld: () => Promise<void> },
+  operation: (env: E, context: C | undefined) => Promise<T>
+): Promise<T> {
+  const tenantId = authority.tenantId,
+    assertHeld = authority.assertHeld;
+  if (env.ENABLE_SAML_DR_EXPORT !== 'true' || !tenantId || ownedOperation.getStore()?.active)
+    throw new Error('saml_dr_held_tenant_scope_invalid');
+  await assertHeld();
+  const result = await runReplicationWriterOperation(env, () =>
+    runOwnedOperation(env, context, { tenantId }, async (covered, tracked) => {
+      await assertHeld();
+      return operation(covered, tracked);
+    })
+  );
+  // runOwnedOperation has awaited every tracked/deferred effect before this final proof.
+  await assertHeld();
+  return result;
 }
 
 export async function runSamlDrCoveredFetch<
