@@ -1,7 +1,9 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
+	import { ADMIN_ROLES } from '@authrim/ar-lib-core/constants/admin-roles';
 	import type { AdminAccess } from '$lib/access/access';
+	import { persona } from '$lib/access/personas';
 	import { createFakeSchemaSetting } from '$lib/api/fake/schema-setting-fake';
 	import { createFakeSettings } from '$lib/api/fake/settings-fake';
 	import { t } from '$lib/i18n/i18n.svelte';
@@ -23,14 +25,12 @@
 	});
 
 	const TENANT = 'acme';
-	const EDITOR: AdminAccess = {
-		platform: false,
-		roles: ['tenant_admin'],
-		permissions: ['admin:settings:read', 'admin:settings:write']
-	};
+	/** The built-in tenant admin: settings read and write. */
+	const EDITOR: AdminAccess = persona('tenant').access;
+	/** A tenant admin whose custom role carries the settings read only: may look, not change. */
 	const VIEWER: AdminAccess = {
 		platform: false,
-		roles: ['tenant_admin'],
+		roles: [ADMIN_ROLES.TENANT_ADMIN],
 		permissions: ['admin:settings:read']
 	};
 	const body = () => within(document.body);
@@ -195,14 +195,17 @@
 		await expect(Math.round(description.getBoundingClientRect().left)).toBe(
 			Math.round(labelBox.getBoundingClientRect().left)
 		);
+		// The history is empty before the save, so a row after it shows the list reading again.
+		await canvas.findByText(t('ss.history.empty'));
 		// Changing a field raises the save bar; Save sends it and the page shows the new name.
 		const label = canvas.getByRole('textbox', { name: t('ss.field.label') });
 		await userEvent.clear(label);
 		await userEvent.type(label, 'Staff ID');
 		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
 		await canvas.findByRole('heading', { level: 1, name: 'Staff ID' });
-		// The change is in the history.
-		await seen(canvas, t('ss.history.op.update'));
+		// The change is in the history table (the facts above carry an "Updated" label of their own).
+		const history = await canvas.findByRole('table', { name: t('ss.section.history') });
+		await within(history).findByText(t('ss.history.op.update'));
 	}}
 >
 	{#snippet template()}
@@ -473,7 +476,7 @@
 		<SchemaSetting
 			client={createFakeSchemaSetting()}
 			tenantId={TENANT}
-			access={{ platform: false, roles: ['support'], permissions: ['admin:users:read'] }}
+			access={persona('support').access}
 		/>
 	{/snippet}
 </Story>
