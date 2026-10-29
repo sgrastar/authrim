@@ -639,7 +639,8 @@ describe('adminRolesRouter', () => {
         scope_type: 'tenant',
         scope_id: 'tenant_123',
         expires_at: 2000,
-      })
+      }),
+      undefined
     );
   });
 
@@ -1152,7 +1153,7 @@ describe('adminRolesRouter', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(repoMocks.removeAssignmentById).toHaveBeenCalledWith('assignment_1');
+    expect(repoMocks.removeAssignmentById).toHaveBeenCalledWith('assignment_1', undefined);
     expect(repoMocks.createAuditLog).toHaveBeenCalled();
   });
 
