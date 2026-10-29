@@ -49,6 +49,19 @@ export function getApprovalPresetExpiry(policyPreset: ApprovalPolicyPreset): num
   return Date.now() + APPROVAL_PRESETS[policyPreset].requestTtlSeconds * 1000;
 }
 
+/**
+ * The deadline of an approval request. The policy preset sets how long a request may stay open;
+ * a caller may ask for a shorter time, never a longer one. The deadline is also when a grant
+ * issued from the request ends, so it cannot be left to the caller.
+ */
+export function resolveApprovalRequestExpiry(
+  policyPreset: ApprovalPolicyPreset,
+  requestedExpiresAt?: number
+): number {
+  const ceiling = getApprovalPresetExpiry(policyPreset);
+  return requestedExpiresAt === undefined ? ceiling : Math.min(requestedExpiresAt, ceiling);
+}
+
 export function getApprovalNotificationCooldownMs(
   policyPreset: string,
   action: ApprovalNotificationCooldownAction

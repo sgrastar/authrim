@@ -170,8 +170,12 @@ describe('Approval / Elevation repositories', () => {
       redaction_level: 'raw',
     });
 
-    const reloaded = await grantRepo.getElevationGrantByPublicId(grant.public_grant_id);
+    const reloaded = await grantRepo.getElevationGrantByPublicId(grant.public_grant_id, 'tenant-a');
     expect(reloaded?.scope_canonical).toBe(scope.canonical);
+    // A grant is only found within its own tenant.
+    expect(
+      await grantRepo.getElevationGrantByPublicId(grant.public_grant_id, 'tenant-b')
+    ).toBeNull();
 
     const revoked = await grantRepo.updateElevationGrantStatus(grant.id, 'revoked', {
       revokedAt: Date.now(),
