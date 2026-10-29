@@ -123,8 +123,86 @@ jobs:
         if: github.base_ref == 'main'
         run: pnpm migrate:release:check
 
-  api-tests:
-    name: API Tests with Coverage
+  # The API tests of the packages, one job per shard (scripts/ci-test-shards.mjs), so the workflow
+  # takes as long as its slowest shard instead of the sum of all packages. Each shard hands its
+  # coverage summaries on to the summary job.
+  api-package-tests:
+    name: API Tests (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [management, auth, core, services]
+    env:
+      TURBO_CONCURRENCY: 2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup environment variables
+        run: |
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
+
+      - name: Check that every tested package belongs to a shard
+        run: node scripts/ci-test-shards.mjs check
+
+      # Turbo replays the build of a package whose inputs did not change (tests always run: they
+      # read files outside their package, such as the root migrations, that the cache key does not
+      # cover). A pull request restores the cache of its own earlier runs, so only the first run of
+      # a branch starts cold.
+      - name: Restore Turbo cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .turbo/cache
+          key: turbo-api-${{ matrix.shard }}-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-api-${{ matrix.shard }}-${{ runner.os }}-
+
+      - name: Run API tests with coverage
+        run: >-
+          AUTHRIM_SECURITY_REGRESSION_SUITE=true
+          pnpm exec turbo run test $(node scripts/ci-test-shards.mjs filters ${{ matrix.shard }})
+          -- --coverage
+
+      # Staged under ci-coverage/packages/... so that downloading it into the workspace puts each
+      # file back where the summary script looks for it.
+      - name: Collect package coverage
+        run: |
+          mkdir -p ci-coverage
+          for dir in packages/*/coverage; do
+            [ -d "$dir" ] || continue
+            mkdir -p "ci-coverage/$dir"
+            cp "$dir"/coverage-summary.json "$dir"/coverage-final.json "ci-coverage/$dir/" 2>/dev/null || true
+          done
+
+      - name: Upload package coverage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authrim-api-coverage-${{ matrix.shard }}
+          path: ci-coverage
+          if-no-files-found: error
+          retention-days: 1
+
+  # The suites that run across packages (integration, security regressions, evidence checks). They
+  # do not depend on the package tests, so they run next to them.
+  api-suite-tests:
+    name: API Repository Suites
     runs-on: ubuntu-latest
     env:
       TURBO_CONCURRENCY: 2
@@ -158,8 +236,17 @@ jobs:
       - name: Prepare repository suite reports
         run: mkdir -p ci-reports
 
-      - name: Run API tests with coverage
-        run: AUTHRIM_SECURITY_REGRESSION_SUITE=true pnpm run test:coverage:api
+      - name: Restore Turbo cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .turbo/cache
+          key: turbo-api-suites-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-api-suites-${{ runner.os }}-
+
+      # The suites run the packages' tests and import their built output.
+      - name: Build API packages
+        run: pnpm run build:api
 
       - name: Run canonical integration tests
         env:
@@ -192,12 +279,7 @@ jobs:
           AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-scale-out-phase1-tests.json
         run: pnpm run test:scale-out-phase1
 
-      - name: Export compact package coverage summary
-        env:
-          AUTHRIM_COVERAGE_STATS_OUTPUT: ${{ github.workspace }}/ci-reports/authrim-package-coverage.json
-        run: node scripts/ci-pr-coverage-comment.mjs
-
-      - name: Upload API coverage and repository suite reports
+      - name: Upload repository suite reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: authrim-api-test-evidence
@@ -286,7 +368,8 @@ jobs:
     name: Repository Test Suites Summary
     runs-on: ubuntu-latest
     needs:
-      - api-tests
+      - api-package-tests
+      - api-suite-tests
       - control-plane-tests
       - lint
       - typecheck
@@ -301,6 +384,18 @@ jobs:
         with:
           name: authrim-api-test-evidence
           path: ci-reports
+
+      - name: Download package coverage
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: authrim-api-coverage-*
+          merge-multiple: true
+          path: .
+
+      - name: Export compact package coverage summary
+        env:
+          AUTHRIM_COVERAGE_STATS_OUTPUT: ${{ github.workspace }}/ci-reports/authrim-package-coverage.json
+        run: node scripts/ci-pr-coverage-comment.mjs
 
       - name: Download control-plane repository suite report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -382,7 +477,7 @@ jobs:
         run: pnpm --filter=@authrim/ar-admin-console check:dev-mock-guard
 
       - name: Test package size reporting
-        run: node --test scripts/ci-package-sizes.test.mjs
+        run: node --test scripts/ci-package-sizes.test.mjs scripts/ci-test-shards.test.mjs
 
       - name: Measure all package build sizes
         run: node scripts/ci-package-sizes.mjs ci-reports/authrim-package-sizes.json
@@ -427,7 +522,8 @@ jobs:
       - dependency-audit
       - lint
       - typecheck
-      - api-tests
+      - api-package-tests
+      - api-suite-tests
       - ui-tests
       - control-plane-tests
       - coverage-summary
