@@ -122,7 +122,8 @@ interface CanonicalAccountAuthenticationStateRow {
   subject_updated_at: number | string;
 }
 
-function runtimeTimestampToIso(value: number | string): string {
+/** Normalize seconds, milliseconds, microseconds or nanoseconds to the canonical ISO form. */
+export function runtimeTimestampToIso(value: number | string): string {
   // PostgreSQL int8 values are strings by default; validate before numeric/date coercion.
   const numeric = typeof value === 'string' ? Number(value) : value;
   if (typeof value === 'string' && (!/^-?\d+$/.test(value) || !Number.isSafeInteger(numeric))) {

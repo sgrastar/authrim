@@ -147,6 +147,28 @@ key state from before the activation for 30 seconds after reading it from KV, wh
 lag by up to a minute). `setup lookup-hmac-rotate` waits that long before leaving dual-write and
 asks again while Control answers `CONTROL_PLANE_LOOKUP_HMAC_DUAL_WRITE_DWELL_INCOMPLETE`.
 
+## Guest account reads
+
+The Guest administration list, detail, and upgrade-history APIs read the tenant's account
+stores (`tenant_core/users`), including every assigned shard, rather than its metadata database.
+Details read only account state, browser-resume credential metadata, and the latest upgrade
+summary; they do not resolve a PII store. Upgrade history remains readable after the source
+account is deleted and includes records where the requested user is the upgraded target.
+
+Routed lists and upgrade history use bounded pages (`limit`, default 50, maximum 100) and an
+opaque `next_cursor` saved in `AUTHRIM_CONFIG`. Send it as `cursor` to continue. Cursors expire
+15 minutes after the first page and are scoped to the tenant, endpoint, query, and physical
+account-store inventory. A changed inventory, expired cursor, or changed query returns 409;
+restart from the first page. Direct-storage lists retain offset pagination. Routed lists require
+`offset=0`. List order is last use descending, then user id; history order is upgrade time
+descending, then record id, with shard order breaking remaining ties.
+
+Each routed page checks every account shard. A storage or continuation-store failure returns
+503 instead of a partial result or a metadata fallback. Pagination is a live read, not a database
+snapshot: concurrent activity can move records between pages. Credential expiry is evaluated at
+the first page's observation time. These responses return no personal field values and do not
+create `audit_log_pii` records.
+
 ## PII read records
 
 Admin responses that return personal fields record, after the response is sent, one row per
