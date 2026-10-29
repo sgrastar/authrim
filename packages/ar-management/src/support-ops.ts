@@ -475,7 +475,10 @@ async function getSupportOpsApprovalWorkflowState(
   const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'support-ops-approval-state');
   const requestRepo = new ApprovalRequestRepository(adminAdapter);
   const approvalRepo = new ApprovalRequestApprovalRepository(adminAdapter);
-  const request = await requestRepo.getApprovalRequestByPublicId(approvalRequestId);
+  const request = await requestRepo.getApprovalRequestByPublicId(
+    approvalRequestId,
+    expected.tenantId
+  );
   if (!request) {
     return { approved: false, approvedBy: [], bound: false };
   }

@@ -42948,7 +42948,7 @@ components:
             hierarchy:
               description: Cache mode is determined in the following order
               order:
-                - '1. Client-specific mode (v1:cache-mode:client:{clientId})'
+                - '1. Client-specific mode (v1:cache-mode:client:{tenantId}:{clientId})'
                 - '2. Platform-level mode (v1:cache-mode:platform)'
                 - 3. Default mode (fixed)
             kv_key_version: v1
@@ -73757,6 +73757,9 @@ components:
             - service_principal
         requester_subject_id:
           type: string
+          description: >-
+            Names the requester only for a caller without an admin identity (a machine credential).
+            A signed-in admin is always the requester; naming anyone else is rejected.
         target_subject_type:
           type: string
           enum:
@@ -73823,6 +73826,9 @@ components:
           default: false
         expires_at:
           type: integer
+          description: >-
+            Deadline in epoch milliseconds. The policy preset sets the longest time a request may
+            stay open; a later value is cut to it. It is also when a grant issued from the request ends.
         approvals:
           type: array
           items:
