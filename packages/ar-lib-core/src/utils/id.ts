@@ -7,6 +7,8 @@
  */
 
 import { getTenantSettingsDocument, type TenantSettingsStores } from './tenant-settings';
+import { isValidPersistedUserId } from './persisted-user-id';
+export { isValidPersistedUserId } from './persisted-user-id';
 
 /**
  * Supported user ID formats
@@ -27,8 +29,6 @@ const NANOID_LENGTH = 21;
  * NanoID alphabet for URL-safe IDs (same as nanoid default)
  */
 const NANOID_ALPHABET = 'useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict';
-
-const PERSISTED_USER_ID_PATTERN = /^(?:[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}|[A-Za-z0-9_-]{21})$/u;
 
 /**
  * Generate a NanoID using Web Crypto API
@@ -91,11 +91,6 @@ export function isValidUserId(id: string, format?: UserIdFormat): boolean {
 
   // If no format specified, accept either
   return uuidPattern.test(id) || nanoidPattern.test(id);
-}
-
-/** Validate the legacy-safe and generated forms accepted at persisted runtime boundaries. */
-export function isValidPersistedUserId(id: unknown): id is string {
-  return typeof id === 'string' && PERSISTED_USER_ID_PATTERN.test(id);
 }
 
 /** Validate the canonical account ID derived from a persisted user ID. */

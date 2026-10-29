@@ -38,7 +38,7 @@ const adminAdminRbac = {
 	admin_admin_rbac_required: '*',
 	admin_admin_rbac_name_validation:
 		'名前は小文字で始め、小文字、数字、アンダースコア、ハイフンのみを使用してください',
-	admin_admin_rbac_name_placeholder: '例: security_admin',
+	admin_admin_rbac_name_placeholder: '例: helpdesk',
 	admin_admin_rbac_name_hint:
 		'小文字、数字、アンダースコア、ハイフンのみ使用できます。先頭は英字にしてください。',
 	admin_admin_rbac_create_description_placeholder: 'このロールの用途を説明...',

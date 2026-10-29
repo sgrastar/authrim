@@ -832,7 +832,7 @@ describe('a change of a tenant’s set', () => {
   it('is a read: a viewer may ask, and the route is declared for POST only', async () => {
     const t = await setup();
     const setId = await t.createSet(t.tenantContent([['email', 'email']]));
-    const viewer = t.cookie([{ role: 'role_viewer', scope: 'tenant' }]);
+    const viewer = t.cookie([{ role: 'role_ar_viewer', scope: 'tenant' }]);
     const body = { content: t.tenantContent([['nickname', 'nickname']]) };
     expect((await t.preview(setId, body, viewer)).status).toBe(200);
     expect(findAdminRouteAccessRule('POST', `${SETS}/x/preview-change`)?.permissions).toEqual([
@@ -953,13 +953,13 @@ describe('a change of a platform set', () => {
     // The settings read for every tenant, the clients read for this tenant only.
     insertRole(t.db, {
       id: 'role_global_settings_reader',
-      name: 'viewer',
+      name: 'ar_viewer',
       permissions: ['admin:settings:read'],
       hierarchy: 10,
     });
     const reader = t.cookie([
       { role: 'role_global_settings_reader', scope: 'global' },
-      { role: 'role_viewer', scope: 'tenant' },
+      { role: 'role_ar_viewer', scope: 'tenant' },
     ]);
 
     for (const query of ['', `?tenant_id=${OTHER}`]) {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["**/.env.*local"],
+  "globalDependencies": ["**/.env.*local", "tsconfig.base.json", "types/**"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -14,7 +14,8 @@
     "test": {
       "dependsOn": ["build"],
       "env": ["AUTHRIM_SECURITY_REGRESSION_SUITE"],
-      "outputs": ["coverage/**"]
+      "outputs": ["coverage/**"],
+      "cache": false
     },
     "lint": {
       "dependsOn": ["^build"],

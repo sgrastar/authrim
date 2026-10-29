@@ -1,5 +1,7 @@
 // Re-export everything from shared modules
 export * from './constants';
+// `./constants` is the file constants.ts, so the directory is exported by path.
+export * from './constants/admin-roles';
 export * from './types/env';
 export * from './types/oidc';
 export * from './types/admin';
@@ -768,6 +770,7 @@ export { RUNTIME_LOOKUP_HMAC_TEST_VECTOR } from './entrypoints/RuntimeSmokeEntry
 export * from './services/guest-lifecycle';
 export * from './services/guest-settings';
 export * from './repositories/guest-lifecycle';
+export * from './services/guest-pii-erasure';
 
 export * from './services/guest-session';
 

@@ -7,7 +7,7 @@
  * - GET  /api/admin/jobs/:id/result - Get job result (completed/partial_failure only)
  *
  * Security:
- * - RBAC: tenant_admin or higher required
+ * - RBAC: ar_tenant_admin or higher required
  * - Rate limit: moderate profile
  * - Tenant isolation: All queries filtered by tenant_id
  *
@@ -34,6 +34,7 @@ import {
   type ObjectCatalogPhysicalRecord,
   type ObjectRepresentation,
   readR2ObjectTextWithLimit,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import {
   loadCatalogObjectArtifact,
@@ -59,7 +60,7 @@ import {
   sanitizeUserImportFilename,
 } from './user-import-jobs';
 
-const ADMIN_JOB_MANAGER_ROLES = ['system_admin', 'distributor_admin', 'tenant_admin'];
+const ADMIN_JOB_MANAGER_ROLES = [...ADMIN_ROLE_GROUPS.tenantAdmin];
 
 export function registerAdminJobPermissionMiddleware(app: Hono<any, any, any>) {
   app.use('/api/admin/jobs', requireAnyRole(ADMIN_JOB_MANAGER_ROLES));

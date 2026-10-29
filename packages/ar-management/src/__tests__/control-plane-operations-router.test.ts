@@ -590,9 +590,9 @@ function createApp(input?: {
       principalType: input?.principalType,
       clientId: input?.clientId,
       actorId: input?.actorId,
-      roles: input?.roles ?? ['system_admin'],
+      roles: input?.roles ?? ['ar_super_admin'],
       // The roles of this fixture's Admin come from a global assignment.
-      globalRoles: input?.roles ?? ['system_admin'],
+      globalRoles: input?.roles ?? ['ar_super_admin'],
       tenantScope: ['*'],
       permissions: input?.permissions ?? [],
       globalPermissions: input?.permissions ?? [],
@@ -1337,7 +1337,7 @@ describe('control-plane operations admin router', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ items: [finding], count: 1 });
 
-    const denied = createApp({ roles: ['tenant_admin'] });
+    const denied = createApp({ roles: ['ar_tenant_admin'] });
     const deniedResponse = await denied.app.request(
       '/api/admin/platform/control-plane/drift-findings',
       {},

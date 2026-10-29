@@ -38,7 +38,7 @@ const adminAdminRbac = {
 	admin_admin_rbac_required: '*',
 	admin_admin_rbac_name_validation:
 		'Name must start with lowercase letter and contain only lowercase letters, numbers, underscores, and hyphens',
-	admin_admin_rbac_name_placeholder: 'e.g., security_admin',
+	admin_admin_rbac_name_placeholder: 'e.g., helpdesk',
 	admin_admin_rbac_name_hint:
 		'Lowercase letters, numbers, underscores, and hyphens only. Must start with a letter.',
 	admin_admin_rbac_create_description_placeholder: 'Describe what this role is for...',

@@ -43,6 +43,11 @@ Kept:
   externalized audit details. The import's own request, approval and cancellation audit entries
   are among them.
 - `core.plugin_account_metadata_mutations` (a ledger the database forbids deleting).
+- `pii.guest_pii_erasure_markers`: minimal, immutable Guest deletion denials. Cancelling an
+  import must not let a later restore recreate a deleted identity. The corresponding Core
+  Guest lifecycle rows in `deleting` or `deleted` are also kept; ordinary active/finalized
+  lifecycle rows are discarded. The two Guest mutation-epoch singletons remain coordination
+  state and are not copied from a backup or deleted by cleanup.
 - Backup records (`tenant_backup_*`, including restored holds and admin mappings) and the
   receipts of the restore targets, which stay `invalid`.
 - Admin database rows outside the backup datasets (database registry, provisioning records,
@@ -63,7 +68,13 @@ still write its key until then.
 `GET /api/admin/tenant-backups/{operationId}` returns `discard`:
 
 ```json
-{ "decision": "discard", "blocker": { "kind": "legal_hold", "detail": { "holdIds": ["…"], "restoredHolds": 1, "bundleHoldIds": ["…"], "bundleHolds": 2 } } }
+{
+  "decision": "discard",
+  "blocker": {
+    "kind": "legal_hold",
+    "detail": { "holdIds": ["…"], "restoredHolds": 1, "bundleHoldIds": ["…"], "bundleHolds": 2 }
+  }
+}
 ```
 
 While a blocker is set the operation stays `cancelling` and is retried with backoff. Watch
@@ -74,12 +85,12 @@ run's `failureCodes` log. The same record is in `tenant_backup_import_discards` 
 
 ## When the cleanup stops
 
-| Failure code | Blocker | Meaning | What to do |
-| --- | --- | --- | --- |
-| `backup_import_cleanup_legal_hold` | `legal_hold` | The restored data has legal holds (`restoredHolds`, first IDs in `holdIds`) or the bundle carries some not restored yet (`bundleHolds`, first IDs in `bundleHoldIds`). Nothing was deleted. | See below. This blocker never clears by itself. |
-| `backup_import_cleanup_blocked` | `blocked_rows` | A row of `table` in `resourceId` could not be deleted: another tenant's row (or a row of unknown owner) refers to it with `CASCADE`/`SET NULL`, or a kept row restricts it. Rows deleted before it stay deleted; nothing of another tenant changed. | Find the referencing row (`PRAGMA foreign_key_list` of the referencing tables). Decide with the owner of that row; once the reference is gone the next scheduled run continues. |
-| `backup_import_cleanup_schema_changed` | `schema_changed` | The database schema of `resourceId` changed after the decision (a migration ran). Every delete also checks the schema itself, so nothing was deleted against the new schema. | Do not deploy while an import cleanup runs. The cleanup continues once the schema matches the recorded one again; otherwise contact engineering, since the discard plan has to be reviewed against the new schema. |
-| `backup_import_discard_tenant_published` | — | The tenant is no longer `provisioning` (or `deleted`). | The cleanup never touches a published tenant. Investigate how it was activated. |
+| Failure code                             | Blocker          | Meaning                                                                                                                                                                                                                                             | What to do                                                                                                                                                                                                         |
+| ---------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `backup_import_cleanup_legal_hold`       | `legal_hold`     | The restored data has legal holds (`restoredHolds`, first IDs in `holdIds`) or the bundle carries some not restored yet (`bundleHolds`, first IDs in `bundleHoldIds`). Nothing was deleted.                                                         | See below. This blocker never clears by itself.                                                                                                                                                                    |
+| `backup_import_cleanup_blocked`          | `blocked_rows`   | A row of `table` in `resourceId` could not be deleted: another tenant's row (or a row of unknown owner) refers to it with `CASCADE`/`SET NULL`, or a kept row restricts it. Rows deleted before it stay deleted; nothing of another tenant changed. | Find the referencing row (`PRAGMA foreign_key_list` of the referencing tables). Decide with the owner of that row; once the reference is gone the next scheduled run continues.                                    |
+| `backup_import_cleanup_schema_changed`   | `schema_changed` | The database schema of `resourceId` changed after the decision (a migration ran). Every delete also checks the schema itself, so nothing was deleted against the new schema.                                                                        | Do not deploy while an import cleanup runs. The cleanup continues once the schema matches the recorded one again; otherwise contact engineering, since the discard plan has to be reviewed against the new schema. |
+| `backup_import_discard_tenant_published` | —                | The tenant is no longer `provisioning` (or `deleted`).                                                                                                                                                                                              | The cleanup never touches a published tenant. Investigate how it was activated.                                                                                                                                    |
 
 ### Legal holds
 
@@ -114,7 +125,7 @@ bundle beyond it are refused with `backup_restore_authority_required`:
 
 A tenant administrator can therefore restore none of these; a platform operator's DR restore
 keeps them. Unlike a new global assignment through the API, a restore may give a role **at** the
-requester's own global level (so a super_admin can restore a global super_admin, and a DR restore
+requester's own global level (so an ar_super_admin can restore a global ar_super_admin, and a DR restore
 of the tenant the platform administrators belong to keeps their access). Every restored global
 assignment is written to `admin_audit_log` first, as `tenant_backup.global_admin_assignment_restored`
 with severity `critical` (requester, assignment, admin, role and scope); if that entry cannot be
@@ -130,6 +141,51 @@ cleanup leaves the tenant as it was (`none`) or discards what was written. Ask a
 the needed authority to request the import instead, or remove the rows from the source first.
 
 ## Operating notes
+
+### Current Guest deletion authority during restore
+
+A users restore checks the current authenticated source inventory and primary Core/PII databases,
+including Guest deletion acceptance before a PII marker exists. A current accepted deletion,
+erasure in progress, upgrade in progress or an unfinalized registration blocks activation. An old
+snapshot declaring an account active or registered cannot override these states.
+
+Each restored authentication/raw-profile owner must have a current positive canonical owner.
+This is checked while input is validated, before target writes begin, and again in bounded
+restore batches. A newly empty target, an uploaded manifest and the absence of a marker in an old
+snapshot do not establish current authority. Shared organization/provider sensitive values retain
+their existing ownership rules; they are not treated as runtime-user credentials.
+
+The production connection currently supports authenticated current sources in the same
+environment and issuer, using the complete signed registry inventory and its primary Admin
+generation. It cannot prove the latest denials if the old authoritative source has been lost,
+is offline, or belongs to another environment. Such restores are blocked; they must not be
+reported ready or retried using an empty replacement database as their authority.
+
+Current terminal PII denials are carried into the target in pages of at most 16. Existing exact
+markers are kept without advancing their source epoch; conflicting identities, generations or
+revisions stop the restore. The complete inventory, Core/PII epochs and denial-set digest are
+retained as encrypted, immutable restore-operation evidence. This internal witness is excluded
+from restored user-row counts and held-row summaries. It adds no operation ID, timestamp or PII
+to a completed Guest marker.
+
+Before activation the source proof is checked again while the existing Control mutation gate is
+held. This requires strict writer admission (`ENABLE_SAML_DR_EXPORT=true`) and verified installed
+writer coverage. Both tenant-activation SQL statements enforce the returned deadline using their
+database execution clocks. A deadline expiry or a partial platform/Core activation remains an
+unfinished import; only its own sealed restore target may resume it under a fresh proof. No
+snapshot-participant receipt is fabricated for this control-only fence. The import coordinator does
+not hold an ordinary writer permit while acquiring this gate. Each other import/cleanup handler
+retains its normal writer admission; activation uses the live held tenant scope until its SQL, KV
+and deferred effects have settled.
+
+Input or source changes can leave an import waiting. Repair the authoritative source or request
+a new reviewed import when its proof is stale. A source epoch change during an unfinished
+denial collection also stops with `backup_guest_current_source_changed_replan_required`; retrying
+the same cursor does not replace the reviewed source vector. Do not bypass the proof, remove deletion
+markers, or extend a mutation deadline manually. The normal cancellation boundary described
+above still applies.
+
+### Cleanup operation
 
 - Do not deploy migrations while an import cleanup is running; the cleanup checks the schema
   before and after every step and stops on a change.

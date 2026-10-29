@@ -399,4 +399,55 @@ describe('Agent template and baseline control plane', () => {
       expect.anything()
     );
   });
+
+  describe('the copies of a template', () => {
+    const templateRow = (sourceTenantId: string) => ({
+      id: 'template-1',
+      version: 1,
+      source_tenant_id: sourceTenantId,
+      template_type: 'task_set',
+      source_object_id: 'obj-1',
+      source_object_version: 1,
+      definition_json: '{}',
+      definition_digest: 'digest',
+      status: 'active',
+      published_by: 'someone',
+      published_at: 1,
+    });
+
+    it('lists them for the tenant that published the template', async () => {
+      adapter.queryOne.mockResolvedValue(templateRow('control'));
+      adapter.query.mockResolvedValue([]);
+
+      const response = await request('/api/admin/agent-templates/template-1/1/copies');
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ copies: [] });
+    });
+
+    it('does not list them for a template of another tenant, whatever its ID', async () => {
+      adapter.queryOne.mockResolvedValue(templateRow('another-tenant'));
+      adapter.query.mockResolvedValue([
+        { id: 'copy-1', template_id: 'template-1', target_tenant_id: 'victim' },
+      ]);
+
+      const response = await request('/api/admin/agent-templates/template-1/1/copies');
+
+      expect(response.status).toBe(404);
+      expect(adapter.query).not.toHaveBeenCalled();
+    });
+
+    it('does not copy a template of another tenant', async () => {
+      adapter.queryOne.mockResolvedValue(templateRow('another-tenant'));
+
+      const response = await request('/api/admin/agent-templates/template-1/1/copies', 'POST', {
+        target_tenant_ids: ['control'],
+        bulk_plan_id: 'plan-1',
+        bulk_plan_version: 1,
+      });
+
+      expect([404, 400]).toContain(response.status);
+      expect(adapter.batch).not.toHaveBeenCalled();
+    });
+  });
 });

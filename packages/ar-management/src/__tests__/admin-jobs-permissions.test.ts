@@ -45,7 +45,7 @@ function createApp() {
 function buildHeaders(permissions: string[]): HeadersInit {
   return {
     'Content-Type': 'application/json',
-    'X-Admin-Roles': 'tenant_admin',
+    'X-Admin-Roles': 'ar_tenant_admin',
     'X-Admin-Permissions': permissions.join(','),
   };
 }

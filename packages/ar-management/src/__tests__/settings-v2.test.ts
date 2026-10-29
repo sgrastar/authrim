@@ -259,16 +259,16 @@ function createTestApp(
     };
   }>();
 
-  // Mock admin auth middleware - set adminAuth with system_admin role
+  // Mock admin auth middleware - set adminAuth with ar_super_admin role
   app.use('*', async (c, next) => {
     c.set(
       'adminAuth',
       options.adminAuth ?? {
         userId: 'test_admin',
         authMethod: 'bearer',
-        roles: ['system_admin'], // system_admin has access to all settings
+        roles: ['ar_super_admin'], // ar_super_admin has access to all settings
         // Held through a global assignment, as the platform settings routes ask.
-        globalRoles: ['system_admin'],
+        globalRoles: ['ar_super_admin'],
         tenantScope: ['*'],
       }
     );
@@ -2040,7 +2040,7 @@ describe('Settings API v2', () => {
           adminAuth: {
             userId: 'viewer_1',
             authMethod: 'bearer',
-            roles: ['viewer'],
+            roles: ['ar_viewer'],
             org_id: 'tenant_123',
           },
         });
@@ -2095,9 +2095,9 @@ describe('Settings API v2', () => {
         const { app, mockEnv } = createTestApp({
           kv: mockKV,
           adminAuth: {
-            userId: 'org_admin_1',
+            userId: 'tenant_admin_1',
             authMethod: 'bearer',
-            roles: ['org_admin'],
+            roles: ['ar_tenant_admin'],
             org_id: 'tenant_123',
           },
         });
@@ -2352,7 +2352,7 @@ describe('Settings API v2', () => {
             userId: 'setup-machine',
             authMethod: 'machine_access_token',
             actorType: 'machine',
-            roles: ['system_admin'],
+            roles: ['ar_super_admin'],
             tenantId: 'test-tenant',
             tenantScope: ['test-tenant'],
             permissions: ['admin:clients:read'],
@@ -4884,12 +4884,12 @@ describe('Settings API v2', () => {
   });
 
   describe('Authorization Boundaries', () => {
-    it('should allow org_admin access to tenant settings for their own tenant via adminAuth', async () => {
+    it('should allow ar_tenant_admin access to tenant settings for their own tenant via adminAuth', async () => {
       const { app, mockEnv } = createTestApp({
         adminAuth: {
-          userId: 'org_admin_1',
+          userId: 'tenant_admin_1',
           authMethod: 'bearer',
-          roles: ['org_admin'],
+          roles: ['ar_tenant_admin'],
           org_id: 'tenant_123',
           tenantId: 'tenant_123',
         },
@@ -4909,9 +4909,9 @@ describe('Settings API v2', () => {
     it('should reject tenant settings access across tenant boundaries', async () => {
       const { app, mockEnv } = createTestApp({
         adminAuth: {
-          userId: 'org_admin_1',
+          userId: 'tenant_admin_1',
           authMethod: 'bearer',
-          roles: ['org_admin'],
+          roles: ['ar_tenant_admin'],
           org_id: 'tenant_123',
         },
       });
@@ -5008,7 +5008,7 @@ describe('Settings API v2', () => {
           userId: 'read-other-machine',
           authMethod: 'machine_access_token',
           actorType: 'machine',
-          roles: ['super_admin'],
+          roles: ['ar_super_admin'],
           tenantId: 'tenant_123',
           tenantScope: ['tenant_123'],
           permissions: ['admin:clients:read'],

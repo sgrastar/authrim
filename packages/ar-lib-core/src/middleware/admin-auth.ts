@@ -24,6 +24,7 @@ import type { DatabaseAdapter } from '../db/adapter';
 import { requireAdminDatabaseAdapter } from '../services/admin-database-adapter';
 import { createLogger } from '../utils/logger';
 import { hasAdminPermission } from '../types/admin-user';
+import { ADMIN_ROLE_GROUPS } from '../constants/admin-roles';
 import { buildRequestIssuerUrl, getDefaultTenantId } from '../utils/issuer';
 import { resolveTenantFromRequest } from '../utils/tenant-context';
 import { parseTokenHeader, verifyToken } from '../utils/jwt';
@@ -74,7 +75,7 @@ export interface AdminAuthOptions {
 
   /**
    * Required roles for access. User must have at least one of these roles.
-   * Default: ['super_admin', 'security_admin', 'admin', 'support', 'viewer']
+   * Default: every standard Admin role (`ADMIN_ROLE_GROUPS.anyAdmin`)
    */
   requireRoles?: string[];
 
@@ -224,8 +225,7 @@ export function hasGlobalAdminRole(
 }
 
 /**
- * Whether the caller is a platform administrator: the wildcard, or the super_admin or system_admin
- * role, held through a global assignment. This is what a platform-wide operation asks for (the
+ * Whether the caller is a platform administrator: the wildcard, or the super admin role, held through a global assignment. This is what a platform-wide operation asks for (the
  * control plane, platform logging, the database connections), and it is not read from `roles` or
  * `permissions`, which also hold what is given for one tenant only.
  *
@@ -243,7 +243,7 @@ export function hasGlobalPlatformAuthority(
   }
   if (
     hasGlobalAdminPermission(authContext, '*') ||
-    hasGlobalAdminRole(authContext, ['super_admin', 'system_admin'])
+    hasGlobalAdminRole(authContext, ADMIN_ROLE_GROUPS.platform)
   ) {
     return true;
   }
@@ -426,13 +426,7 @@ async function authenticateMachineAccessToken(
 }
 
 /** The roles an admin needs (one of) to use the Admin API unless a route asks for others. */
-export const DEFAULT_ADMIN_SIGN_IN_ROLES: readonly string[] = [
-  'super_admin',
-  'security_admin',
-  'admin',
-  'support',
-  'viewer',
-];
+export const DEFAULT_ADMIN_SIGN_IN_ROLES: readonly string[] = ADMIN_ROLE_GROUPS.anyAdmin;
 
 /**
  * Authenticate using session cookie

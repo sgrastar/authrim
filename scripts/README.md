@@ -580,7 +580,7 @@ npx @authrim/setup deploy --env prod --yes
 ```
 
 After the first deployment, open the setup URL that `@authrim/setup` prints to create the first
-`system_admin` with a Passkey.
+`ar_super_admin` with a Passkey.
 
 **Note:** Settings start at the Settings API defaults. To apply a certification profile, use `./scripts/switch-certification-profile.sh`.
 
@@ -747,7 +747,7 @@ Open the setup URL → create the initial admin with a Passkey
 setup-resend.sh --env=remote (optional)
 ```
 
-**Note:** The `setup-keys.sh` script generates an initial admin setup token (valid for 1 hour). After deployment, open the setup URL to create the first `system_admin` account using Passkey authentication. This is a one-time operation - after the first admin is created, the setup feature is permanently disabled.
+**Note:** The `setup-keys.sh` script generates an initial admin setup token (valid for 1 hour). After deployment, open the setup URL to create the first `ar_super_admin` account using Passkey authentication. This is a one-time operation - after the first admin is created, the setup feature is permanently disabled.
 
 **Note:** The `setup-kv.sh` script now automatically initializes default system settings (FAPI, OIDC configuration) using the basic-op certification profile.
 

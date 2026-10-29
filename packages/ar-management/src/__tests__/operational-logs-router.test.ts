@@ -50,7 +50,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
             authMethod: 'session',
             tenantId: 'tenant-a',
             permissions,
-            roles: ['tenant_admin'],
+            roles: ['ar_tenant_admin'],
             hierarchyLevel: 50,
             mfaVerified: true,
           });

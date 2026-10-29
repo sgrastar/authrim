@@ -28,6 +28,7 @@ import {
   type UserEventData,
   // Cookie Configuration
   getAdminCookieSameSite,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 
@@ -187,8 +188,9 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Check if user has any admin role
-    const adminRoles = ['super_admin', 'security_admin', 'admin', 'operator', 'support', 'viewer'];
-    const hasAdminRole = roles.some((role) => adminRoles.includes(role));
+    const hasAdminRole = roles.some((role) =>
+      (ADMIN_ROLE_GROUPS.anyAdmin as readonly string[]).includes(role)
+    );
     const isPlatformAdmin = rolesResult.some(
       (role) => role.scope_type === 'global' || Number(role.has_global_scope ?? 0) > 0
     );

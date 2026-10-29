@@ -38,6 +38,7 @@ import {
   getScopedCategoryMeta,
   type CategoryName,
   type SettingScopeLevel,
+  ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -82,8 +83,8 @@ function checkRolePermission(
   scopeLevel: SettingScopeLevel,
   action: 'view' | 'edit'
 ): boolean {
-  // super_admin and system_admin always have access
-  if (userRoles.includes('super_admin') || userRoles.includes('system_admin')) {
+  // The super admin always has access
+  if (userRoles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
     return true;
   }
 
@@ -98,30 +99,19 @@ function checkRolePermission(
 
 /**
  * Check if user can access a specific tenant's data
- * super_admin, system_admin and distributor_admin can access any tenant
- * org_admin can only access their own tenant
+ * The super admin and the tenant admin can access the tenant they hold the role for
  */
 function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: string): boolean {
   if (!adminAuth) return false;
 
   const userRoles = adminAuth.roles;
 
-  // super_admin, system_admin and distributor_admin can access any tenant
-  if (
-    userRoles.includes('super_admin') ||
-    userRoles.includes('system_admin') ||
-    userRoles.includes('distributor_admin')
-  ) {
+  if (userRoles.includes(ADMIN_ROLES.SUPER_ADMIN) || userRoles.includes(ADMIN_ROLES.TENANT_ADMIN)) {
     return true;
   }
 
-  // org_admin can only access their own tenant
-  if (userRoles.includes('org_admin')) {
-    return adminAuth.org_id === tenantId;
-  }
-
   // viewer with tenant association
-  if (userRoles.includes('viewer')) {
+  if (userRoles.includes(ADMIN_ROLES.VIEWER)) {
     return !adminAuth.org_id || adminAuth.org_id === tenantId;
   }
 

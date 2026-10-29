@@ -232,7 +232,8 @@ async function upsertCoverageStatus(
 export class AdminLoggingControlRepository {
   constructor(private readonly adapter: DatabaseAdapter) {}
 
-  async loadCriticalPolicy(): Promise<AdminLoggingCriticalPolicyState> {
+  /** `tenantId` limits the tenant-level assignments to that tenant's; omitted, it is every tenant's. */
+  async loadCriticalPolicy(tenantId?: string): Promise<AdminLoggingCriticalPolicyState> {
     const destinations = await this.adapter.query<AdminLoggingCriticalDestinationRow>(
       `SELECT id, name, display_name, provider, lifecycle_status, health_status,
               critical_allowed, default_fallback_eligible, last_health_check_at, version
@@ -253,8 +254,10 @@ export class AdminLoggingControlRepository {
            lpa.log_type IN ('audit', 'admin_audit', 'security', 'pii')
            OR lpa.plane = 'sensitive_detail'
          )
+         ${tenantId === undefined ? '' : 'AND lpa.tenant_id = ?'}
        ORDER BY lpa.log_type ASC, lpa.plane ASC, lpa.tenant_id ASC
-       LIMIT 100`
+       LIMIT 100`,
+      tenantId === undefined ? [] : [tenantId]
     );
     const policies = await this.adapter.query<AdminLoggingCriticalPolicyRow>(
       `SELECT acp.id, acp.policy_key, acp.destination_id, ad.name AS destination_name,
@@ -369,7 +372,10 @@ export class AdminLoggingControlRepository {
     });
   }
 
-  async loadSensitiveDetailPolicy(): Promise<AdminLoggingSensitiveDetailPolicyState> {
+  /** `tenantId` limits the assignments and the index summary to that tenant's. */
+  async loadSensitiveDetailPolicy(
+    tenantId?: string
+  ): Promise<AdminLoggingSensitiveDetailPolicyState> {
     const assignments = await this.adapter.query<AdminLoggingDestinationOverrideViewRow>(
       `SELECT lpa.id, lpa.tenant_id, lpa.log_type, lpa.plane, lpa.destination_id,
               ad.name AS destination_name, ad.health_status AS destination_health_status,
@@ -378,8 +384,10 @@ export class AdminLoggingControlRepository {
        FROM logging_destination_overrides lpa
        LEFT JOIN admin_destinations ad ON ad.id = lpa.destination_id
        WHERE lpa.plane = 'sensitive_detail'
+         ${tenantId === undefined ? '' : 'AND lpa.tenant_id = ?'}
        ORDER BY lpa.log_type ASC, lpa.tenant_id ASC
-       LIMIT 100`
+       LIMIT 100`,
+      tenantId === undefined ? [] : [tenantId]
     );
     const policies = await this.adapter.query<AdminLoggingSensitiveDetailPolicyRow>(
       `SELECT sdp.id, sdp.log_type, sdp.plane, sdp.destination_id,
@@ -395,9 +403,11 @@ export class AdminLoggingControlRepository {
     const indexSummary = await this.adapter.query<SensitiveDetailIndexSummaryRow>(
       `SELECT object_class, COUNT(*) AS total, MAX(created_at) AS last_created_at
        FROM sensitive_detail_chunk_index
+       ${tenantId === undefined ? '' : 'WHERE tenant_id = ?'}
        GROUP BY object_class
        ORDER BY object_class ASC
-       LIMIT 100`
+       LIMIT 100`,
+      tenantId === undefined ? [] : [tenantId]
     );
     const keyVersions = await this.adapter.query<LoggingKeyVersionStatusRow>(
       `SELECT kv.status, COUNT(*) AS total
@@ -594,23 +604,27 @@ export class AdminLoggingControlRepository {
     now: number;
     limit: number;
     pendingTtlMs: number;
+    /** Looked at before the limit, so that other tenants' rows cannot push this tenant's out. */
+    tenantKey?: string | null;
   }): Promise<LogCatalogRepairFinding[]> {
+    const tenantCondition = input.tenantKey ? 'AND tenant_key = ?' : '';
+    const tenantParams = input.tenantKey ? [input.tenantKey] : [];
     const objectRows = await this.adapter.query<LogCatalogRepairObjectDbRow>(
       `SELECT id, tenant_key, log_type, plane, object_key, status, record_count, byte_count,
               checksum_sha256, created_at, committed_at
        FROM log_object_catalog
-       WHERE status IN ('pending', 'orphan_candidate', 'committed')
+       WHERE status IN ('pending', 'orphan_candidate', 'committed') ${tenantCondition}
        ORDER BY created_at DESC
        LIMIT ?`,
-      [input.limit]
+      [...tenantParams, input.limit]
     );
     const manifestRows = await this.adapter.query<LogCatalogRepairManifestDbRow>(
       `SELECT tenant_key, log_type, plane, bucket_start_at, shard, status
        FROM log_chunk_manifests
-       WHERE status IN ('committed', 'repair_needed')
+       WHERE status IN ('committed', 'repair_needed') ${tenantCondition}
        ORDER BY bucket_start_at DESC
        LIMIT ?`,
-      [input.limit]
+      [...tenantParams, input.limit]
     );
 
     return detectLogCatalogRepairFindings({

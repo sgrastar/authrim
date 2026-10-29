@@ -68,25 +68,25 @@ function setup() {
 }
 
 type Kind =
-  | 'global super_admin'
-  | 'tenant-limited super_admin'
-  | 'global viewer + tenant super_admin'
+  | 'global ar_super_admin'
+  | 'tenant-limited ar_super_admin'
+  | 'global viewer + tenant ar_super_admin'
   | 'global viewer'
   | 'tenant viewer';
 
 const KINDS: Record<Kind, Assignment[]> = {
-  'global super_admin': GLOBAL_SUPER_ADMIN,
-  'tenant-limited super_admin': TENANT_SUPER_ADMIN,
-  'global viewer + tenant super_admin': GLOBAL_VIEWER_TENANT_SUPER_ADMIN,
-  'global viewer': [{ role: 'role_viewer', scope: 'global' }],
-  'tenant viewer': [{ role: 'role_viewer', scope: 'tenant' }],
+  'global ar_super_admin': GLOBAL_SUPER_ADMIN,
+  'tenant-limited ar_super_admin': TENANT_SUPER_ADMIN,
+  'global viewer + tenant ar_super_admin': GLOBAL_VIEWER_TENANT_SUPER_ADMIN,
+  'global viewer': [{ role: 'role_ar_viewer', scope: 'global' }],
+  'tenant viewer': [{ role: 'role_ar_viewer', scope: 'tenant' }],
 };
 
 describe('platform-wide routes', () => {
   it.each([
-    ['global super_admin', 'allowed'],
-    ['tenant-limited super_admin', 'denied'],
-    ['global viewer + tenant super_admin', 'denied'],
+    ['global ar_super_admin', 'allowed'],
+    ['tenant-limited ar_super_admin', 'denied'],
+    ['global viewer + tenant ar_super_admin', 'denied'],
     ['global viewer', 'denied'],
     ['tenant viewer', 'denied'],
   ] as Array<[Kind, 'allowed' | 'denied']>)(
@@ -114,9 +114,9 @@ describe('platform-wide routes', () => {
   );
 
   it.each([
-    ['global super_admin', 200],
-    ['tenant-limited super_admin', 403],
-    ['global viewer + tenant super_admin', 403],
+    ['global ar_super_admin', 200],
+    ['tenant-limited ar_super_admin', 403],
+    ['global viewer + tenant ar_super_admin', 403],
   ] as Array<[Kind, number]>)(
     'the system-admin guard and the Worker version guard for a %s answer %s',
     async (kind, status) => {
@@ -136,16 +136,16 @@ describe('platform-wide routes', () => {
     // A legacy custom role with a platform name, held for the tenant, next to a viewer.
     insertRole(context.db, {
       id: 'role_named_system_admin',
-      name: 'system_admin',
+      name: 'ar_super_admin',
       permissions: ['admin:control_plane:read'],
       hierarchy: 10,
     });
     const local = signIn(context.db, [
-      { role: 'role_viewer', scope: 'tenant' },
+      { role: 'role_ar_viewer', scope: 'tenant' },
       { role: 'role_named_system_admin', scope: 'tenant' },
     ]);
     const global = signIn(context.db, [
-      { role: 'role_viewer', scope: 'tenant' },
+      { role: 'role_ar_viewer', scope: 'tenant' },
       { role: 'role_named_system_admin', scope: 'global' },
     ]);
 
@@ -158,7 +158,7 @@ describe('platform-wide routes', () => {
 });
 
 describe('managing tenants', () => {
-  it('is platform authority for a global super_admin, and for no one who holds the wildcard or the role for a tenant', async () => {
+  it('is platform authority for a global ar_super_admin, and for no one who holds the wildcard or the role for a tenant', async () => {
     const results: Record<string, unknown> = {};
     for (const kind of Object.keys(KINDS) as Kind[]) {
       const context = setup();
@@ -167,9 +167,9 @@ describe('managing tenants', () => {
     }
 
     expect(results).toEqual({
-      'global super_admin': { platform: true, own: true, other: true },
-      'tenant-limited super_admin': { platform: false, own: true, other: false },
-      'global viewer + tenant super_admin': { platform: false, own: true, other: false },
+      'global ar_super_admin': { platform: true, own: true, other: true },
+      'tenant-limited ar_super_admin': { platform: false, own: true, other: false },
+      'global viewer + tenant ar_super_admin': { platform: false, own: true, other: false },
       // Reaching a tenant's resources with what the request's tenant gives is allowed; the
       // permission to do something with them is the route's own.
       'global viewer': { platform: false, own: true, other: false },
@@ -206,7 +206,7 @@ describe('managing tenants', () => {
       hasPlatformTenantManagementAuthority({
         ...base,
         tenantScope: ['*'],
-        roles: ['super_admin'],
+        roles: ['ar_super_admin'],
         globalRoles: ['viewer'],
       })
     ).toBe(false);
@@ -233,14 +233,14 @@ describe('declared route access for the platform roles', () => {
       const context = setupApp((app) => {
         app.use(
           '/api/admin/*',
-          adminAuthMiddleware({ plane: 'tenant', requireRoles: ['system_admin', 'viewer'] }),
+          adminAuthMiddleware({ plane: 'tenant', requireRoles: ['ar_super_admin', 'viewer'] }),
           enforceDeclaredAdminRouteAccess()
         );
         app.get('/api/admin/tenants', (c) => c.json({ ok: true }));
       });
       insertRole(context.db, {
         id: 'role_named_system_admin',
-        name: 'system_admin',
+        name: 'ar_super_admin',
         permissions: [],
         hierarchy: 10,
       });

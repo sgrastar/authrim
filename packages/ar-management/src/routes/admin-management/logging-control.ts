@@ -4316,6 +4316,7 @@ async function detectLogCatalogRepairs(
     now,
     limit,
     pendingTtlMs,
+    tenantKey: input?.tenantKey ?? null,
   });
   const findings = rawFindings.filter((finding) => {
     if (input?.tenantKey && finding.tenantKey !== input.tenantKey) {
@@ -4513,12 +4514,19 @@ async function buildDangerousCatalogRepairPlanFromRequest(c: AdminContext): Prom
   };
 }
 
+// The destinations and policies are the installation's own; what is tenant data in these views
+// (which tenant sends what where) is limited to the caller's tenant unless the caller is the
+// platform.
 async function loadAdminLoggingCriticalPolicy(c: AdminContext) {
-  return getAdminLoggingControlRepository(c).loadCriticalPolicy();
+  return getAdminLoggingControlRepository(c).loadCriticalPolicy(
+    hasPlatformAuthority(getAuth(c)) ? undefined : getTenantIdFromContext(c)
+  );
 }
 
 async function loadSensitiveDetailPolicy(c: AdminContext) {
-  return getAdminLoggingControlRepository(c).loadSensitiveDetailPolicy();
+  return getAdminLoggingControlRepository(c).loadSensitiveDetailPolicy(
+    hasPlatformAuthority(getAuth(c)) ? undefined : getTenantIdFromContext(c)
+  );
 }
 
 interface LoggingPolicySnapshotDraftBody {
@@ -12733,13 +12741,16 @@ adminLoggingRouter.get('/', async (c) => {
       has_archive: read.hasArchive(),
       coverage: read.coverage(),
     };
+    // Delivery is counted for the caller's tenant; only the platform sees every tenant's.
+    const deliveryTenant = await resolveTenantKeyFilter(c, undefined);
+    if (!deliveryTenant.ok) return deliveryTenant.response;
     const deliverySummary = await adapter.query<Record<string, unknown>>(
       `SELECT lane, status, SUM(batch_count) AS total
        FROM logging_delivery_event_aggregates
-       WHERE bucket_start_at >= ?
+       WHERE bucket_start_at >= ? ${deliveryTenant.tenantKey ? 'AND tenant_key = ?' : ''}
        GROUP BY lane, status
        ORDER BY lane ASC, status ASC`,
-      [from]
+      deliveryTenant.tenantKey ? [from, deliveryTenant.tenantKey] : [from]
     );
     const recentChanges = await read.adapter.query<Record<string, unknown>>(
       `SELECT id AS audit_id, admin_user_id AS actor_id, action, resource_type, resource_id,

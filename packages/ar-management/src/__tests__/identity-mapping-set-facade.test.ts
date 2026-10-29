@@ -1364,7 +1364,7 @@ describe('a preview', () => {
       { key: null }
     );
     const viewer = await t.request(
-      t.cookie([{ role: 'role_viewer', scope: 'tenant' }]),
+      t.cookie([{ role: 'role_ar_viewer', scope: 'tenant' }]),
       'PUT',
       `${SETS}/${platform.id}?preview=true`,
       t.body(),
@@ -1812,7 +1812,7 @@ describe('who may use the facade', () => {
   it('lets a viewer read and no one without the settings permissions do anything', async () => {
     const t = await setup();
     const created = await t.create();
-    const viewer = t.cookie([{ role: 'role_viewer', scope: 'tenant' }]);
+    const viewer = t.cookie([{ role: 'role_ar_viewer', scope: 'tenant' }]);
 
     const list = await t.request(viewer, 'GET', SETS);
     const read = await t.request(viewer, 'GET', `${SETS}/${created.id}`);
@@ -2673,7 +2673,7 @@ describe('a stored answer is for the credential that made the request', () => {
     t.db
       .prepare(
         `INSERT INTO admin_role_assignments (id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, created_at)
-         VALUES ('demoted-assignment', ?, ?, 'role_super_admin', 'tenant', ?, ?)`
+         VALUES ('demoted-assignment', ?, ?, 'role_ar_super_admin', 'tenant', ?, ?)`
       )
       .run(TENANT, userId, TENANT, Date.now());
 
@@ -3042,7 +3042,7 @@ describe('repeating a deletion', () => {
     t.db
       .prepare(
         `INSERT INTO admin_role_assignments (id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, created_at)
-         VALUES ('demoted-delete', ?, ?, 'role_super_admin', 'tenant', ?, ?)`
+         VALUES ('demoted-delete', ?, ?, 'role_ar_super_admin', 'tenant', ?, ?)`
       )
       .run(TENANT, userId, TENANT, Date.now());
 

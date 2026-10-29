@@ -621,7 +621,7 @@ export async function resolveUserType(
     [subjectId, tenantId]
   );
 
-  if (result?.account_type === 'admin') return 'system_admin';
+  if (result?.account_type === 'admin') return 'admin';
   if (result?.account_type === 'service_account') return 'end_user';
   // Guest registration is exposed through account:lifecycle:read, not the subject type.
   return 'end_user';
@@ -643,8 +643,8 @@ export async function resolveUserType(
  * const rbacClaims = await getUserRBACClaims({ metadata, account }, userId, tenantId);
  * // Result:
  * // {
- * //   authrim_roles: ['end_user', 'org_admin'],
- * //   authrim_user_type: 'enterprise_admin',
+ * //   authrim_roles: ['end_user', 'billing_manager'],
+ * //   authrim_user_type: 'end_user',
  * //   authrim_org_id: 'org_123',
  * //   authrim_plan: 'professional',
  * //   authrim_org_type: 'enterprise'

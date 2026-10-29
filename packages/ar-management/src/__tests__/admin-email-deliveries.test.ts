@@ -35,7 +35,7 @@ function adapter(value: Awaited<ReturnType<typeof row>>): DatabaseAdapter {
 
 describe('Admin email delivery history', () => {
   it.each([
-    ['admin', ['admin'], [], 'full'],
+    ['ar_tenant_admin', ['ar_tenant_admin'], [], 'full'],
     [
       'technical investigator',
       ['technical_investigator'],

@@ -53,7 +53,7 @@ pnpm run admin-ui:issue-session -- --env single --local --ui-origin http://127.0
 ## Notes
 
 - The default TTL is 30 minutes.
-- The default role is `super_admin`.
+- The default role is `ar_super_admin`.
 - The tool does not create or verify passkeys.
 - The tool does not modify Admin UI authentication code.
 - The generated account uses an `example.invalid` email address and ID prefixes reserved for this

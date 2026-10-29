@@ -506,8 +506,8 @@ it('creates an import from verified upload handles with the bundle source identi
 it('records the authority of a platform operator who asks for an import', async () => {
   auth = {
     ...auth,
-    roles: ['super_admin'],
-    globalRoles: ['super_admin'],
+    roles: ['ar_super_admin'],
+    globalRoles: ['ar_super_admin'],
     tenantScope: ['*'],
     globalPermissions: ['*'],
     globalHierarchyLevel: 100,

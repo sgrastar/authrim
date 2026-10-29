@@ -2425,7 +2425,7 @@ paths:
         usual tenant view access, but saving it (set, clear, and so on) needs platform authority, a
         role that may edit settings held through a global assignment, or a machine token that may
         write the settings of every tenant; the tenant's own administrators (including its
-        super_admin), tokens limited to some tenants, and agents are refused with 403. It is a
+        ar_tenant_admin), tokens limited to some tenants, and agents are refused with 403. It is a
         tenant category only (400 for the platform and for apps), has no environment variable, is
         not inherited, is not given to several tenants by the bulk apply, is not copied when a
         tenant is cloned, and cannot be rolled back through the settings history routes (400).
@@ -7061,8 +7061,11 @@ paths:
       operationId: deleteApiAdminGuestUsersById
       summary: Delete a guest account.
       description: >-
-        Deletes a guest account and all browser resume credentials for that account. Upgrade history is
-        preserved for audit purposes. An active account legal hold rejects deletion with 409.
+        Accepts or resumes one guest deletion request across bounded pages. A new legal hold can pause
+        the original request until erasure starts; active holds return 409. A 503 guest_deletion_pending
+        response with Retry-After means the same request is still running. Success is returned only
+        after Core erasure, the minimal PII deny marker, and authentication-state proof are confirmed.
+        Upgrade history is preserved under its existing retention policy.
       responses:
         '200':
           $ref: '#/components/responses/GuestUserDelete'
@@ -7075,6 +7078,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -7150,8 +7155,13 @@ paths:
       operationId: postApiAdminGuestUsersCleanup
       summary: Clean up expired guest accounts.
       description: >-
-        Finds expired browser resume credentials and optionally deletes the associated guest accounts. The
-        default dry-run mode reports what would be removed without mutating data.
+        Reports expired browser resume credentials and existing deletion requests without mutation by
+        default. With dry_run=false, resumes original deletion requests first, then processes at most
+        16 credential or job candidates per request. Pass next_cursor back as cursor to continue beyond
+        held or pending candidates while has_more is true. A null next_cursor restarts the next sweep.
+        Cursors expire when the verified storage inventory changes. complete=false
+        includes pending work and legal holds; a partial response does not mean all guests are erased.
+        A 503 reports unavailable or unverified storage rather than a successful empty cleanup.
       responses:
         '200':
           $ref: '#/components/responses/GuestUserCleanup'
@@ -7160,6 +7170,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/GuestUserCleanup'
@@ -36282,7 +36294,7 @@ components:
           schema:
             $ref: '#/components/schemas/AdminManagementRoleAssignmentCreateRequest'
           example:
-            role_id: role_security_admin
+            role_id: role_ar_tenant_admin
             admin_user_id: admin_123
             scope_type: tenant
             scope_id: default
@@ -37404,13 +37416,13 @@ components:
             $ref: '#/components/schemas/AdminRoleAssignmentRuleInput'
           example:
             name: assign_engineering_viewer
-            role_id: role_viewer
+            role_id: role_ar_viewer
             condition:
               type: email_domain
               domain: example.com
             actions:
               - type: assign_role
-                role_id: role_viewer
+                role_id: role_ar_viewer
             priority: 10
     AdminRoleAssignmentRuleTest:
       required: true
@@ -37977,7 +37989,7 @@ components:
           schema:
             $ref: '#/components/schemas/UserRoleAssignRequest'
           example:
-            role_id: role_support
+            role_id: role_ar_support
             scope: global
             expires_at: null
     UserSendEmail:
@@ -40393,7 +40405,7 @@ components:
             email: admin@example.com
             name: Admin User
             roles:
-              - super_admin
+              - ar_super_admin
             permissions:
               - admin.users.read
               - admin.users.write
@@ -42242,7 +42254,7 @@ components:
             tenant_id: tenant_123
             name: assign_engineering_viewer
             description: Assign viewer role to engineering users.
-            role_id: role_viewer
+            role_id: role_ar_viewer
             scope_type: global
             scope_target: ''
             condition:
@@ -42250,7 +42262,7 @@ components:
               domain: example.com
             actions:
               - type: assign_role
-                role_id: role_viewer
+                role_id: role_ar_viewer
             priority: 10
             is_active: true
             stop_processing: false
@@ -42276,7 +42288,7 @@ components:
             $ref: '#/components/schemas/AdminRoleListResponse'
           example:
             roles:
-              - id: role_viewer
+              - id: role_ar_viewer
                 tenant_id: tenant_123
                 name: viewer
                 display_name: Viewer
@@ -42296,7 +42308,7 @@ components:
             $ref: '#/components/schemas/AdminRoleEnvelope'
           example:
             role:
-              id: role_viewer
+              id: role_ar_viewer
               tenant_id: tenant_123
               name: viewer
               display_name: Viewer
@@ -42363,7 +42375,7 @@ components:
           schema:
             $ref: '#/components/schemas/AdminRoleAssignmentsResponse'
           example:
-            role_id: role_viewer
+            role_id: role_ar_viewer
             role_name: viewer
             assignments:
               - assignment_id: assign_123
@@ -44665,7 +44677,7 @@ components:
             permissions:
               - permission: 'users:read'
                 source: role
-                source_id: role_support
+                source_id: role_ar_support
                 source_name: Support Agent
                 granted_at: 1770000000
                 expires_at: null
@@ -44673,7 +44685,7 @@ components:
               users:
                 - permission: 'users:read'
                   source: role
-                  source_id: role_support
+                  source_id: role_ar_support
                   source_name: Support Agent
                   granted_at: 1770000000
                   expires_at: null
@@ -44683,7 +44695,7 @@ components:
               from_organizations: 0
               from_inherited: 0
             roles:
-              - role_id: role_support
+              - role_id: role_ar_support
                 role_name: Support Agent
                 granted_at: 1770000000000
                 expires_at: null
@@ -44764,7 +44776,7 @@ components:
             user_id: user_123
             roles:
               - id: ra_123
-                role_id: role_support
+                role_id: role_ar_support
                 role_name: support_agent
                 role_display_name: Support Agent
                 is_system_role: false
@@ -44786,7 +44798,7 @@ components:
             assignment:
               id: ra_123
               subject_id: user_123
-              role_id: role_support
+              role_id: role_ar_support
               role_name: support_agent
               scope: global
               scope_target: ''
@@ -54595,8 +54607,8 @@ components:
             - string
             - 'null'
       example:
-        role_id: role_security_admin
-        role_name: security_admin
+        role_id: role_ar_tenant_admin
+        role_name: ar_tenant_admin
         direct_permissions:
           - 'admin:admin_roles:read'
         effective_permissions:
@@ -54829,6 +54841,11 @@ components:
       type: object
       additionalProperties: false
       properties:
+        cursor:
+          type: string
+          nullable: true
+          maxLength: 2048
+          description: Opaque selection position from next_cursor; it does not grant authority.
         dry_run:
           type: boolean
           default: true
@@ -54843,6 +54860,9 @@ components:
           required:
             - dry_run
             - expired_count
+            - pending_users
+            - has_more
+            - next_cursor
             - expired_credentials
             - note
           properties:
@@ -54850,6 +54870,15 @@ components:
               type: boolean
               enum:
                 - true
+            pending_users:
+              type: integer
+              minimum: 0
+            has_more:
+              type: boolean
+            next_cursor:
+              type: string
+              nullable: true
+              maxLength: 2048
             expired_count:
               type: integer
               minimum: 0
@@ -54878,6 +54907,11 @@ components:
             - deleted_users
             - deleted_credentials
             - deactivated_credentials
+            - complete
+            - has_more
+            - next_cursor
+            - pending_users
+            - held_users
           properties:
             success:
               type: boolean
@@ -54885,6 +54919,20 @@ components:
               type: boolean
               enum:
                 - false
+            complete:
+              type: boolean
+            has_more:
+              type: boolean
+            next_cursor:
+              type: string
+              nullable: true
+              maxLength: 2048
+            pending_users:
+              type: integer
+              minimum: 0
+            held_users:
+              type: integer
+              minimum: 0
             deleted_users:
               type: integer
               minimum: 0
@@ -67474,13 +67522,13 @@ components:
           format: int64
       example:
         name: assign_engineering_viewer
-        role_id: role_viewer
+        role_id: role_ar_viewer
         condition:
           type: email_domain
           domain: example.com
         actions:
           - type: assign_role
-            role_id: role_viewer
+            role_id: role_ar_viewer
         priority: 10
     AdminRoleAssignmentRuleTestRequest:
       type: object
@@ -67635,7 +67683,7 @@ components:
             $ref: '#/components/schemas/AdminRole'
       example:
         roles:
-          - id: role_viewer
+          - id: role_ar_viewer
             tenant_id: tenant_123
             name: viewer
             display_name: Viewer
@@ -72251,7 +72299,7 @@ components:
         permissions:
           - permission: 'users:read'
             source: role
-            source_id: role_support
+            source_id: role_ar_support
             source_name: Support Agent
             granted_at: 1770000000
             expires_at: null
@@ -72259,7 +72307,7 @@ components:
           users:
             - permission: 'users:read'
               source: role
-              source_id: role_support
+              source_id: role_ar_support
               source_name: Support Agent
               granted_at: 1770000000
               expires_at: null
@@ -72269,7 +72317,7 @@ components:
           from_organizations: 0
           from_inherited: 0
         roles:
-          - role_id: role_support
+          - role_id: role_ar_support
             role_name: Support Agent
             granted_at: 1770000000000
             expires_at: null
@@ -72467,7 +72515,7 @@ components:
         user_id: user_123
         roles:
           - id: ra_123
-            role_id: role_support
+            role_id: role_ar_support
             role_name: support_agent
             role_display_name: Support Agent
             is_system_role: false
@@ -72496,7 +72544,7 @@ components:
         expires_at:
           type: integer
       example:
-        role_id: role_support
+        role_id: role_ar_support
         scope: global
         expires_at: null
     UserRoleAssignResponse:
@@ -72520,7 +72568,7 @@ components:
         assignment:
           id: ra_123
           subject_id: user_123
-          role_id: role_support
+          role_id: role_ar_support
           role_name: support_agent
           scope: global
           scope_target: ''

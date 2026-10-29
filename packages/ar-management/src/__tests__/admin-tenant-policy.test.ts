@@ -182,7 +182,7 @@ describe('adminTenantPolicyMiddleware', () => {
   });
 
   it('allows platform admins at the tenant-domain mapping platform guard', async () => {
-    const app = buildPlatformGuardApp(['super_admin']);
+    const app = buildPlatformGuardApp(['ar_super_admin']);
     const res = await app.request(
       makeRequest('/api/admin/platform/tenant-domain-mappings'),
       undefined,

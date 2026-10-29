@@ -139,7 +139,7 @@ describe('Policy service branch and failure behavior', () => {
         request('/api/policy/evaluate', {
           method: 'POST',
           body: {
-            subject: { id: 'user', roles: [{ name: 'system_admin', scope: 'global' }] },
+            subject: { id: 'user', roles: [{ name: 'admin', scope: 'global' }] },
             resource: { type: 'document', id: 'doc' },
             action: { name: 'read' },
             timestamp: 1,

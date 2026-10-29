@@ -422,7 +422,7 @@ describe('/api/admin/platform/settings/legacy-import', () => {
 
   it('previews by default and runs only when asked, for platform admins', async () => {
     const { env, settings } = environment(saved, config);
-    const request = appFor(env, ['system_admin']);
+    const request = appFor(env, ['ar_super_admin']);
 
     const previewed = await request('GET');
     expect(previewed.status).toBe(200);
@@ -443,7 +443,7 @@ describe('/api/admin/platform/settings/legacy-import', () => {
 
   it('refuses a platform role that only a tenant gives: the import covers the whole environment', async () => {
     const { env } = environment(saved, config);
-    const request = appFor(env, ['system_admin'], false);
+    const request = appFor(env, ['ar_super_admin'], false);
 
     expect((await request('GET')).status).toBe(403);
     expect((await request('POST', { dryRun: false })).status).toBe(403);
@@ -462,7 +462,7 @@ describe('/api/admin/platform/settings/legacy-import', () => {
     } as unknown as Env;
     const before = new Map(settings);
 
-    const response = await appFor(held, ['system_admin'])('POST', { dryRun: false });
+    const response = await appFor(held, ['ar_super_admin'])('POST', { dryRun: false });
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
@@ -477,6 +477,6 @@ describe('/api/admin/platform/settings/legacy-import', () => {
     expect((await appFor(env, ['admin'])('POST', { dryRun: false })).status).toBe(403);
 
     const broken = environment(saved, config, ['system_settings']);
-    expect((await appFor(broken.env, ['system_admin'])('GET')).status).toBe(503);
+    expect((await appFor(broken.env, ['ar_super_admin'])('GET')).status).toBe(503);
   });
 });

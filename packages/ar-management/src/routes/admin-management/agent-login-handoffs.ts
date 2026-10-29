@@ -21,6 +21,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   type AdminAuthContext,
   type Env,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import type { AgentManagementEnv } from '../../agent-downscope-auth';
 
@@ -29,7 +30,7 @@ type AgentLoginHandoffContext = Context<{
   Variables: { adminAuth?: AdminAuthContext };
 }>;
 
-const REQUIRED_ADMIN_ROLES = ['super_admin', 'security_admin', 'admin', 'support', 'viewer'];
+const REQUIRED_ADMIN_ROLES = [...ADMIN_ROLE_GROUPS.anyAdmin];
 
 interface RootAdminSessionRow {
   id: string;

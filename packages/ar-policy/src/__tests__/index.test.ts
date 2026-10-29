@@ -136,7 +136,7 @@ describe('Policy Service API', () => {
         body: {
           subject: {
             id: 'user_123',
-            roles: [{ name: 'system_admin', scope: 'global' }],
+            roles: [{ name: 'admin', scope: 'global' }],
           },
           resource: {
             type: 'document',
@@ -152,7 +152,7 @@ describe('Policy Service API', () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.allowed).toBe(true);
-      expect(body.decidedBy).toBe('system_admin_full_access');
+      expect(body.decidedBy).toBe('admin_full_access');
     });
 
     it('should deny access for non-admin user', async () => {
@@ -325,7 +325,7 @@ describe('Policy Service API', () => {
         method: 'POST',
         body: {
           subjectId: 'user_123',
-          roles: [{ name: 'system_admin', scope: 'global' }],
+          roles: [{ name: 'admin', scope: 'global' }],
           resourceType: 'document',
           resourceId: 'doc_456',
           action: 'read',
@@ -361,7 +361,7 @@ describe('Policy Service API', () => {
         body: {
           claims: {
             sub: 'user_123',
-            authrim_roles: ['system_admin'],
+            authrim_roles: ['admin'],
           },
           resourceType: 'document',
           resourceId: 'doc_456',
@@ -380,7 +380,7 @@ describe('Policy Service API', () => {
         method: 'POST',
         body: {
           subjectId: 'user_123',
-          roles: [{ name: 'system_admin', scope: 'global' }],
+          roles: [{ name: 'admin', scope: 'global' }],
           resourceType: 'document',
           resourceId: 'doc_456',
           action: 'read',
@@ -447,10 +447,10 @@ describe('Policy Service API', () => {
       expect(body.isAdmin).toBe(true);
     });
 
-    it('should return true for system_admin role', async () => {
+    it('should return true for admin role', async () => {
       const req = createRequest('/api/policy/is-admin', {
         method: 'POST',
-        body: { roles: ['system_admin'] },
+        body: { roles: ['admin'] },
       });
       const res = await app.fetch(req, mockEnv);
 
@@ -477,7 +477,7 @@ describe('Policy Service API', () => {
         body: {
           claims: {
             sub: 'user_123',
-            authrim_roles: ['org_admin'],
+            authrim_roles: ['admin'],
           },
         },
       });
@@ -597,7 +597,7 @@ describe('Policy Service API', () => {
         body: {
           subject: {
             id: 'user_123',
-            roles: [{ name: 'system_admin', scope: 'global' }],
+            roles: [{ name: 'admin', scope: 'global' }],
           },
           resource: { type: 'doc', id: 'doc_1' },
           action: { name: 'read' },

@@ -149,6 +149,47 @@ export function createProductionTenantBackupRestoreTargets(input: { env: Env; te
     platform,
     plan,
     assertUnpublished,
+    /** A retry may observe the platform half committed; only this operation's sealed target admits it. */
+    async assertActivationReady(context: TenantBackupStepContext, planDigest: string) {
+      if (context.operation.phase !== 'activate_restore' || !/^[a-f0-9]{64}$/.test(planDigest))
+        invalid();
+      const targets = await resolve(context);
+      const core = targets.get('tenant_core/default') ?? invalid();
+      const users = targets.get('tenant_core/users') ?? invalid();
+      const [platformRow, coreRow, receipt] = await Promise.all([
+        platform.queryOne<{ lifecycle_state: string }>(
+          'SELECT lifecycle_state FROM tenants WHERE id=?',
+          [context.lease.tenantId],
+          { consistencyClass: 'primary_required' }
+        ),
+        core.database.queryOne<{ lifecycle_state: string }>(
+          'SELECT lifecycle_state FROM tenants WHERE id=?',
+          [context.lease.tenantId],
+          { consistencyClass: 'primary_required' }
+        ),
+        users.database.queryOne(
+          `SELECT 1 AS owned FROM tenant_backup_restore_targets WHERE id=? AND tenant_id=? AND operation_id=? AND resource_id=? AND plan_digest=? AND state='sealed'`,
+          [
+            `${context.lease.operationId}:${users.resourceId}`,
+            context.lease.tenantId,
+            context.lease.operationId,
+            users.resourceId,
+            planDigest,
+          ],
+          { consistencyClass: 'primary_required' }
+        ),
+      ]);
+      if (
+        !receipt ||
+        !platformRow ||
+        !coreRow ||
+        !['provisioning', 'active'].includes(platformRow.lifecycle_state) ||
+        !['provisioning', 'active'].includes(coreRow.lifecycle_state) ||
+        (platformRow.lifecycle_state === 'provisioning' && coreRow.lifecycle_state === 'active')
+      )
+        invalid();
+      context.signal.throwIfAborted();
+    },
     async resolveTarget(
       context: TenantBackupStepContext,
       resourceId: string,

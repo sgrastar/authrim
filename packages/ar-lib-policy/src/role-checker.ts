@@ -31,7 +31,7 @@ export interface RoleCheckOptions {
  *
  * @example
  * ```typescript
- * if (hasRole(subject, 'system_admin')) {
+ * if (hasRole(subject, 'admin')) {
  *   // Allow access
  * }
  * ```
@@ -72,7 +72,7 @@ export function hasRole(
  *
  * @example
  * ```typescript
- * if (hasAnyRole(subject, ['system_admin', 'org_admin'])) {
+ * if (hasAnyRole(subject, ['admin', 'billing_manager'])) {
  *   // Allow access
  * }
  * ```
@@ -109,39 +109,13 @@ export function hasAllRoles(
 }
 
 /**
- * Check if subject is an admin (has any admin role)
+ * Check if subject has the preset admin role
  *
  * @param subject - Subject to check
- * @returns true if subject has any admin role
+ * @returns true if subject has the admin role
  */
 export function isAdmin(subject: PolicySubject | SubjectRole[]): boolean {
-  return hasAnyRole(subject, ['system_admin', 'distributor_admin', 'org_admin', 'admin']);
-}
-
-/**
- * Check if subject is a system admin
- *
- * @param subject - Subject to check
- * @returns true if subject has system_admin role
- */
-export function isSystemAdmin(subject: PolicySubject | SubjectRole[]): boolean {
-  return hasRole(subject, 'system_admin');
-}
-
-/**
- * Check if subject is an organization admin
- *
- * @param subject - Subject to check
- * @param orgId - Optional organization ID to check scoped role
- * @returns true if subject has org_admin role
- */
-export function isOrgAdmin(subject: PolicySubject | SubjectRole[], orgId?: string): boolean {
-  const options: RoleCheckOptions = {};
-  if (orgId) {
-    options.scope = 'org';
-    options.scopeTarget = `org:${orgId}`;
-  }
-  return hasRole(subject, 'org_admin', options);
+  return hasRole(subject, 'admin');
 }
 
 /**
@@ -193,8 +167,8 @@ export function getActiveRoles(
  * ```typescript
  * const subject = subjectFromClaims({
  *   sub: 'user_123',
- *   authrim_roles: ['end_user', 'org_admin'],
- *   authrim_user_type: 'enterprise_admin',
+ *   authrim_roles: ['end_user', 'billing_manager'],
+ *   authrim_user_type: 'end_user',
  *   authrim_org_id: 'org_456',
  *   authrim_plan: 'professional',
  *   authrim_org_type: 'enterprise'

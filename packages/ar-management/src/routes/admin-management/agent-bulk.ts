@@ -260,6 +260,11 @@ agentBulkPlansRouter.post('/', async (c) => {
   } catch {
     return error(c, 400, 'AGENT_BULK_PLAN_INVALID');
   }
+  // Whether the caller may act on these tenants is settled before anything is read about them, so
+  // that the answer does not tell a tenant's state to someone who has no business with it.
+  if (!tenantScoped(c, resolved.definition.targetTenantIds, ADMIN_PERMISSIONS.BULK_PLANS_CREATE)) {
+    return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
+  }
   if (!(await activeTargetTenants(c, resolved.definition.targetTenantIds))) {
     return error(c, 400, 'AGENT_BULK_PLAN_TARGET_INVALID');
   }
@@ -274,9 +279,6 @@ agentBulkPlansRouter.post('/', async (c) => {
       policyError === 'AGENT_BULK_PLAN_TARGET_POLICY_UNAVAILABLE' ? 503 : 409,
       policyError
     );
-  }
-  if (!tenantScoped(c, resolved.definition.targetTenantIds, ADMIN_PERMISSIONS.BULK_PLANS_CREATE)) {
-    return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
   }
   const database = requireDedicatedAdminDatabaseAdapter(c.env, 'agent-bulk-grant-validation');
   const grants = new AdminAgentAccessRepository(

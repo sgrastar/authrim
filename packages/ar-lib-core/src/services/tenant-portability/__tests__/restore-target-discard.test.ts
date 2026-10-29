@@ -60,6 +60,68 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+it('keeps immutable Guest denials while discarding ordinary restored lifecycle rows', async () => {
+  db.exec(`CREATE TABLE guest_account_lifecycle(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,phase TEXT NOT NULL);
+    INSERT INTO guest_account_lifecycle VALUES ('active','a','active'),('finalized','a','registered'),('pending','a','deleting'),('gone','a','deleted'),('foreign','b','active');
+    CREATE TRIGGER keep_guest_denial BEFORE DELETE ON guest_account_lifecycle WHEN OLD.phase IN ('deleting','deleted') BEGIN SELECT RAISE(ABORT,'immutable'); END;
+    CREATE TABLE guest_core_mutation_epoch(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
+    INSERT INTO guest_core_mutation_epoch VALUES(1,7);`);
+  const schema = await Promise.all(
+    ['guest_account_lifecycle', 'guest_core_mutation_epoch'].map((name) =>
+      readBackupSqliteSchema(adapter(), name)
+    )
+  );
+  const lifecycle = {
+    ...dataset('guest_account_lifecycle', ['id', 'tenant_id', 'phase'], 'users'),
+    id: 'core.guest_account_lifecycle',
+  };
+  const discard = planTenantDiscard({ family: 'core', schema, datasets: [lifecycle], identity });
+  await expect(
+    runTenantDiscardPage({ database: adapter(), plan: discard, authorize: async () => {}, signal })
+  ).resolves.toEqual({ done: true });
+  expect(db.prepare('SELECT id FROM guest_account_lifecycle ORDER BY id').all()).toEqual([
+    { id: 'foreign' },
+    { id: 'gone' },
+    { id: 'pending' },
+  ]);
+  expect(await hasTenantDiscardRemaining(adapter(), discard)).toBe(false);
+  expect(db.prepare('SELECT revision FROM guest_core_mutation_epoch').get()).toEqual({
+    revision: 7,
+  });
+});
+
+it('retains terminal PII markers on cancel without attempting a forbidden DELETE', async () => {
+  db.exec(`CREATE TABLE guest_pii_erasure_markers(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,state TEXT NOT NULL);
+    INSERT INTO guest_pii_erasure_markers VALUES ('deny','a','deleted');
+    CREATE TRIGGER keep_guest_marker BEFORE DELETE ON guest_pii_erasure_markers BEGIN SELECT RAISE(ABORT,'immutable'); END;
+    CREATE TABLE guest_pii_mutation_epoch(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
+    INSERT INTO guest_pii_mutation_epoch VALUES(1,3);
+    CREATE TABLE users_pii(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL);
+    INSERT INTO users_pii VALUES ('live','a');`);
+  const schema = await Promise.all(
+    ['guest_pii_erasure_markers', 'guest_pii_mutation_epoch', 'users_pii'].map((name) =>
+      readBackupSqliteSchema(adapter(), name)
+    )
+  );
+  const datasets = ['guest_pii_erasure_markers', 'users_pii'].map((table) => ({
+    ...dataset(
+      table,
+      table === 'users_pii' ? ['id', 'tenant_id'] : ['id', 'tenant_id', 'state'],
+      'users'
+    ),
+    id: `pii.${table}`,
+  }));
+  const discard = planTenantDiscard({ family: 'pii', schema, datasets, identity });
+  expect(discard.tables.map((value) => value.table)).toEqual(['users_pii']);
+  await expect(
+    runTenantDiscardPage({ database: adapter(), plan: discard, authorize: async () => {}, signal })
+  ).resolves.toEqual({ done: true });
+  expect(db.prepare('SELECT * FROM guest_pii_erasure_markers').all()).toEqual([
+    { id: 'deny', tenant_id: 'a', state: 'deleted' },
+  ]);
+  expect(await hasTenantDiscardRemaining(adapter(), discard)).toBe(false);
+});
+
 it('clears self references, deletes children first and leaves other tenants alone', async () => {
   db.exec(`
     CREATE TABLE groups(id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, parent_id TEXT REFERENCES groups(id));
