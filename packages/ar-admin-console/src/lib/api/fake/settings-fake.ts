@@ -49,7 +49,7 @@ export interface FakeSettingsOptions {
 	locked?: readonly string[];
 }
 
-const EVERYONE: AdminAccess = { platform: true, roles: ['super_admin'], permissions: ['*'] };
+const EVERYONE: AdminAccess = { platform: true, roles: ['ar_super_admin'], permissions: ['*'] };
 
 function settingsOf(category: CategoryName): Record<string, SettingMeta> {
 	return ALL_CATEGORY_META[category].settings as Record<string, SettingMeta>;

@@ -888,7 +888,7 @@ function createMockContext(options: {
         userId: 'admin-user',
         email: 'admin@example.com',
         sessionId: 'session-123',
-        roles: ['system_admin'],
+        roles: ['ar_super_admin'],
         permissions: [],
       },
     ],

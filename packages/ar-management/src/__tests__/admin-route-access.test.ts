@@ -152,7 +152,7 @@ describe('declared admin route access', () => {
 
   it('restricts global R2 schedules and metrics to platform admin roles', () => {
     expect(findAdminRouteAccessRule('GET', '/api/admin/jobs/schedules')).toMatchObject({
-      roles: ['super_admin', 'system_admin'],
+      roles: ['ar_super_admin'],
     });
     expect(
       findAdminRouteAccessRule('GET', '/api/admin/jobs/schedules')?.permissions
@@ -403,10 +403,10 @@ describe('declared admin route access', () => {
   });
 
   it('keeps tenant cloning on the platform-admin tenant administration boundary', async () => {
-    const tenantWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE], ['tenant_admin']);
+    const tenantWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE], ['ar_tenant_admin']);
     const lifecycleWriter = createHarness(
       [ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD],
-      ['system_admin']
+      ['ar_super_admin']
     );
 
     await expect(
@@ -546,7 +546,7 @@ describe('declared admin route access', () => {
     const evidenceExporter = createHarness([
       ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE,
     ]);
-    const tenantAdmin = createHarness([], ['tenant_admin']);
+    const tenantAdmin = createHarness([], ['ar_tenant_admin']);
 
     await expect(
       reader.request('/api/admin/tenants/tenant-a/directory-auth/overview')

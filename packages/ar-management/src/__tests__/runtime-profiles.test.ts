@@ -71,8 +71,8 @@ function createTestApp() {
     c.set('adminAuth', {
       userId: 'admin-1',
       actorId: 'admin-1',
-      roles: ['system_admin'],
-      globalRoles: ['system_admin'],
+      roles: ['ar_super_admin'],
+      globalRoles: ['ar_super_admin'],
       tenantScope: ['*'],
       authMethod: 'session',
     });
@@ -89,8 +89,8 @@ function createTestApp() {
     c.set('adminAuth', {
       userId: 'admin-1',
       actorId: 'admin-1',
-      roles: ['system_admin'],
-      globalRoles: ['system_admin'],
+      roles: ['ar_super_admin'],
+      globalRoles: ['ar_super_admin'],
       tenantScope: ['*'],
       authMethod: 'session',
     });

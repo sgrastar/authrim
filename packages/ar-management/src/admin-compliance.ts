@@ -6,7 +6,7 @@
  * Access reviews: compliance/access-reviews.ts. Reports: compliance/report-routes.ts.
  *
  * Security:
- * - RBAC: tenant_admin or higher required
+ * - RBAC: ar_tenant_admin or higher required
  * - Rate limit: moderate profile
  * - Tenant isolation: All queries filtered by tenant_id
  *

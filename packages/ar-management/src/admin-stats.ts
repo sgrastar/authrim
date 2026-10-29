@@ -11,7 +11,7 @@ import { logQueryErrorResponse } from './log-archive-query';
  * - GET /api/admin/stats/geography   - Geography-based statistics (Phase 3)
  *
  * Security:
- * - RBAC: tenant_admin or higher required
+ * - RBAC: ar_tenant_admin or higher required
  * - Rate limit: moderate profile
  * - Tenant isolation: All queries filtered by tenant_id
  *

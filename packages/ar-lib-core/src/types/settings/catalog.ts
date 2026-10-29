@@ -117,6 +117,7 @@ export type CategoryName = keyof typeof ALL_CATEGORY_META;
 import type { SettingScopeLevel, ScopePermission, ScopedCategoryMeta } from './common';
 import { DEFAULT_SCOPE_PERMISSIONS } from './common';
 import type { SettingScope } from '../../utils/settings-manager';
+import { ADMIN_ROLES } from '../../constants/admin-roles';
 
 /**
  * Category scope configuration
@@ -139,13 +140,13 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   infrastructure: {
     allowedScopes: ['platform'],
     scopePermissions: {
-      platform: { viewRoles: ['system_admin', 'viewer'], editRoles: [] }, // read-only
+      platform: { viewRoles: [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.VIEWER], editRoles: [] }, // read-only
     },
   },
   encryption: {
     allowedScopes: ['platform'],
     scopePermissions: {
-      platform: { viewRoles: ['system_admin'], editRoles: [] }, // read-only, restricted view
+      platform: { viewRoles: [ADMIN_ROLES.SUPER_ADMIN], editRoles: [] }, // read-only, restricted view
     },
   },
   cache: {
@@ -206,8 +207,8 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['platform', 'tenant'],
     scopePermissions: {
       tenant: {
-        viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin', 'viewer'],
-        editRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin'],
+        viewRoles: [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.TENANT_ADMIN, ADMIN_ROLES.VIEWER],
+        editRoles: [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.TENANT_ADMIN],
       },
     },
   },

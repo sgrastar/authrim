@@ -437,8 +437,23 @@ adminRebacRouter.post('/admin-relationships', async (c: AdminContext) => {
       );
     }
 
+    // Both ends have to be this tenant's own administrators, or the relationship would point
+    // into another tenant (and its existence could be probed through the duplicate check).
+    for (const [type, id] of [
+      [body.from_type, body.from_id],
+      [body.to_type, body.to_id],
+    ] as const) {
+      if (
+        (type ?? 'admin_user') === 'admin_user' &&
+        !(await adminUserBelongsToTenant(adapter, tenantId, id))
+      ) {
+        return c.json({ error: 'not_found', message: 'Admin user not found' }, 404);
+      }
+    }
+
     // Check for duplicate
     const exists = await repo.hasRelationship(body.from_id, body.to_id, body.relationship_type, {
+      tenantId,
       fromType: body.from_type,
       toType: body.to_type,
     });
@@ -606,8 +621,18 @@ adminRebacRouter.post('/admins/:userId/relationships', async (c: AdminContext) =
       );
     }
 
+    if (
+      (body.to_type ?? 'admin_user') === 'admin_user' &&
+      !(await adminUserBelongsToTenant(adapter, tenantId, body.to_id))
+    ) {
+      return c.json({ error: 'not_found', message: 'Admin user not found' }, 404);
+    }
+
     // Check for duplicate
-    const exists = await repo.hasRelationship(userId, body.to_id, body.relationship_type);
+    const exists = await repo.hasRelationship(userId, body.to_id, body.relationship_type, {
+      tenantId,
+      toType: body.to_type,
+    });
     if (exists) {
       return c.json({ error: 'conflict', message: 'Relationship already exists' }, 409);
     }

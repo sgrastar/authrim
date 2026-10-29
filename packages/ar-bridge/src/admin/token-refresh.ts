@@ -6,6 +6,7 @@ import {
   createErrorResponse,
   getTenantIdFromContext,
   hasAdminPermission,
+  hasGlobalPlatformAuthority,
 } from '@authrim/ar-lib-core';
 import {
   getTokenRefreshConfig,
@@ -38,10 +39,31 @@ async function requirePermission(
   return null;
 }
 
+/**
+ * The refresh config is one document for every tenant (a shared KV key), so reading or changing
+ * it takes platform authority on top of the permission.
+ */
+async function requirePlatformConfigAccess(
+  c: AdminTokenRefreshContext,
+  permission: string
+): Promise<Response | null> {
+  const forbidden = await requirePermission(c, permission);
+  if (forbidden) {
+    return forbidden;
+  }
+  if (!hasGlobalPlatformAuthority(getAdminAuth(c), permission)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  return null;
+}
+
 export async function handleAdminGetTokenRefreshConfig(
   c: AdminTokenRefreshContext
 ): Promise<Response> {
-  const forbidden = await requirePermission(c, ADMIN_PERMISSIONS.EXTERNAL_TOKEN_REFRESH_READ);
+  const forbidden = await requirePlatformConfigAccess(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_TOKEN_REFRESH_READ
+  );
   if (forbidden) {
     return forbidden;
   }
@@ -53,7 +75,10 @@ export async function handleAdminGetTokenRefreshConfig(
 export async function handleAdminUpdateTokenRefreshConfig(
   c: AdminTokenRefreshContext
 ): Promise<Response> {
-  const forbidden = await requirePermission(c, ADMIN_PERMISSIONS.EXTERNAL_TOKEN_REFRESH_WRITE);
+  const forbidden = await requirePlatformConfigAccess(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_TOKEN_REFRESH_WRITE
+  );
   if (forbidden) {
     return forbidden;
   }
@@ -77,7 +102,14 @@ export async function handleAdminListTokenRefreshRuns(
 
   const limit = Number(c.req.query('limit') ?? '50');
   const tenantId = getTenantIdFromContext(c);
-  const runs = await listTokenRefreshRuns(c.env, tenantId, limit);
+  // Only the platform sees a run as a whole; a tenant sees its own part of it.
+  const view = hasGlobalPlatformAuthority(
+    getAdminAuth(c),
+    ADMIN_PERMISSIONS.EXTERNAL_TOKEN_REFRESH_READ
+  )
+    ? 'platform'
+    : 'tenant';
+  const runs = await listTokenRefreshRuns(c.env, tenantId, limit, view);
   return c.json({ runs });
 }
 

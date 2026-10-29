@@ -992,7 +992,7 @@ describe('tenant-runtime-registry-snapshot', () => {
       deploymentTarget: 'edge-a',
       snapshotStore,
       actorId: 'admin-1',
-      actorRoles: ['system_admin'],
+      actorRoles: ['ar_super_admin'],
       breakGlassConfirmation: TENANT_RUNTIME_REGISTRY_EMERGENCY_PURGE_CONFIRMATION,
       reason: 'stale generated binding after emergency rollback',
       now: new Date('2026-05-16T00:00:00.000Z'),
@@ -1037,13 +1037,13 @@ describe('tenant-runtime-registry-snapshot', () => {
         breakGlassConfirmation: TENANT_RUNTIME_REGISTRY_EMERGENCY_PURGE_CONFIRMATION,
         reason: 'operator requested',
       })
-    ).rejects.toThrow('tenant_runtime_registry_purge_requires_system_admin');
+    ).rejects.toThrow('tenant_runtime_registry_purge_requires_super_admin');
     await expect(
       purgeTenantRuntimeRegistrySnapshot({
         tenantId: 'tenant-a',
         snapshotStore,
         actorId: 'admin-1',
-        actorRoles: ['system_admin'],
+        actorRoles: ['ar_super_admin'],
         breakGlassConfirmation: 'PURGE',
         reason: 'operator requested',
       })

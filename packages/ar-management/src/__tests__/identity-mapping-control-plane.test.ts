@@ -4881,6 +4881,32 @@ describe('IdentityMappingControlPlaneRepository schema and template catalogs', (
     );
   });
 
+  it("shares only the default tenant's non-tenant templates with other tenants", async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.listMappingTemplates('tenant_a');
+
+    const { sql, params } = adapter.queries[0];
+    expect(sql).toContain("tenant_id = ? OR (tenant_id = ? AND template_scope <> 'tenant')");
+    expect(params).toEqual(['tenant_a', 'default']);
+  });
+
+  it('rejects a template scope that is not a string', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createMappingTemplate('default', {
+        templateKey: 'shared',
+        displayName: 'Shared',
+        template: {},
+        templateScope: 1 as unknown as string,
+      })
+    ).rejects.toThrow();
+    expect(adapter.executes).toHaveLength(0);
+  });
+
   it('rejects oversized imported schema catalogs before persistence', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -4999,7 +5025,7 @@ describe('identity mapping control plane Admin API handlers', () => {
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
       (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         is_platform_admin: false,
       });
       await next();
@@ -5044,7 +5070,7 @@ describe('identity mapping control plane Admin API handlers', () => {
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
       (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         is_platform_admin: false,
       });
       await next();

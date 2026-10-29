@@ -102,8 +102,8 @@ describe('machine access: what a principal or credential may be given', () => {
   it('refuses every tenant even for a permission the global assignment holds, when it holds no machine access', async () => {
     const context = setup();
     const actor = signIn(context.db, [
-      { role: 'role_viewer', scope: 'global' },
-      { role: 'role_super_admin', scope: 'tenant' },
+      { role: 'role_ar_viewer', scope: 'global' },
+      { role: 'role_ar_super_admin', scope: 'tenant' },
     ]);
     // The viewer role does not hold machine access, so the global part cannot hand it out.
     const created = await context.call(
@@ -251,7 +251,7 @@ describe('machine access: what a principal or credential may be given', () => {
     expect(issued.status).toBe(400);
   });
 
-  it('still lets a global super_admin create, widen and key a principal for every tenant', async () => {
+  it('still lets a global ar_super_admin create, widen and key a principal for every tenant', async () => {
     const context = setup();
     const global = signIn(context.db, GLOBAL_SUPER_ADMIN);
 
@@ -287,7 +287,7 @@ describe('machine access: what a principal or credential may be given', () => {
     expect(widened.status).toBe(200);
   });
 
-  it('still lets a tenant-limited super_admin manage machine access inside the tenant', async () => {
+  it('still lets a tenant-limited ar_super_admin manage machine access inside the tenant', async () => {
     const context = setup();
     const actor = signIn(context.db, TENANT_SUPER_ADMIN);
 
@@ -424,7 +424,7 @@ describe('changing a role that a global assignment leads to', () => {
     expect(patched.status).toBe(403);
   });
 
-  it('still lets a global super_admin change such a role', async () => {
+  it('still lets a global ar_super_admin change such a role', async () => {
     const context = setup();
     insertRole(context.db, {
       id: 'role_global_reader',
@@ -447,7 +447,7 @@ describe('changing a role that a global assignment leads to', () => {
     expect(patched.status).toBe(200);
   });
 
-  it('still lets a tenant-limited super_admin change a role that only the tenant uses', async () => {
+  it('still lets a tenant-limited ar_super_admin change a role that only the tenant uses', async () => {
     const context = setup();
     insertRole(context.db, {
       id: 'role_local',
@@ -477,7 +477,7 @@ describe('role hierarchy', () => {
     insertRole(context.db, {
       id: 'role_writer',
       // Signing in takes one of the Admin roles by name; the permissions are the writer's own.
-      name: 'support',
+      name: 'ar_support',
       permissions: ['admin:admin_roles:read', 'admin:admin_roles:write', 'admin:users:read'],
       hierarchy: 50,
     });
@@ -571,7 +571,7 @@ describe('inherits_from', () => {
     insertRole(context.db, {
       id: 'role_writer',
       // Signing in takes one of the Admin roles by name; the permissions are the writer's own.
-      name: 'support',
+      name: 'ar_support',
       permissions: ['admin:admin_roles:read', 'admin:admin_roles:write', 'admin:users:read'],
       hierarchy: 50,
     });
@@ -579,7 +579,7 @@ describe('inherits_from', () => {
   }
   const writer = { role: 'role_writer', scope: 'tenant' as const };
 
-  it('refuses a role that inherits super_admin, at creation and by update', async () => {
+  it('refuses a role that inherits ar_super_admin, at creation and by update', async () => {
     const context = withWriter();
     insertRole(context.db, {
       id: 'role_plain',
@@ -593,10 +593,10 @@ describe('inherits_from', () => {
       name: 'sneaky',
       permissions: [],
       hierarchy_level: 5,
-      inherits_from: 'role_super_admin',
+      inherits_from: 'role_ar_super_admin',
     });
     const updated = await context.call(actor.cookie, 'PATCH', '/api/admin/admin-roles/role_plain', {
-      inherits_from: 'role_super_admin',
+      inherits_from: 'role_ar_super_admin',
     });
 
     expect(created.status).toBe(403);
@@ -692,7 +692,7 @@ describe('inherits_from', () => {
       name: 'child-of-viewer',
       permissions: [],
       hierarchy_level: 5,
-      inherits_from: 'role_viewer',
+      inherits_from: 'role_ar_viewer',
     });
 
     expect(created.status).toBe(201);
@@ -705,25 +705,26 @@ describe('inherits_from', () => {
     const context = setup();
     const actor = signIn(context.db, TENANT_SUPER_ADMIN);
 
-    // super_admin is a system role; system_admin is a name that platform checks read.
+    // The reserved prefix is the standard roles' alone: Admin checks read their names as authority.
     const created = await context.call(actor.cookie, 'POST', '/api/admin/admin-roles', {
-      name: 'system_admin',
+      name: 'ar_super_admin',
       permissions: [],
       hierarchy_level: 1,
     });
     const admin = await context.call(actor.cookie, 'POST', '/api/admin/admin-roles', {
-      name: 'super_admin',
+      name: 'AR_Anything',
       permissions: [],
       hierarchy_level: 1,
     });
+
     const free = await context.call(actor.cookie, 'POST', '/api/admin/admin-roles', {
       name: 'auditors',
       permissions: [],
       hierarchy_level: 1,
     });
 
-    expect(created.status).toBe(409);
-    expect(admin.status).toBe(409);
+    expect(created.status).toBe(400);
+    expect(admin.status).toBe(400);
     expect(free.status).toBe(201);
   });
 });
@@ -763,18 +764,18 @@ describe('bringing a global invitation back', () => {
       }
     ).expires_at;
 
-  it('refuses a resend of an expired global or super_admin invitation without the wildcard from a global assignment', async () => {
+  it('refuses a resend of an expired global or ar_super_admin invitation without the wildcard from a global assignment', async () => {
     const context = setup();
     insertInvitation(context, {
       id: 'global-invitation',
-      roleId: 'role_support',
+      roleId: 'role_ar_support',
       roleName: 'support',
       scope: 'global',
     });
     insertInvitation(context, {
       id: 'super-invitation',
-      roleId: 'role_super_admin',
-      roleName: 'super_admin',
+      roleId: 'role_ar_super_admin',
+      roleName: 'ar_super_admin',
       scope: 'global',
     });
     const before = expiryOf(context, 'global-invitation');
@@ -794,17 +795,17 @@ describe('bringing a global invitation back', () => {
     expect(expiryOf(context, 'global-invitation')).toBe(before);
   });
 
-  it('lets a global super_admin resend it, and a tenant-limited super_admin resend a tenant invitation', async () => {
+  it('lets a global ar_super_admin resend it, and a tenant-limited ar_super_admin resend a tenant invitation', async () => {
     const context = setup();
     insertInvitation(context, {
       id: 'global-invitation',
-      roleId: 'role_support',
+      roleId: 'role_ar_support',
       roleName: 'support',
       scope: 'global',
     });
     insertInvitation(context, {
       id: 'tenant-invitation',
-      roleId: 'role_support',
+      roleId: 'role_ar_support',
       roleName: 'support',
       scope: 'tenant',
     });

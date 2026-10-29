@@ -97,7 +97,7 @@ function createContext(
   tenantId: string,
   body?: unknown,
   permissions: string[] = ['*'],
-  roles: string[] = ['system_admin'],
+  roles: string[] = ['ar_super_admin'],
   query: Record<string, string | undefined> = {},
   params: Record<string, string> = {}
 ) {
@@ -310,7 +310,7 @@ describe('directory auth admin API', () => {
           email_code_fallback_mode: 'directory_unavailable_recovery',
         },
         [],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
     const body = (await denied.json()) as Record<string, unknown>;
@@ -329,7 +329,7 @@ describe('directory auth admin API', () => {
           email_code_fallback_mode: 'directory_unavailable_recovery',
         },
         ['admin:directory_auth:migration:write'],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
     const body = (await response.json()) as { item: { name: string } };
@@ -353,7 +353,7 @@ describe('directory auth admin API', () => {
           email_code_fallback_mode: 'login_method',
         },
         [],
-        ['tenant_admin'],
+        ['ar_tenant_admin'],
         {},
         { campaignId: 'damc_1' }
       ) as never
@@ -374,7 +374,7 @@ describe('directory auth admin API', () => {
           period_end_at: 2000,
         },
         [],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
     const body = (await response.json()) as Record<string, unknown>;
@@ -395,7 +395,7 @@ describe('directory auth admin API', () => {
           download_after_delete: true,
         },
         ['admin:directory_auth:evidence_export:create'],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
     const body = (await response.json()) as {
@@ -447,7 +447,7 @@ describe('directory auth admin API', () => {
           period_end_at: now - 24 * 60 * 60 * 1000,
         },
         ['admin:directory_auth:evidence_export:create'],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
 
@@ -495,7 +495,7 @@ describe('directory auth admin API', () => {
         'tenant-a',
         undefined,
         ['admin:directory_auth:evidence_export:create'],
-        ['tenant_admin'],
+        ['ar_tenant_admin'],
         {},
         { exportId: 'daex_1' }
       ) as never
@@ -552,7 +552,7 @@ describe('directory auth admin API', () => {
         'tenant-a',
         undefined,
         ['admin:directory_auth:evidence_export:create'],
-        ['tenant_admin'],
+        ['ar_tenant_admin'],
         {},
         { exportId: 'daex_1' }
       ) as never
@@ -606,7 +606,7 @@ describe('directory auth admin API', () => {
           },
         },
         ['admin:directory_auth:write'],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
     const body = (await response.json()) as {
@@ -660,7 +660,7 @@ describe('directory auth admin API', () => {
           consent_summary: { operator_confirmed: true },
         },
         [],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
 
@@ -679,7 +679,7 @@ describe('directory auth admin API', () => {
           consent_summary: { operator_confirmed: true },
         },
         ['admin:directory_auth:write'],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
 
@@ -700,7 +700,7 @@ describe('directory auth admin API', () => {
           },
         },
         ['admin:directory_auth:write'],
-        ['tenant_admin']
+        ['ar_tenant_admin']
       ) as never
     );
 
@@ -740,7 +740,7 @@ describe('directory auth admin API', () => {
         'tenant-a',
         undefined,
         ['admin:directory_auth:write'],
-        ['tenant_admin'],
+        ['ar_tenant_admin'],
         {},
         { bundleId: 'dasb_1' }
       ) as never
@@ -767,11 +767,11 @@ describe('directory auth admin API', () => {
     const deniedBody = (await denied.json()) as { required_role?: string };
 
     expect(denied.status).toBe(403);
-    expect(deniedBody.required_role).toBe('tenant_admin');
+    expect(deniedBody.required_role).toBe('ar_tenant_admin');
     expect(mocks.cleanupExpiredDirectoryAuthMaintenance).not.toHaveBeenCalled();
 
     const response = await runDirectoryAuthMaintenanceCleanupHandler(
-      createContext('tenant-a', { reason: 'daily cleanup' }, [], ['tenant_admin']) as never
+      createContext('tenant-a', { reason: 'daily cleanup' }, [], ['ar_tenant_admin']) as never
     );
     const body = (await response.json()) as {
       result: {

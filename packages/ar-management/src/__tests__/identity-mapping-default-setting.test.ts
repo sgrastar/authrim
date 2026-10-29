@@ -858,25 +858,25 @@ describe('platform preview guards', () => {
 
 describe('who may save a default Mapping Set where', () => {
   const kinds: Array<{ name: string; assignments: Assignment[]; outcome: 'allowed' | 'denied' }> = [
-    { name: 'a global super_admin', assignments: GLOBAL_SUPER_ADMIN, outcome: 'allowed' },
+    { name: 'a global ar_super_admin', assignments: GLOBAL_SUPER_ADMIN, outcome: 'allowed' },
     {
-      name: 'a super_admin limited to one tenant',
+      name: 'a ar_super_admin limited to one tenant',
       assignments: TENANT_SUPER_ADMIN,
       outcome: 'denied',
     },
     {
-      name: 'a global viewer who is also a tenant super_admin',
+      name: 'a global viewer who is also a tenant ar_super_admin',
       assignments: GLOBAL_VIEWER_TENANT_SUPER_ADMIN,
       outcome: 'denied',
     },
     {
       name: 'a global viewer',
-      assignments: [{ role: 'role_viewer', scope: 'global' }],
+      assignments: [{ role: 'role_ar_viewer', scope: 'global' }],
       outcome: 'denied',
     },
     {
       name: 'a viewer of one tenant',
-      assignments: [{ role: 'role_viewer', scope: 'tenant' }],
+      assignments: [{ role: 'role_ar_viewer', scope: 'tenant' }],
       outcome: 'denied',
     },
   ];
@@ -901,7 +901,7 @@ describe('who may save a default Mapping Set where', () => {
     }
   });
 
-  it('still lets a super_admin limited to the tenant save the tenant’s own default', async () => {
+  it('still lets a ar_super_admin limited to the tenant save the tenant’s own default', async () => {
     const t = setup();
     const cookie = t.admin(TENANT_SUPER_ADMIN);
 
@@ -921,27 +921,31 @@ describe('the authority to edit a platform category', () => {
   it('asks for a platform role held through a global assignment, and a global tenant scope', () => {
     expect(
       hasGlobalPlatformSettingsEdit(
-        auth({ roles: ['super_admin'], globalRoles: ['super_admin'], tenantScope: ['*'] }),
+        auth({ roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'], tenantScope: ['*'] }),
         'identity-mapping'
       )
     ).toBe(true);
     expect(
       hasGlobalPlatformSettingsEdit(
-        auth({ roles: ['system_admin'], globalRoles: ['system_admin'], tenantScope: ['*'] }),
+        auth({ roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'], tenantScope: ['*'] }),
         'identity-mapping'
       )
     ).toBe(true);
     // The role is only held for a tenant: it is in `roles`, not in `globalRoles`.
     expect(
       hasGlobalPlatformSettingsEdit(
-        auth({ roles: ['super_admin'], globalRoles: [], tenantScope: ['tenant-a'] }),
+        auth({ roles: ['ar_super_admin'], globalRoles: [], tenantScope: ['tenant-a'] }),
         'identity-mapping'
       )
     ).toBe(false);
     // Roles without a global scope, or none of the roles that may edit, are not enough.
     expect(
       hasGlobalPlatformSettingsEdit(
-        auth({ roles: ['super_admin'], globalRoles: ['super_admin'], tenantScope: ['tenant-a'] }),
+        auth({
+          roles: ['ar_super_admin'],
+          globalRoles: ['ar_super_admin'],
+          tenantScope: ['tenant-a'],
+        }),
         'identity-mapping'
       )
     ).toBe(false);
@@ -954,7 +958,7 @@ describe('the authority to edit a platform category', () => {
     expect(hasGlobalPlatformSettingsEdit(undefined, 'identity-mapping')).toBe(false);
     // An older context without the global fields is refused, not read from `roles`.
     expect(
-      hasGlobalPlatformSettingsEdit(auth({ roles: ['super_admin'] }), 'identity-mapping')
+      hasGlobalPlatformSettingsEdit(auth({ roles: ['ar_super_admin'] }), 'identity-mapping')
     ).toBe(false);
   });
 
@@ -1020,7 +1024,11 @@ describe('the authority to edit a platform category', () => {
     it('is not let in by a role name it does not have', () => {
       expect(
         hasGlobalPlatformSettingsEdit(
-          machine({ tenantScope: ['*'], roles: ['super_admin'], globalRoles: ['super_admin'] }),
+          machine({
+            tenantScope: ['*'],
+            roles: ['ar_super_admin'],
+            globalRoles: ['ar_super_admin'],
+          }),
           'identity-mapping'
         )
       ).toBe(false);

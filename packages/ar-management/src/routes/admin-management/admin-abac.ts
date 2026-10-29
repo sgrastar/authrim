@@ -297,6 +297,15 @@ adminAbacRouter.delete('/admin-attributes/:id', async (c: AdminContext) => {
       return c.json({ error: 'not_found', message: 'Attribute not found' }, 404);
     }
 
+    // A system attribute is shared by every tenant, so neither it nor its values can be removed
+    // here. This has to be refused before the values go: deleting the definition fails afterwards.
+    if (existing.is_system) {
+      return c.json(
+        { error: 'not_found', message: 'Attribute not found or is system attribute' },
+        404
+      );
+    }
+
     // Delete all values for this attribute first
     await valueRepo.deleteAllByAttribute(id);
 

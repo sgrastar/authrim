@@ -403,6 +403,7 @@ describe('admin consent statement lifecycle', () => {
     'inserts localization with public link %#',
     async (document_url) => {
       mocks.adapter.query
+        .mockResolvedValueOnce([{ id: 'vid' }])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ id: 'localization-1' }]);
       const response = await adminConsentLocalizationUpsertHandler(
@@ -424,6 +425,7 @@ describe('admin consent statement lifecycle', () => {
 
   it('updates an existing localization and falls back for legacy schemas', async () => {
     mocks.adapter.query
+      .mockResolvedValueOnce([{ id: 'vid' }])
       .mockResolvedValueOnce([{ id: 'localization-1' }])
       .mockResolvedValueOnce([{ id: 'localization-1' }]);
     mocks.adapter.execute
@@ -439,7 +441,26 @@ describe('admin consent statement lifecycle', () => {
     expect(mocks.adapter.execute).toHaveBeenCalledTimes(2);
   });
 
+  it("does not write a translation of a version that is not this tenant's statement", async () => {
+    mocks.adapter.query.mockResolvedValueOnce([]);
+
+    const response = await adminConsentLocalizationUpsertHandler(
+      context({
+        params: { sid: 'statement-a', vid: 'version-of-b' },
+        body: { title: 'T', description: 'D' },
+      })
+    );
+
+    expect(response.status).toBe(404);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    const call = mocks.adapter.query.mock.calls[0] as [string, unknown[]];
+    expect(call[0]).toContain('statement_id = ?');
+    expect(call[0]).toContain('tenant_id = ?');
+    expect(call[1]).toEqual(['version-of-b', 'statement-a', expect.any(String)]);
+  });
+
   it('does not hide unrelated localization persistence failures', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([{ id: 'vid' }]);
     mocks.adapter.execute.mockRejectedValueOnce(new Error('D1 unavailable'));
     expect(
       (

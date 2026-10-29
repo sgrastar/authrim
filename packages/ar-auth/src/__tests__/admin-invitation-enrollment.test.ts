@@ -40,7 +40,7 @@ const invitation = {
   email: 'new-admin@example.com',
   name: 'New Admin',
   status: 'pending',
-  admin_role_id: 'role_admin',
+  admin_role_id: 'role_ar_tenant_admin',
   role_name: 'admin',
   role_display_name: 'Administrator',
   scope_type: 'tenant',

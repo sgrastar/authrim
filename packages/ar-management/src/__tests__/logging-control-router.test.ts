@@ -211,7 +211,7 @@ const env = envFixture as unknown as Env;
 
 function createApp(
   permissions: string[] = [],
-  roles: string[] = ['tenant_admin'],
+  roles: string[] = ['ar_tenant_admin'],
   platformRoleIsGlobal = true
 ) {
   const app = new Hono<{ Bindings: Env; Variables: { adminAuth?: unknown; tenantId?: string } }>();
@@ -220,7 +220,7 @@ function createApp(
     // A platform role in this fixture comes from a global assignment.
     const global =
       platformRoleIsGlobal &&
-      roles.some((role) => role === 'system_admin' || role === 'super_admin');
+      roles.some((role) => role === 'ar_super_admin' || role === 'ar_super_admin');
     c.set('adminAuth', {
       userId: 'admin-1',
       permissions,
@@ -239,7 +239,7 @@ function createApp(
 }
 
 function createPlatformApp(permissions: string[] = []) {
-  return createApp(permissions, ['system_admin']);
+  return createApp(permissions, ['ar_super_admin']);
 }
 
 function destinationRow(overrides: Record<string, unknown> = {}) {
@@ -521,7 +521,7 @@ describe('logging control routers', () => {
     // A platform role held for one tenant only is not platform authority.
     const tenantOnlyPlatformRole = await createApp(
       [ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE],
-      ['system_admin'],
+      ['ar_super_admin'],
       false
     ).request(
       '/api/admin/destinations',

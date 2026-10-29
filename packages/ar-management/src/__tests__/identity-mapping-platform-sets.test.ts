@@ -63,6 +63,12 @@ function openAdminDatabase(): SQLiteDatabase {
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
+  db.exec(
+    readFileSync(
+      resolve(REPO_ROOT, 'migrations/admin/d1/054_admin_roles_ar_prefix.sql'),
+      'utf8'
+    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+  );
   // The settings documents the reference search reads (the default Mapping Set lives there).
   for (const file of [
     '028_tenant_settings_documents.sql',
@@ -129,10 +135,10 @@ interface Actor {
   sessionId?: string;
 }
 
-const TENANT_ADMIN_AUTH = { roles: ['tenant_admin'], is_platform_admin: false, tenantScope: [] };
+const TENANT_ADMIN_AUTH = { roles: ['ar_tenant_admin'], is_platform_admin: false, tenantScope: [] };
 const PLATFORM_ADMIN: Actor = {
   tenant: 'tenant-a',
-  auth: { roles: ['super_admin'], globalRoles: ['super_admin'], tenantScope: ['*'] },
+  auth: { roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'], tenantScope: ['*'] },
 };
 const TENANT_A_ADMIN: Actor = { tenant: 'tenant-a', auth: TENANT_ADMIN_AUTH };
 const TENANT_B_ADMIN: Actor = { tenant: 'tenant-b', auth: TENANT_ADMIN_AUTH };
@@ -1297,9 +1303,9 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
         { roles: [], permissions: ['*'], globalPermissions: [], tenantScope: ['tenant-a'] },
       ],
       [
-        'a tenant-limited super_admin session',
+        'a tenant-limited ar_super_admin session',
         {
-          roles: ['super_admin'],
+          roles: ['ar_super_admin'],
           globalRoles: [],
           permissions: ['*'],
           globalPermissions: [],
@@ -1307,9 +1313,9 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
         },
       ],
       [
-        'a super_admin role that is not a global one, under a global scope',
+        'a ar_super_admin role that is not a global one, under a global scope',
         {
-          roles: ['viewer', 'super_admin'],
+          roles: ['viewer', 'ar_super_admin'],
           globalRoles: ['viewer'],
           permissions: ['*', 'admin:users:read'],
           globalPermissions: ['admin:users:read'],
@@ -1327,20 +1333,20 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
         },
       ],
       [
-        'a global super_admin whose scope names only the tenant',
-        { roles: ['super_admin'], globalRoles: ['super_admin'], tenantScope: ['tenant-a'] },
+        'a global ar_super_admin whose scope names only the tenant',
+        { roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'], tenantScope: ['tenant-a'] },
       ],
       [
-        'a global super_admin with an empty scope',
-        { roles: ['super_admin'], globalRoles: ['super_admin'], tenantScope: [] },
+        'a global ar_super_admin with an empty scope',
+        { roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'], tenantScope: [] },
       ],
       [
-        'a global super_admin whose context carries no tenant scope',
-        { roles: ['super_admin'], globalRoles: ['super_admin'] },
+        'a global ar_super_admin whose context carries no tenant scope',
+        { roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'] },
       ],
       [
         'roles and permissions only, as an older context carries them',
-        { roles: ['super_admin'], permissions: ['*'], tenantScope: ['*'] },
+        { roles: ['ar_super_admin'], permissions: ['*'], tenantScope: ['*'] },
       ],
       ['is_platform_admin alone', { roles: [], is_platform_admin: true, tenantScope: ['*'] }],
     ];
@@ -1503,21 +1509,27 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
 
       it.each([
         [
-          'a global viewer who is also a super_admin for this tenant only',
+          'a global viewer who is also a ar_super_admin for this tenant only',
           [
-            { role: 'role_viewer', scope: 'global' },
-            { role: 'role_super_admin', scope: 'tenant' },
+            { role: 'role_ar_viewer', scope: 'global' },
+            { role: 'role_ar_super_admin', scope: 'tenant' },
           ],
         ],
         [
           'a global viewer who also holds a wildcard-permission role for this tenant only',
           [
-            { role: 'role_viewer', scope: 'global' },
+            { role: 'role_ar_viewer', scope: 'global' },
             { role: 'role_tenant_wildcard', scope: 'tenant' },
           ],
         ],
-        ['a super_admin for this tenant only', [{ role: 'role_super_admin', scope: 'tenant' }]],
-        ['a global admin (not a platform role)', [{ role: 'role_admin', scope: 'global' }]],
+        [
+          'a ar_super_admin for this tenant only',
+          [{ role: 'role_ar_super_admin', scope: 'tenant' }],
+        ],
+        [
+          'a global admin (not a platform role)',
+          [{ role: 'role_ar_tenant_admin', scope: 'global' }],
+        ],
       ] as Array<[string, Assignment[]]>)(
         'refuses %s every change to a platform set',
         async (_name, assignments) => {
@@ -1543,19 +1555,19 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
       );
 
       it.each([
-        ['a global super_admin', [{ role: 'role_super_admin', scope: 'global' }]],
+        ['a global ar_super_admin', [{ role: 'role_ar_super_admin', scope: 'global' }]],
         [
-          'a viewer for this tenant only who is also a global super_admin',
+          'a viewer for this tenant only who is also a global ar_super_admin',
           [
-            { role: 'role_viewer', scope: 'tenant' },
-            { role: 'role_super_admin', scope: 'global' },
+            { role: 'role_ar_viewer', scope: 'tenant' },
+            { role: 'role_ar_super_admin', scope: 'global' },
           ],
         ],
         [
-          'a global viewer and a global super_admin',
+          'a global viewer and a global ar_super_admin',
           [
-            { role: 'role_viewer', scope: 'global' },
-            { role: 'role_super_admin', scope: 'global' },
+            { role: 'role_ar_viewer', scope: 'global' },
+            { role: 'role_ar_super_admin', scope: 'global' },
           ],
         ],
       ] as Array<[string, Assignment[]]>)(
@@ -1575,8 +1587,8 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
       it('lets the mixed admin keep working on the tenant’s own sets', async () => {
         const { session, db } = await context();
         const actor = signIn(db, [
-          { role: 'role_viewer', scope: 'global' },
-          { role: 'role_super_admin', scope: 'tenant' },
+          { role: 'role_ar_viewer', scope: 'global' },
+          { role: 'role_ar_super_admin', scope: 'tenant' },
         ]);
 
         const created = await session.call(actor, 'POST', '', {
@@ -1593,11 +1605,15 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
       const { api, createPlatformSet } = await setup();
       for (const auth of [
         { roles: [], permissions: ['*'], globalPermissions: ['*'], tenantScope: ['*'] },
-        { roles: ['super_admin'], globalRoles: ['super_admin'], tenantScope: ['*'] },
-        { roles: ['system_admin'], globalRoles: ['system_admin'], tenantScope: ['tenant-a', '*'] },
+        { roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'], tenantScope: ['*'] },
         {
-          roles: ['viewer', 'super_admin'],
-          globalRoles: ['viewer', 'super_admin'],
+          roles: ['ar_super_admin'],
+          globalRoles: ['ar_super_admin'],
+          tenantScope: ['tenant-a', '*'],
+        },
+        {
+          roles: ['viewer', 'ar_super_admin'],
+          globalRoles: ['viewer', 'ar_super_admin'],
           tenantScope: ['*'],
         },
       ]) {
@@ -1618,7 +1634,7 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
 
       const response = await api.call(
         actorOf({
-          roles: ['tenant_admin'],
+          roles: ['ar_tenant_admin'],
           permissions: ['admin:settings:write'],
           tenantScope: ['*'],
         }),
@@ -1634,7 +1650,7 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
       const { api } = await setup();
 
       const response = await api.call(
-        actorOf({ roles: ['super_admin'], permissions: ['*'], tenantScope: ['tenant-a'] }),
+        actorOf({ roles: ['ar_super_admin'], permissions: ['*'], tenantScope: ['tenant-a'] }),
         'POST',
         '',
         { fieldMappingKey: 'own', displayName: 'Own' }

@@ -12,6 +12,7 @@ import {
   type AdminAuthContext,
   type CategoryName,
   type SettingScopeLevel,
+  ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -27,8 +28,8 @@ export function checkRolePermission(
   scopeLevel: SettingScopeLevel,
   action: 'view' | 'edit'
 ): boolean {
-  // super_admin and system_admin always have access
-  if (userRoles.includes('super_admin') || userRoles.includes('system_admin')) {
+  // The super admin always has access
+  if (userRoles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
     return true;
   }
 
@@ -65,8 +66,8 @@ export function hasGlobalPlatformSettingsEdit(
  * The roles a person holds for `tenantId`. `adminAuth.roles` adds up the global assignments and the
  * ones for the tenant the request arrived on (`adminAuth.tenantId`), so they are the caller's roles
  * for that tenant only; for any other tenant, only the global assignments (under a global tenant
- * scope) hold. A tenant-only super_admin, or a global viewer who is a super_admin of one tenant,
- * is therefore not a super_admin of the others.
+ * scope) hold. A tenant-only ar_tenant_admin, or a global viewer who is an ar_tenant_admin of one
+ * tenant, is therefore not an ar_tenant_admin of the others.
  */
 export function rolesForTenant(
   adminAuth: AdminAuthContext,
@@ -163,9 +164,8 @@ export function isCategoryWritableAtScope(
 
 /**
  * Check if user can access a specific tenant's data
- * super_admin, system_admin and distributor_admin can access any tenant, as long as they hold the
- * role for every tenant (a global assignment) or the tenant is the one the request arrived on
- * org_admin can only access their own tenant
+ * The super admin and the tenant admin can access a tenant they hold the role for: through a global
+ * assignment, or because the tenant is the one the request arrived on.
  */
 export function canAccessTenant(
   adminAuth: AdminAuthContext | undefined,
@@ -189,23 +189,12 @@ export function canAccessTenant(
   // the global assignments.
   const userRoles = rolesForTenant(adminAuth, tenantId);
 
-  // super_admin, system_admin and distributor_admin can access any tenant
-  if (
-    userRoles.includes('super_admin') ||
-    userRoles.includes('system_admin') ||
-    userRoles.includes('distributor_admin')
-  ) {
+  if (userRoles.includes(ADMIN_ROLES.SUPER_ADMIN) || userRoles.includes(ADMIN_ROLES.TENANT_ADMIN)) {
     return true;
   }
 
-  // org_admin can only access their own tenant
-  if (userRoles.includes('org_admin')) {
-    // org_admin's org_id should match the tenantId
-    return adminAuth.org_id === tenantId;
-  }
-
   // viewer with tenant association
-  if (userRoles.includes('viewer')) {
+  if (userRoles.includes(ADMIN_ROLES.VIEWER)) {
     // Viewers can view if they have no org restriction or org matches
     return !adminAuth.org_id || adminAuth.org_id === tenantId;
   }

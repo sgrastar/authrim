@@ -82,7 +82,7 @@ function context(body: unknown, bodyError = false) {
       name === 'adminAuth'
         ? {
             userId: 'admin-1',
-            roles: ['system_admin'],
+            roles: ['ar_super_admin'],
             permissions: ['*'],
             tenantScope: ['tenant-a'],
             tenantId: 'tenant-a',

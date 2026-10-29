@@ -103,7 +103,7 @@ function createMockContext(options: {
       'adminAuth',
       options.adminAuth ?? {
         userId: 'admin_1',
-        roles: ['system_admin'],
+        roles: ['ar_super_admin'],
       },
     ],
     ['adminUser', options.adminUser ?? { id: 'admin_1' }],
@@ -175,8 +175,8 @@ describe('Settings History Handlers', () => {
         params: { category: 'oauth' },
         query: { tenantId: 'tenant_other' },
         adminAuth: {
-          userId: 'org_admin_1',
-          roles: ['org_admin'],
+          userId: 'tenant_admin_1',
+          roles: ['ar_tenant_admin'],
           org_id: 'tenant_123',
         },
       });

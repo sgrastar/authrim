@@ -25,9 +25,9 @@ function humanAuth(overrides: Partial<AdminAuthContext> = {}): AdminAuthContext 
     userId: 'admin-1',
     authMethod: 'session',
     tenantId: 'tenant-a',
-    roles: ['system_admin'],
+    roles: ['ar_super_admin'],
     // The role and the permission come from a global assignment.
-    globalRoles: ['system_admin'],
+    globalRoles: ['ar_super_admin'],
     permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
     globalPermissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
     hierarchyLevel: 100,
@@ -47,7 +47,7 @@ describe('internal version manager authority', () => {
     expect((await app.request('/internal')).status).toBe(403);
   });
 
-  it('rejects a tenant-scoped role named system_admin', async () => {
+  it('rejects a tenant-scoped role named ar_super_admin', async () => {
     const app = createApp(
       humanAuth({ tenantScope: ['tenant-a'] }),
       ADMIN_PERMISSIONS.CONTROL_PLANE_READ
@@ -80,7 +80,7 @@ describe('internal version manager authority', () => {
   it('rejects a platform role or permission held for one tenant while the global assignment is only a viewer', async () => {
     const app = createApp(
       humanAuth({
-        roles: ['viewer', 'system_admin'],
+        roles: ['viewer', 'ar_super_admin'],
         globalRoles: ['viewer'],
         permissions: ['*'],
         globalPermissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
