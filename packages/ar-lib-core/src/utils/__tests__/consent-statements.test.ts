@@ -1222,14 +1222,14 @@ describe('Consent Statements Utility', () => {
   });
 
   describe('activateVersion', () => {
-    it('should require at least one localization (D8)', async () => {
+    it.each([0, '0'])('should require at least one localization (D8), count=%s', async (count) => {
       const queryResults = new Map();
       const mockQuery = vi.fn(async (sql: string) => {
-        if (sql.includes('SELECT id, status FROM consent_statement_versions')) {
-          return [{ id: 'ver-1', status: 'draft' }];
+        if (sql.includes('SELECT id, status, updated_at FROM consent_statement_versions')) {
+          return [{ id: 'ver-1', status: 'draft', updated_at: '1' }];
         }
         if (sql.includes('COUNT(*)') && sql.includes('consent_statement_localizations')) {
-          return [{ cnt: 0 }]; // No localizations
+          return [{ cnt: count }]; // PostgreSQL COUNT returns BIGINT text.
         }
         return [];
       });
@@ -1246,8 +1246,8 @@ describe('Consent Statements Utility', () => {
 
     it('should activate version when localization exists', async () => {
       const mockQuery = vi.fn(async (sql: string) => {
-        if (sql.includes('SELECT id, status FROM consent_statement_versions')) {
-          return [{ id: 'ver-1', status: 'draft' }];
+        if (sql.includes('SELECT id, status, updated_at FROM consent_statement_versions')) {
+          return [{ id: 'ver-1', status: 'draft', updated_at: '1' }];
         }
         if (sql.includes('COUNT(*)') && sql.includes('consent_statement_localizations')) {
           return [{ cnt: 1 }];
@@ -1274,14 +1274,14 @@ describe('Consent Statements Utility', () => {
       await expect(activateVersion(adapter, 'default', 'stmt-1', 'ver-1')).resolves.not.toThrow();
       expect(adapter.batch).toHaveBeenCalledTimes(1);
       const statements = vi.mocked(adapter.batch).mock.calls[0][0];
-      expect(statements).toHaveLength(4);
+      expect(statements).toHaveLength(5);
       expect(statements[2].sql).toContain('definition_generation=definition_generation+1');
       expect(statements[3].sql).toContain('statement_consent_projection_jobs');
       expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining('WHERE tenant_id = ? AND version_id = ?'),
         ['default', 'ver-1']
       );
-      expect(statements[1].params).toEqual(expect.arrayContaining(['ver-1', 'stmt-1', 'default']));
+      expect(statements[4].params).toEqual(expect.arrayContaining(['ver-1', 'stmt-1', 'default']));
     });
   });
 

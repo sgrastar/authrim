@@ -366,6 +366,66 @@ describe('statement consent writes across metadata and account databases', () =>
     expect(await count(account.adapter, 'statement_consent_guards')).toBe(0);
   });
 
+  it.each(['put', 'delete'])(
+    'rejects activation after a concurrent draft localization %s',
+    async (action) => {
+      await metadata.adapter.execute(
+        `INSERT INTO consent_statement_versions(id,tenant_id,statement_id,version,effective_at,status,created_at,updated_at)
+      VALUES('draft',?,?,'20261029',1,'draft',1,1)`,
+        [TENANT, STATEMENT]
+      );
+      await metadata.adapter.execute(
+        `INSERT INTO consent_statement_localizations(id,tenant_id,version_id,language,title,description,document_url,created_at,updated_at)
+      VALUES('draft-loc',?,'draft','en','Terms','Terms','https://example.com/old',1,1)`,
+        [TENANT]
+      );
+      const batch = metadata.adapter.batch.bind(metadata.adapter);
+      let race = true;
+      const racing: DatabaseAdapter = {
+        ...metadata.adapter,
+        batch: async (statements) => {
+          if (race) {
+            race = false;
+            await batch([
+              {
+                sql: "UPDATE consent_statement_versions SET updated_at=updated_at+1 WHERE id='draft' AND tenant_id=?",
+                params: [TENANT],
+              },
+              {
+                sql:
+                  action === 'put'
+                    ? "UPDATE consent_statement_localizations SET document_url='https://example.com/new' WHERE version_id='draft' AND tenant_id=?"
+                    : "DELETE FROM consent_statement_localizations WHERE version_id='draft' AND tenant_id=?",
+                params: [TENANT],
+              },
+            ]);
+          }
+          return batch(statements);
+        },
+      };
+      await expect(activateVersion(racing, TENANT, STATEMENT, 'draft')).rejects.toThrow(
+        'document_changed'
+      );
+      expect(
+        await metadata.adapter.queryOne(
+          "SELECT status,is_current,content_hash FROM consent_statement_versions WHERE id='draft'"
+        )
+      ).toEqual({ status: 'draft', is_current: 0, content_hash: null });
+      expect(
+        await metadata.adapter.queryOne(
+          'SELECT is_current FROM consent_statement_versions WHERE id=?',
+          [VERSION_ID]
+        )
+      ).toEqual({ is_current: 1 });
+      expect(
+        await metadata.adapter.queryOne('SELECT definition_generation FROM consent_statements')
+      ).toEqual({ definition_generation: 0 });
+      expect(
+        await metadata.adapter.query('SELECT * FROM statement_consent_projection_jobs')
+      ).toEqual([]);
+    }
+  );
+
   it('rolls activation and generation back when durable projection enqueue fails', async () => {
     await metadata.adapter.execute(
       "INSERT INTO consent_statement_localizations(id,tenant_id,version_id,language,title,description,created_at,updated_at) VALUES('loc',?,?,'en','Terms','Terms',1,1)",

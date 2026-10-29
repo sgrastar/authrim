@@ -886,6 +886,10 @@ import {
   rolloutDynamicPluginBatchHandler,
 } from './routes/settings/plugins';
 import { processProviderReprojectionJobs } from './provider-reprojection-jobs';
+import {
+  adminConsentReferenceAuditHandler,
+  processStatementConsentReferenceAuditJobs,
+} from './statement-consent-reference-audit';
 import { processStatementConsentProjectionJobs } from './statement-consent-projection-jobs';
 import { processTenantDisasterRecoveryLookupReprojection } from './tenant-disaster-recovery-lookup';
 import {
@@ -3924,6 +3928,7 @@ app.use('/api/admin/users/:userId/consent-records/*', async (c, next) => {
 // Consent items CRUD
 app.get('/api/admin/consent-statements', adminConsentStatementsListHandler);
 app.post('/api/admin/consent-statements', adminConsentStatementCreateHandler);
+app.get('/api/admin/consent-statements/reference-audit', adminConsentReferenceAuditHandler);
 app.get('/api/admin/consent-statements/:id', adminConsentStatementGetHandler);
 app.put('/api/admin/consent-statements/:id', adminConsentStatementUpdateHandler);
 app.delete('/api/admin/consent-statements/:id', adminConsentStatementDeleteHandler);
@@ -4411,6 +4416,13 @@ async function handleCoveredScheduled(
     await processStatementConsentProjectionJobs(env, log.module('CONSENT-PROJECTION'));
   } catch (error) {
     log.warn('Statement consent projection scheduler failed', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  try {
+    await processStatementConsentReferenceAuditJobs(env, log.module('CONSENT-REFERENCE-AUDIT'));
+  } catch (error) {
+    log.warn('Statement consent reference audit scheduler failed', {
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
   }

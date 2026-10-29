@@ -51,8 +51,14 @@ are normalized with `Number()` before arithmetic or JSON projection. A retry aft
 batch acknowledgement recovers only through a matching primary operation receipt.
 
 Version activation co-commits both current-version changes, the definition generation increment and
-a durable metadata projection job. Statement updates also increment the definition generation;
-disabling increments the closed generation. Retire/delete policy itself belongs to PR5. Projection
+a durable metadata projection job. Localization mutations co-commit a monotone version `updated_at`
+revision. Activation compares the revision read before hashing and reserves the version row with a
+transaction-local random `current_statement_guard` token before changing the old current. The token
+conditions the generation bump and enqueue; the final update publishes the hash and restores
+`current_statement_guard=statement_id`. A raced draft edit leaves the previous current and generation
+unchanged and returns 409. This also locks the version row before PostgreSQL localization writes;
+its concurrency semantics still require real PostgreSQL validation. Statement updates also increment the definition generation;
+disabling increments the closed generation. Retirement follows the rules below. Projection
 acknowledges each account shard in the job row, uses the registry's existing store-count bound, and
 resumes from the last acknowledged shard after failure. A changed target inventory or physical route
 resets its cursor. A newer definition generation resets the job and cannot be acknowledged or deleted
@@ -91,7 +97,7 @@ challenge bound to the same user/session and capped by the original expiry, retu
 `error_details.restart_required` asks the user to restart from the app. No approval is automatically
 replayed and a consumed challenge is never reused. A change after metadata
 revalidation and before guard projection has the documented short cross-database window; evidence
-still retains the document hash. Localization immutability and statement retirement are PR5 work.
+still retains the document hash. Localizations of active or archived versions are immutable; change the document by creating a new draft version.
 
 ## Physical identity and disaster recovery
 
@@ -130,3 +136,97 @@ The local schema-contract suite compares D1 and PostgreSQL column lists statical
 **not executed in this environment** (no disposable server and no network). Static parity and passing
 SQLite tests do not establish PostgreSQL trigger, lock, isolation or restore execution behavior.
 The explicit PostgreSQL integration suite above must still run before a PostgreSQL rollout.
+
+## Retirement and evidence retention
+
+`DELETE /api/admin/consent-statements/:id` now returns
+`{ "success": true, "disposition": "retired" }` for published definitions. This replaces the former
+cascade that erased all users' records and history. Retirement retains versions, localizations,
+requirements, records and history. `retired_at` is set once; retries do not increment generations
+again. A retired statement cannot be reactivated with PUT.
+
+The order is:
+
+1. In one metadata batch, set `is_active=0` and `retired_at`, increment both definition and closed
+   generations, and enqueue the **closed** projection.
+2. Project that generation to all account shards through the durable projection job. Failed shards
+   remain pending. A pending projection is not proof of complete closure.
+3. A submission of the previous screen returns `409 document_changed` through the existing consent
+   POST contract. Metadata revalidation closes new grants immediately; after projection even a
+   prepared old grant is rejected by the account guard. The already documented short interval
+   between metadata revalidation and projection remains.
+4. After each evidence row's retention deadline, the retention job removes eligible terminal records
+   and unprotected history. Granted records still protect their history. Published definition
+   tombstones, versions and bodies remain available; this job does not physically delete them.
+
+Physical DELETE is restricted further to definitions whose never-active state can be proved:
+`is_active=0`, `definition_generation=0`, no retirement marker, and only draft, unhashed versions.
+The handler visits the registry's bounded account-store inventory and counts at most one matching
+record and history row per store (also checking legacy metadata evidence). Only zero everywhere
+permits a metadata-only atomic deletion; count/routing errors abort the request. Nonzero counts or
+an unprovable activation history cause retirement. The deletion batch locks the parent statement before touching bodies and rechecks the draft proof
+for every deletion. Activation must pass its parent-generation update before publishing a version.
+A PostgreSQL parent/version lock conflict may abort a batch; retry the request after rollback. This conservative rule can retain unused drafts that have already been edited. There is no
+API for erasing all users' consent evidence.
+
+Version DELETE remains draft-only. Localization PUT and DELETE require a draft version of the
+statement and tenant in the path; active and archived versions return 409. The write predicates
+recheck draft status, including the compatibility SQL for older localization columns. Existing
+localization tenant isolation remains in place. A body change requires a new version.
+
+## Reference audit and retention shard traversal
+
+The scheduler runs a recurring read-only reference audit. Use
+`GET /api/admin/consent-statements/reference-audit` with the normal tenant consent settings read
+permission. It returns `status` (`not_started`, `processing`, or `completed`), the current pass in
+`current`, and the previous complete report in `last_completed` (NULL until the first completion).
+The API never starts a destructive repair. There is no automatic deletion of unresolved references.
+
+Each report counts `scanned` records and `unresolved` records, and includes bounded `samples` with
+account `binding_ref`, `record_id`, `statement_id`, `version_id`, `missing_statement`, and
+`missing_version`. A version that exists under a different statement or tenant is unresolved.
+`samples_truncated` reports that the total exceeds the stored sample limit. Missing definitions may
+be a restore/order problem: verify settings and users were restored with their original IDs, resolve
+the referenced definitions, and inspect the next completed pass. **Run this audit to completion after
+DR before releasing the target for use.** A sample list is a diagnostic subset, not a repair list.
+
+Both maintenance jobs store their per-tenant targets, physical-route identities, shard/page cursor
+and run ID in the existing metadata `admin_jobs` rows (`consent/reference-audit` and
+`consent/retention`). A compare-and-swap acknowledges each successful page. An account or metadata
+failure leaves that page pending and preserves completed shards. A changed target inventory or
+physical route resets the pass. Tenant rotation uses AUTHRIM_CONFIG (KV fallback); failed tenants
+are revisited on a later rotation. Explicit nonrouted deployments scan tenants in their single Core
+binding and use that same database for definitions and records. No schema or DR column contract
+changes are required. Restored cursors are reset when the trusted target identities change; PR7's
+physical identity rebinding remains a separate prerequisite.
+
+Retention scans bounded history pages before record pages on each account shard. Snapshot rows
+use `retain_until` independently of current or missing definitions. Only rows with
+`consent_settings_snapshot_at IS NULL` use current metadata `record_retention_days`, normalized from
+PostgreSQL BIGINT strings. Unknown legacy policy keeps those rows. NULL deadlines remain unlimited;
+strictly expired terminal statuses (`withdrawn`, `denied`, `expired`) and the granted-history
+protection follow the existing rules. No migration of old rows is performed.
+
+Each pass is a rolling keyset scan rather than a cross-database snapshot. Inserts below a saved row
+ID and concurrent definition changes may be observed on the next pass. Keep a restored target
+quiescent while obtaining its initial complete audit. The previous complete report remains readable
+while a new pass runs. Page settings follow environment, then lowercase KV key, then code defaults:
+
+| Environment key (KV uses lowercase)        | Default | Maximum |
+| ------------------------------------------ | ------- | ------- |
+| `CONSENT_REFERENCE_AUDIT_TENANT_PAGE_SIZE` | 4       | 32      |
+| `CONSENT_REFERENCE_AUDIT_ROW_PAGE_SIZE`    | 64      | 90      |
+| `CONSENT_REFERENCE_AUDIT_SHARD_PAGE_SIZE`  | 1       | 32      |
+| `CONSENT_REFERENCE_AUDIT_SAMPLE_LIMIT`     | 32      | 100     |
+| `CONSENT_RETENTION_TENANT_PAGE_SIZE`       | 4       | 32      |
+| `CONSENT_RETENTION_ROW_PAGE_SIZE`          | 64      | 90      |
+| `CONSENT_RETENTION_SHARD_PAGE_SIZE`        | 1       | 32      |
+
+The shard page setting bounds pages per tenant tick, including the separate history and record
+phases for retention. Invalid values fail closed. PostgreSQL maintenance SQL is statically reviewed
+only in this environment; no real PostgreSQL execution has been performed.
+
+The test-only step-B delete guards currently reject direct evidence deletion when a tenant guard
+is enforced. PR7 must provide and verify an authorized retention deletion path before installing
+those production triggers. PR5 leaves trigger fixtures and published migrations unchanged; a
+blocked deletion remains pending rather than bypassing guards.
