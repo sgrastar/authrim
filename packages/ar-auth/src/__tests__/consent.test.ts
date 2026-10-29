@@ -8,7 +8,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { getConsentItemsForScreen, processConsentItemDecisions } from '@authrim/ar-lib-core';
+import {
+  getConsentItemsForScreen,
+  processConsentItemDecisions,
+  StatementConsentAccountReadError,
+} from '@authrim/ar-lib-core';
 import { consentGetHandler, consentPostHandler } from '../consent';
 import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
 
@@ -153,6 +157,8 @@ function createMockContext(options: {
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
   db?: D1Database;
+  /** The user's account database, when it differs from the tenant metadata database. */
+  accountDb?: D1Database;
   challengeStore?: ReturnType<typeof createMockChallengeStore>;
   env?: Record<string, unknown>;
 }) {
@@ -188,7 +194,7 @@ function createMockContext(options: {
         tenantId: 'default',
         accountId: 'user-123',
         legacyUserId: 'user-123',
-        coreDb: mockDB,
+        coreDb: options.accountDb ?? mockDB,
         piiDb: mockDB,
         coreBindingRef: 'DB',
         piiBindingRef: 'DB',
@@ -383,6 +389,79 @@ describe('Consent Handlers', () => {
       expect(c.html).not.toHaveBeenCalled();
       await expect(response.json()).resolves.toMatchObject({
         challenge_id: 'unsafe-consent-challenge',
+      });
+    });
+
+    describe('statement consent items', () => {
+      function consentScreenContext() {
+        const challengeStore = createMockChallengeStore({
+          id: 'consent-items-challenge',
+          type: 'consent',
+          userId: 'user-123',
+          metadata: { client_id: 'test-client', scope: 'openid profile' },
+        });
+        const mockDB = createMockDB({
+          firstResult: {
+            client_id: 'test-client',
+            client_name: 'Test Application',
+            logo_uri: null,
+            client_uri: null,
+            policy_uri: null,
+            tos_uri: null,
+            is_trusted: 0,
+          },
+        });
+        const accountDb = createMockDB({});
+        const c = createMockContext({
+          query: { challenge_id: 'consent-items-challenge' },
+          headers: { accept: 'application/json' },
+          challengeStore,
+          db: mockDB,
+          accountDb,
+        }) as unknown as Parameters<typeof consentGetHandler>[0];
+        return { c, metadataDb: mockDB, accountDb };
+      }
+
+      it('reads definitions from the metadata store and records from the account store', async () => {
+        const { c, metadataDb, accountDb } = consentScreenContext();
+
+        const response = await consentGetHandler(c);
+
+        expect(response.status).toBe(200);
+        const [stores] = vi.mocked(getConsentItemsForScreen).mock.calls[0];
+        const prepared = (db: unknown) => (db as { prepare: ReturnType<typeof vi.fn> }).prepare;
+        prepared(metadataDb).mockClear();
+        prepared(accountDb).mockClear();
+        await stores.metadata.query('SELECT 1');
+        expect(prepared(metadataDb)).toHaveBeenCalledTimes(1);
+        expect(prepared(accountDb)).not.toHaveBeenCalled();
+        await stores.account.query('SELECT 1');
+        expect(prepared(accountDb)).toHaveBeenCalledTimes(1);
+        expect(prepared(metadataDb)).toHaveBeenCalledTimes(1);
+      });
+
+      it('answers 503 instead of asking again or skipping when the account records cannot be read', async () => {
+        vi.mocked(getConsentItemsForScreen).mockRejectedValue(
+          new StatementConsentAccountReadError(new Error('account database down'))
+        );
+        const { c } = consentScreenContext();
+
+        const response = await consentGetHandler(c);
+
+        expect(response.status).toBe(503);
+        await expect(response.json()).resolves.toEqual({
+          error: 'temporarily_unavailable',
+          error_description: 'Consent records are temporarily unavailable',
+        });
+      });
+
+      it('keeps an unreadable definition non-blocking, as before', async () => {
+        vi.mocked(getConsentItemsForScreen).mockRejectedValue(new Error('definitions unavailable'));
+        const { c } = consentScreenContext();
+
+        const response = await consentGetHandler(c);
+
+        expect(response.status).toBe(200);
       });
     });
 
@@ -1251,6 +1330,37 @@ describe('Consent Handlers', () => {
       expect(response.status).toBe(403);
       await expect(response.json()).resolves.toMatchObject({ error: 'access_denied' });
       expect(mockValidateActingAsRelationship).not.toHaveBeenCalled();
+    });
+
+    it('answers 503 and records nothing when the account records cannot be read on approval', async () => {
+      vi.mocked(getConsentItemsForScreen).mockRejectedValue(
+        new StatementConsentAccountReadError(new Error('account database down'))
+      );
+      const challengeStore = createMockChallengeStore({
+        id: 'consent-challenge-records-down',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid profile',
+          state: 'test-state',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'consent-challenge-records-down', approved: true },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        db: createMockDB({ runResult: { success: true } }),
+      }) as unknown as Parameters<typeof consentPostHandler>[0];
+
+      const response = await consentPostHandler(c);
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+      expect(processConsentItemDecisions).not.toHaveBeenCalled();
     });
 
     it('should reject approval when required consent items are not granted', async () => {

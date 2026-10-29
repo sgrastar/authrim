@@ -27,7 +27,7 @@ const TEXT_REQUIRED = [
   'version',
   'status',
 ];
-const TEXT_OPTIONAL = ['client_id', 'ip_address_hash', 'user_agent', 'receipt_id'];
+const TEXT_OPTIONAL = ['client_id', 'ip_address_hash', 'user_agent', 'receipt_id', 'content_hash'];
 const INTEGER_REQUIRED = ['created_at', 'updated_at'];
 const INTEGER_OPTIONAL = [
   'granted_at',
@@ -59,10 +59,11 @@ const COLUMNS = [
   'consent_settings_snapshot_at',
   'record_retention_days_snapshot',
   'reconsent_interval_days_snapshot',
+  'content_hash',
 ];
 
 describe('disabled statement-consent storage: existing schema safeguards', () => {
-  it('keeps both definition FKs, all 20 columns, uniqueness and every D1 index', async () => {
+  it('keeps both definition FKs, all 21 columns, uniqueness and every D1 index', async () => {
     const fixture = sqliteAdapter('core');
     // Only close uses the host SQLite handle; all observations use the shared typed adapter.
     const database = fixture.db as { close(): void };
@@ -73,7 +74,7 @@ describe('disabled statement-consent storage: existing schema safeguards', () =>
       });
       const columns = await adapter.query<Column>("PRAGMA table_info('user_consent_records')");
       expect(columns.map((column) => column.name)).toEqual(COLUMNS);
-      expect(columns).toHaveLength(20);
+      expect(columns).toHaveLength(21);
       for (const column of columns) {
         expect(column.type).toBe(
           [...TEXT_REQUIRED, ...TEXT_OPTIONAL].includes(column.name) ? 'TEXT' : 'INTEGER'
@@ -169,7 +170,9 @@ describe('disabled statement-consent storage: existing schema safeguards', () =>
     expect(table).toBeDefined();
     if (!table) throw new Error('postgres_consent_record_table_missing');
     const columns = [...table.matchAll(/^\s+([a-z_]+)\s+(text|bigint)([^\n]*)/gmu)];
-    expect(columns.map((match) => match[1]).sort()).toEqual([...COLUMNS].sort());
+    // The baseline is immutable; content_hash arrives in a later migration (checked below).
+    const baselineColumns = COLUMNS.filter((name) => name !== 'content_hash');
+    expect(columns.map((match) => match[1]).sort()).toEqual([...baselineColumns].sort());
     expect(columns).toHaveLength(20);
     for (const [, name, type, constraints] of columns) {
       expect(type).toBe([...TEXT_REQUIRED, ...TEXT_OPTIONAL].includes(name) ? 'text' : 'bigint');
@@ -201,6 +204,7 @@ describe('disabled statement-consent storage: existing schema safeguards', () =>
       .sort()
       .map((name) => readFileSync(new URL(name, directory), 'utf8'))
       .join('\n');
+    expect(migrations).toMatch(/ALTER TABLE user_consent_records ADD COLUMN content_hash TEXT;/u);
     expect(table).not.toMatch(/\bREFERENCES\b/iu);
     expect(migrations).not.toMatch(
       /ALTER TABLE(?: ONLY)? public\.user_consent_records\s+ADD CONSTRAINT[^;]*\bFOREIGN KEY\b/iu
