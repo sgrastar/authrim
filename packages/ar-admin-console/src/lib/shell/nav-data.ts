@@ -133,7 +133,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				legacyRoutes: ['/admin/policies']
 			},
 			{
-				id: 'schema',
+				id: 'schema-setting',
 				label: 'nav.data.schema',
 				icon: 'list',
 				platform: 'template',

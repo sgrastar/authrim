@@ -1,9 +1,16 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
+	import InfoTip from '../primitives/InfoTip.svelte';
 
 	interface Props {
 		title?: string;
 		description?: string;
+		/**
+		 * A short plain explanation of what the box is, behind a "?" beside the title, instead of a
+		 * line under it. Not for what a person needs to decide or recover: that stays visible.
+		 */
+		info?: string;
 		/** Heading level for the title; defaults to h2 inside a page. */
 		level?: 2 | 3;
 		/** Body without padding (tables, lists that draw their own rows). */
@@ -17,6 +24,7 @@
 	let {
 		title,
 		description,
+		info,
 		level = 2,
 		flush = false,
 		tone = 'default',
@@ -31,7 +39,10 @@
 		<header class="card__head">
 			<div class="card__titles">
 				{#if title}
-					<svelte:element this={`h${level}`} class="card__title">{title}</svelte:element>
+					<div class="card__title-row">
+						<svelte:element this={`h${level}`} class="card__title">{title}</svelte:element>
+						{#if info}<InfoTip label="{t('common.moreInfo')}: {title}" text={info} />{/if}
+					</div>
 				{/if}
 				{#if description}<p class="card__desc">{description}</p>{/if}
 			</div>
@@ -80,6 +91,17 @@
 	.card__titles {
 		min-width: 0;
 		flex: 1;
+	}
+
+	.card__title-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	/* The "?" button is taller than the heading: it must not make the header taller. */
+	.card__title-row > :global(.info-tip) {
+		margin-block: -2px;
 	}
 
 	.card__title {

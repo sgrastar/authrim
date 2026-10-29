@@ -4,6 +4,8 @@ import { deCompliance } from './compliance/de';
 import { deMappingConsole } from './mapping-console/de';
 import { deServiceFlows } from './service-flows/de';
 import { deAccountFlows } from './account-flows/de';
+import { deSchemaSetting } from './schema-setting/de';
+import { deTenantGeneral } from './tenant-general/de';
 
 export const de = {
 	...deSettings,
@@ -11,6 +13,8 @@ export const de = {
 	...deMappingConsole,
 	...deServiceFlows,
 	...deAccountFlows,
+	...deSchemaSetting,
+	...deTenantGeneral,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

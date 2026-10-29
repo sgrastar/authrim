@@ -16,7 +16,7 @@
 		"test:watch": "vitest --project unit",
 		"test:stories": "vitest run --project storybook",
 		"test:coverage": "vitest run --project unit --coverage",
-		"lint": "eslint . && node scripts/check-route-styles.mjs && node scripts/check-raw-colors.mjs && node scripts/check-type-scale.mjs",
+		"lint": "eslint . && node scripts/check-route-styles.mjs && node scripts/check-raw-colors.mjs && node scripts/check-type-scale.mjs && node scripts/check-css-vars.mjs",
 		"check:dev-mock-guard": "node scripts/check-dev-mock-guard.mjs",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",

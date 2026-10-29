@@ -24,7 +24,7 @@
 			docs: {
 				description: {
 					component:
-						'Two or three columns for forms, facts and cards. The column count follows the room the block really has — the page next to the left nav, a card, a dialog — not the screen: when a column would get narrower than `minWidth`, one column goes, down to one on phones. Children fill in reading order (row by row); `ColumnSpan` gives one the whole row.\n\nFor facts, `DetailList columns={2|3}` does the same with each label above its value. Keep related fields next to each other (given and family name), and do not use three columns for fields that take long values.'
+						'Two or three columns for forms, facts and cards. The column count follows the room the block really has — the page next to the left nav, a card, a dialog — not the screen: when a column would get narrower than `minWidth`, one column goes, down to one on phones. Children fill in reading order (row by row); `ColumnSpan` gives one the whole row.\n\nFor facts, `DetailList columns={2|3}` does the same with each label above its value. Keep related fields next to each other (given and family name), and do not use three columns for fields that take long values.\n\n**A range is two columns:** a minimum next to its maximum (lengths, numbers, dates), so the pair reads as one thing. The same goes for short settings that are made together.'
 				}
 			}
 		}

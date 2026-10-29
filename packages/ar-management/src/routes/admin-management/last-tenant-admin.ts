@@ -14,29 +14,50 @@
  */
 
 import type { Context } from 'hono';
-import { ADMIN_ROLES, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import {
+  ADMIN_GUARD_NOW_MS,
+  ADMIN_ROLES,
+  allOfGuards,
+  type AdminWriteGuard,
+  type DatabaseAdapter,
+} from '@authrim/ar-lib-core';
 
 export type LastTenantAdminExclusion =
   /**
    * One assignment is going away, or, with `stillCurrent`, only ceasing to be permanent: it
    * stays an administrator until its (future) expiry.
    */
-  | { assignmentId: string; stillCurrent?: boolean }
+  | {
+      assignmentId: string;
+      stillCurrent?: boolean;
+      /**
+       * The expiry the assignment is given. A write guard reckons with it against the clock of
+       * the database when the write runs, instead of taking `stillCurrent` as it was at the request.
+       */
+      newExpiresAt?: number;
+    }
   /** An account is going away (suspended, deleted) or loses the role under every scope. */
   | { adminUserId: string };
 
-async function countTenantAdmins(
-  adapter: DatabaseAdapter,
+/** The count of the tenant's administrators as a SELECT, with the parameters it binds. */
+function tenantAdminCount(
   tenantId: string,
   permanentOnly: boolean,
-  exclusion?: LastTenantAdminExclusion
-): Promise<number> {
+  exclusion?: LastTenantAdminExclusion,
+  clock: 'request' | 'database' = 'request'
+): { sql: string; params: unknown[] } {
   const params: unknown[] = [tenantId, ADMIN_ROLES.TENANT_ADMIN, tenantId];
   // A permanent assignment has no expiry; otherwise any assignment that has not ended counts.
   let lifetime = 'AND ra.expires_at IS NULL';
   if (!permanentOnly) {
-    lifetime = 'AND (ra.expires_at IS NULL OR ra.expires_at > ?)';
-    params.push(Date.now());
+    // A guard is decided when the write runs, so it reads the clock there, not the request's.
+    lifetime =
+      clock === 'database'
+        ? `AND (ra.expires_at IS NULL OR ra.expires_at > ${ADMIN_GUARD_NOW_MS})`
+        : 'AND (ra.expires_at IS NULL OR ra.expires_at > ?)';
+    if (clock === 'request') {
+      params.push(Date.now());
+    }
   }
   let exclude = '';
   if (exclusion && 'assignmentId' in exclusion) {
@@ -46,8 +67,8 @@ async function countTenantAdmins(
     exclude = 'AND au.id <> ?';
     params.push(exclusion.adminUserId);
   }
-  const row = await adapter.queryOne<{ count: number }>(
-    `SELECT COUNT(DISTINCT au.id) AS count
+  return {
+    sql: `SELECT COUNT(DISTINCT au.id) AS count
        FROM admin_role_assignments ra
        JOIN admin_roles r
          ON r.id = ra.admin_role_id
@@ -65,9 +86,56 @@ async function countTenantAdmins(
         AND au.status = 'active'
         ${lifetime}
         ${exclude}`,
-    params
-  );
+    params,
+  };
+}
+
+async function countTenantAdmins(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  permanentOnly: boolean,
+  exclusion?: LastTenantAdminExclusion
+): Promise<number> {
+  const { sql, params } = tenantAdminCount(tenantId, permanentOnly, exclusion);
+  const row = await adapter.queryOne<{ count: number }>(sql, params);
   return Number(row?.count ?? 0);
+}
+
+/**
+ * The same rule as `wouldLeaveNoTenantAdmin`, as a condition on the write itself: it holds while
+ * the tenant would still have a current administrator, and a permanent one if it has one now,
+ * once `exclusion` is taken away. Put in the `WHERE` of the statement that makes the change, the
+ * database decides it atomically, so two requests that each leave "one other administrator" do
+ * not both go through.
+ */
+export function tenantKeepsAdminGuard(
+  tenantId: string,
+  exclusion: LastTenantAdminExclusion
+): AdminWriteGuard {
+  const stillCurrent = 'assignmentId' in exclusion && exclusion.stillCurrent === true;
+  const keeps = (permanentOnly: boolean): AdminWriteGuard => {
+    const others = tenantAdminCount(tenantId, permanentOnly, exclusion, 'database');
+    const all = tenantAdminCount(tenantId, permanentOnly, undefined, 'database');
+    return {
+      sql: `(${others.sql}) >= 1 OR (${all.sql}) = 0`,
+      params: [...others.params, ...all.params],
+    };
+  };
+  const newExpiresAt = 'assignmentId' in exclusion ? exclusion.newExpiresAt : undefined;
+  let current: AdminWriteGuard | undefined;
+  if (newExpiresAt !== undefined) {
+    // The assignment stays an administrator only while its new expiry is still to come, which
+    // is the database's call when the write runs.
+    const others = keeps(false);
+    current = {
+      sql: `? > ${ADMIN_GUARD_NOW_MS} OR ${others.sql}`,
+      params: [newExpiresAt, ...others.params],
+    };
+  } else if (!stillCurrent) {
+    current = keeps(false);
+  }
+  // The tenant must keep a current administrator, and a permanent one if it has one now.
+  return allOfGuards(current, keeps(true)) ?? { sql: '1 = 1', params: [] };
 }
 
 /**
