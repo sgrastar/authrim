@@ -13,7 +13,7 @@ import {
 import { runTenantBackupScheduler } from '../operation-scheduler';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { TenantBackupOperationStore } from '../operation-store';
 import { TenantBackupExecutionInventory } from '../execution-inventory';
 import type { TenantBackupStepContext } from '../operation-executor';
@@ -187,6 +187,166 @@ function openInput() {
     },
   };
 }
+it('runs one bounded restore authority preflight for 500 rows and fences the actual SQL write', async () => {
+  target.exec('CREATE TABLE owners(id TEXT PRIMARY KEY NOT NULL,tenant_id TEXT NOT NULL)');
+  const rows = Array.from({ length: 500 }, (_, i) =>
+    JSON.stringify({ id: ['text', `owner-${i}`], tenant_id: ['text', 'a'] })
+  );
+  let members = new Set<string>();
+  const prepareRows = vi.fn(
+    async (_context: TenantBackupStepContext, values: readonly string[]) => {
+      members = new Set(values);
+    }
+  );
+  const assertPreparedRows = vi.fn(async () => {
+    expect(members.size).toBe(500);
+  });
+  const transform = vi.fn(async (_context: TenantBackupStepContext, value: string) => {
+    expect(members.has(value)).toBe(true);
+    return value;
+  });
+  const guarded: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'core.owners' },
+    schema: {
+      table: 'owners',
+      columns: ['id', 'tenant_id'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    restoreTransform: {
+      id: 'current-owner-batch-v1',
+      statementsPerRow: 0,
+      statementsPerBatch: 128,
+      prepareRows,
+      assertPreparedRows,
+      transform,
+    },
+  };
+  await persist();
+  await seal();
+  const active = {
+    ...context,
+    operation: {
+      ...context.operation,
+      phase: 'apply_sqlite_dataset',
+      cursor_json: JSON.stringify({
+        version: 1,
+        targetId: 'target',
+        targetOrdinal: 0,
+        datasetId: guarded.dataset.id,
+        sourceCursor: null,
+        rowsWritten: 0,
+      }),
+    },
+  };
+  await runSqliteRestoreDatasetStep(active, {
+    ...openInput(),
+    policy: guarded,
+    manifest: { ...manifest, datasets: [guarded.dataset] },
+    readNextValidatedRow: async ({ sourceCursor }) => {
+      const i = sourceCursor === null ? 0 : Number(sourceCursor);
+      return i < rows.length ? { rowJson: rows[i], nextCursor: String(i + 1) } : null;
+    },
+  });
+  expect(prepareRows).toHaveBeenCalledTimes(1);
+  expect(transform).toHaveBeenCalledTimes(500);
+  expect(assertPreparedRows).toHaveBeenCalledTimes(2);
+  expect(target.prepare('SELECT count(*) AS n FROM owners').get()).toEqual({ n: 500 });
+});
+
+it('uses the same bulk authority hook in the combined dataset execution path', async () => {
+  target.exec('CREATE TABLE owners(id TEXT PRIMARY KEY NOT NULL,tenant_id TEXT NOT NULL)');
+  const rows = Array.from({ length: 200 }, (_, i) =>
+    JSON.stringify({ id: ['text', `owner-${i}`], tenant_id: ['text', 'a'] })
+  );
+  let members = new Set<string>();
+  const prepareRows = vi.fn(
+    async (_context: TenantBackupStepContext, values: readonly string[]) => {
+      members = new Set(values);
+    }
+  );
+  const assertPreparedRows = vi.fn(async () => {
+    expect(members.size).toBe(200);
+  });
+  const transform = vi.fn(async (_context: TenantBackupStepContext, value: string) => {
+    expect(members.has(value)).toBe(true);
+    return value;
+  });
+  const guarded: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    dataset: { ...policy.dataset, id: 'core.owners' },
+    schema: {
+      table: 'owners',
+      columns: ['id', 'tenant_id'],
+      primaryKey: ['id'],
+      uniqueKeys: [],
+      tenantColumn: 'tenant_id',
+    },
+    restoreTransform: {
+      id: 'current-owner-batch-v1',
+      statementsPerRow: 0,
+      statementsPerBatch: 128,
+      prepareRows,
+      assertPreparedRows,
+      transform,
+    },
+  };
+  const sourceManifest = { ...manifest, datasets: [guarded.dataset] };
+  await persist();
+  await persistSqliteRestoreSequence(inventory, 1, [
+    {
+      targetId: 'target',
+      ordinal: 0,
+      policy: guarded,
+      manifest: sourceManifest,
+      recordCount: rows.length,
+      byteCount: rows.reduce((sum, value) => sum + new TextEncoder().encode(value).length, 0),
+    },
+  ]);
+  await seal();
+  let cursor: string | null = JSON.stringify({
+    version: 1,
+    sequenceOrdinal: 1,
+    jobIndex: 0,
+    datasetCursor: null,
+    completedRows: [],
+    emptyPrepared: false,
+  });
+  for (let i = 0; i < 4; i++) {
+    const result = await runSqliteRestoreSequenceStep(
+      {
+        ...context,
+        operation: {
+          ...context.operation,
+          phase: 'start_sqlite_restore_sequence',
+          cursor_json: cursor,
+        },
+      },
+      {
+        ...openInput(),
+        sequenceOrdinal: 1,
+        loadValidatedDataset: async () => ({
+          policy: guarded,
+          manifest: sourceManifest,
+          readNextValidatedRow: async ({ sourceCursor }: { sourceCursor: string | null }) => {
+            const index = sourceCursor === null ? 0 : Number(sourceCursor);
+            return index < rows.length
+              ? { rowJson: rows[index], nextCursor: String(index + 1) }
+              : null;
+          },
+        }),
+      }
+    );
+    cursor = result.cursor;
+    if (result.phase === 'restore_other_stores') break;
+  }
+  expect(prepareRows).toHaveBeenCalledTimes(1);
+  expect(transform).toHaveBeenCalledTimes(200);
+  expect(assertPreparedRows.mock.calls.length).toBeGreaterThanOrEqual(2);
+  expect(target.prepare('SELECT count(*) AS n FROM owners').get()).toEqual({ n: 200 });
+});
 it('persists initialization once and restores through the same sealed plan across worker takeover', async () => {
   await persist();
   await persist();

@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../import/postgres-restore-table-contract';
@@ -13,6 +14,46 @@ import {
 const SCHEMA = `authrim_dsql_identity_${'a'.repeat(32)}`;
 const ROOT = resolve(import.meta.dirname, '../../../..');
 const clean = (text: string) => text.replace(/\s+/gu, ' ').trim();
+
+// Explicitly reevaluated source changes, not a declaration of DSQL Guest support. The
+// disposable three-table baseline still lacks the Guest workflow, epochs, markers and guards.
+// Pin the complete migrations so changed function bodies require another review too.
+const REVIEWED_GUEST_SOURCE: Readonly<
+  Record<string, { sha256: string; triggers: Readonly<Record<string, readonly string[]>> }>
+> = {
+  'core/017_guest_erasure_admission.sql': {
+    sha256: '89a42a7289995dc3f4913971150e71dd8395c3e37334cebf0c660e05e3de6f2e',
+    triggers: {
+      passkeys: [
+        'CREATE TRIGGER trg_guest_core_passkeys BEFORE INSERT OR UPDATE OR DELETE ON passkeys FOR EACH ROW EXECUTE FUNCTION authrim_guest_core_source_guard();',
+      ],
+    },
+  },
+  'pii/007_guest_pii_erasure_markers.sql': {
+    sha256: '65416c744871b4367bcf2b3d6a29d9c552ca376ff899c5eb3ba13f9e72baf1e2',
+    triggers: {
+      users_pii: [
+        'CREATE TRIGGER trg_guest_pii_users_pii BEFORE INSERT OR UPDATE OR DELETE ON "users_pii" FOR EACH ROW EXECUTE FUNCTION authrim_guest_pii_source_guard();',
+      ],
+    },
+  },
+};
+function assertReviewedSourceTriggers(
+  family: string,
+  filename: string,
+  migration: string,
+  table: string
+): void {
+  const declarations = Array.from(
+    migration.matchAll(
+      new RegExp(`CREATE TRIGGER[^;]+ ON (?:public\\.)?"?${table}"?(?=\\s|$)[^;]*;`, 'gu')
+    ),
+    (match) => clean(match[0])
+  );
+  const reviewed = REVIEWED_GUEST_SOURCE[`${family}/${filename}`];
+  if (reviewed) expect(createHash('sha256').update(migration).digest('hex')).toBe(reviewed.sha256);
+  expect(declarations).toEqual(reviewed?.triggers[table] ?? []);
+}
 
 function database() {
   const plan = createDsqlIdentitySchemaPlan(SCHEMA);
@@ -111,14 +152,12 @@ describe('DSQL native identity evaluation schema', () => {
           .sort()
       ).toEqual(sourceIndexes.sort());
 
-      // A later source alteration or new trigger requires explicit reevaluation,
-      // never silently treating this snapshot as the current native contract.
+      // Unreviewed source alterations/triggers still fail. Reviewed Guest guards remain
+      // unsupported by this non-serving experiment, rather than being silently emulated.
       const directory = resolve(ROOT, `migrations/${family}/postgresql`);
       for (const filename of readdirSync(directory).filter((name) => name.endsWith('.sql'))) {
         const migration = readFileSync(resolve(directory, filename), 'utf8');
-        expect(migration).not.toMatch(
-          new RegExp(`CREATE TRIGGER[^;]+ ON (?:public\\.)?${table.name}\\b`, 'u')
-        );
+        assertReviewedSourceTriggers(family, filename, migration, table.name);
         if (!filename.startsWith('001_')) {
           expect(migration).not.toMatch(
             new RegExp(`ALTER TABLE (?:ONLY )?(?:public\\.)?${table.name}\\b`, 'u')
@@ -130,6 +169,40 @@ describe('DSQL native identity evaluation schema', () => {
     expect(plan.indexes).toHaveLength(12);
     expect(plan.fullRuntimeReady).toBe(false);
     expect(plan.scope).toBe('identity-staging-experiment');
+  });
+
+  it('does not claim Guest erasure admission from the disposable baseline experiment', () => {
+    const plan = createDsqlIdentitySchemaPlan(SCHEMA);
+    expect(plan.scope).toBe('identity-staging-experiment');
+    expect(plan.fullRuntimeReady).toBe(false);
+    expect(plan.tables.map(({ name }) => name)).toEqual(['users_core', 'users_pii', 'passkeys']);
+    expect(
+      plan.tables.some(({ sql }) =>
+        /guest_(?:core|pii)_mutation_epoch|guest_pii_erasure_markers|CREATE TRIGGER/iu.test(sql)
+      )
+    ).toBe(false);
+    const known = readFileSync(
+      resolve(ROOT, 'migrations/core/postgresql/017_guest_erasure_admission.sql'),
+      'utf8'
+    );
+    expect(() =>
+      assertReviewedSourceTriggers('core', 'unreviewed.sql', known, 'passkeys')
+    ).toThrow();
+    expect(() =>
+      assertReviewedSourceTriggers(
+        'core',
+        '017_guest_erasure_admission.sql',
+        known.replace('RAISE EXCEPTION', 'RAISE NOTICE'),
+        'passkeys'
+      )
+    ).toThrow();
+    const quoted = readFileSync(
+      resolve(ROOT, 'migrations/pii/postgresql/007_guest_pii_erasure_markers.sql'),
+      'utf8'
+    );
+    expect(() =>
+      assertReviewedSourceTriggers('pii', 'unreviewed.sql', quoted, 'users_pii')
+    ).toThrow();
   });
 
   it('fingerprints the source contracts and native definitions independently of the trial namespace', () => {

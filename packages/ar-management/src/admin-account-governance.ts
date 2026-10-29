@@ -1,3 +1,4 @@
+import { assertGuestLegalHoldAdmission } from './guest-legal-hold-admission';
 import {
   createAccountLegalHold,
   releaseAccountLegalHold,
@@ -448,6 +449,12 @@ export async function adminAccountLegalHoldCreateHandler(c: Context<{ Bindings: 
     const eventId = `legal-hold-event:${keyDigest}`;
     const operationId = `legal-hold-projection:${keyDigest}`;
 
+    const previous = await adapter.queryOne<LegalHoldRow>(
+      `SELECT id,subject_id,state,reason_code,case_reference,expires_at,version,created_by,created_at,released_by,released_at,release_reason,updated_at FROM legal_holds WHERE id=? AND tenant_id=?`,
+      [holdId, tenantId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (!previous) await assertGuestLegalHoldAdmission(adapter, tenantId, accountId);
     await createAccountLegalHold(adapter, {
       holdId,
       tenantId,
@@ -468,6 +475,7 @@ export async function adminAccountLegalHoldCreateHandler(c: Context<{ Bindings: 
       [holdId, tenantId],
       { consistencyClass: 'primary_required' }
     );
+    if (!row) await assertGuestLegalHoldAdmission(adapter, tenantId, accountId);
     if (!row || !sameCreatedHold(row, { accountId, reasonCode, caseReference, expiresAt })) {
       return conflict(c, 'Idempotency-Key was already used for another legal hold request');
     }
@@ -492,6 +500,22 @@ export async function adminAccountLegalHoldCreateHandler(c: Context<{ Bindings: 
     ) {
       return conflict(c, 'The account already has an active legal hold');
     }
+    if (error instanceof Error && error.message === 'guest_erasure_already_started')
+      return c.json(
+        {
+          error: 'guest_erasure_already_started',
+          error_description: 'Guest data erasure has started; a new legal hold cannot be accepted',
+        },
+        409
+      );
+    if (error instanceof Error && error.message.startsWith('guest_hold_admission_'))
+      return c.json(
+        {
+          error: 'guest_hold_admission_unverified',
+          error_description: 'Guest legal hold admission could not be verified',
+        },
+        503
+      );
     logSanitizedError('Account legal hold create failed', error);
     return c.json({ error: 'server_error', error_description: 'Unable to create legal hold' }, 500);
   }

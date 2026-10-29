@@ -147,6 +147,10 @@
             {
               "path": "033_log_iceberg_core_publications.sql",
               "checksum": "27ccbcb08348a7dc7cd20e85d7a7fb150efbc640ead97ccd3d7dc72d87d6bf6e"
+            },
+            {
+              "path": "034_guest_erasure_admission.sql",
+              "checksum": "c25becac2fc111bef7b8837a321ffd9b50e571e351078146322c0ab9b0ceefff"
             }
           ]
         },
@@ -207,6 +211,10 @@
             {
               "path": "013_pii_log_purge_operations.sql",
               "checksum": "7096175c05b7d66237dcdf2203ed0bb74d0716bd2c52a65c7089cbbf1cc3f9dd"
+            },
+            {
+              "path": "014_guest_pii_erasure_markers.sql",
+              "checksum": "20ff6b90e0a1f5d4555f2f5f366478aa3b7f38960f1b0a4e5237ea002ec8267a"
             }
           ]
         },
@@ -620,6 +628,10 @@
             {
               "path": "016_log_iceberg_core_publications.sql",
               "checksum": "66cbe8cd26d03aca61eb8c3151968e63f0a314c6070f6c8249c94883be0e2255"
+            },
+            {
+              "path": "017_guest_erasure_admission.sql",
+              "checksum": "89a42a7289995dc3f4913971150e71dd8395c3e37334cebf0c660e05e3de6f2e"
             }
           ]
         },
@@ -651,6 +663,10 @@
             {
               "path": "006_pii_log_purge_operations.sql",
               "checksum": "9ea13c29ed29e366f3f0296d392af227493baf452a4e5582b2839ad35fd6c346"
+            },
+            {
+              "path": "007_guest_pii_erasure_markers.sql",
+              "checksum": "65416c744871b4367bcf2b3d6a29d9c552ca376ff899c5eb3ba13f9e72baf1e2"
             }
           ]
         }
@@ -804,6 +820,10 @@
         {
           "path": "033_log_iceberg_core_publications.sql",
           "checksum": "27ccbcb08348a7dc7cd20e85d7a7fb150efbc640ead97ccd3d7dc72d87d6bf6e"
+        },
+        {
+          "path": "034_guest_erasure_admission.sql",
+          "checksum": "c25becac2fc111bef7b8837a321ffd9b50e571e351078146322c0ab9b0ceefff"
         }
       ]
     },
@@ -868,6 +888,10 @@
         {
           "path": "013_pii_log_purge_operations.sql",
           "checksum": "7096175c05b7d66237dcdf2203ed0bb74d0716bd2c52a65c7089cbbf1cc3f9dd"
+        },
+        {
+          "path": "014_guest_pii_erasure_markers.sql",
+          "checksum": "20ff6b90e0a1f5d4555f2f5f366478aa3b7f38960f1b0a4e5237ea002ec8267a"
         }
       ]
     },
@@ -1301,6 +1325,10 @@
         {
           "path": "016_log_iceberg_core_publications.sql",
           "checksum": "66cbe8cd26d03aca61eb8c3151968e63f0a314c6070f6c8249c94883be0e2255"
+        },
+        {
+          "path": "017_guest_erasure_admission.sql",
+          "checksum": "89a42a7289995dc3f4913971150e71dd8395c3e37334cebf0c660e05e3de6f2e"
         }
       ]
     },
@@ -1336,6 +1364,10 @@
         {
           "path": "006_pii_log_purge_operations.sql",
           "checksum": "9ea13c29ed29e366f3f0296d392af227493baf452a4e5582b2839ad35fd6c346"
+        },
+        {
+          "path": "007_guest_pii_erasure_markers.sql",
+          "checksum": "65416c744871b4367bcf2b3d6a29d9c552ca376ff899c5eb3ba13f9e72baf1e2"
         }
       ]
     }

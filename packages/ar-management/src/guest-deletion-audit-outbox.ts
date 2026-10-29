@@ -1,5 +1,8 @@
 import {
   createAuditLog,
+  GuestLifecycleRepository,
+  parseGuestDeletionProgress,
+  type GuestDeletionReceiptV2,
   getAdminProxyMetadataFromContext,
   type DatabaseAdapter,
   type Env,
@@ -28,6 +31,7 @@ export interface GuestDeletionAuditOutboxRow {
   created_at: number | string;
   updated_at: number | string;
   succeeded_at: number | string | null;
+  execution_progress_json?: string | null;
 }
 
 export interface GuestDeletionAuditTaskInput {
@@ -168,10 +172,68 @@ export class GuestDeletionAuditOutboxRepository {
   }
 
   async markSucceeded(auditId: string): Promise<void> {
+    const task = await this.get(auditId);
+    if (task) {
+      const lifecycle = await new GuestLifecycleRepository(this.db, this.tenantId).get(
+        task.user_id
+      );
+      if (isVersionedGuestTask(task) || isVersionedGuestRoute(lifecycle?.deletion_route_json))
+        return this.acknowledgeV2(task);
+    }
     await this.db.execute(
       'DELETE FROM guest_deletion_audit_outbox WHERE tenant_id = ? AND audit_id = ?',
       [this.tenantId, auditId]
     );
+  }
+
+  /** Preserve the existing delivery-then-DELETE contract; no actor/IP terminal history is added. */
+  async acknowledgeV2(task: GuestDeletionAuditOutboxRow): Promise<void> {
+    if (task.tenant_id !== this.tenantId) throw new Error('guest_deletion_audit_ack_unknown');
+    const terminal = await requireVersionedGuestTerminal(this.db, task);
+    const stored = await this.get(task.audit_id);
+    if (!stored) return;
+    if (
+      !sameTask(stored, {
+        auditId: task.audit_id,
+        userId: task.user_id,
+        operationId: task.operation_id,
+        actorUserId: task.actor_user_id,
+        ipAddress: task.ip_address,
+        userAgent: task.user_agent,
+        metadataJson: task.metadata_json,
+        createdAt: Number(task.created_at),
+      }) ||
+      !stored.execution_progress_json ||
+      parseGuestDeletionProgress(stored.execution_progress_json).stage !== 'terminal'
+    )
+      throw new Error('guest_deletion_audit_ack_unknown');
+    let failure: unknown;
+    try {
+      await this.db.execute(
+        `DELETE FROM guest_deletion_audit_outbox WHERE tenant_id=? AND audit_id=? AND user_id=? AND operation_id=? AND actor_user_id=? AND ip_address=? AND user_agent=? AND metadata_json=? AND created_at=? AND status IN ('pending','retry') AND execution_progress_json=?
+        AND EXISTS (SELECT 1 FROM guest_account_lifecycle guest WHERE guest.tenant_id=guest_deletion_audit_outbox.tenant_id AND guest.user_id=guest_deletion_audit_outbox.user_id
+          AND guest.phase='deleted' AND guest.deletion_operation_id=guest_deletion_audit_outbox.operation_id AND guest.deletion_route_json=? AND guest.deleted_at=?)`,
+        [
+          task.tenant_id,
+          task.audit_id,
+          task.user_id,
+          task.operation_id,
+          task.actor_user_id,
+          task.ip_address,
+          task.user_agent,
+          task.metadata_json,
+          task.created_at,
+          stored.execution_progress_json,
+          terminal.routeJson,
+          terminal.completedAt,
+        ]
+      );
+    } catch (error) {
+      failure = error;
+    }
+    if (await this.get(task.audit_id))
+      throw new Error('guest_deletion_audit_ack_unknown', { cause: failure });
+    await requireVersionedGuestTerminal(this.db, task);
   }
 
   async markRetry(task: GuestDeletionAuditOutboxRow, now: number, code: string): Promise<void> {
@@ -193,7 +255,108 @@ export class GuestDeletionAuditOutboxRepository {
   }
 }
 
-async function writeGuestDeletionAudit(
+function isVersionedGuestTask(task: GuestDeletionAuditOutboxRow): boolean {
+  const metadata: unknown = JSON.parse(task.metadata_json);
+  return (
+    !!metadata &&
+    typeof metadata === 'object' &&
+    !Array.isArray(metadata) &&
+    'guestDeletionVersion' in metadata
+  );
+}
+function isVersionedGuestRoute(routeJson: string | null | undefined): boolean {
+  if (!routeJson) return false;
+  const route: unknown = JSON.parse(routeJson);
+  return (
+    !!route &&
+    typeof route === 'object' &&
+    !Array.isArray(route) &&
+    'schemaVersion' in route &&
+    route.schemaVersion === 2
+  );
+}
+async function requireVersionedGuestTerminal(
+  core: DatabaseAdapter,
+  task: GuestDeletionAuditOutboxRow
+): Promise<{ routeJson: string; completedAt: number }> {
+  const row = await new GuestLifecycleRepository(core, task.tenant_id).get(task.user_id);
+  if (
+    !row ||
+    row.phase !== 'deleted' ||
+    row.deletion_operation_id !== task.operation_id ||
+    !row.deleted_at ||
+    !row.deletion_route_json
+  )
+    throw new Error('guest_deletion_audit_ack_unknown');
+  const route = GuestLifecycleRepository.parseDeletionRouteV2(row.deletion_route_json, {
+    tenantId: task.tenant_id,
+    userId: task.user_id,
+    operationId: task.operation_id,
+  });
+  if (route.execution.phase !== 'erasure_started' || route.completionAuditId !== task.audit_id)
+    throw new Error('guest_deletion_audit_ack_unknown');
+  const metadata: unknown = JSON.parse(task.metadata_json);
+  if (
+    !metadata ||
+    typeof metadata !== 'object' ||
+    Array.isArray(metadata) ||
+    !('guestDeletionVersion' in metadata) ||
+    metadata.guestDeletionVersion !== 2 ||
+    !('operationId' in metadata) ||
+    metadata.operationId !== route.operationId
+  )
+    throw new Error('guest_deletion_audit_ack_unknown');
+  const account = await core.queryOne<{ id: string }>(
+    `SELECT id FROM identity_accounts WHERE tenant_id=? AND id=? AND legacy_user_id=? AND account_route_generation=? AND lifecycle_state='deleted'`,
+    [task.tenant_id, route.accountId, task.user_id, route.accountRouteGeneration],
+    { consistencyClass: 'primary_required' }
+  );
+  if (!account) throw new Error('guest_deletion_audit_ack_unknown');
+  return { routeJson: row.deletion_route_json, completedAt: row.deleted_at };
+}
+
+/** Execution uses only the immutable same-Core task, never a retry request's actor. */
+export async function requireGuestDeletionAuditTask(
+  core: DatabaseAdapter,
+  route: GuestDeletionReceiptV2
+): Promise<GuestDeletionAuditOutboxRow> {
+  const task = await new GuestDeletionAuditOutboxRepository(core, route.tenantId).get(
+    route.completionAuditId
+  );
+  if (
+    !task ||
+    task.tenant_id !== route.tenantId ||
+    task.user_id !== route.userId ||
+    task.operation_id !== route.operationId ||
+    task.audit_id !== route.completionAuditId ||
+    !['pending', 'retry'].includes(task.status) ||
+    !task.actor_user_id ||
+    !Number.isSafeInteger(Number(task.created_at)) ||
+    Number(task.created_at) < 1 ||
+    typeof task.metadata_json !== 'string' ||
+    new TextEncoder().encode(task.metadata_json).length > 4096
+  )
+    throw new Error('guest_deletion_source_unverified');
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(task.metadata_json);
+  } catch {
+    throw new Error('guest_deletion_source_unverified');
+  }
+  if (
+    !metadata ||
+    typeof metadata !== 'object' ||
+    Array.isArray(metadata) ||
+    !('guestDeletionVersion' in metadata) ||
+    metadata.guestDeletionVersion !== 2 ||
+    !('operationId' in metadata) ||
+    metadata.operationId !== route.operationId
+  )
+    throw new Error('guest_deletion_source_unverified');
+  return task;
+}
+
+export async function writeGuestDeletionAudit(
   env: Env,
   task: GuestDeletionAuditOutboxRow,
   completedAt: number
@@ -285,15 +448,20 @@ export async function processGuestDeletionAuditOutbox(
             phase: string;
             deletion_operation_id: string | null;
             deleted_at: number | string | null;
+            deletion_route_json: string | null;
           }>(
-            `SELECT phase, deletion_operation_id, deleted_at FROM guest_account_lifecycle
+            `SELECT phase, deletion_operation_id, deleted_at, deletion_route_json FROM guest_account_lifecycle
                WHERE tenant_id = ? AND user_id = ?`,
             [tenantId, task.user_id],
             { consistencyClass: 'primary_required' }
           );
           if (!lifecycle || lifecycle.deletion_operation_id !== task.operation_id) {
             const taskCreatedAt = asNonNegativeInteger(task.created_at);
-            if (taskCreatedAt > 0 && attemptAt - taskCreatedAt < ORPHAN_TASK_GRACE_SECONDS) {
+            if (
+              isVersionedGuestTask(task) ||
+              isVersionedGuestRoute(lifecycle?.deletion_route_json) ||
+              (taskCreatedAt > 0 && attemptAt - taskCreatedAt < ORPHAN_TASK_GRACE_SECONDS)
+            ) {
               await repository.markRetry(task, attemptAt, 'guest_deletion_claim_pending');
               retrying += 1;
             } else {
@@ -311,6 +479,17 @@ export async function processGuestDeletionAuditOutbox(
             await repository.markRetry(task, attemptAt, 'guest_deletion_completion_time_missing');
             retrying += 1;
             continue;
+          }
+          if (isVersionedGuestTask(task) || isVersionedGuestRoute(lifecycle.deletion_route_json)) {
+            await requireVersionedGuestTerminal(adapter, task);
+            if (
+              !task.execution_progress_json ||
+              parseGuestDeletionProgress(task.execution_progress_json).stage !== 'terminal'
+            ) {
+              await repository.markRetry(task, attemptAt, 'guest_deletion_finalization_pending');
+              retrying += 1;
+              continue;
+            }
           }
           await writeAudit(task, adapter, completedAt * 1000);
           await repository.markSucceeded(task.audit_id);
