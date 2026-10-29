@@ -49822,7 +49822,7 @@ Remove this role from {email}?
 	 */
 	admin_admin_rbac_name_validation: () => LocalizedString
 	/**
-	 * e.g., security_admin
+	 * e.g., helpdesk
 	 */
 	admin_admin_rbac_name_placeholder: () => LocalizedString
 	/**

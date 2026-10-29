@@ -1837,7 +1837,7 @@ const roles = new Map<string, DevRole>([
 		{
 			id: 'role-admin',
 			tenant_id: TENANT_ID,
-			name: 'admin',
+			name: 'ar_tenant_admin',
 			display_name: 'Administrator',
 			description: 'Built-in role with broad tenant administration permissions.',
 			is_system: false,
@@ -2161,7 +2161,7 @@ const adminUserRoleAssignments = new Map<string, DevAdminRoleAssignment[]>([
 				id: 'admin-role-assignment-dev-admin',
 				assignment_id: 'admin-role-assignment-dev-admin',
 				role_id: 'role-admin',
-				name: 'admin',
+				name: 'ar_tenant_admin',
 				display_name: 'Administrator',
 				scope_type: 'global',
 				scope_id: null,
@@ -2513,7 +2513,7 @@ const adminPolicies = new Map<string, DevAdminPolicy>([
 			priority: 1000,
 			resource_pattern: 'admin:console:*',
 			actions: ['read'],
-			conditions: { roles: ['platform_admin', 'tenant_admin'], condition_type: 'any' },
+			conditions: { roles: ['ar_super_admin', 'ar_tenant_admin'], condition_type: 'any' },
 			is_active: true,
 			is_system: true,
 			created_at: Math.floor(NOW / 1000) - 86400 * 180,
@@ -5928,10 +5928,10 @@ function adminRoleListItem(role: DevRole) {
 		display_name: role.display_name ?? null,
 		description: role.description ?? null,
 		permissions: role.permissions,
-		hierarchy_level: role.name === 'admin' ? 100 : role.name === 'viewer' ? 10 : 50,
+		hierarchy_level: role.name === 'ar_tenant_admin' ? 80 : role.name === 'ar_viewer' ? 20 : 50,
 		role_type: role.is_system
 			? 'system'
-			: role.name === 'admin' || role.name === 'viewer'
+			: role.name === 'ar_tenant_admin' || role.name === 'ar_viewer'
 				? 'builtin'
 				: 'custom',
 		is_system: role.is_system,
@@ -13663,7 +13663,7 @@ export async function handleDevAdminMock(
 			tenant_id: TENANT_ID,
 			email: 'dev-admin@localhost',
 			name: 'Dev Admin',
-			roles: ['platform_admin', 'tenant_admin', 'admin'],
+			roles: ['ar_super_admin'],
 			permissions: ['*'],
 			admin_scope: 'platform',
 			is_platform_admin: true,
