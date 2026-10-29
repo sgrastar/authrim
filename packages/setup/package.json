@@ -29,7 +29,7 @@
     "test:package": "node scripts/check-package.mjs"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.13",
+    "@hono/node-server": "^2.1.5",
     "@inquirer/prompts": "^7.2.1",
     "chalk": "^6.0.1",
     "commander": "^15.0.0",
