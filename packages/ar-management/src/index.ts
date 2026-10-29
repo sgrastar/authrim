@@ -2287,15 +2287,10 @@ app.delete('/api/admin/rate-limits/profile-override', requireSystemAdmin(), clea
 app.get('/api/admin/settings/cache-mode', requireSystemAdmin(), getPlatformCacheModeHandler);
 app.post('/api/admin/settings/cache-mode', requireSystemAdmin(), setPlatformCacheModeHandler);
 app.get('/api/admin/settings/cache-mode/info', requireSystemAdmin(), getCacheModeInfoHandler);
-// Client-specific cache mode overrides
+// Client-specific cache mode overrides. The mode is kept per tenant and client, and the handlers
+// check the client belongs to the request's tenant, so a tenant administrator sets its own.
 app.get('/api/admin/clients/:clientId/cache-mode', getClientCacheModeHandler);
-// The mode is kept under the client ID alone, which two tenants can share (a copied tenant), so
-// setting it is the platform's.
-app.post(
-  '/api/admin/clients/:clientId/cache-mode',
-  requireSystemAdmin(),
-  setClientCacheModeHandler
-);
+app.post('/api/admin/clients/:clientId/cache-mode', setClientCacheModeHandler);
 
 // [DEPRECATED] Admin IP Security Configuration
 // → Migrate to: /api/admin/tenants/:tenantId/settings/security
