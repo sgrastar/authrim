@@ -11,6 +11,7 @@ const { repoMocks, mockAdminAdapter } = vi.hoisted(() => ({
     createAdminUser: vi.fn(),
     updateAdminUser: vi.fn(),
     suspendAccount: vi.fn(),
+    deactivateAccount: vi.fn(),
     activateAccount: vi.fn(),
     unlockAccount: vi.fn(),
     getRole: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAdminUser = repoMocks.createAdminUser;
     updateAdminUser = repoMocks.updateAdminUser;
     suspendAccount = repoMocks.suspendAccount;
+    deactivateAccount = repoMocks.deactivateAccount;
     activateAccount = repoMocks.activateAccount;
     unlockAccount = repoMocks.unlockAccount;
     searchAdminUsers = repoMocks.searchAdminUsers;
@@ -145,6 +147,9 @@ describe('adminUsersRouter', () => {
     // What an account holds, for the authority over it: no assignments here.
     mockAdminAdapter.query.mockResolvedValue([]);
     repoMocks.getAssignmentsByUser.mockResolvedValue([]);
+    // The writes apply: a guarded write that did not apply is the other request's win.
+    repoMocks.suspendAccount.mockResolvedValue(true);
+    repoMocks.deactivateAccount.mockResolvedValue(true);
   });
 
   it('should reject updates to an admin that holds a role above the caller', async () => {
@@ -609,7 +614,8 @@ describe('adminUsersRouter', () => {
     expect(response.status).toBe(200);
     expect(repoMocks.updateAdminUser).toHaveBeenCalledWith(
       'admin_1',
-      expect.objectContaining({ email: 'new@example.com', name: 'Updated' })
+      expect.objectContaining({ email: 'new@example.com', name: 'Updated' }),
+      undefined
     );
     expect(repoMocks.createAuditLog).toHaveBeenCalled();
   });
@@ -664,7 +670,7 @@ describe('adminUsersRouter', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(repoMocks.updateAdminUser).toHaveBeenCalledWith('admin_target', { is_active: false });
+    expect(repoMocks.deactivateAccount).toHaveBeenCalledWith('admin_target', expect.anything());
     expect(repoMocks.createAuditLog).toHaveBeenCalled();
   });
 
@@ -813,7 +819,7 @@ describe('adminUsersRouter', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(repoMocks.suspendAccount).toHaveBeenCalledWith('admin_target');
+    expect(repoMocks.suspendAccount).toHaveBeenCalledWith('admin_target', expect.anything());
     expect(repoMocks.createAuditLog).toHaveBeenCalled();
   });
 
@@ -968,7 +974,7 @@ describe('adminUsersRouter', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(repoMocks.removeAssignmentById).toHaveBeenCalledWith('assignment_1');
+    expect(repoMocks.removeAssignmentById).toHaveBeenCalledWith('assignment_1', undefined);
     expect(repoMocks.createAuditLog).toHaveBeenCalled();
   });
 
@@ -1039,7 +1045,13 @@ describe('adminUsersRouter', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(repoMocks.removeAssignment).toHaveBeenCalledWith('admin_target', 'role_ar_support');
+    expect(repoMocks.removeAssignment).toHaveBeenCalledWith(
+      'admin_target',
+      'role_ar_support',
+      undefined,
+      undefined,
+      undefined
+    );
     expect(repoMocks.createAuditLog).toHaveBeenCalled();
   });
 
@@ -1120,7 +1132,7 @@ describe('adminUsersRouter', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(repoMocks.updateAdminUser).toHaveBeenCalledWith('admin_target', { is_active: false });
+    expect(repoMocks.deactivateAccount).toHaveBeenCalledWith('admin_target', expect.anything());
   });
 
   it.each([
@@ -1128,11 +1140,14 @@ describe('adminUsersRouter', () => {
     ['already removed assignment', { id: 'role_ar_support', name: 'ar_support' }, false],
   ])('returns not found for a role assignment with %s', async (_label, role, removed) => {
     repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_target' });
-    repoMocks.getAssignment.mockResolvedValue({
-      id: 'assignment_1',
-      admin_user_id: 'admin_target',
-      admin_role_id: 'role_ar_support',
-    });
+    // An assignment that is already removed is gone when the refused write looks again.
+    repoMocks.getAssignment
+      .mockResolvedValueOnce({
+        id: 'assignment_1',
+        admin_user_id: 'admin_target',
+        admin_role_id: 'role_ar_support',
+      })
+      .mockResolvedValue(removed ? { id: 'assignment_1' } : null);
     repoMocks.getRole.mockResolvedValue(role);
     repoMocks.removeAssignmentById.mockResolvedValue(removed);
     const { app, env } = createTestApp();

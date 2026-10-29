@@ -12,6 +12,7 @@ export {
   AdminRoleAssignmentRepository,
   type AdminRoleAssignmentWithUser,
 } from './admin-role';
+export { ADMIN_GUARD_NOW_MS, allOfGuards, guardClause, type AdminWriteGuard } from './write-guard';
 export { AdminSessionRepository } from './admin-session';
 export { AdminPasskeyRepository } from './admin-passkey';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
