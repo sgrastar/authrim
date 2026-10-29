@@ -22,7 +22,10 @@ import {
 import { type ApprovalNotificationPolicySource } from './approval-notification-policy';
 import { describeApprovalCompletionMethod } from './approval-completion-guidance';
 import { resolveApprovalNotificationTransport } from './approval-notification-resolution';
-import { getApprovalPresetExpiry, resolveApprovalEffectivePolicy } from './approval-policy-presets';
+import {
+  resolveApprovalEffectivePolicy,
+  resolveApprovalRequestExpiry,
+} from './approval-policy-presets';
 
 type AdminContext = Context<any, any, any>;
 
@@ -220,6 +223,35 @@ export async function resolveApprovalSteps(
   return resolved;
 }
 
+export class ApprovalRequesterError extends Error {}
+
+/**
+ * Who a request is made by. An admin who is signed in is the requester; they cannot file a
+ * request in someone else's name, because the requester is the one person who must not approve
+ * it. A machine credential (its principal id is also in `userId`) may name the requester, as it
+ * could before.
+ */
+export function resolveApprovalRequester(
+  adminAuth: { userId?: string | null; authMethod?: string | null } | undefined,
+  named: { type?: string; id?: string }
+): { type: ApprovalRequest['requester_subject_type']; id: string } {
+  const userId = adminAuth?.userId;
+  if (userId && adminAuth?.authMethod !== 'machine_access_token') {
+    if (
+      (named.id !== undefined && named.id !== userId) ||
+      (named.type !== undefined && named.type !== 'admin_user')
+    ) {
+      throw new ApprovalRequesterError('requester must be the signed-in admin');
+    }
+    return { type: 'admin_user', id: userId };
+  }
+  return {
+    type: (named.type ??
+      (userId ? 'admin_user' : 'service_principal')) as ApprovalRequest['requester_subject_type'],
+    id: named.id ?? userId ?? 'system',
+  };
+}
+
 export function buildApprovalPreviewRequest(input: {
   tenantId: string;
   requesterSubjectType: ApprovalRequest['requester_subject_type'];
@@ -252,9 +284,8 @@ export function buildApprovalPreviewRequest(input: {
   return {
     investigation_id: scope.normalized.investigation_id ?? generateInvestigationId(),
     tenant_id: tenantId,
-    requester_subject_type: (body.requester_subject_type ??
-      requesterSubjectType) as ApprovalApproverSubjectType,
-    requester_subject_id: body.requester_subject_id ?? requesterSubjectId,
+    requester_subject_type: requesterSubjectType as ApprovalApproverSubjectType,
+    requester_subject_id: requesterSubjectId,
     target_subject_type: body.target_subject_type,
     target_subject_id: body.target_subject_id,
     request_surface: body.request_surface,
@@ -270,7 +301,7 @@ export function buildApprovalPreviewRequest(input: {
     policy_preset: body.policy_preset,
     reuse_scope: body.reuse_scope ?? 'request',
     partial_access_allowed: body.partial_access_allowed ?? false,
-    expires_at: body.expires_at ?? getApprovalPresetExpiry(body.policy_preset),
+    expires_at: resolveApprovalRequestExpiry(body.policy_preset, body.expires_at),
     scope_json: scope.normalized,
     scope_canonical: scope.canonical,
     resolved_policy: resolveApprovalEffectivePolicy(body.policy_preset),
@@ -376,7 +407,10 @@ export async function previewApprovalRequestResolution(
         subject_id: step.subject_id ?? null,
         relation_type: step.relation_type ?? null,
         relation_source: step.relation_source ?? null,
-        expires_at: step.expires_at ?? requestPreview.expires_at,
+        expires_at: Math.min(
+          step.expires_at ?? requestPreview.expires_at,
+          requestPreview.expires_at
+        ),
         method: selectedMethod,
         transport_channel: transportChannel,
         acceptable_methods: acceptableMethods,
