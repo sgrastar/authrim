@@ -1242,22 +1242,40 @@ export function createLookupHmacReindexProcessor(env: Env): DirectoryJobProcesso
         createLookupBlindIndex(source.sourceKind, raw.value, keys.source),
         createLookupBlindIndex(source.sourceKind, raw.value, keys.current),
       ]);
-      const sourceReservationCreatedAt = await verifySourceReservation({
-        lookupForBucket,
-        sourceIndex,
-        tenantId: raw.tenantId,
-        accountId: raw.accountId,
-      });
-      const projected = await upsertCurrentIdentifier({
-        lookupForBucket,
-        operationId: operation.operationId,
-        currentIndex,
-        tenantId: raw.tenantId,
-        accountId: raw.accountId,
-        routeProjection: publication.routeProjection,
-        now: Math.floor(input.nowMs() / 1000),
-        sourceReservationCreatedAt,
-      });
+      let projected: 'projected' | 'reservation_not_committed' = 'reservation_not_committed';
+      try {
+        const sourceReservationCreatedAt = await verifySourceReservation({
+          lookupForBucket,
+          sourceIndex,
+          tenantId: raw.tenantId,
+          accountId: raw.accountId,
+        });
+        projected = await upsertCurrentIdentifier({
+          lookupForBucket,
+          operationId: operation.operationId,
+          currentIndex,
+          tenantId: raw.tenantId,
+          accountId: raw.accountId,
+          routeProjection: publication.routeProjection,
+          now: Math.floor(input.nowMs() / 1000),
+          sourceReservationCreatedAt,
+        });
+      } catch (error) {
+        // A retry may read a source row just before its unlink releases either generation.
+        // Only these ownership conflicts can be treated as stale, and only after a primary
+        // authority check. Storage errors and conflicts of a live link still fail the batch.
+        // The existing stale cleanup below preserves other operations and email replacements.
+        if (
+          !(error instanceof Error) ||
+          ![
+            'lookup_hmac_reindex_source_reservation_invalid',
+            'lookup_hmac_reindex_reservation_conflict',
+          ].includes(error.message) ||
+          (await sourceStillAuthoritative(source, sourceSession, row))
+        ) {
+          throw error;
+        }
+      }
       const authoritative = await sourceStillAuthoritative(source, sourceSession, row);
       if (projected === 'reservation_not_committed' && authoritative) {
         // The reservation was released after this run checked it, so no route was written, yet
