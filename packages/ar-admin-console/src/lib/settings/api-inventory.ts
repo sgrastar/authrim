@@ -208,28 +208,28 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'custom-claims',
 		name: 'Custom claims',
 		kind: 'records',
-		page: 'access/schema',
+		page: 'access/schema-setting',
 		paths: [`${A}/custom-claims`]
 	},
 	{
 		id: 'token-claim-rules',
 		name: 'Token claim rules',
 		kind: 'records',
-		page: 'access/schema',
+		page: 'access/schema-setting',
 		paths: [`${A}/token-claim-rules`]
 	},
 	{
 		id: 'oidc-scopes',
 		name: 'OIDC scopes',
 		kind: 'records',
-		page: 'access/schema',
+		page: 'access/schema-setting',
 		paths: [`${A}/field-mapping/oidc-scopes`]
 	},
 	{
 		id: 'attribute-dictionary',
 		name: 'Attribute fields and groups',
 		kind: 'records',
-		page: 'access/schema',
+		page: 'access/schema-setting',
 		paths: [`${A}/field-mapping/attribute-fields`, `${A}/field-mapping/attribute-groups`]
 	},
 	{

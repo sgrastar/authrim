@@ -20,7 +20,7 @@
 
 	/* --- Flow diagram ---
 	   Node width and side gutter decide the canvas width and where edges run. */
-	--flow-node-w: 250px;
+	--flow-node-w: 300px;
 	--flow-gutter: 24px;
 	--flow-canvas-w: calc(var(--flow-node-w) + var(--flow-gutter) * 2);
 
@@ -163,5 +163,12 @@
 		--tile-pad: 12px;
 		--dialog-pad-x: 16px;
 		--dialog-pad-y: 16px;
+	}
+}
+
+/* The flow diagram (350px wide) steps down on a phone, so it stays inside the page. */
+@media (max-width: 400px) {
+	:root {
+		--flow-node-w: 232px;
 	}
 }

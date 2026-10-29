@@ -40,7 +40,7 @@
 	 */
 	const columns = $derived([
 		{ key: 'protocol', label: t('sf.mock.col.protocol'), width: '140px' },
-		{ key: 'kind', label: t('sf.mock.col.kind'), width: '64px' },
+		{ key: 'kind', label: t('sf.mock.col.kind'), width: '100px' },
 		{ key: 'name', label: t('sf.mock.col.name') },
 		{ key: 'status', label: t('sf.mock.col.status'), width: '216px' },
 		{ key: 'created', label: t('sf.mock.col.created'), width: '208px' },
@@ -194,7 +194,7 @@
 
 <LeaveGuard {dirty} />
 
-<Page>
+<Page withFlow={opened !== null}>
 	{#if opened && 'flow' in opened}
 		<AccountFlowDetail
 			flow={opened.flow}

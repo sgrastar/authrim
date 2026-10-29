@@ -7,6 +7,8 @@
 
 	interface Props extends Omit<HTMLTextareaAttributes, 'value'> {
 		label: string;
+		/** Keep the label for screen readers only (the name is shown beside the field). */
+		hideLabel?: boolean;
 		value?: string;
 		hint?: string;
 		error?: string;
@@ -29,6 +31,7 @@
 
 	let {
 		label,
+		hideLabel = false,
 		value = $bindable(''),
 		hint,
 		error,
@@ -69,8 +72,8 @@
 </script>
 
 <div class="field" class:has-error={!!error} class:is-busy={busy()} class:is-changed={isChanged}>
-	<div class="field__top">
-		<label class="field__label" for={inputId}>
+	<div class="field__top" class:field__top--hidden={hideLabel && !actions}>
+		<label class="field__label" class:sr-only={hideLabel} for={inputId}>
 			{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}
 			{#if required}<span class="field__req" aria-hidden="true">*</span>{/if}
 		</label>
@@ -118,6 +121,12 @@
 		justify-content: space-between;
 		gap: 10px;
 		min-height: 22px;
+	}
+
+	/* The name is shown beside the field: the row it would take is not needed. The label stays
+	   (visually hidden) for screen readers, so the box itself must not be `display: none`. */
+	.field__top--hidden {
+		display: contents;
 	}
 
 	.field__label {
