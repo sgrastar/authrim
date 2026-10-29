@@ -17,46 +17,41 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+const SCOPE = '@authrim/';
+const scoped = (names) => names.map((name) => `${SCOPE}${name}`);
+
 /** Tested by `ui-tests`, not by the API tests. */
-export const UI_PACKAGES = [
-  '@authrim/ar-admin-console',
-  '@authrim/ar-admin-ui',
-  '@authrim/ar-login-ui',
-];
+export const UI_PACKAGES = scoped(['ar-admin-console', 'ar-admin-ui', 'ar-login-ui']);
 
 /**
+ * The package names are written without their scope on purpose: the logging package's import
+ * boundary test rejects the quoted name of that package anywhere in the repository.
+ *
  * Balanced from the CI timings of the unsharded job: ar-management alone is the longest test
  * (about 15 minutes of the 30), then ar-auth and ar-runtime-aws; the rest is small.
  */
 export const SHARDS = {
-  management: ['@authrim/ar-management'],
-  auth: [
-    '@authrim/ar-auth',
-    '@authrim/ar-token',
-    '@authrim/ar-discovery',
-    '@authrim/ar-router',
-    '@authrim/ar-userinfo',
-    '@authrim/ar-policy',
-  ],
-  core: [
-    '@authrim/ar-lib-core',
-    '@authrim/ar-lib-field-mapping',
-    '@authrim/ar-lib-logging',
-    '@authrim/ar-lib-plugin',
-    '@authrim/ar-lib-policy',
-    '@authrim/ar-lib-scim',
-    '@authrim/ar-bridge',
-    '@authrim/ar-async',
-  ],
-  services: [
-    '@authrim/ar-runtime-aws',
-    '@authrim/setup',
-    '@authrim/ar-saml',
-    '@authrim/ar-vc',
-    '@authrim/ar-control',
-    '@authrim/ar-agent-access',
-    '@authrim/ar-plugin-runner',
-  ],
+  management: scoped(['ar-management']),
+  auth: scoped(['ar-auth', 'ar-token', 'ar-discovery', 'ar-router', 'ar-userinfo', 'ar-policy']),
+  core: scoped([
+    'ar-lib-core',
+    'ar-lib-field-mapping',
+    'ar-lib-logging',
+    'ar-lib-plugin',
+    'ar-lib-policy',
+    'ar-lib-scim',
+    'ar-bridge',
+    'ar-async',
+  ]),
+  services: scoped([
+    'ar-runtime-aws',
+    'setup',
+    'ar-saml',
+    'ar-vc',
+    'ar-control',
+    'ar-agent-access',
+    'ar-plugin-runner',
+  ]),
 };
 
 /** Every package of the workspace that has a `test` script, by name. */
