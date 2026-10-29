@@ -14,6 +14,7 @@ import {
   verifyDsqlConfigurationReferences,
 } from './configuration-import';
 import { runDsqlConfigurationProbe } from './configuration-probe';
+import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../import/postgres-restore-table-contract';
 
 vi.mock('./configuration-fixture', () => ({ createDsqlConfigurationFixture: vi.fn() }));
 vi.mock('./configuration-schema', async (original) => ({
@@ -113,7 +114,11 @@ beforeEach(() => {
         sourceSha256: 'a'.repeat(64),
         targetSha256: 'b'.repeat(64),
       })),
-      omittedDatasets: Array.from({ length: 14 }, (_, i) => `omitted-${i}`),
+      omittedDatasets: POSTGRES_RESTORE_TABLE_CONTRACTS.filter(
+        (spec) => !Object.hasOwn(rows, spec.datasetId)
+      )
+        .map((spec) => spec.datasetId)
+        .sort(),
     } as Awaited<ReturnType<typeof verifyDsqlConfigurationSubset>>;
   });
   execute.mockImplementation(async (sql: string, params?: unknown[]) => {

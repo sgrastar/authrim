@@ -10,6 +10,7 @@ import {
   verifyDsqlIdentitySubset,
 } from './identity-import';
 import { runDsqlIdentityProbe } from './identity-probe';
+import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../import/postgres-restore-table-contract';
 
 vi.mock('./identity-fixture', () => ({ createDsqlIdentityFixture: vi.fn() }));
 vi.mock('./identity-schema', async (original) => ({
@@ -93,7 +94,11 @@ beforeEach(() => {
         sourceSha256: 'a'.repeat(64),
         targetSha256: 'b'.repeat(64),
       })),
-      omittedDatasets: Array.from({ length: 15 }, (_, i) => `omitted-${i}`),
+      omittedDatasets: POSTGRES_RESTORE_TABLE_CONTRACTS.filter(
+        (spec) => !Object.hasOwn(rows, spec.datasetId)
+      )
+        .map((spec) => spec.datasetId)
+        .sort(),
     } as Awaited<ReturnType<typeof verifyDsqlIdentitySubset>>;
   });
   execute.mockImplementation(async (sql: string, params?: unknown[]) => {

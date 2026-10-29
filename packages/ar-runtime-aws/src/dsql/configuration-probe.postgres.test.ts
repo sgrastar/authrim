@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuroraDsqlAdapter } from './adapter';
 import { createDsqlConfigurationSchemaPlan } from './configuration-schema';
 import { runDsqlConfigurationProbe } from './configuration-probe';
+import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../import/postgres-restore-table-contract';
 
 // This test checks the complete probe's SQL/backup/resume/cleanup orchestration on
 // local PostgreSQL. It does not demonstrate DSQL's service or ASYNC index support.
@@ -75,7 +76,14 @@ const url = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
       });
       expect(result.checks).toHaveLength(16);
       expect(result.checks.every((check) => check.passed)).toBe(true);
-      expect(result.omittedDatasets).toHaveLength(14);
+      const restored = new Set(
+        createDsqlConfigurationSchemaPlan(result.schema).tables.map((table) => table.datasetId)
+      );
+      expect(result.omittedDatasets).toEqual(
+        POSTGRES_RESTORE_TABLE_CONTRACTS.filter((spec) => !restored.has(spec.datasetId))
+          .map((spec) => spec.datasetId)
+          .sort()
+      );
       expect(
         await pool.query('SELECT 1 FROM pg_namespace WHERE nspname=$1', [result.schema])
       ).toMatchObject({ rowCount: 0 });
