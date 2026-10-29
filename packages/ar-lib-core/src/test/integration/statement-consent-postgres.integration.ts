@@ -81,6 +81,9 @@ async function setup() {
       await control.query(ddl[0].replaceAll('public.', `${schema}.`));
   }
   await control.query(`SET search_path=${schema},public`);
+  await control.query(
+    'ALTER TABLE user_consent_records ADD COLUMN content_hash TEXT; ALTER TABLE consent_item_history ADD COLUMN content_hash_after TEXT;'
+  );
   await control.query(stepASchema('postgresql'));
   const backendIds = new Set<number>();
   async function owned() {
@@ -118,8 +121,18 @@ async function setup() {
     ['statement', 'statement-tenant-a'],
   ])
     await adapter.execute(
-      `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,physical_id,restore_epoch,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`,
-      ['tenant-a', kind, key, 'enforced', 'physical-source', 'epoch-source', 1, 1]
+      `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,physical_id,restore_epoch,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+      [
+        'tenant-a',
+        kind,
+        key,
+        'enforced',
+        'account-tenant-a',
+        'physical-source',
+        'epoch-source',
+        1,
+        1,
+      ]
     );
   await adapter.execute(
     `INSERT INTO statement_consent_key_states(tenant_id,user_id,statement_id,account_id,physical_id,restore_epoch,revision,withdrawal_generation,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
@@ -146,6 +159,64 @@ async function setup() {
 }
 
 describe('dedicated PostgreSQL consent transaction, actual local backend', () => {
+  it.each(['tenant', 'statement'])(
+    'keeps the %s guard account binding immutable',
+    async (scope) => {
+      const f = await setup();
+      await expect(
+        f.adapter.execute('UPDATE statement_consent_guards SET account_id=? WHERE scope_kind=?', [
+          'other-account',
+          scope,
+        ])
+      ).rejects.toThrow('statement_consent_guard_monotonic');
+    }
+  );
+  it('reopens only a statement in a newer generation while preserving the tenant closure', async () => {
+    const f = await setup();
+    await f.adapter.execute(
+      "UPDATE statement_consent_guards SET mode='closed',definition_generation=1,closed_generation=1 WHERE scope_kind='statement'"
+    );
+    await expect(
+      f.adapter.execute(
+        "UPDATE statement_consent_guards SET mode='enforced' WHERE scope_kind='statement'"
+      )
+    ).rejects.toThrow('statement_consent_guard_monotonic');
+    await f.adapter.execute(
+      "UPDATE statement_consent_guards SET mode='enforced',definition_generation=2 WHERE scope_kind='statement'"
+    );
+    const guard = await f.adapter.queryOne<{
+      mode: string;
+      definition_generation: string;
+      closed_generation: string;
+    }>(
+      "SELECT mode,definition_generation,closed_generation FROM statement_consent_guards WHERE scope_kind='statement'"
+    );
+    expect(guard?.mode).toBe('enforced');
+    expect(Number(guard?.definition_generation)).toBe(2);
+    expect(Number(guard?.closed_generation)).toBe(1);
+    await expect(
+      f.adapter.execute(
+        "UPDATE statement_consent_guards SET closed_generation=0 WHERE scope_kind='statement'"
+      )
+    ).rejects.toThrow('statement_consent_guard_monotonic');
+    await f.adapter.execute(
+      "UPDATE statement_consent_guards SET mode='closed' WHERE scope_kind='tenant'"
+    );
+    await expect(
+      f.adapter.execute(
+        "UPDATE statement_consent_guards SET mode='enforced',definition_generation=2 WHERE scope_kind='tenant'"
+      )
+    ).rejects.toThrow('statement_consent_guard_monotonic');
+  });
+  it('admits the trusted metadata snapshot with no account-side definitions', async () => {
+    const f = await setup();
+    await f.adapter.execute('DELETE FROM consent_statement_versions');
+    await f.adapter.execute('DELETE FROM consent_statements');
+    expect(await applyStatementConsentTransition(f.cap, transitionInput())).toMatchObject({
+      outcome: 'applied',
+    });
+  });
+
   it('normalizes actual default int8 strings for grant, noop, withdraw and historical replay', async () => {
     const f = await setup();
     const first = transitionInput();

@@ -22,6 +22,7 @@ export async function listUserStatementConsentRecords(
     statement_id: string;
     version_id: string;
     version: string;
+    content_hash: string | null;
     status: string;
     granted_at: number | null;
     withdrawn_at: number | null;
@@ -45,6 +46,7 @@ export async function listUserStatementConsentRecords(
   return rows.map((r) => ({
     ...r,
     status: r.status as ConsentRecordStatus,
+    content_hash: r.content_hash ?? undefined,
     granted_at: optionalNumber(r.granted_at),
     withdrawn_at: optionalNumber(r.withdrawn_at),
     expires_at: optionalNumber(r.expires_at),

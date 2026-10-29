@@ -88,12 +88,34 @@
 				selected_org_id: selectedOrgId || undefined,
 				acting_as_user_id: consentData.acting_as?.id
 			};
+			// Echo the documents displayed, including optional items omitted from decisions.
+			submitPayload.consent_item_versions = Object.fromEntries(
+				(consentData.consent_items ?? []).map((item) => [
+					item.statement_id,
+					{ version_id: item.version_id, content_hash: item.content_hash ?? null }
+				])
+			);
 			// Include consent item decisions if consent management is enabled
 			if (consentData.consent_management_enabled && Object.keys(consentItemDecisions).length > 0) {
 				submitPayload.consent_item_decisions = consentItemDecisions;
 			}
 			const { data, error: apiError } = await consentAPI.submit(submitPayload);
 
+			if (apiError?.error === 'document_changed') {
+				const replacement = apiError.error_details?.consent_challenge_id;
+				if (typeof replacement === 'string' && replacement) {
+					const updated = new URL(window.location.href);
+					updated.searchParams.set('challenge_id', replacement);
+					window.location.replace(updated.toString());
+				} else if (apiError.error_details?.refresh_consent === true) {
+					error = '';
+					await loadConsentData();
+				} else {
+					consentData = null;
+					error = $LL.error_authorizationRequestExpired();
+				}
+				return;
+			}
 			if (apiError) {
 				throw loginUiDisplayError($LL.error_server_error());
 			}

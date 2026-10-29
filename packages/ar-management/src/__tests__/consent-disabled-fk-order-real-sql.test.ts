@@ -11,7 +11,7 @@ import { adminConsentStatementDeleteHandler } from '../admin-consent-statements'
 import { openCoreStore } from './helpers/core-schema-sqlite';
 import type { SQLiteDatabase } from './test-sqlite';
 
-const NOW = 1_800_000_000_000;
+let NOW = Date.now();
 const TENANT = 'consent-disabled-a';
 const STATEMENT = 'consent-statement-a';
 const VERSION = 'consent-version-a';
@@ -73,8 +73,10 @@ async function state(adapter: DatabaseAdapter) {
 
 describe('disabled consent split: preserve the existing delayed-grant safeguard', () => {
   it('accepts a live grant, then rejects old screen targets after the actual statement DELETE', async () => {
+    NOW = Date.now();
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    const { db, adapter } = openCoreStore(TENANT);
+    const { db, adapter: sqlite } = openCoreStore(TENANT);
+    const adapter = { ...sqlite, getType: () => 'd1' as const };
     opened.push(db);
     expect(await adapter.queryOne('PRAGMA foreign_keys')).toEqual({ foreign_keys: 1 });
     const schemaSql = `SELECT type,name,sql FROM sqlite_schema
@@ -105,7 +107,7 @@ describe('disabled consent split: preserve the existing delayed-grant safeguard'
     };
     const grant = (userId: string) =>
       processConsentItemDecisions(
-        adapter,
+        singleDatabaseStatementConsent(adapter),
         TENANT,
         userId,
         { [STATEMENT]: 'granted' },
@@ -167,7 +169,7 @@ describe('disabled consent split: preserve the existing delayed-grant safeguard'
     });
 
     // The unmodified producer receives exactly the targets obtained before DELETE.
-    await expect(grant(DELAYED_USER)).rejects.toThrow(/FOREIGN KEY constraint failed/iu);
+    await expect(grant(DELAYED_USER)).rejects.toThrow(/document_changed/iu);
     expect(await state(adapter)).toEqual({
       statements: [],
       versions: [],

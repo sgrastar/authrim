@@ -89,7 +89,7 @@ describe('statement consent across metadata and account databases (current behav
       expect(before).toEqual({ satisfied: false, unsatisfied: [STATEMENT] });
 
       await processConsentItemDecisions(
-        stores.account,
+        stores,
         TENANT,
         USER,
         { [STATEMENT]: 'granted' },
@@ -171,7 +171,7 @@ describe('statement consent across metadata and account databases (current behav
     it('DEFECT: recording consent in the account database fails on the D1 foreign keys', async () => {
       await expect(
         processConsentItemDecisions(
-          account.adapter,
+          { metadata: metadata.adapter, account: account.adapter },
           TENANT,
           USER,
           { [STATEMENT]: 'granted' },
@@ -183,14 +183,12 @@ describe('statement consent across metadata and account databases (current behav
       expect(await listUserStatementConsentRecords(account.adapter, TENANT, USER)).toEqual([]);
     });
 
-    it('DEFECT: without the foreign keys the record is written with no retention snapshot', async () => {
-      // PostgreSQL's baseline has no foreign keys. The retention days are read from the same
-      // adapter as the record is written to, so an account database without definitions stores
-      // the agreement with no retention, and the retention job (which reads metadata) never
-      // reaches it.
+    it('takes the retention snapshot from the metadata definition even though the account database holds none', async () => {
+      // PostgreSQL's baseline has no foreign keys. The retention days are read from the metadata
+      // database and the record is written to the account database, so the snapshot is complete.
       account.db.exec('PRAGMA foreign_keys=OFF');
       await processConsentItemDecisions(
-        account.adapter,
+        { metadata: metadata.adapter, account: account.adapter },
         TENANT,
         USER,
         { [STATEMENT]: 'granted' },
@@ -200,17 +198,21 @@ describe('statement consent across metadata and account databases (current behav
       );
 
       const [record] = await listUserStatementConsentRecords(account.adapter, TENANT, USER);
-      expect(record).toMatchObject({ statement_id: STATEMENT, status: 'granted' });
-      expect(record.retain_until).toBeUndefined();
-      expect(record.record_retention_days_snapshot).toBeUndefined();
+      expect(record).toMatchObject({
+        statement_id: STATEMENT,
+        status: 'granted',
+        record_retention_days_snapshot: 30,
+      });
+      expect(record.retain_until).toBeGreaterThan(Date.now());
     });
 
-    it('DEFECT: the hash column exists but nothing stores what was agreed to in it', async () => {
-      // The column and the history column arrived with the additive migration; the write path
-      // fills them when statement consent moves onto the atomic transitions.
-      const stores = singleDatabaseStatementConsent(metadata.adapter);
+    it('stores the hash of the document agreed to on the record and its history', async () => {
+      await metadata.adapter.execute(
+        `UPDATE consent_statement_versions SET content_hash = ? WHERE id = ?`,
+        ['a'.repeat(64), VERSION_ID]
+      );
       await processConsentItemDecisions(
-        stores.account,
+        singleDatabaseStatementConsent(metadata.adapter),
         TENANT,
         USER,
         { [STATEMENT]: 'granted' },
@@ -218,17 +220,16 @@ describe('statement consent across metadata and account databases (current behav
         'iphash',
         target
       );
-      const [row] = await metadata.adapter.query<{
-        receipt_id: string | null;
-        content_hash: string | null;
-      }>(`SELECT receipt_id, content_hash FROM user_consent_records WHERE tenant_id = ?`, [TENANT]);
-      expect(row.content_hash).toBeNull();
-      expect(row.receipt_id).toBeNull();
+      const [row] = await metadata.adapter.query<{ content_hash: string | null }>(
+        `SELECT content_hash FROM user_consent_records WHERE tenant_id = ?`,
+        [TENANT]
+      );
+      expect(row.content_hash).toBe('a'.repeat(64));
       const [history] = await metadata.adapter.query<{ content_hash_after: string | null }>(
         `SELECT content_hash_after FROM consent_item_history WHERE tenant_id = ?`,
         [TENANT]
       );
-      expect(history.content_hash_after).toBeNull();
+      expect(history.content_hash_after).toBe('a'.repeat(64));
     });
   });
 });

@@ -2354,6 +2354,7 @@ export interface ConsentSubmission {
 	selected_org_id?: string;
 	acting_as_user_id?: string;
 	consent_item_decisions?: Record<string, 'granted' | 'denied'>;
+	consent_item_versions?: Record<string, { version_id: string; content_hash: string | null }>;
 }
 
 /**

@@ -58,6 +58,7 @@
 		inline_content?: string;
 		version: string;
 		version_id: string;
+		content_hash?: string | null;
 		is_required: boolean;
 		enforcement: string;
 		current_status?: string;

@@ -15,6 +15,7 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import type { AuthChallengeStoreRpc } from '@authrim/ar-lib-core/types/auth-runtime-ports';
 import type {
   ConsentScreenData,
   ConsentClientInfo,
@@ -111,6 +112,7 @@ const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }>
 
 type SessionBoundConsentChallenge = {
   userId: string;
+  expiresAt?: number;
   metadata?: ConsentChallengeMetadata & { session_id?: unknown };
 };
 
@@ -663,6 +665,74 @@ async function loadConsentScreenItems(
   );
 }
 
+type DisplayedStatementVersions = Record<
+  string,
+  { version_id: string; content_hash: string | null }
+>;
+function statementSnapshotsMatch(
+  items: ConsentScreenItem[],
+  displayed: DisplayedStatementVersions | undefined
+): boolean {
+  if (items.length === 0 && displayed === undefined) return true;
+  return Boolean(
+    displayed &&
+    typeof displayed === 'object' &&
+    !Array.isArray(displayed) &&
+    Object.keys(displayed).length === items.length &&
+    items.every((item) => {
+      const shown = displayed[item.statement_id];
+      return (
+        shown &&
+        typeof shown === 'object' &&
+        !Array.isArray(shown) &&
+        shown.version_id === item.version_id &&
+        Object.hasOwn(shown, 'content_hash') &&
+        shown.content_hash === (item.content_hash ?? null)
+      );
+    })
+  );
+}
+
+/** Refresh consent, never approval. Preserve the original challenge's expiry and session binding. */
+async function changedConsentDocument(
+  c: Context<{ Bindings: Env }>,
+  pending: SessionBoundConsentChallenge,
+  consumed: boolean
+): Promise<Response> {
+  let details: Record<string, unknown> = { refresh_consent: true };
+  if (consumed) {
+    const remaining = Number(pending.expiresAt) - Date.now();
+    if (Number.isSafeInteger(pending.expiresAt) && remaining > 0) {
+      const id = crypto.randomUUID();
+      const store = (await getChallengeStoreByChallengeId(
+        c.env,
+        id,
+        getTenantIdFromContext(c)
+      )) as AuthChallengeStoreRpc;
+      await store.storeChallengeRpc({
+        id,
+        tenantId: getTenantIdFromContext(c),
+        type: 'consent',
+        userId: pending.userId,
+        challenge: id,
+        ttl: Math.ceil(remaining / 1000),
+        notAfterMs: pending.expiresAt,
+        metadata: { ...pending.metadata },
+      });
+      details = { consent_challenge_id: id };
+    } else details = { restart_required: true };
+  }
+  return c.json(
+    {
+      error: 'document_changed',
+      error_description:
+        'Consent documents changed. Review the updated consent screen before submitting.',
+      error_details: details,
+    },
+    409
+  );
+}
+
 /**
  * Handle consent approval/denial
  * POST /auth/consent
@@ -693,6 +763,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       selected_scopes?: string[];
       acknowledged_policy_versions?: { privacy_policy?: string; terms_of_service?: string };
       consent_item_decisions?: Record<string, 'granted' | 'denied'>;
+      consent_item_versions?: DisplayedStatementVersions;
     }>();
     const challenge_id = jsonBody.challenge_id;
     const approved = jsonBody.approved === true;
@@ -771,6 +842,23 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           503
         );
       }
+    }
+
+    if (
+      approved &&
+      pendingChallenge.metadata &&
+      typeof pendingChallenge.metadata.client_id === 'string'
+    ) {
+      const pendingItems = await loadConsentScreenItems(c, {
+        tenantId: getTenantIdFromContext(c),
+        clientId: pendingChallenge.metadata.client_id,
+        userId: pendingChallenge.userId,
+        metadata: pendingChallenge.metadata,
+        language: 'en',
+        defaultLanguage: 'en',
+      });
+      if (!statementSnapshotsMatch(pendingItems, jsonBody.consent_item_versions))
+        return await changedConsentDocument(c, pendingChallenge, false);
     }
 
     let consumedChallengeData: {
@@ -992,12 +1080,15 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       language: 'en',
       defaultLanguage: 'en',
     });
+    if (!statementSnapshotsMatch(consentItems, jsonBody.consent_item_versions))
+      return await changedConsentDocument(c, pendingChallenge, true);
     const targets = Object.fromEntries(
       consentItems.map((item) => [
         item.statement_id,
         {
           version_id: item.version_id,
           version: item.version,
+          content_hash: item.content_hash ?? null,
           withdrawal_allowed: item.withdrawal_allowed,
         },
       ])
@@ -1042,39 +1133,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const privacyPolicyVersion = acknowledged_policy_versions?.privacy_policy || null;
     const tosVersion = acknowledged_policy_versions?.terms_of_service || null;
 
-    try {
-      await upsertOAuthClientConsent(authCtx.coreAdapter, {
-        consentId,
-        userId,
-        clientId: client_id,
-        tenantId,
-        scope: effectiveScope,
-        selectedScopesJson,
-        grantedAt: now,
-        expiresAt,
-        privacyPolicyVersion,
-        tosVersion,
-        now,
-        consentGeneration,
-      });
-    } catch (error) {
-      // Withdrawn while the user was approving: nothing was recorded; approve again.
-      if (isOAuthClientConsentGenerationChanged(error)) {
-        return c.json(
-          {
-            error: 'consent_withdrawn',
-            error_description:
-              'Consent for this application changed while it was being approved. Start again.',
-          },
-          409
-        );
-      }
-      throw error;
-    }
-
-    // Invalidate consent cache so next check reflects updated consent
-    await invalidateConsentCache(c.env, userId, tenantId, client_id);
-
     // Process consent item decisions (consent management)
     if (consentItems.length > 0) {
       const hasBlockingConsentItems = consentItems.some(
@@ -1087,7 +1145,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           : undefined;
 
         await processConsentItemDecisions(
-          authCtx.coreAdapter,
+          statementConsentStores(c, tenantId),
           tenantId,
           userId,
           validConsentItemDecisions,
@@ -1097,7 +1155,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
             client_id,
           },
           ipHash,
-          targets
+          targets,
+          { env: c.env }
         );
 
         // Publish events for each decision
@@ -1125,6 +1184,20 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           }
         }
       } catch (err) {
+        if (
+          err instanceof Error &&
+          ['document_changed', 'statement_consent_transition_rejected'].includes(err.message)
+        )
+          return await changedConsentDocument(c, pendingChallenge, true);
+        if (err instanceof Error && err.message === 'statement_consent_atomic_backend_unsupported')
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description:
+                'Statement consent writes are unavailable on this database backend',
+            },
+            503
+          );
         log.warn('Failed to process consent item decisions', { action: 'consent_items' });
         if (hasBlockingConsentItems) {
           return c.json(
@@ -1137,6 +1210,39 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         }
       }
     }
+
+    try {
+      await upsertOAuthClientConsent(authCtx.coreAdapter, {
+        consentId,
+        userId,
+        clientId: client_id,
+        tenantId,
+        scope: effectiveScope,
+        selectedScopesJson,
+        grantedAt: now,
+        expiresAt,
+        privacyPolicyVersion,
+        tosVersion,
+        now,
+        consentGeneration,
+      });
+    } catch (error) {
+      // The application's consent generation changed; approval must restart.
+      if (isOAuthClientConsentGenerationChanged(error)) {
+        return c.json(
+          {
+            error: 'consent_withdrawn',
+            error_description:
+              'Consent for this application changed while it was being approved. Start again.',
+          },
+          409
+        );
+      }
+      throw error;
+    }
+
+    // Invalidate consent cache so next check reflects updated consent
+    await invalidateConsentCache(c.env, userId, tenantId, client_id);
 
     // Check if versioning is enabled for history recording
     const versioningEnabled = await getConsentVersioningEnabled(c.env);
