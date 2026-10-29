@@ -134,7 +134,7 @@ describe('tenant backup operation dispatcher', () => {
       createTenantBackupOperationHandlers(env, resolver, now).run(context)
     ).resolves.toBe(result);
 
-    expect(resolver).toHaveBeenCalledWith(context);
+    expect(resolver).toHaveBeenCalledWith(context, env);
     expect(mocks.exportStep).toHaveBeenCalledWith(env, context, adapter.export, now);
   });
 

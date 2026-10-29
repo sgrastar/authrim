@@ -1,5 +1,12 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import { decryptValue, encryptValue } from '../../utils/pii-encryption';
+import {
+  GUEST_CURRENT_DENY_WITNESS_DATASET,
+  GUEST_CURRENT_DENY_WITNESS_REASON,
+  guestCurrentDenyWitnessId,
+  parseGuestCurrentDenyWitness,
+  type GuestCurrentDenyWitness,
+} from './guest-current-deny-witness';
 
 type Database = Pick<DatabaseAdapter, 'execute' | 'query' | 'queryOne'>;
 const MAX_ROW_BYTES = 1024 * 1024;
@@ -160,9 +167,9 @@ export class TenantBackupRestoreHoldStore {
       item_count: number;
     }>(
       `SELECT dataset_id,reason,count(*) AS item_count
-       FROM tenant_backup_restored_holds WHERE tenant_id=? AND operation_id=?
+       FROM tenant_backup_restored_holds WHERE tenant_id=? AND operation_id=? AND dataset_id<>?
        GROUP BY dataset_id,reason ORDER BY dataset_id,reason LIMIT ?`,
-      [tenantId, operationId, MAX_PAGE_SIZE]
+      [tenantId, operationId, GUEST_CURRENT_DENY_WITNESS_DATASET, MAX_PAGE_SIZE]
     );
     if (
       rows.length > MAX_PAGE_SIZE ||
@@ -180,5 +187,72 @@ export class TenantBackupRestoreHoldStore {
       reason: row.reason,
       count: row.item_count,
     }));
+  }
+
+  /** Exact, operation-owned internal evidence. No arbitrary held user row can be read here. */
+  async writeGuestCurrentDenyWitness(input: {
+    witness: GuestCurrentDenyWitness;
+    encryptionKey: string;
+    keyVersion: number;
+    now: number;
+    authorize: () => Promise<void>;
+  }): Promise<void> {
+    const pinned = { ...input };
+    const rowJson = JSON.stringify(pinned.witness);
+    const witness = parseGuestCurrentDenyWitness(rowJson, pinned.witness);
+    await pinned.authorize();
+    await this.write({
+      tenantId: witness.tenantId,
+      operationId: witness.operationId,
+      datasetId: GUEST_CURRENT_DENY_WITNESS_DATASET,
+      recordId: guestCurrentDenyWitnessId(witness.operationId, witness.planDigest),
+      reason: GUEST_CURRENT_DENY_WITNESS_REASON,
+      rowJson,
+      encryptionKey: pinned.encryptionKey,
+      keyVersion: pinned.keyVersion,
+      now: pinned.now,
+    });
+    await pinned.authorize();
+  }
+
+  /** Exact, operation-owned internal evidence. No arbitrary held user row can be read here. */
+  async readGuestCurrentDenyWitness(input: {
+    tenantId: string;
+    operationId: string;
+    planDigest: string;
+    encryptionKey: string;
+    keyVersion: number;
+    authorize: () => Promise<void>;
+    /** Recheck the installed source identity, complete inventory and epoch vector. */
+    assertCurrentSource: (witness: GuestCurrentDenyWitness) => Promise<void>;
+  }): Promise<GuestCurrentDenyWitness> {
+    const pinned = { ...input };
+    keyInput(pinned.encryptionKey, pinned.keyVersion);
+    installedIdentifier(pinned.tenantId);
+    const recordId = guestCurrentDenyWitnessId(pinned.operationId, pinned.planDigest);
+    await pinned.authorize();
+    const row = await this.database.queryOne<HoldRow>(
+      `SELECT reason,source_row_sha256,payload_encrypted,payload_key_version
+       FROM tenant_backup_restored_holds WHERE tenant_id=? AND operation_id=? AND dataset_id=? AND record_id=?`,
+      [pinned.tenantId, pinned.operationId, GUEST_CURRENT_DENY_WITNESS_DATASET, recordId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (
+      !row ||
+      row.reason !== GUEST_CURRENT_DENY_WITNESS_REASON ||
+      row.payload_key_version !== pinned.keyVersion
+    )
+      throw new Error('backup_guest_current_deny_authority_unavailable');
+    const decrypted = await decryptValue(row.payload_encrypted, pinned.encryptionKey);
+    if (
+      !decrypted.wasEncrypted ||
+      decrypted.keyVersion !== pinned.keyVersion ||
+      (await sha256(decrypted.decrypted)) !== row.source_row_sha256
+    )
+      throw new Error('backup_guest_current_deny_witness_invalid');
+    const result = parseGuestCurrentDenyWitness(decrypted.decrypted, pinned);
+    await pinned.assertCurrentSource(result);
+    await pinned.authorize();
+    return result;
   }
 }

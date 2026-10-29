@@ -16,15 +16,18 @@ describe.each(['d1', 'postgresql'])('guest lifecycle conditional SQL (%s schema)
       INSERT INTO identity_accounts VALUES ('tenant-1', 'guest-1', 'user', NULL, 'guest', 0);
       INSERT INTO identity_accounts VALUES ('tenant-2', 'guest-1', 'user', NULL, 'guest', 0);
       INSERT INTO identity_accounts VALUES ('tenant-1', 'device-1', 'device', NULL, 'registered', 0);`);
-    sqlite.exec(
-      readFileSync(
-        new URL(
-          `../../../../../migrations/core/${dialect}/002_guest_account_lifecycle.sql`,
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
+    // Candidate reads require the lifecycle rows and their durable completion task.
+    // Keep each dialect's real DDL rather than an incomplete synthetic task table.
+    for (const migration of [
+      '002_guest_account_lifecycle.sql',
+      '004_guest_deletion_audit_outbox.sql',
+    ])
+      sqlite.exec(
+        readFileSync(
+          new URL(`../../../../../migrations/core/${dialect}/${migration}`, import.meta.url),
+          'utf8'
+        )
+      );
     const params = (values: unknown[] = []): SQLInputValue[] =>
       values.map((value) => {
         if (value === null || typeof value === 'string' || typeof value === 'number') return value;

@@ -67,6 +67,40 @@ async function runStep(
   input: RestoreStepInput,
   mode: 'write' | 'defer' | 'verify'
 ): Promise<TenantBackupStepResult> {
+  const prepareRows = input.policy.restoreTransform?.prepareRows?.bind(
+    input.policy.restoreTransform
+  );
+  if (prepareRows) {
+    const read = input.readNextValidatedRow;
+    const cached = new Map<string | null, Awaited<ReturnType<typeof read>>>();
+    const readPrepared: typeof read = async (request) => {
+      const cachedRow = cached.get(request.sourceCursor);
+      if (cachedRow !== undefined) return cachedRow;
+      let sourceCursor = request.sourceCursor,
+        bytes = 0;
+      const rows: string[] = [];
+      // A preflight is never a global cache or a read of the whole dataset. It does not
+      // advance the durable cursor; the existing row/byte/statement budgets still do that.
+      for (let index = 0; index < (mode === 'defer' ? 1 : 500); index++) {
+        const row = await read({ ...request, sourceCursor });
+        if (!row) {
+          cached.set(sourceCursor, null);
+          break;
+        }
+        const size = new TextEncoder().encode(row.rowJson).byteLength;
+        if (rows.length && bytes + size > 4 * 1024 * 1024) break;
+        if (!row.nextCursor || row.nextCursor === sourceCursor) invalid();
+        cached.set(sourceCursor, row);
+        rows.push(row.rowJson);
+        bytes += size;
+        sourceCursor = row.nextCursor;
+        if (bytes >= 4 * 1024 * 1024) break;
+      }
+      if (rows.length) await prepareRows(context, rows, mode);
+      return cached.get(request.sourceCursor) ?? null;
+    };
+    input = { ...input, readNextValidatedRow: readPrepared };
+  }
   if (mode === 'write') return runWriteBatch(context, input);
   if (mode === 'verify') return runVerifyBatch(context, input);
   return runSingleStep(context, input, mode);
@@ -110,14 +144,22 @@ export function restoreRowStatements(policy: SqliteDatasetInspectionPolicy): num
     invalid();
   return issued ? issued + 1 : 0;
 }
+export function restoreBatchStatements(policy: SqliteDatasetInspectionPolicy): number {
+  const count = policy.restoreTransform?.statementsPerBatch ?? 0;
+  if (!Number.isSafeInteger(count) || count < 0 || count >= RESTORE_STATEMENT_BUDGET) invalid();
+  return count;
+}
 
 /** Rows of `policy` one transition may carry within the statement budget. */
 export function restoreStatementRows(policy: SqliteDatasetInspectionPolicy): number {
   const statements = restoreRowStatements(policy);
-  return statements ? Math.floor(RESTORE_STATEMENT_BUDGET / statements) : Number.POSITIVE_INFINITY;
+  return statements
+    ? Math.floor((RESTORE_STATEMENT_BUDGET - restoreBatchStatements(policy)) / statements)
+    : Number.POSITIVE_INFINITY;
 }
 
 function restoreBatchRows(policy: SqliteDatasetInspectionPolicy): number {
+  restoreBatchStatements(policy);
   return Math.min(policy.restoreHold ? 250 : RESTORE_PAGE_ROWS_MAX, restoreStatementRows(policy));
 }
 
@@ -186,7 +228,12 @@ async function runVerifyBatch(
   let processedRows = 0;
   let sourceCursor = current.verifySourceCursor;
   let sourceComplete = false;
-  for (let index = 0; index < verifyBatchRows(policy); index++) {
+  for (
+    let index = 0;
+    index <
+    Math.min(verifyBatchRows(policy), policy.restoreTransform?.prepareRows ? 500 : Infinity);
+    index++
+  ) {
     context.signal.throwIfAborted();
     let next: Awaited<ReturnType<RestoreStepInput['readNextValidatedRow']>>;
     try {
@@ -240,11 +287,15 @@ async function runVerifyBatch(
     let target: Awaited<ReturnType<typeof openPlannedSqliteRestoreTarget>>;
     try {
       target = await openPlannedSqliteRestoreTarget({ ...input, context });
+      await policy.restoreTransform?.assertPreparedRows?.(context);
       for (const chunk of calls(rows)) await target.verifyRows(policy, manifest, chunk);
+      await policy.restoreTransform?.assertPreparedRows?.(context);
     } catch {
       throw new Error('backup_restore_row_verify_failed');
     }
   }
+  if (rows.length && policy.restoreDisposition === 'reference_only')
+    await policy.restoreTransform?.assertPreparedRows?.(context);
   const rowsVerified = current.rowsVerified + rows.length;
   if (rowsVerified > current.rowsWritten) invalid();
   if (sourceComplete) {
@@ -311,7 +362,12 @@ async function runWriteBatch(
   let processedRows = 0;
   let sourceCursor = current.sourceCursor;
   let sourceComplete = false;
-  for (let index = 0; index < restoreBatchRows(policy); index++) {
+  for (
+    let index = 0;
+    index <
+    Math.min(restoreBatchRows(policy), policy.restoreTransform?.prepareRows ? 500 : Infinity);
+    index++
+  ) {
     context.signal.throwIfAborted();
     let next: Awaited<ReturnType<RestoreStepInput['readNextValidatedRow']>>;
     try {
@@ -369,11 +425,15 @@ async function runWriteBatch(
       throw new Error('backup_restore_target_open_failed');
     }
     try {
+      await policy.restoreTransform?.assertPreparedRows?.(context);
       for (const chunk of calls(rows)) await target.writeRows(policy, manifest, chunk);
+      await policy.restoreTransform?.assertPreparedRows?.(context);
     } catch {
       throw new Error('backup_restore_row_write_failed');
     }
   }
+  if (rows.length && policy.restoreDisposition === 'reference_only')
+    await policy.restoreTransform?.assertPreparedRows?.(context);
   context.signal.throwIfAborted();
   if (sourceComplete) {
     if (policy.restoreDisposition === 'reference_only')
@@ -665,6 +725,7 @@ async function runSingleStep(
     } catch {
       throw new Error('backup_restore_target_open_failed');
     }
+    await policy.restoreTransform?.assertPreparedRows?.(context);
     if (mode === 'verify') {
       if ((current.rowsVerified ?? 0) >= current.rowsWritten) invalid();
       try {
@@ -686,6 +747,7 @@ async function runSingleStep(
         throw new Error('backup_restore_row_write_failed');
       }
     }
+    await policy.restoreTransform?.assertPreparedRows?.(context);
   }
   if (mode === 'verify') {
     if ((current.rowsVerified ?? 0) >= current.rowsWritten) invalid();

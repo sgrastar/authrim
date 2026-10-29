@@ -1,9 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import { CanonicalIdentityRepository, CanonicalRuntimeUserWriter } from '@authrim/ar-lib-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { openGuestStore } from './helpers/guest-erasure-fixture';
 
 const mocks = vi.hoisted(() => ({
   adapter: null as DatabaseAdapter | null,
@@ -32,23 +30,8 @@ import {
   adminAccountSupportContextPutHandler,
 } from '../admin-account-governance';
 
-const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 type SqlValue = string | number | null | Uint8Array;
-interface SqliteDatabase {
-  exec(sql: string): void;
-  close(): void;
-  prepare(sql: string): {
-    run(...params: SqlValue[]): { changes: number | bigint };
-    get(...params: SqlValue[]): Record<string, SqlValue> | undefined;
-    all(...params: SqlValue[]): Array<Record<string, SqlValue>>;
-  };
-}
-
-// Node 22+ supplies the real engine; this package's ambient types predate node:sqlite.
-const sqliteModule = 'node:sqlite';
-const { DatabaseSync } = (await import(sqliteModule)) as {
-  DatabaseSync: new (filename: string) => SqliteDatabase;
-};
+type SqliteDatabase = ReturnType<typeof openGuestStore>['db'];
 
 function sqliteAdapter(database: SqliteDatabase): DatabaseAdapter {
   const values = (params: unknown[] = []): SqlValue[] =>
@@ -64,7 +47,8 @@ function sqliteAdapter(database: SqliteDatabase): DatabaseAdapter {
       throw new Error('unsupported_test_sql_value');
     });
   const totalChanges = () => {
-    const count = database.prepare('SELECT total_changes() AS n').get()?.n;
+    const row = database.prepare('SELECT total_changes() AS n').get();
+    const count = row && typeof row === 'object' && 'n' in row ? row.n : undefined;
     if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0)
       throw new Error('invalid_test_sqlite_total_changes');
     return count;
@@ -128,13 +112,10 @@ describe('Admin account governance handlers', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    database = new DatabaseSync(':memory:');
+    // Governance now reads Guest admission columns; exercise the deployed migration
+    // stream and its guards rather than an obsolete baseline-only schema.
+    database = openGuestStore('core').db;
     database.exec('PRAGMA foreign_keys = ON');
-    database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
-    );
     database.exec(
       `INSERT INTO identity_accounts (
          id, tenant_id, account_type, lifecycle_state, legacy_user_id, created_at, updated_at

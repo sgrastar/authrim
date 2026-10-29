@@ -19,14 +19,14 @@ const selection = {
 
 describe('Phase 8 SQLite modules', () => {
   it('pins the reviewed selectable SQL inventory without duplicates', () => {
-    expect(PHASE8_SQLITE_DATASET_REGISTRATIONS).toHaveLength(191);
-    expect(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS).toHaveLength(315);
+    expect(PHASE8_SQLITE_DATASET_REGISTRATIONS).toHaveLength(192);
+    expect(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS).toHaveLength(316);
     expect(
       new Set(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => dataset.id)).size
     ).toBe(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length);
     expect(
       createHash('sha256').update(JSON.stringify(PHASE8_SQLITE_DATASET_REGISTRATIONS)).digest('hex')
-    ).toBe('f5153bc17d51b5aa5dd8eacd1376eb7768dd5588c0a97868126b2e4ffd8d4a38');
+    ).toBe('390075a6128ceba3e68c834b27b59b93ff9f0684f53ff6da522ffc0e2e803d9d');
   });
 
   it('covers every reviewed Phase 8 SQL classification exactly once', () => {
@@ -88,6 +88,8 @@ describe('Phase 8 SQLite modules', () => {
     expect(ids).not.toContain('control.control_account_legal_hold_projections');
     expect(ids).not.toContain('plugin_runner.plugin_runner_egress_audit');
     expect(ids).toContain('pii.identity_identifier_replacement_challenges');
+    expect(ids).toContain('pii.guest_pii_erasure_markers');
+    expect(ids).not.toContain('core.guest_core_mutation_epoch');
     expect(
       PHASE8_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) =>
         ['ephemeral', 'rebuild', 'external', 'tenant_state'].includes(dataset.kind)
