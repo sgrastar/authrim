@@ -1,10 +1,12 @@
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
   getTenantIdFromContext,
   listOAuthClientConsentsWithClients,
+  listUserStatementConsentRecords,
+  lookupStatementDefinitions,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
 
@@ -147,6 +149,53 @@ function normalizeFlowConsentStatus(row: FlowConsentRecordRow): string {
   return 'granted';
 }
 
+async function listStatementConsentRows(input: {
+  metadata: DatabaseAdapter;
+  account: DatabaseAdapter;
+  tenantId: string;
+  userId: string;
+  language: string;
+}): Promise<StatementConsentRow[]> {
+  const records = await listUserStatementConsentRecords(
+    input.account,
+    input.tenantId,
+    input.userId
+  );
+  if (records.length === 0) return [];
+  const definitions = await lookupStatementDefinitions(
+    input.metadata,
+    input.tenantId,
+    {
+      statementIds: records.map((record) => record.statement_id),
+      versionIds: records.map((record) => record.version_id),
+    },
+    input.language
+  );
+  return records
+    .map((record) => {
+      const statement = definitions.statements.get(record.statement_id);
+      const localization = definitions.localizations.get(record.version_id);
+      return {
+        id: record.id,
+        statement_id: record.statement_id,
+        version_id: record.version_id,
+        version: record.version,
+        status: record.status,
+        granted_at: record.granted_at ?? null,
+        withdrawn_at: record.withdrawn_at ?? null,
+        expires_at: record.expires_at ?? null,
+        client_id: record.client_id ?? null,
+        receipt_id: record.receipt_id ?? null,
+        updated_at: record.updated_at,
+        slug: statement?.slug ?? null,
+        category: statement?.category ?? null,
+        title: localization?.title ?? statement?.slug ?? record.statement_id,
+        description: localization?.description ?? null,
+      };
+    })
+    .sort((left, right) => right.updated_at - left.updated_at);
+}
+
 export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   setNoStore(c);
   const accountSession = await requireAccountSession(c);
@@ -156,29 +205,18 @@ export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>):
 
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
+  const accountCtx = createAccountAuthContextFromHono(c, tenantId);
   const preferredLanguage = getPreferredLanguage(c);
   const [statementRows, flowRecordRows, oauthRows] = await Promise.all([
-    authCtx.coreAdapter.query<StatementConsentRow>(
-      `SELECT ucr.id, ucr.statement_id, ucr.version_id, ucr.version, ucr.status,
-              ucr.granted_at, ucr.withdrawn_at, ucr.expires_at, ucr.client_id,
-              ucr.receipt_id, ucr.updated_at, cs.slug, cs.category,
-              COALESCE(loc_pref.title, loc_en.title, cs.slug, ucr.statement_id) AS title,
-              COALESCE(loc_pref.description, loc_en.description) AS description
-         FROM user_consent_records ucr
-         LEFT JOIN consent_statements cs
-           ON ucr.tenant_id = cs.tenant_id AND ucr.statement_id = cs.id
-         LEFT JOIN consent_statement_localizations loc_pref
-           ON loc_pref.tenant_id = ucr.tenant_id
-          AND loc_pref.version_id = ucr.version_id
-          AND loc_pref.language = ?
-         LEFT JOIN consent_statement_localizations loc_en
-           ON loc_en.tenant_id = ucr.tenant_id
-          AND loc_en.version_id = ucr.version_id
-          AND loc_en.language = 'en'
-        WHERE ucr.tenant_id = ? AND ucr.user_id = ?
-        ORDER BY ucr.updated_at DESC`,
-      [preferredLanguage, tenantId, accountSession.userId]
-    ),
+    // The record is the user's, in the account database; what it names is the tenant's, in the
+    // metadata database. A record whose definition is gone is still returned (it is evidence).
+    listStatementConsentRows({
+      metadata: authCtx.coreAdapter,
+      account: accountCtx.coreAdapter,
+      tenantId,
+      userId: accountSession.userId,
+      language: preferredLanguage,
+    }),
     authCtx.coreAdapter.query<FlowConsentRecordRow>(
       `SELECT cr.id, cr.statement_id,
               COALESCE(csv.id, cr.statement_version) AS version_id,
@@ -239,7 +277,7 @@ export async function listAccountConsentsHandler(c: Context<{ Bindings: Env }>):
     // OAuth client consents are stored with the user in its account database (resolved by
     // requireAccountSession); client records are tenant metadata.
     listOAuthClientConsentsWithClients({
-      accountCore: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      accountCore: accountCtx.coreAdapter,
       tenantMetadata: authCtx.coreAdapter,
       tenantId,
       userId: accountSession.userId,

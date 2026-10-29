@@ -143,7 +143,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "hono": "4.13.12",
-    "jose": "^6.2.9"
+    "jose": "^6.2.13"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",
@@ -203,7 +203,7 @@
       "@sveltejs/kit": ">=2.70.2",
       "rollup": ">=4.59.0",
       "hono": "4.13.12",
-      "jose": "6.2.9",
+      "jose": "6.2.13",
       "@hono/node-server": "2.1.5",
       "fast-uri": "3.1.9",
       "body-parser@<1.20.9": "1.20.9",

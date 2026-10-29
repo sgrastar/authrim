@@ -4389,12 +4389,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         consentMgmtEnabled = envVal === 'true' || envVal === '1';
       }
 
+      // Definitions are the tenant's (metadata); the user's profile and consent records live with
+      // the user's account, resolved above.
       const authCtx = createAuthContextFromHono(c, tenantId);
+      const accountAuthCtx = createAccountAuthContextFromHono(c, tenantId);
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const userClaims = await timeAuthRequestDiagnosticOperation(
         c,
         'auth_authorize_consent_user_claims',
-        () => getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub, piiCtx.defaultPiiAdapter)
+        () =>
+          getUserClaimsForRules(accountAuthCtx.coreAdapter, tenantId, sub, piiCtx.defaultPiiAdapter)
       );
       const requirements = await timeAuthRequestDiagnosticOperation(
         c,
@@ -4413,7 +4417,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           const { satisfied, unsatisfied } = await timeAuthRequestDiagnosticOperation(
             c,
             'auth_authorize_consent_satisfaction',
-            () => checkUserConsentSatisfaction(authCtx.coreAdapter, tenantId, sub, requirements)
+            () =>
+              checkUserConsentSatisfaction(accountAuthCtx.coreAdapter, tenantId, sub, requirements)
           );
 
           if (!satisfied) {
