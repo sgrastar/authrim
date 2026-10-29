@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import { singleDatabaseStatementConsent } from '@authrim/ar-lib-core';
 import {
   getConsentItemsForScreen,
   processConsentItemDecisions,
@@ -81,7 +82,13 @@ describe('disabled consent split: preserve the existing delayed-grant safeguard'
     const beforeSchema = await adapter.query(schemaSql);
     await seed(adapter);
 
-    const page = await getConsentItemsForScreen(adapter, TENANT, null, DELAYED_USER, 'en');
+    const page = await getConsentItemsForScreen(
+      singleDatabaseStatementConsent(adapter),
+      TENANT,
+      null,
+      DELAYED_USER,
+      'en'
+    );
     expect(page).toHaveLength(1);
     const item = page[0];
     expect(item).toMatchObject({

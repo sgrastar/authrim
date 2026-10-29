@@ -18,7 +18,6 @@ import type {
   ConsentStatement,
   ConsentStatementVersion,
   ConsentStatementLocalization,
-  ConsentStatementUserRecord,
   TenantConsentRequirement,
   ClientConsentOverride,
   ConditionalConsentRule,
@@ -26,8 +25,9 @@ import type {
   ConsentEvidence,
   ResolvedConsentRequirement,
   ConsentEnforcement,
-  ConsentRecordStatus,
 } from '../types/consent-statements';
+import { listUserStatementConsentRecords } from '../services/statement-consent-records';
+import type { StatementConsentStores } from '../services/statement-consent-stores';
 import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
 
 export interface ResolvedClientTrustPolicy {
@@ -190,6 +190,13 @@ export function evaluateConditionalRules(
 // =============================================================================
 
 /**
+ * Flag columns are INTEGER in D1 and BIGINT in PostgreSQL, where node-postgres returns BIGINT as
+ * a string. A required statement read as "0" would silently stop being asked for, so every flag
+ * read goes through here.
+ */
+const isOn = (value: unknown): boolean => value === true || Number(value) === 1;
+
+/**
  * Get all active consent statements for a tenant
  */
 export async function getActiveConsentStatements(
@@ -226,13 +233,18 @@ export async function getActiveConsentStatements(
   return rows.map((r) => ({
     ...r,
     processing_purpose: r.processing_purpose ?? undefined,
-    is_active: r.is_active === 1,
-    record_retention_days: r.record_retention_days ?? undefined,
-    withdrawal_allowed: r.withdrawal_allowed == null ? true : r.withdrawal_allowed === 1,
+    display_order: Number(r.display_order),
+    is_active: isOn(r.is_active),
+    record_retention_days:
+      r.record_retention_days == null ? undefined : Number(r.record_retention_days),
+    withdrawal_allowed: r.withdrawal_allowed == null ? true : isOn(r.withdrawal_allowed),
     withdrawal_impact: r.withdrawal_impact ?? undefined,
     reconsent_on_version_change:
-      r.reconsent_on_version_change == null ? true : r.reconsent_on_version_change === 1,
-    reconsent_interval_days: r.reconsent_interval_days ?? undefined,
+      r.reconsent_on_version_change == null ? true : isOn(r.reconsent_on_version_change),
+    reconsent_interval_days:
+      r.reconsent_interval_days == null ? undefined : Number(r.reconsent_interval_days),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
     category: r.category as ConsentStatement['category'],
     legal_basis: r.legal_basis as ConsentStatement['legal_basis'],
   }));
@@ -272,8 +284,11 @@ async function getCurrentVersion(
   return {
     ...r,
     content_hash: r.content_hash ?? undefined,
-    effective_until: r.effective_until ?? null,
-    is_current: r.is_current === 1,
+    effective_at: Number(r.effective_at),
+    effective_until: r.effective_until == null ? null : Number(r.effective_until),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
+    is_current: isOn(r.is_current),
     content_type: r.content_type as ConsentStatementVersion['content_type'],
     status: r.status as ConsentStatementVersion['status'],
   };
@@ -333,6 +348,8 @@ export async function getLocalization(
         withdrawal_impact: match.withdrawal_impact ?? undefined,
         document_url: match.document_url ?? undefined,
         inline_content: match.inline_content ?? undefined,
+        created_at: Number(match.created_at),
+        updated_at: Number(match.updated_at),
       };
     }
   }
@@ -345,6 +362,8 @@ export async function getLocalization(
     withdrawal_impact: first.withdrawal_impact ?? undefined,
     document_url: first.document_url ?? undefined,
     inline_content: first.inline_content ?? undefined,
+    created_at: Number(first.created_at),
+    updated_at: Number(first.updated_at),
   };
 }
 
@@ -380,17 +399,17 @@ async function getTenantRequirements(
     id: r.id,
     tenant_id: r.tenant_id,
     statement_id: r.statement_id,
-    is_required: r.is_required === 1,
+    is_required: isOn(r.is_required),
     min_version: r.min_version ?? undefined,
     enforcement: r.enforcement as ConsentEnforcement,
-    show_deletion_link: r.show_deletion_link === 1,
+    show_deletion_link: isOn(r.show_deletion_link),
     deletion_url: r.deletion_url ?? undefined,
     conditional_rules: r.conditional_rules_json
       ? (JSON.parse(r.conditional_rules_json) as ConditionalConsentRule[])
       : [],
-    display_order: r.display_order,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
+    display_order: Number(r.display_order),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
   }));
 }
 
@@ -443,7 +462,7 @@ async function getClientOverrides(
     checkbox_default_checked:
       r.checkbox_default_checked === null || r.checkbox_default_checked === undefined
         ? undefined
-        : r.checkbox_default_checked === 1,
+        : isOn(r.checkbox_default_checked),
     binding_type:
       r.binding_type === 'subject' ||
       r.binding_type === 'scope' ||
@@ -455,9 +474,9 @@ async function getClientOverrides(
     binding_value: r.binding_value ?? undefined,
     evidence_profile: r.evidence_profile ?? undefined,
     language_fallback: r.language_fallback ?? undefined,
-    display_order: r.display_order ?? undefined,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
+    display_order: r.display_order == null ? undefined : Number(r.display_order),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
   }));
 }
 
@@ -737,54 +756,6 @@ export async function resolveConsentRequirements(
 // =============================================================================
 
 /**
- * Get user's consent records for a tenant
- */
-async function getUserConsentRecords(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string
-): Promise<ConsentStatementUserRecord[]> {
-  const rows = await adapter.query<{
-    id: string;
-    tenant_id: string;
-    user_id: string;
-    statement_id: string;
-    version_id: string;
-    version: string;
-    status: string;
-    granted_at: number | null;
-    withdrawn_at: number | null;
-    expires_at: number | null;
-    retain_until: number | null;
-    consent_settings_snapshot_at: number | null;
-    record_retention_days_snapshot: number | null;
-    reconsent_interval_days_snapshot: number | null;
-    client_id: string | null;
-    ip_address_hash: string | null;
-    user_agent: string | null;
-    receipt_id: string | null;
-    created_at: number;
-    updated_at: number;
-  }>(`SELECT * FROM user_consent_records WHERE tenant_id = ? AND user_id = ?`, [tenantId, userId]);
-
-  return rows.map((r) => ({
-    ...r,
-    status: r.status as ConsentRecordStatus,
-    granted_at: r.granted_at ?? undefined,
-    withdrawn_at: r.withdrawn_at ?? undefined,
-    expires_at: r.expires_at ?? undefined,
-    retain_until: r.retain_until ?? undefined,
-    consent_settings_snapshot_at: r.consent_settings_snapshot_at ?? undefined,
-    record_retention_days_snapshot: r.record_retention_days_snapshot ?? undefined,
-    reconsent_interval_days_snapshot: r.reconsent_interval_days_snapshot ?? undefined,
-    client_id: r.client_id ?? undefined,
-    ip_address_hash: r.ip_address_hash ?? undefined,
-    user_agent: r.user_agent ?? undefined,
-    receipt_id: r.receipt_id ?? undefined,
-  }));
-}
-
-/**
  * Check if a user satisfies all consent requirements.
  * Returns the list of unsatisfied requirement statement IDs.
  */
@@ -796,7 +767,7 @@ export async function checkUserConsentSatisfaction(
 ): Promise<{ satisfied: boolean; unsatisfied: string[] }> {
   if (requirements.length === 0) return { satisfied: true, unsatisfied: [] };
 
-  const records = await getUserConsentRecords(adapter, tenantId, userId);
+  const records = await listUserStatementConsentRecords(adapter, tenantId, userId);
   const unsatisfied: string[] = [];
 
   for (const req of requirements) {
@@ -843,24 +814,42 @@ export async function checkUserConsentSatisfaction(
 // =============================================================================
 
 /**
- * Build consent items for the consent screen display
+ * The subject's consent records could not be read from the account database.
+ *
+ * A required statement cannot be treated as "not agreed yet" (the screen would ask again and
+ * overwrite what was recorded) or as "nothing to ask" (a required agreement would be skipped), and
+ * the definitions are never a substitute for the records. Callers answer with an error.
+ */
+export class StatementConsentAccountReadError extends Error {
+  constructor(cause: unknown) {
+    super('statement_consent_account_read_failed', { cause });
+    this.name = 'StatementConsentAccountReadError';
+  }
+}
+
+/**
+ * Build consent items for the consent screen display.
+ *
+ * Definitions (statements, versions, localizations, requirements, overrides) are read from the
+ * metadata database; the subject's profile claims and consent records from the account database.
+ * The two are joined here, never in SQL.
  */
 export async function getConsentItemsForScreen(
-  adapter: DatabaseAdapter,
+  stores: StatementConsentStores,
   tenantId: string,
   clientId: string | null,
   userId: string,
   language: string,
   tenantDefaultLanguage: string = 'en',
   context: ConsentRequirementResolutionContext = {},
-  piiAdapter: DatabaseAdapter = adapter
+  piiAdapter: DatabaseAdapter = stores.account
 ): Promise<ConsentScreenItem[]> {
   // Get user claims for conditional rule evaluation
-  const userClaims = await getUserClaimsForRules(adapter, tenantId, userId, piiAdapter);
+  const userClaims = await getUserClaimsForRules(stores.account, tenantId, userId, piiAdapter);
 
   // Resolve requirements
   const requirements = await resolveConsentRequirements(
-    adapter,
+    stores.metadata,
     tenantId,
     clientId,
     userClaims,
@@ -869,14 +858,18 @@ export async function getConsentItemsForScreen(
   if (requirements.length === 0) return [];
 
   // Get user's existing consent records
-  const records = await getUserConsentRecords(adapter, tenantId, userId);
+  const records = await listUserStatementConsentRecords(stores.account, tenantId, userId).catch(
+    (error: unknown) => {
+      throw new StatementConsentAccountReadError(error);
+    }
+  );
 
   const items: ConsentScreenItem[] = [];
 
   for (const req of requirements) {
     // Get localization
     const localization = await getLocalization(
-      adapter,
+      stores.metadata,
       tenantId,
       req.current_version.id,
       language,
@@ -1083,7 +1076,7 @@ export async function processConsentItemDecisions(
   const now = Date.now();
 
   // Get existing records
-  const existingRecords = await getUserConsentRecords(adapter, tenantId, userId);
+  const existingRecords = await listUserStatementConsentRecords(adapter, tenantId, userId);
   const existingMap = new Map(existingRecords.map((r) => [r.statement_id, r]));
 
   for (const [statementId, decision] of Object.entries(decisions)) {
