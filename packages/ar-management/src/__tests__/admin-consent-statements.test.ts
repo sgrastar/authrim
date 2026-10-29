@@ -1,9 +1,13 @@
+import type { PreparedStatement } from '@authrim/ar-lib-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  adapter: { query: vi.fn(), execute: vi.fn() },
+  adapter: { query: vi.fn(), execute: vi.fn(), batch: vi.fn() },
+  account: { query: vi.fn(), execute: vi.fn() },
+  resolveAccount: vi.fn(),
   validateVersion: vi.fn(),
   activateVersion: vi.fn(),
+  withdraw: vi.fn(),
   logger: { info: vi.fn(), error: vi.fn() },
 }));
 
@@ -13,11 +17,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
+    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.account })),
+    resolveAccountDataContextFromHono: mocks.resolveAccount,
     getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
     validateVersionFormat: mocks.validateVersion,
     activateVersion: mocks.activateVersion,
+    withdrawStatementConsent: mocks.withdraw,
   };
 });
+
+vi.mock('../admin-account-storage', () => ({ adminAccountCoreAdapter: mocks.resolveAccount }));
 
 import {
   adminConsentStatementCreateHandler,
@@ -56,6 +65,7 @@ function context(
         : vi.fn().mockResolvedValue(options.body ?? {}),
     },
     env: {},
+    get: vi.fn(() => ({ actorId: 'admin-1' })),
     json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
   } as never;
 }
@@ -65,10 +75,22 @@ describe('admin consent statement lifecycle', () => {
     vi.clearAllMocks();
     mocks.adapter.query.mockReset();
     mocks.adapter.execute.mockReset();
+    mocks.adapter.batch.mockReset();
+    mocks.adapter.batch.mockImplementation(async (statements: PreparedStatement[]) =>
+      statements.map(() => ({ success: true, rowsAffected: 1 }))
+    );
+    mocks.account.query.mockReset();
+    mocks.account.execute.mockReset();
+    mocks.resolveAccount.mockReset();
+    mocks.resolveAccount.mockResolvedValue(mocks.account);
+    mocks.account.query.mockResolvedValue([]);
+    mocks.account.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.adapter.query.mockResolvedValue([]);
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.validateVersion.mockReturnValue(true);
     mocks.activateVersion.mockResolvedValue(undefined);
+    mocks.withdraw.mockReset();
+    mocks.withdraw.mockResolvedValue('withdrawn');
   });
 
   it('lists only the current tenant statements and handles failures', async () => {
@@ -192,7 +214,11 @@ describe('admin consent statement lifecycle', () => {
       .mockResolvedValueOnce([{ id: 'statement-1' }])
       .mockResolvedValueOnce([{ id: 'statement-1', slug: 'privacy-v2' }]);
     expect((await adminConsentStatementUpdateHandler(context({ body }))).status).toBe(200);
-    expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
+    const statements = mocks.adapter.batch.mock.calls[0][0] as PreparedStatement[];
+    expect(statements[0].sql).toContain('definition_generation = definition_generation + 1');
+    expect(statements[0].sql).toContain('closed_generation = closed_generation + 1');
+    expect(statements[1].sql).toContain('statement_consent_projection_jobs');
+    expect(statements[0].params).toEqual(
       expect.arrayContaining(['privacy-v2', 'legal', 'contract', '', 0, 0, null, 0, null, 0, 0])
     );
   });
@@ -330,52 +356,74 @@ describe('admin consent statement lifecycle', () => {
     expect((await adminConsentVersionDeleteHandler(context())).status).toBe(status);
   });
 
-  it('lists user records/history and withdraws only granted withdrawable consent', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'record-1' }]);
+  it('lists a user records from the account database with the statement names from metadata', async () => {
+    mocks.account.query.mockResolvedValueOnce([
+      { id: 'record-1', statement_id: 'statement-1' },
+      { id: 'record-2', statement_id: 'statement-gone' },
+    ]);
+    mocks.adapter.query.mockResolvedValueOnce([
+      { id: 'statement-1', slug: 'terms', category: 'terms_of_service' },
+    ]);
     await expect((await adminUserConsentRecordsListHandler(context())).json()).resolves.toEqual({
-      records: [{ id: 'record-1' }],
+      records: [
+        {
+          id: 'record-1',
+          statement_id: 'statement-1',
+          slug: 'terms',
+          category: 'terms_of_service',
+        },
+        // A record whose statement was removed is still listed: it is the evidence.
+        { id: 'record-2', statement_id: 'statement-gone', slug: null, category: null },
+      ],
     });
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'history-1' }]);
+    expect(mocks.resolveAccount).toHaveBeenCalledWith(expect.anything(), 'tenant-a', 'userId');
+    expect(mocks.adapter.query).toHaveBeenCalledTimes(1);
+    expect(mocks.adapter.query.mock.calls[0][0]).not.toContain('user_consent_records');
+  });
+
+  it('reads the history from the account database', async () => {
+    mocks.account.query.mockResolvedValueOnce([{ id: 'history-1' }]);
     await expect((await adminUserConsentHistoryHandler(context())).json()).resolves.toEqual({
       history: [{ id: 'history-1' }],
     });
-    mocks.adapter.query.mockResolvedValueOnce([
-      {
-        status: 'granted',
-        version_id: 'version-1',
-        version: '20260101',
-        expires_at: null,
-        withdrawal_allowed: 1,
-        record_retention_days: 30,
-        reconsent_interval_days: null,
-      },
-    ]);
-    expect((await adminUserConsentWithdrawHandler(context())).status).toBe(200);
-    expect(mocks.adapter.execute).toHaveBeenCalledTimes(3);
+    expect(mocks.adapter.query).not.toHaveBeenCalled();
   });
 
+  it('shows no records and no history for a user without an account route', async () => {
+    mocks.resolveAccount.mockResolvedValue(null);
+    await expect((await adminUserConsentRecordsListHandler(context())).json()).resolves.toEqual({
+      records: [],
+    });
+    await expect((await adminUserConsentHistoryHandler(context())).json()).resolves.toEqual({
+      history: [],
+    });
+    expect((await adminUserConsentWithdrawHandler(context())).status).toBe(404);
+  });
+
+  it('withdraws through the atomic service with tenant stores and the authenticated admin actor', async () => {
+    expect((await adminUserConsentWithdrawHandler(context())).status).toBe(200);
+    expect(mocks.withdraw).toHaveBeenCalledWith(
+      { metadata: mocks.adapter, account: mocks.account },
+      'tenant-a',
+      'userId',
+      'statementId',
+      { env: {}, actor: { id: 'admin-1', type: 'admin' } }
+    );
+    expect(mocks.account.execute).not.toHaveBeenCalled();
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+  });
   it.each([
-    [[], 404],
-    [[{ status: 'withdrawn', withdrawal_allowed: 1 }], 400],
-    [[{ status: 'granted', withdrawal_allowed: 0 }], 400],
-  ])('rejects invalid withdrawal state %#', async (rows, status) => {
-    mocks.adapter.query.mockResolvedValueOnce(rows);
+    ['missing', 404],
+    ['not_granted', 400],
+    ['withdrawal_forbidden', 400],
+  ])('rejects invalid withdrawal %s', async (result, status) => {
+    mocks.withdraw.mockResolvedValue(result);
     expect((await adminUserConsentWithdrawHandler(context())).status).toBe(status);
   });
-
-  it('supports no-retention withdrawal and handles persistence failure', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([
-      {
-        status: 'granted',
-        version_id: 'v',
-        version: '20260101',
-        expires_at: null,
-        withdrawal_allowed: null,
-        record_retention_days: null,
-        reconsent_interval_days: 0,
-      },
-    ]);
-    mocks.adapter.execute.mockRejectedValueOnce(new Error('failure'));
+  it('fails closed when atomic persistence is unavailable', async () => {
+    mocks.withdraw.mockRejectedValue(new Error('statement_consent_atomic_backend_unsupported'));
+    expect((await adminUserConsentWithdrawHandler(context())).status).toBe(503);
+    mocks.withdraw.mockRejectedValue(new Error('write_failed'));
     expect((await adminUserConsentWithdrawHandler(context())).status).toBe(500);
   });
 

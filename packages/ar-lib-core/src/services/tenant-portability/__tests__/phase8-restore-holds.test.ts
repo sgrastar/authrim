@@ -59,7 +59,7 @@ describe('Phase 8 restored work holds', () => {
   });
 
   it('keeps a finite reviewed rule registry and rejects malformed discriminator fields', () => {
-    expect(Object.keys(PHASE8_RESTORE_HOLD_RULES)).toHaveLength(46);
+    expect(Object.keys(PHASE8_RESTORE_HOLD_RULES)).toHaveLength(48);
     expect(
       phase8RestoreHoldReason(
         'core.account_lifecycle_event_outbox',

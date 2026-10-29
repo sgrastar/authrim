@@ -879,6 +879,30 @@ run('rolls back imported rows and suspended triggers on a missing role parent', 
   });
 });
 
+it.each(['core.statement_consent_guards', 'core.statement_consent_admissions'])(
+  'rejects source-only statement consent authority before opening a target: %s',
+  async (datasetId) => {
+    const source = backup('core', {}, { [datasetId]: [{ tenant_id: t('tenant-a') }] });
+    expect(() => assertPostgresBackupProjectionSupported(source, 'core')).toThrow(
+      UnsupportedPostgresBackupProjectionError
+    );
+    const clientFactory = vi.fn((): Client => {
+      throw new Error('unexpected_target_open');
+    });
+    await expect(
+      restoreVerifiedPostgresFamily({
+        backup: source,
+        family: 'core',
+        tenantId: 'tenant-a',
+        targetId: randomUUID(),
+        connectionString: 'unused',
+        clientFactory,
+      })
+    ).rejects.toThrow(UnsupportedPostgresBackupProjectionError);
+    expect(clientFactory).not.toHaveBeenCalled();
+  }
+);
+
 it('rejects unsupported nonempty profiles before opening a target and exposes names/counts only', async () => {
   const source = backup(
     'core',

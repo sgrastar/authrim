@@ -51,6 +51,7 @@ describe('Phase 8 SQL restore target placement', () => {
       'core.tenant_invitation_redemptions': 'tenant_core/default',
       'core.provisioning_revocation_receipts': 'tenant_core/default',
       'core.role_assignments': 'tenant_core/users',
+      'core.consent_item_history': 'tenant_core/users',
       'core.subject_org_membership': 'tenant_core/users',
       'pii.users_pii': 'tenant_pii',
       'admin.admin_roles': 'admin',

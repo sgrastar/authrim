@@ -69,6 +69,7 @@ const TABLE_GROUPS: Partial<
       profiles provisioning_assignment_ownership provisioning_revocation_receipts relationships role_assignments
       service_group_inputs service_group_manual service_group_write_boundaries structured_attribute_values subject_account_links
       subject_org_membership tenant_invitation_redemptions tenant_invitations totp_backup_codes totp_credentials
+      statement_consent_key_states statement_consent_operations statement_consent_admissions
       user_consent_records user_custom_fields user_roles
       user_verified_attributes users users_core value_provenance
       webhook_deliveries
@@ -103,7 +104,7 @@ const TABLE_GROUPS: Partial<
     rebuild: `
       authrim_migrations migration_metadata tenant_database_migration_state
       account_routing_outbox authrim_control_plane_shard_metadata contact_point_search_indexes did_document_cache
-      log_iceberg_core_publications
+      log_iceberg_core_publications statement_consent_guards statement_consent_projection_jobs
       directory_auth_release_advisories
       identity_binding_lookup_indexes legal_hold_projection_outbox lookup_retention_policy_projection_outbox refresh_token_shard_configs
       relationship_closure service_group_catalog service_group_epoch service_group_results

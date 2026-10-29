@@ -18,6 +18,13 @@ type HoldRule =
 export const PHASE8_RESTORE_HOLD_RULES: Readonly<Record<string, HoldRule>> = {
   // Admin jobs are already held as source-only workflows. A source running action must not be
   // made runnable independently of its excluded DO/Core execution receipts in the target.
+  // Source admissions must never become authority in the target environment.
+  'core.statement_consent_admissions': { reason: 'source_consent_admission', all: true },
+  'core.statement_consent_operations': {
+    reason: 'source_consent_operation',
+    column: 'status',
+    holdValues: ['executing'],
+  },
   'core.support_operation_actions': {
     reason: 'source_support_operation',
     column: 'status',

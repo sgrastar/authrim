@@ -13,6 +13,8 @@ import {
   type AdminAuthContext,
 } from '@authrim/ar-lib-core';
 
+import { GUEST_READ_CURSOR_TTL_SECONDS } from './guest-read-pagination';
+
 import { canAccessTenant, hasTenantSettingsPermission } from './routes/settings-v2';
 
 function authorized(c: C, action: 'view' | 'edit'): boolean {
@@ -374,7 +376,7 @@ export async function listGuestLifecycleHandler(c: C): Promise<Response> {
         bindings: sources.map((s) => s.bindingRef).sort(),
         index: 0,
         afterUserId: '',
-        expiresAt: now + 900,
+        expiresAt: now + GUEST_READ_CURSOR_TTL_SECONDS,
       };
     }
     const items: Array<{
@@ -432,7 +434,7 @@ export async function listGuestLifecycleHandler(c: C): Promise<Response> {
     if (position.index < position.bindings.length) {
       nextCursor = crypto.randomUUID();
       await config.put(key(c, 'inspection', nextCursor), JSON.stringify(position), {
-        expirationTtl: 900,
+        expirationTtl: GUEST_READ_CURSOR_TTL_SECONDS,
       });
     }
     return c.json({ items, next_cursor: nextCursor, observed_at: now });

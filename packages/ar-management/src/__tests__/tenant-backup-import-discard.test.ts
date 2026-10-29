@@ -240,7 +240,9 @@ function tenantRows(database: DatabaseSync, tenantId: string) {
         : null;
     if (!filter) continue;
     const found = database
-      .prepare(`SELECT * FROM "${name}" WHERE ${filter} ORDER BY rowid`)
+      .prepare(
+        `SELECT * FROM "${name}" WHERE ${filter} ORDER BY ${columns.map((column) => `"${column}"`).join(',')}`
+      )
       .all(tenantId);
     if (found.length) rows[name] = found;
   }
