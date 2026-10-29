@@ -22,7 +22,7 @@ vi.mock('pg', () => ({
     async end() {}
     async query(sql: string) {
       if (
-        !/^(BEGIN|CREATE TABLE|SELECT|INSERT INTO authrim_aws_import_staging|COMMIT|ROLLBACK)/u.test(
+        !/^(BEGIN|CREATE TABLE|SELECT|INSERT INTO authrim_aws_import_staging|INSERT INTO statement_consent_(guards|projection_jobs)|COMMIT|ROLLBACK)/u.test(
           sql
         )
       )
