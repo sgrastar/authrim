@@ -79,7 +79,7 @@ A tenant therefore carries the institution it stands for in the `institution` se
 | `institution.scopes`        | empty   | One to 20 comma-separated lowercase domain names, no wildcard. The first is the default scope.                |
 | `institution.display_names` | `{}`    | JSON text mapping a language tag to the institution's name. `ja` and `en` are required, at most 16 languages. |
 
-Only platform authority can change them (a role held through a global assignment, or a machine token that may write the settings of every tenant). The tenant's own administrators, including its super_admin, can read them and are refused when they save. They are not copied when a tenant is cloned and are refused by the bulk apply.
+Only platform authority can change them (a role held through a global assignment, or a machine token that may write the settings of every tenant). The tenant's own administrators, including its ar_tenant_admin, can read them and are refused when they save. They are not copied when a tenant is cloned and are refused by the bulk apply.
 
 While `institution.scopes` is set:
 

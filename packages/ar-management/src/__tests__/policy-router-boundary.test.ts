@@ -37,7 +37,7 @@ describe('Policy router middleware boundary', () => {
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({
       error: 'access_denied',
-      required_roles: ['system_admin', 'org_admin', 'admin'],
+      required_roles: ['ar_tenant_admin', 'ar_super_admin'],
     });
   });
 });

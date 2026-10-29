@@ -63,6 +63,8 @@ import {
   bumpAuthenticationMethodsCacheRevision,
   resolveClientTrustPolicy,
   getTenantMetadataContextFromHono,
+  ADMIN_ROLES,
+  requireSystemAdmin,
 } from '@authrim/ar-lib-core';
 import {
   categoryPatchNeedsState,
@@ -1052,7 +1054,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
 
     // A platform setting reaches every tenant, so the role has to come from a global assignment:
     // `roles` also holds what is given for one tenant only (an Admin of one tenant who is a
-    // super_admin there must not change what every other tenant inherits).
+    // ar_tenant_admin there must not change what every other tenant inherits).
     if (!hasGlobalPlatformSettingsEdit(adminAuth, category)) {
       return errorResponse(
         c,
@@ -1342,8 +1344,8 @@ settingsV2.get('/settings/meta/:category/scope', async (c) => {
       permission = 'edit';
     } else if (perms.viewRoles.some((role) => userRoles.includes(role))) {
       permission = 'view';
-    } else if (userRoles.includes('system_admin')) {
-      // system_admin always has access
+    } else if (userRoles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
+      // The super admin always has access
       permission = perms.editRoles.length > 0 ? 'edit' : 'view';
     }
 
@@ -1440,13 +1442,15 @@ settingsV2.get('/settings/:category/history/:version', getSettingsVersion);
  * POST /api/admin/settings/:category/rollback
  * Rollback to a previous version
  */
-settingsV2.post('/settings/:category/rollback', rollbackSettings);
+// Rollback and the current snapshot read and rewrite the legacy `settings:<category>:` keys of the
+// shared KV, which carry no tenant, so they are the platform's.
+settingsV2.post('/settings/:category/rollback', requireSystemAdmin(), rollbackSettings);
 
 /**
  * GET /api/admin/settings/:category/current
  * Get current settings for a category (for comparison with history)
  */
-settingsV2.get('/settings/:category/current', getCurrentSettings);
+settingsV2.get('/settings/:category/current', requireSystemAdmin(), getCurrentSettings);
 
 /**
  * GET /api/admin/settings/:category/compare

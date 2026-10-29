@@ -255,7 +255,7 @@
 
 	async function handleRemoveRole(role: AdminRoleAssignment) {
 		if (!admin) return;
-		const isPlatformAdminRole = role.name === 'super_admin';
+		const isPlatformAdminRole = role.name === 'ar_super_admin';
 		const message = isPlatformAdminRole
 			? $LL.admin_admins_remove_platform_role_confirm({
 					role: role.name,
@@ -322,7 +322,7 @@
 	}
 
 	function hasPlatformAdminRole(adminUser: AdminUserDetail): boolean {
-		return adminUser.roles.some((role) => role.name === 'super_admin');
+		return adminUser.roles.some((role) => role.name === 'ar_super_admin');
 	}
 
 	function passkeyProviderIcon(passkey: AdminUserDetail['passkeys'][number]): string | null {

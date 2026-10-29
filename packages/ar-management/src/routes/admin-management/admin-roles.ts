@@ -4,7 +4,7 @@
  * Endpoints for managing Admin roles (stored in DB_ADMIN).
  * Includes role definitions and permission management.
  *
- * Requires super_admin role or admin:admin_roles:* permission.
+ * Requires the admin:admin_roles:* permission.
  */
 
 import { Hono } from 'hono';
@@ -25,6 +25,8 @@ import {
   hasAdminPermission,
   hasGlobalAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
+  ADMIN_ROLES,
+  allOfGuards,
   type AdminRole,
   type AdminRoleAssignmentScopeType,
 } from '@authrim/ar-lib-core';
@@ -34,10 +36,21 @@ import {
   callerOutranksGlobally,
   checkRoleInheritance,
   mayGiveGlobally,
+  isRoleNameReserved,
+  isScopeAllowedForRole,
   mayRemoveAssignment,
   roleReachesGlobalAssignment,
-  RESERVED_ROLE_NAMES,
 } from './admin-role-authority';
+import {
+  ensureTenantKeepsAdmin,
+  lastTenantAdminResponse,
+  tenantKeepsAdminGuard,
+} from './last-tenant-admin';
+import {
+  countActiveRoleHolders,
+  lastPlatformAdminResponse,
+  roleKeepsHolderGuard,
+} from './last-platform-admin';
 
 // Create router
 export const adminRolesRouter = new Hono<{
@@ -74,7 +87,7 @@ function canAccessRole(role: AdminRole, tenantId: string): boolean {
 }
 
 function isPlatformAdminRole(roleName: string | undefined): boolean {
-  return roleName === 'super_admin';
+  return roleName === ADMIN_ROLES.SUPER_ADMIN;
 }
 
 function mergeAvailableRoles(tenantRoles: AdminRole[], systemRoles: AdminRole[]): AdminRole[] {
@@ -124,26 +137,12 @@ function normalizeAssignmentScope(
   return null;
 }
 
-async function countActiveRoleAssignees(
+function countActiveRoleAssignees(
   adapter: ReturnType<typeof getAdminAdapter>,
   tenantId: string,
   roleId: string
 ): Promise<number> {
-  const now = Date.now();
-  const row = await adapter.queryOne<{ count: number }>(
-    `SELECT COUNT(DISTINCT au.id) as count
-     FROM admin_role_assignments ra
-     JOIN admin_users au
-       ON au.id = ra.admin_user_id
-      AND au.tenant_id = ra.tenant_id
-     WHERE ra.tenant_id = ?
-       AND ra.admin_role_id = ?
-       AND au.is_active = 1
-       AND au.status = 'active'
-       AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-    [tenantId, roleId, now]
-  );
-  return Number(row?.count ?? 0);
+  return countActiveRoleHolders(adapter, tenantId, roleId, false);
 }
 
 /**
@@ -311,6 +310,11 @@ adminRolesRouter.post('/:id/assignments', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
+    // The super admin is held through a global assignment only.
+    if (!isScopeAllowedForRole(role.name, normalizedScope.scopeType)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
     if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
@@ -408,6 +412,10 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
+    if (!isScopeAllowedForRole(role.name, normalizedScope.scopeType)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
     if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
@@ -440,6 +448,25 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
+    // An expiry ends the assignment (now, or later by itself), so it is held to the rule for
+    // removing one.
+    const expiring =
+      role.name === ADMIN_ROLES.TENANT_ADMIN && typeof body.expires_at === 'number'
+        ? {
+            assignmentId,
+            // An expiry still to come keeps the account an administrator for now; only a permanent
+            // one that gains an expiry loses what it kept.
+            stillCurrent: body.expires_at > Date.now(),
+            newExpiresAt: body.expires_at,
+          }
+        : null;
+    if (expiring) {
+      const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, expiring);
+      if (tenantAdminRefusal) {
+        return tenantAdminRefusal;
+      }
+    }
+
     const duplicate = await roleAssignmentRepo.assignmentExists({
       adminUserId: assignment.admin_user_id,
       adminRoleId: id,
@@ -451,14 +478,21 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
-    const updated = await roleAssignmentRepo.updateAssignment(assignmentId, {
-      scope_type: normalizedScope.scopeType,
-      scope_id: normalizedScope.scopeId,
-      expires_at: body.expires_at,
-    });
+    const updated = await roleAssignmentRepo.updateAssignment(
+      assignmentId,
+      {
+        scope_type: normalizedScope.scopeType,
+        scope_id: normalizedScope.scopeId,
+        expires_at: body.expires_at,
+      },
+      expiring ? tenantKeepsAdminGuard(tenantId, expiring) : undefined
+    );
 
     if (!updated) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // Gone, or the last administrator by the time the write ran: another request got there first.
+      return expiring && (await roleAssignmentRepo.getAssignment(assignmentId))
+        ? lastTenantAdminResponse(c)
+        : createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     await createAuditLog(c, 'admin_role.assignment_update', assignmentId, 'success', {
@@ -512,14 +546,7 @@ adminRolesRouter.delete('/:id/assignments/:assignmentId', async (c) => {
     if (isPlatformAdminRole(role.name)) {
       const activeAssignees = await countActiveRoleAssignees(adapter, tenantId, id);
       if (activeAssignees <= 1) {
-        return c.json(
-          {
-            error: 'last_platform_admin',
-            error_description:
-              'At least one active platform administrator must remain. Assign another platform administrator before removing this role.',
-          },
-          409
-        );
+        return lastPlatformAdminResponse(c, 'role');
       }
 
       if (assignment.admin_user_id === authContext.userId) {
@@ -527,9 +554,31 @@ adminRolesRouter.delete('/:id/assignments/:assignmentId', async (c) => {
       }
     }
 
-    const removed = await roleAssignmentRepo.removeAssignmentById(assignmentId);
+    const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+      assignmentId,
+    });
+    if (tenantAdminRefusal) {
+      return tenantAdminRefusal;
+    }
+
+    const removed = await roleAssignmentRepo.removeAssignmentById(
+      assignmentId,
+      allOfGuards(
+        isPlatformAdminRole(role.name) ? roleKeepsHolderGuard(tenantId, id, false) : undefined,
+        role.name === ADMIN_ROLES.TENANT_ADMIN
+          ? tenantKeepsAdminGuard(tenantId, { assignmentId })
+          : undefined
+      )
+    );
     if (!removed) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // Gone, or the last administrator by the time the write ran: another request got there first.
+      if (!(await roleAssignmentRepo.getAssignment(assignmentId))) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      return isPlatformAdminRole(role.name) &&
+        (await countActiveRoleAssignees(adapter, tenantId, id)) <= 1
+        ? lastPlatformAdminResponse(c, 'role')
+        : lastTenantAdminResponse(c);
     }
 
     await createAuditLog(c, 'admin_role.assignment_remove', assignmentId, 'success', {
@@ -572,24 +621,26 @@ adminRolesRouter.post('/', async (c) => {
     }>();
 
     // Validate required fields
-    if (!body.name) {
+    if (!body.name || typeof body.name !== 'string') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
     if (!body.permissions || !Array.isArray(body.permissions)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    // Check if name already exists. A system role's name is taken in every tenant: Admin checks
-    // read role names, so a custom role must not be able to carry one.
+    // The reserved prefix belongs to the standard roles: Admin checks read their names as
+    // authority, so a custom role must not look like one.
+    if (isRoleNameReserved(body.name)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    // Check if name already exists. A system role's name is taken in every tenant.
     const existing = await roleRepo.findByName(tenantId, body.name);
     if (existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
     const systemRoles = await roleRepo.getSystemRoles();
-    if (
-      RESERVED_ROLE_NAMES.has(body.name) ||
-      systemRoles.some((systemRole) => systemRole.name === body.name)
-    ) {
+    if (systemRoles.some((systemRole) => systemRole.name === body.name)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 

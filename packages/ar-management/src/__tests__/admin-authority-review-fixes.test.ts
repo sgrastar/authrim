@@ -64,7 +64,7 @@ const credentialBody = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-/** A custom role the Admin holds globally next to the tenant's super_admin. */
+/** A custom role the Admin holds globally next to the tenant's ar_super_admin. */
 function insertMachineWriter(context: Context) {
   insertRole(context.db, {
     id: 'role_machine_writer',
@@ -239,7 +239,7 @@ describe('3. control plane permissions of a machine token', () => {
   it('refuses a token limited to the tenant that holds the rotate permission', async () => {
     const context = await setup();
     const mixed = signIn(context.db, [
-      { role: 'role_viewer', scope: 'global' },
+      { role: 'role_ar_viewer', scope: 'global' },
       ...TENANT_SUPER_ADMIN,
     ]);
     const principalId = await createPrincipal(context, mixed.cookie, {
@@ -444,7 +444,7 @@ describe('5. the hierarchy that counts for a global role is the global one', () 
       hierarchy: level,
     });
     return [
-      { role: 'role_viewer', scope: 'global' },
+      { role: 'role_ar_viewer', scope: 'global' },
       { role: 'role_roles_writer', scope: 'global' },
       ...TENANT_SUPER_ADMIN,
     ] as Assignment[];
@@ -517,7 +517,7 @@ describe('5. the hierarchy that counts for a global role is the global one', () 
       { role: 'role_global_all', scope: 'global' },
       ...TENANT_SUPER_ADMIN,
     ]);
-    const target = signIn(context.db, [{ role: 'role_viewer', scope: 'tenant' }]);
+    const target = signIn(context.db, [{ role: 'role_ar_viewer', scope: 'tenant' }]);
     const assign = (role: string) =>
       context.call(actor.cookie, 'POST', `/api/admin/admin-roles/${role}/assignments`, {
         admin_user_id: target.userId,
@@ -604,7 +604,7 @@ describe('5. the hierarchy that counts for a global role is the global one', () 
     expect(invited.status).toBe(403);
   });
 
-  it('still lets a global super_admin change and assign global roles below it', async () => {
+  it('still lets a global ar_super_admin change and assign global roles below it', async () => {
     const context = await setup();
     insertRole(context.db, {
       id: 'role_low',

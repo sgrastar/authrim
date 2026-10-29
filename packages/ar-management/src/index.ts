@@ -73,6 +73,7 @@ import {
   runTenantBackupCoveredEffect,
   withTenantBackupMutationCoverage,
   type TenantBackupMutationCoverage,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import { runRetentionMaintenance } from './retention-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
@@ -701,6 +702,7 @@ import {
   cancelTenantInvitationHandler,
 } from './admin-tenant-invitations';
 import { requireSupportedTenantParam } from './single-tenant-guard';
+import { requireTenantAdminForChanges } from './admin-role-gates';
 import { adminTenantPolicyMiddleware } from './admin-tenant-policy';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getAuthenticationMethodsHandler } from './authentication-methods';
@@ -1685,15 +1687,9 @@ app.use('/api/admin/users/:id/lock', async (c, next) => {
     endpointClass: 'mgmt_admin_user_lock',
   })(c, next);
 });
-// RBAC: Require tenant_admin or higher for suspend/lock operations
-app.use(
-  '/api/admin/users/:id/suspend',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.use(
-  '/api/admin/users/:id/lock',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+// RBAC: Require ar_tenant_admin or higher for suspend/lock operations
+app.use('/api/admin/users/:id/suspend', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+app.use('/api/admin/users/:id/lock', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
 // Idempotency support for suspend/lock/activate (prevents duplicate status changes on retry)
 app.use('/api/admin/users/:id/suspend', idempotencyMiddleware());
 app.use('/api/admin/users/:id/lock', idempotencyMiddleware());
@@ -1709,10 +1705,7 @@ app.use('/api/admin/users/:id/activate', async (c, next) => {
     endpointClass: 'mgmt_admin_user_activate',
   })(c, next);
 });
-app.use(
-  '/api/admin/users/:id/activate',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+app.use('/api/admin/users/:id/activate', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
 app.post('/api/admin/users/:id/activate', adminUserActivateHandler);
 app.use('/api/admin/users/:id/anonymize', idempotencyMiddleware());
 app.post('/api/admin/users/:id/anonymize', adminUserAnonymizeHandler);
@@ -2022,7 +2015,7 @@ app.get(
   listDirectoryConnectorRelayEventsHandler
 );
 
-// Platform Tenant Domain Mappings API (system_admin only)
+// Platform Tenant Domain Mappings API (ar_super_admin only)
 // - GET    /api/admin/platform/tenant-domain-mappings        - List mappings
 // - POST   /api/admin/platform/tenant-domain-mappings        - Create mapping
 // - POST   /api/admin/platform/tenant-domain-mappings/verify          - Initiate DNS verification
@@ -2212,24 +2205,28 @@ app.post('/api/admin/certification-profiles/:id/apply', applyCertificationProfil
 
 // [DEPRECATED] Admin Code Shards Configuration
 // → Migrate to: /api/admin/platform/settings/infrastructure
-app.get('/api/admin/settings/code-shards', getCodeShards);
-app.put('/api/admin/settings/code-shards', updateCodeShards);
+app.get('/api/admin/settings/code-shards', requireSystemAdmin(), getCodeShards);
+app.put('/api/admin/settings/code-shards', requireSystemAdmin(), updateCodeShards);
 
 // [DEPRECATED] Admin Token Revocation Shards Configuration
 // → Migrate to: /api/admin/platform/settings/infrastructure
 // NOTE: Has reset operation - complex functionality, keep until migration complete
-app.get('/api/admin/settings/revocation-shards', getRevocationShards);
-app.put('/api/admin/settings/revocation-shards', updateRevocationShards);
-app.delete('/api/admin/settings/revocation-shards', resetRevocationShards);
+app.get('/api/admin/settings/revocation-shards', requireSystemAdmin(), getRevocationShards);
+app.put('/api/admin/settings/revocation-shards', requireSystemAdmin(), updateRevocationShards);
+app.delete('/api/admin/settings/revocation-shards', requireSystemAdmin(), resetRevocationShards);
 
 // [DEPRECATED] Admin Region Sharding
 // → Migrate to: /api/admin/platform/settings/infrastructure
 // NOTE: Has migrate/validate operations - keep until settings-v2 supports operations
-app.get('/api/admin/settings/region-shards', getRegionShards);
-app.put('/api/admin/settings/region-shards', updateRegionShards);
-app.delete('/api/admin/settings/region-shards', deleteRegionShards);
-app.post('/api/admin/settings/region-shards/migrate', migrateRegionShards);
-app.get('/api/admin/settings/region-shards/validate', validateRegionShardsConfig);
+app.get('/api/admin/settings/region-shards', requireSystemAdmin(), getRegionShards);
+app.put('/api/admin/settings/region-shards', requireSystemAdmin(), updateRegionShards);
+app.delete('/api/admin/settings/region-shards', requireSystemAdmin(), deleteRegionShards);
+app.post('/api/admin/settings/region-shards/migrate', requireSystemAdmin(), migrateRegionShards);
+app.get(
+  '/api/admin/settings/region-shards/validate',
+  requireSystemAdmin(),
+  validateRegionShardsConfig
+);
 
 // Admin Session Shards Configuration
 // Session Store DO sharding (default: 4 shards)
@@ -2244,16 +2241,16 @@ app.put('/api/admin/settings/challenge-shards', requireSystemAdmin(), updateChal
 // [DEPRECATED] Admin PII Partition
 // → Migrate to: /api/admin/platform/settings/infrastructure
 // NOTE: Has test/stats operations - keep until settings-v2 supports operations
-app.get('/api/admin/settings/pii-partitions', getPartitionSettings);
-app.put('/api/admin/settings/pii-partitions', updatePartitionSettings);
-app.post('/api/admin/settings/pii-partitions/test', testPartitionRouting);
-app.get('/api/admin/settings/pii-partitions/stats', getPartitionStats);
+app.get('/api/admin/settings/pii-partitions', requireSystemAdmin(), getPartitionSettings);
+app.put('/api/admin/settings/pii-partitions', requireSystemAdmin(), updatePartitionSettings);
+app.post('/api/admin/settings/pii-partitions/test', requireSystemAdmin(), testPartitionRouting);
+app.get('/api/admin/settings/pii-partitions/stats', requireSystemAdmin(), getPartitionStats);
 app.get(
   '/api/admin/platform/settings/pii-partitions/stats',
   requireSystemAdmin(),
   getPlatformPartitionStats
 );
-app.delete('/api/admin/settings/pii-partitions', deletePartitionSettings);
+app.delete('/api/admin/settings/pii-partitions', requireSystemAdmin(), deletePartitionSettings);
 
 // Admin Tombstone Management endpoints (GDPR Art.17 deletion tracking)
 app.get('/api/admin/tombstones', listTombstones);
@@ -2277,26 +2274,27 @@ app.post('/api/admin/guest-users/cleanup', cleanupExpiredGuestUsers);
 
 // [DEPRECATED] Admin PII Encryption Configuration
 // → Migrate to: /api/admin/platform/settings/encryption
-app.get('/api/admin/settings/encryption/status', getEncryptionStatus);
+app.get('/api/admin/settings/encryption/status', requireSystemAdmin(), getEncryptionStatus);
 
 // Rate limit profile override (an operation: a loadTest override always expires). The profiles'
 // limits are Settings API values: /api/admin/platform/settings/rate-limit.
-app.get('/api/admin/rate-limits/profile-override', getProfileOverride);
-app.put('/api/admin/rate-limits/profile-override', setProfileOverride);
-app.delete('/api/admin/rate-limits/profile-override', clearProfileOverride);
+app.get('/api/admin/rate-limits/profile-override', requireSystemAdmin(), getProfileOverride);
+app.put('/api/admin/rate-limits/profile-override', requireSystemAdmin(), setProfileOverride);
+app.delete('/api/admin/rate-limits/profile-override', requireSystemAdmin(), clearProfileOverride);
 
 // Admin Cache Mode Configuration (P0 KV Cache Optimization)
 // Platform-level cache mode (maintenance/fixed)
-app.get('/api/admin/settings/cache-mode', getPlatformCacheModeHandler);
-app.post('/api/admin/settings/cache-mode', setPlatformCacheModeHandler);
-app.get('/api/admin/settings/cache-mode/info', getCacheModeInfoHandler);
-// Client-specific cache mode overrides
+app.get('/api/admin/settings/cache-mode', requireSystemAdmin(), getPlatformCacheModeHandler);
+app.post('/api/admin/settings/cache-mode', requireSystemAdmin(), setPlatformCacheModeHandler);
+app.get('/api/admin/settings/cache-mode/info', requireSystemAdmin(), getCacheModeInfoHandler);
+// Client-specific cache mode overrides. The mode is kept per tenant and client, and the handlers
+// check the client belongs to the request's tenant, so a tenant administrator sets its own.
 app.get('/api/admin/clients/:clientId/cache-mode', getClientCacheModeHandler);
 app.post('/api/admin/clients/:clientId/cache-mode', setClientCacheModeHandler);
 
 // [DEPRECATED] Admin IP Security Configuration
 // → Migrate to: /api/admin/tenants/:tenantId/settings/security
-// Security: Requires system_admin role
+// Security: Requires ar_super_admin role
 app.get('/api/admin/settings/ip-security', requireSystemAdmin(), getIpSecurityConfig);
 app.put('/api/admin/settings/ip-security', requireSystemAdmin(), updateIpSecurityConfig);
 app.delete('/api/admin/settings/ip-security', requireSystemAdmin(), clearIpSecurityConfig);
@@ -2304,10 +2302,26 @@ app.delete('/api/admin/settings/ip-security', requireSystemAdmin(), clearIpSecur
 // [DEPRECATED] Admin Refresh Token Sharding Configuration
 // → Migrate to: /api/admin/platform/settings/infrastructure
 // NOTE: Has stats/cleanup operations
-app.get('/api/admin/settings/refresh-token-sharding', getRefreshTokenShardingConfig);
-app.put('/api/admin/settings/refresh-token-sharding', updateRefreshTokenShardingConfig);
-app.get('/api/admin/settings/refresh-token-sharding/stats', getRefreshTokenShardingStats);
-app.delete('/api/admin/settings/refresh-token-sharding/cleanup', cleanupRefreshTokenGeneration);
+app.get(
+  '/api/admin/settings/refresh-token-sharding',
+  requireSystemAdmin(),
+  getRefreshTokenShardingConfig
+);
+app.put(
+  '/api/admin/settings/refresh-token-sharding',
+  requireSystemAdmin(),
+  updateRefreshTokenShardingConfig
+);
+app.get(
+  '/api/admin/settings/refresh-token-sharding/stats',
+  requireSystemAdmin(),
+  getRefreshTokenShardingStats
+);
+app.delete(
+  '/api/admin/settings/refresh-token-sharding/cleanup',
+  requireSystemAdmin(),
+  cleanupRefreshTokenGeneration
+);
 
 // User Refresh Token Revocation (all tokens for a user)
 app.delete('/api/admin/users/:userId/refresh-tokens', revokeAllUserRefreshTokens);
@@ -2327,9 +2341,11 @@ app.put('/api/admin/scim-settings', adminScimSettingsUpdateHandler);
 // Admin Initial Access Token (IAT) Management endpoints
 // RFC 7591 Dynamic Client Registration requires Initial Access Token
 // Tokens are stored with SHA-256 hash as key (iat:${hash}) - same pattern as SCIM tokens
-app.get('/api/admin/iat-tokens', adminIATListHandler);
-app.post('/api/admin/iat-tokens', adminIATCreateHandler);
-app.delete('/api/admin/iat-tokens/:tokenHash', adminIATRevokeHandler);
+// Initial Access Tokens are kept in one KV namespace without a tenant, and any registration
+// endpoint accepts one, so they are managed by the platform.
+app.get('/api/admin/iat-tokens', requireSystemAdmin(), adminIATListHandler);
+app.post('/api/admin/iat-tokens', requireSystemAdmin(), adminIATCreateHandler);
+app.delete('/api/admin/iat-tokens/:tokenHash', requireSystemAdmin(), adminIATRevokeHandler);
 
 // Admin External IdP Provider Management endpoints (proxy to ar-bridge)
 // Enables Admin UI to manage external identity providers (Google, GitHub, etc.)
@@ -2354,8 +2370,17 @@ app.put('/api/admin/external-providers/:id', adminExternalProvidersUpdateHandler
 app.delete('/api/admin/external-providers/:id', adminExternalProvidersDeleteHandler);
 
 // Admin External IdP token refresh endpoints (proxy to ar-bridge)
-app.get('/api/admin/external-token-refresh/config', adminExternalTokenRefreshConfigGetHandler);
-app.put('/api/admin/external-token-refresh/config', adminExternalTokenRefreshConfigUpdateHandler);
+// The config is one shared document for every tenant, so it is the platform's to read and change.
+app.get(
+  '/api/admin/external-token-refresh/config',
+  requireSystemAdmin(),
+  adminExternalTokenRefreshConfigGetHandler
+);
+app.put(
+  '/api/admin/external-token-refresh/config',
+  requireSystemAdmin(),
+  adminExternalTokenRefreshConfigUpdateHandler
+);
 app.get('/api/admin/external-token-refresh/runs', adminExternalTokenRefreshRunsListHandler);
 app.post('/api/admin/external-token-refresh/run', adminExternalTokenRefreshRunHandler);
 
@@ -2427,9 +2452,10 @@ app.get('/api/admin/users/:id/effective-permissions', adminUserEffectivePermissi
 // ReBAC Management (Relationship-Based Access Control)
 // =============================================================================
 // Manages relation definitions (Zanzibar-style DSL) and relationship tuples.
-// RBAC: Requires system_admin role.
-app.use('/api/admin/rebac', requireSystemAdmin());
-app.use('/api/admin/rebac/*', requireSystemAdmin());
+// RBAC: Reads need the permission the access table declares; changes need ar_tenant_admin or
+// higher (the handlers keep every read and write inside the caller's tenant).
+app.use('/api/admin/rebac', requireTenantAdminForChanges());
+app.use('/api/admin/rebac/*', requireTenantAdminForChanges());
 
 // Relation definitions management
 app.get('/api/admin/rebac/relation-definitions', adminRelationDefinitionsListHandler);
@@ -2454,14 +2480,8 @@ app.get('/api/admin/rebac/object-types', adminObjectTypesListHandler);
 // =============================================================================
 // Manages user attributes for ABAC policy evaluation.
 // Attributes can come from VCs, SAML, or manual assignment.
-app.use(
-  '/api/admin/attributes',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.use(
-  '/api/admin/attributes/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+app.use('/api/admin/attributes', requireTenantAdminForChanges());
+app.use('/api/admin/attributes/*', requireTenantAdminForChanges());
 
 // Attribute management
 app.get('/api/admin/attributes', adminAttributesListHandler);
@@ -2480,16 +2500,10 @@ app.delete('/api/admin/attributes/expired', adminDeleteExpiredAttributesHandler)
 // Defines and manages custom claim field schemas.
 // Controls field types, validation rules, PII classification,
 // and OIDC token/endpoint inclusion settings.
-// RBAC: Requires tenant_admin or higher role.
+// Reads need the read permission the access table declares; changes need ar_tenant_admin or higher.
 
-app.use(
-  '/api/admin/custom-claims',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.use(
-  '/api/admin/custom-claims/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+app.use('/api/admin/custom-claims', requireTenantAdminForChanges());
+app.use('/api/admin/custom-claims/*', requireTenantAdminForChanges());
 
 app.get('/api/admin/custom-claims', adminCustomClaimsListHandler);
 app.post('/api/admin/custom-claims', adminCustomClaimCreateHandler);
@@ -2534,17 +2548,11 @@ app.delete('/api/admin/policies/:id', adminPolicyDeleteHandler);
 // =============================================================================
 // Manages authentication/authorization flows per tenant/client.
 // Flows define the steps and capabilities required for different auth scenarios.
-// RBAC: Requires tenant_admin or higher role.
+// Reads need the read permission the access table declares; changes need ar_tenant_admin or higher.
 
-app.use('/api/admin/flows', requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin']));
-app.use(
-  '/api/admin/flows/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.use(
-  '/api/admin/flow-assignments',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+app.use('/api/admin/flows', requireTenantAdminForChanges());
+app.use('/api/admin/flows/*', requireTenantAdminForChanges());
+app.use('/api/admin/flow-assignments', requireTenantAdminForChanges());
 
 // Flow CRUD endpoints
 app.get('/api/admin/flows', adminFlowsListHandler);
@@ -2645,16 +2653,10 @@ app.delete(
 // =============================================================================
 // Real-time access decision logs for debugging and monitoring.
 // Shows which rules allowed/denied access and why.
-// RBAC: Requires tenant_admin or higher role.
+// Reads need the read permission the access table declares; changes need ar_tenant_admin or higher.
 
-app.use(
-  '/api/admin/access-trace',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
-app.use(
-  '/api/admin/access-trace/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+app.use('/api/admin/access-trace', requireTenantAdminForChanges());
+app.use('/api/admin/access-trace/*', requireTenantAdminForChanges());
 
 // Access trace endpoints
 app.get('/api/admin/access-trace', adminAccessTraceListHandler);
@@ -2677,11 +2679,8 @@ app.use('/api/admin/access-control/*', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require admin role for access control stats
-app.use(
-  '/api/admin/access-control/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+// RBAC: Reads need the permission the access table declares (the stats are read-only)
+app.use('/api/admin/access-control/*', requireTenantAdminForChanges());
 
 // Access Control Hub endpoints
 app.get('/api/admin/access-control/stats', adminAccessControlStatsHandler);
@@ -2712,11 +2711,23 @@ app.get('/api/admin/organizations/:org_id/domain-mappings', listOrgDomainMapping
 // [DEPRECATED] Domain Hash Key Rotation
 // → Migrate to: /api/admin/platform/settings/encryption
 // NOTE: Has rotate/complete lifecycle operations - keep for key management
-app.get('/api/admin/settings/domain-hash-keys', getDomainHashKeysConfig);
-app.post('/api/admin/settings/domain-hash-keys/rotate', rotateDomainHashKey);
-app.put('/api/admin/settings/domain-hash-keys/complete', completeDomainHashKeyRotation);
-app.get('/api/admin/settings/domain-hash-keys/status', getDomainHashKeyStatus);
-app.delete('/api/admin/settings/domain-hash-keys/:version', deleteDomainHashKeyVersion);
+app.get('/api/admin/settings/domain-hash-keys', requireSystemAdmin(), getDomainHashKeysConfig);
+app.post('/api/admin/settings/domain-hash-keys/rotate', requireSystemAdmin(), rotateDomainHashKey);
+app.put(
+  '/api/admin/settings/domain-hash-keys/complete',
+  requireSystemAdmin(),
+  completeDomainHashKeyRotation
+);
+app.get(
+  '/api/admin/settings/domain-hash-keys/status',
+  requireSystemAdmin(),
+  getDomainHashKeyStatus
+);
+app.delete(
+  '/api/admin/settings/domain-hash-keys/:version',
+  requireSystemAdmin(),
+  deleteDomainHashKeyVersion
+);
 
 // =============================================================================
 // Token Embedding Model (Phase 8.2)
@@ -2741,10 +2752,11 @@ app.delete('/api/admin/resource-permissions/:id', deleteResourcePermission);
 
 // Logout notification failures (Phase A-6). The logout settings are the Settings API
 // `session.*` keys: /api/admin/tenants/:tenantId/settings/session.
-app.get('/api/admin/logout-failures', listLogoutFailures);
-app.get('/api/admin/logout-failures/:clientId', getLogoutFailure);
-app.delete('/api/admin/logout-failures/:clientId', clearLogoutFailure);
-app.delete('/api/admin/logout-failures', clearAllLogoutFailures);
+// The failure records are keyed by client ID alone, across every tenant: the platform's to read.
+app.get('/api/admin/logout-failures', requireSystemAdmin(), listLogoutFailures);
+app.get('/api/admin/logout-failures/:clientId', requireSystemAdmin(), getLogoutFailure);
+app.delete('/api/admin/logout-failures/:clientId', requireSystemAdmin(), clearLogoutFailure);
+app.delete('/api/admin/logout-failures', requireSystemAdmin(), clearAllLogoutFailures);
 
 // Check API Key Management endpoints (Phase 8.3)
 app.post('/api/admin/check-api-keys', createCheckApiKey);
@@ -2816,9 +2828,9 @@ app.get('/api/admin/plugins/:id/schema', getPluginSchemaHandler);
 // - GET: Retrieve current settings with value sources
 // - PUT: Update settings (partial update supported)
 // - DELETE: Reset to defaults
-app.get('/api/admin/settings/native-sso', getNativeSSOSettingsConfig);
-app.put('/api/admin/settings/native-sso', updateNativeSSOConfig);
-app.delete('/api/admin/settings/native-sso', clearNativeSSOConfig);
+app.get('/api/admin/settings/native-sso', requireSystemAdmin(), getNativeSSOSettingsConfig);
+app.put('/api/admin/settings/native-sso', requireSystemAdmin(), updateNativeSSOConfig);
+app.delete('/api/admin/settings/native-sso', requireSystemAdmin(), clearNativeSSOConfig);
 
 // Device Secret Management (Native SSO)
 // - List user's device secrets (with pagination and summary)
@@ -2836,7 +2848,7 @@ app.delete('/api/admin/device-secrets/:id', revokeDeviceSecret);
 // =============================================================================
 // CRUD operations for webhook configurations.
 // Webhooks can be tenant-level (receive all events) or client-level (receive specific client events).
-// RBAC: Requires tenant_admin or higher role.
+// RBAC: Requires ar_tenant_admin or higher role.
 // Rate limit: lenient profile.
 
 // Rate limiting for Webhook endpoints
@@ -3499,7 +3511,7 @@ app.post(
 // =============================================================================
 // Manage logging settings dynamically via KV.
 // Supports global settings and per-tenant overrides.
-// RBAC: Requires system_admin role for global settings.
+// RBAC: Requires ar_super_admin role for global settings.
 // Rate limit: moderate profile.
 
 // Rate limiting for Logging config endpoints
@@ -3520,23 +3532,35 @@ app.use('/api/admin/settings/logging/*', async (c, next) => {
   })(c, next);
 });
 
-// Global logging config (system_admin only)
+// Global logging config (ar_super_admin only)
 app.get('/api/admin/settings/logging', requireSystemAdmin(), getLoggingConfig);
 app.put('/api/admin/settings/logging', requireSystemAdmin(), updateLoggingConfig);
 app.delete('/api/admin/settings/logging', requireSystemAdmin(), resetLoggingConfig);
 
 // Tenant-specific logging overrides
-app.get('/api/admin/settings/logging/tenants', listTenantLoggingOverrides);
-app.get('/api/admin/settings/logging/tenant/:tenantId', getTenantLoggingConfig);
-app.put('/api/admin/settings/logging/tenant/:tenantId', updateTenantLoggingConfig);
-app.delete('/api/admin/settings/logging/tenant/:tenantId', resetTenantLoggingConfig);
+app.get('/api/admin/settings/logging/tenants', requireSystemAdmin(), listTenantLoggingOverrides);
+app.get(
+  '/api/admin/settings/logging/tenant/:tenantId',
+  requireSystemAdmin(),
+  getTenantLoggingConfig
+);
+app.put(
+  '/api/admin/settings/logging/tenant/:tenantId',
+  requireSystemAdmin(),
+  updateTenantLoggingConfig
+);
+app.delete(
+  '/api/admin/settings/logging/tenant/:tenantId',
+  requireSystemAdmin(),
+  resetTenantLoggingConfig
+);
 
 // =============================================================================
 // Audit PII Configuration API
 // =============================================================================
 // Per-tenant PII configuration for audit logging.
 // Determines which fields are PII, encryption settings, retention periods.
-// RBAC: Requires tenant_admin or higher.
+// RBAC: Requires ar_tenant_admin or higher.
 // Rate limit: moderate profile.
 
 // Rate limiting for Audit PII config endpoints
@@ -3550,10 +3574,7 @@ app.use('/api/admin/tenants/:tenantId/audit/*', async (c, next) => {
 });
 
 // RBAC for PII config
-app.use(
-  '/api/admin/tenants/:tenantId/audit/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+app.use('/api/admin/tenants/:tenantId/audit/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
 
 app.get('/api/admin/tenants/:tenantId/audit/pii-config', getTenantPIIConfig);
 app.put('/api/admin/tenants/:tenantId/audit/pii-config', updateTenantPIIConfig);
@@ -3561,14 +3582,14 @@ app.delete('/api/admin/tenants/:tenantId/audit/pii-config', resetTenantPIIConfig
 app.post('/api/admin/tenants/:tenantId/audit/pii-config/preset/gdpr', applyGDPRPreset);
 app.post('/api/admin/tenants/:tenantId/audit/pii-config/preset/minimal', applyMinimalPreset);
 
-// List all tenant PII configs (system_admin only)
+// List all tenant PII configs (ar_super_admin only)
 app.get('/api/admin/settings/audit/pii-config', requireSystemAdmin(), listAllTenantPIIConfigs);
 
 // =============================================================================
 // Audit Storage Configuration API
 // =============================================================================
 // Manage audit log storage backends, routing rules, and retention policies.
-// RBAC: Requires system_admin role (infrastructure-level settings).
+// RBAC: Requires ar_super_admin role (infrastructure-level settings).
 // Rate limit: moderate profile.
 
 // Rate limiting for Audit Storage config endpoints
@@ -3589,7 +3610,7 @@ app.use('/api/admin/settings/audit-storage/*', async (c, next) => {
   })(c, next);
 });
 
-// Storage config (system_admin only)
+// Storage config (ar_super_admin only)
 app.get('/api/admin/settings/audit-storage', requireSystemAdmin(), getAuditStorageConfig);
 app.put('/api/admin/settings/audit-storage', requireSystemAdmin(), updateAuditStorageConfig);
 
@@ -3624,7 +3645,7 @@ app.get('/api/admin/settings/audit-storage/stats', requireSystemAdmin(), getStor
 // =============================================================================
 // Endpoints for tracking async job execution status and results.
 // Used for bulk imports, exports, and other long-running operations.
-// RBAC: Requires tenant_admin or higher role.
+// RBAC: Requires ar_tenant_admin or higher role.
 // Rate limit: moderate profile.
 
 // Rate limiting for Jobs endpoints
@@ -3675,7 +3696,7 @@ app.route('/api/admin/support-ops', supportOpsRouter);
 // =============================================================================
 // Time-series and aggregate statistics for administrative dashboards.
 // Supports date range filtering, interval selection, and timezone output.
-// RBAC: Requires tenant_admin or higher role.
+// Reads need the read permission the access table declares; changes need ar_tenant_admin or higher.
 // Rate limit: moderate profile.
 
 // Rate limiting for Stats endpoints
@@ -3688,11 +3709,8 @@ app.use('/api/admin/stats/*', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require tenant_admin or higher for statistics access
-app.use(
-  '/api/admin/stats/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+// RBAC: Reads need the permission the access table declares; changes need ar_tenant_admin or higher
+app.use('/api/admin/stats/*', requireTenantAdminForChanges());
 
 app.get('/api/admin/stats/tokens', adminStatsTokensHandler);
 app.get('/api/admin/stats/auth', adminStatsAuthHandler);
@@ -3709,7 +3727,7 @@ app.get('/api/admin/stats/clients/:id', adminStatsClientHandler);
 // - POST /api/admin/security/alerts/:id/acknowledge - Acknowledge alert
 //
 // Security:
-// - RBAC: tenant_admin or higher required
+// - RBAC: reads need the declared permission; changes need ar_tenant_admin or higher
 // - Rate limit: moderate profile
 // - Tenant isolation: All queries scoped by tenant_id
 // =============================================================================
@@ -3724,11 +3742,8 @@ app.use('/api/admin/security/*', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require tenant_admin or higher for security alerts
-app.use(
-  '/api/admin/security/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+// RBAC: Reads need the declared permission; changes need ar_tenant_admin or higher
+app.use('/api/admin/security/*', requireTenantAdminForChanges());
 
 app.get('/api/admin/security/alerts', adminSecurityAlertsListHandler);
 app.post('/api/admin/security/alerts/:id/acknowledge', adminSecurityAlertAcknowledgeHandler);
@@ -3746,13 +3761,11 @@ app.post('/api/admin/security/ip-reputation', adminSecurityIpReputationHandler);
 // - /api/admin/compliance/reports[/:id[/download]]
 //
 // Security:
-// - RBAC: tenant_admin or higher required
+// - RBAC: reads need the declared permission (the report file itself needs ar_tenant_admin or
+//   higher); changes need ar_tenant_admin or higher
 // - Tenant isolation: All data scoped by tenant_id
 // =============================================================================
-app.use(
-  '/api/admin/compliance/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+app.use('/api/admin/compliance/*', requireTenantAdminForChanges());
 
 app.get('/api/admin/compliance/status', adminComplianceStatusHandler);
 app.get('/api/admin/compliance/access-reviews', listAccessReviews);
@@ -3765,7 +3778,12 @@ app.post('/api/admin/compliance/access-reviews/:id/cancel', cancelAccessReview);
 app.get('/api/admin/compliance/reports', listComplianceReports);
 app.post('/api/admin/compliance/reports', createComplianceReport);
 app.get('/api/admin/compliance/reports/:id', getComplianceReport);
-app.get('/api/admin/compliance/reports/:id/download', downloadComplianceReport);
+// The file is an export of the tenant's records, so it stays with the tenant administrators.
+app.get(
+  '/api/admin/compliance/reports/:id/download',
+  requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin),
+  downloadComplianceReport
+);
 
 // =============================================================================
 // Data Retention API (Phase 3)
@@ -3779,13 +3797,13 @@ app.get('/api/admin/compliance/reports/:id/download', downloadComplianceReport);
 // - PUT /api/admin/data-retention/categories/:category - The lookup directory only
 //
 // Security:
-// - RBAC: tenant_admin or higher required
+// - RBAC: ar_tenant_admin or higher required
 // - Tenant isolation: All data scoped by tenant_id
 // =============================================================================
-app.use(
-  '/api/admin/data-retention/*',
-  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
-);
+// Reads stay with the tenant administrators too: the status and categories answers carry the state
+// of the installation-wide maintenance tasks, the data `GET /api/admin/jobs/schedules` keeps for the
+// platform roles.
+app.use('/api/admin/data-retention/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
 app.get('/api/admin/data-retention/status', getDataRetentionStatus);
 app.get('/api/admin/data-retention/estimate', getDataRetentionEstimate);
 app.get('/api/admin/data-retention/categories', listRetentionCategories);
@@ -4006,6 +4024,9 @@ app.use('/api/admin/test/*', async (c, next) => {
   }
   return next();
 });
+// These endpoints reach every tenant (session minting, signing keys, the scheduled maintenance
+// run), so a tenant-level `admin:security:*` is not enough.
+app.use('/api/admin/test/*', requireSystemAdmin());
 app.use('/api/admin/test/email-codes', managementRequestDiagnosticCheckpoint('mg_test_guard'));
 
 // Test endpoints (all protected by adminAuthMiddleware from /api/admin/* and test guard above)
@@ -4048,7 +4069,7 @@ app.post(
   csrfProtectionMiddleware(),
   adminAuthMiddleware({
     plane: 'platform',
-    requireRoles: ['super_admin', 'system_admin'],
+    requireRoles: [...ADMIN_ROLE_GROUPS.platform],
   }),
   requireInternalVersionManagerAuthority(ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION),
   enforceDeclaredAdminRouteAccess(),
@@ -4117,7 +4138,7 @@ app.get(
   '/api/internal/version-manager/status',
   adminAuthMiddleware({
     plane: 'platform',
-    requireRoles: ['super_admin', 'system_admin'],
+    requireRoles: [...ADMIN_ROLE_GROUPS.platform],
   }),
   requireInternalVersionManagerAuthority(ADMIN_PERMISSIONS.CONTROL_PLANE_READ),
   enforceDeclaredAdminRouteAccess(),

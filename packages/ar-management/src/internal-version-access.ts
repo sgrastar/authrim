@@ -4,9 +4,10 @@ import {
   hasAdminPermission,
   hasGlobalAdminRole,
   isBootstrapSetupMachine,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 
-const PLATFORM_ADMIN_ROLES = new Set(['super_admin', 'system_admin']);
+const PLATFORM_ADMIN_ROLES: ReadonlySet<string> = new Set(ADMIN_ROLE_GROUPS.platform);
 
 /**
  * Registering Worker versions affects every tenant, so the platform role has to come from a global

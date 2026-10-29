@@ -75,16 +75,15 @@ describe('MFA coverage', () => {
     const [sql, params] = queryOne.mock.calls[0]!;
     // Only the roles admin sign-in accepts give access.
     expect(params).toEqual([
-      'super_admin',
-      'security_admin',
-      'admin',
-      'support',
-      'viewer',
+      'ar_super_admin',
+      'ar_tenant_admin',
+      'ar_support',
+      'ar_viewer',
       'tenant-a',
       'tenant-a',
       1000,
     ]);
-    expect(sql).toContain('r.name IN (?, ?, ?, ?, ?)');
+    expect(sql).toContain('r.name IN (?, ?, ?, ?)');
     expect(sql).toContain('ra.tenant_id = u.tenant_id');
     expect(sql).toContain("ra.scope_type = 'global'");
     expect(sql).toContain('ra.scope_id IS NULL AND ra.tenant_id = ?');

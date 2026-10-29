@@ -1,5 +1,7 @@
 // Re-export everything from shared modules
 export * from './constants';
+// `./constants` is the file constants.ts, so the directory is exported by path.
+export * from './constants/admin-roles';
 export * from './types/env';
 export * from './types/oidc';
 export * from './types/admin';

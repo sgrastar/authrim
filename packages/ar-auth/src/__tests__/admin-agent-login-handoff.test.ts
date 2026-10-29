@@ -102,7 +102,7 @@ function liveAdmin(overrides: Partial<AdminAuthContext> = {}): AdminAuthContext 
   return {
     userId: 'admin-1',
     authMethod: 'session',
-    roles: ['super_admin'],
+    roles: ['ar_super_admin'],
     permissions: ['*'],
     tenantId: 'tenant-1',
     tenantScope: ['*'],

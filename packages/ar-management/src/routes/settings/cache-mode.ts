@@ -8,7 +8,7 @@
  *
  * Hierarchical configuration:
  * - Platform-level: Default for all clients (v1:cache-mode:platform)
- * - Client-level: Override for specific clients (v1:cache-mode:client:{clientId})
+ * - Client-level: Override for specific clients, per tenant (v1:cache-mode:client:{tenantId}:{clientId})
  *
  * @see P0 KV Cache Optimization Plan
  */
@@ -26,6 +26,7 @@ import {
   setClientCacheMode,
   getCacheMode,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Types
@@ -146,6 +147,25 @@ export async function setPlatformCacheModeHandler(
 // =============================================================================
 
 /**
+ * Whether the client belongs to the tenant of the request. The cache mode is kept under the
+ * tenant and the client, so a tenant administrator reaches only the override of its own clients.
+ */
+async function clientBelongsToRequestTenant(
+  c: Context<{ Bindings: Env }>,
+  clientId: string
+): Promise<boolean> {
+  const row = await resolveSettingsCoreAdapter(c).queryOne<{ client_id: string }>(
+    'SELECT client_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+    [resolveSettingsTenantId(c), clientId]
+  );
+  return row !== null;
+}
+
+function clientNotFound(c: Context<{ Bindings: Env }>): Response {
+  return c.json({ error: 'not_found', error_description: 'Client not found' }, 404);
+}
+
+/**
  * GET /api/admin/clients/:clientId/cache-mode
  * Get client-specific cache mode configuration
  */
@@ -163,8 +183,13 @@ export async function getClientCacheModeHandler(c: Context<{ Bindings: Env }>): 
       );
     }
 
-    const clientMode = await getClientCacheMode(c.env, clientId);
-    const effectiveMode = await getCacheMode(c.env, clientId);
+    if (!(await clientBelongsToRequestTenant(c, clientId))) {
+      return clientNotFound(c);
+    }
+
+    const client = { tenantId: resolveSettingsTenantId(c), clientId };
+    const clientMode = await getClientCacheMode(c.env, client);
+    const effectiveMode = await getCacheMode(c.env, client);
 
     const response: ClientCacheModeResponse = {
       client_id: clientId,
@@ -221,9 +246,14 @@ export async function setClientCacheModeHandler(c: Context<{ Bindings: Env }>): 
       );
     }
 
-    await setClientCacheMode(c.env, clientId, body.mode as CacheMode | null);
+    if (!(await clientBelongsToRequestTenant(c, clientId))) {
+      return clientNotFound(c);
+    }
 
-    const effectiveMode = await getCacheMode(c.env, clientId);
+    const client = { tenantId: resolveSettingsTenantId(c), clientId };
+    await setClientCacheMode(c.env, client, body.mode as CacheMode | null);
+
+    const effectiveMode = await getCacheMode(c.env, client);
 
     return c.json({
       success: true,
@@ -292,7 +322,7 @@ export async function getCacheModeInfoHandler(c: Context<{ Bindings: Env }>): Pr
     hierarchy: {
       description: 'Cache mode is determined in the following order',
       order: [
-        '1. Client-specific mode (v1:cache-mode:client:{clientId})',
+        '1. Client-specific mode (v1:cache-mode:client:{tenantId}:{clientId})',
         '2. Platform-level mode (v1:cache-mode:platform)',
         '3. Default mode (fixed)',
       ],

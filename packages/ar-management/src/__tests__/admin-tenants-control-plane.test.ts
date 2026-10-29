@@ -53,6 +53,10 @@ const ensureTenantRegionShardConfig = vi.hoisted(() => vi.fn(async () => ({})));
 const seedBuiltinProfileClaimSchemas = vi.hoisted(() => vi.fn(async () => 8));
 
 vi.mock('@authrim/ar-lib-core', () => ({
+  ADMIN_ROLE_GROUPS: {
+    platform: ['ar_super_admin'],
+    tenantAdmin: ['ar_tenant_admin', 'ar_super_admin'],
+  },
   ADMIN_PERMISSIONS: {
     SETTINGS_READ: 'admin:settings:read',
     TENANT_LIFECYCLE_BREAK_GLASS: 'admin:tenants:lifecycle:break_glass',
@@ -265,9 +269,9 @@ function createContext(
   routeParams: Record<string, string> = {},
   adminAuth: Record<string, unknown> = {
     userId: 'platform-admin',
-    roles: ['system_admin'],
+    roles: ['ar_super_admin'],
     // The role comes from a global assignment.
-    globalRoles: ['system_admin'],
+    globalRoles: ['ar_super_admin'],
     tenantScope: ['*'],
     permissions: [],
   }
@@ -1026,8 +1030,8 @@ describe('Control Plane tenant management', () => {
           { id: 'second' },
           {
             userId: 'platform-admin',
-            roles: ['system_admin'],
-            globalRoles: ['system_admin'],
+            roles: ['ar_super_admin'],
+            globalRoles: ['ar_super_admin'],
             tenantScope: ['*'],
             permissions: ['admin:tenants:lifecycle:break_glass'],
           }

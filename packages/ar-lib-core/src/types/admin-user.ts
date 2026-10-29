@@ -126,7 +126,7 @@ export interface AdminRole {
   id: string;
   /** Tenant ID for multi-tenant support */
   tenant_id: string;
-  /** Machine-readable name (e.g., 'super_admin') */
+  /** Machine-readable name (e.g., 'ar_super_admin') */
   name: string;
   /** Human-readable name (e.g., 'Super Administrator') */
   display_name: string | null;
@@ -179,7 +179,7 @@ export interface AdminRoleUpdateInput {
 
 /**
  * Scope type for role assignment
- * - global: Role applies to all tenants (super_admin only)
+ * - global: Role applies to all tenants (ar_super_admin only)
  * - tenant: Role applies to specific tenant
  * - org: Reserved for future Admin scope binding; current Admin APIs do not create it
  */
@@ -813,6 +813,9 @@ export const ADMIN_PERMISSIONS = {
  */
 export type AdminPermission = (typeof ADMIN_PERMISSIONS)[keyof typeof ADMIN_PERMISSIONS] | string;
 
+/** Permissions under these prefixes are never granted by a wildcard, only by their exact name. */
+const EXACT_MATCH_ONLY_PERMISSION_PREFIXES: readonly string[] = ['admin:support_ops:break_glass:'];
+
 /**
  * Check if a set of permissions includes a specific permission
  *
@@ -821,6 +824,12 @@ export type AdminPermission = (typeof ADMIN_PERMISSIONS)[keyof typeof ADMIN_PERM
  * - "admin:users:*" matches "admin:users:read", "admin:users:write", etc.
  */
 export function hasAdminPermission(permissions: string[], required: string): boolean {
+  // Break-glass permissions are held by name only. `*`, `admin:*` and `admin:support_ops:*`
+  // do not carry them: emergency access is not something a broad role picks up as a side effect.
+  if (EXACT_MATCH_ONLY_PERMISSION_PREFIXES.some((prefix) => required.startsWith(prefix))) {
+    return permissions.includes(required);
+  }
+
   // Check for wildcard
   if (permissions.includes('*')) {
     return true;

@@ -11,7 +11,7 @@
  * - Client ownership validation via D1 database
  * - Scoped KV keys with environment prefix
  * - Generalized error messages to prevent information leakage
- * - RBAC: Requires system_admin or org_admin role
+ * - RBAC: Requires the ar_tenant_admin role
  * - Audit logging for all contract modifications
  * - Status transition validation for lifecycle management
  *
@@ -83,7 +83,10 @@ import {
   createAuditLogEntry,
   createLogger,
   resolveEffectiveSettings,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
+import { requireTenantAdminForChanges } from '../../admin-role-gates';
+import { redactClientContract, redactResolutionDebug } from './client-key-redaction';
 
 // =============================================================================
 // Types
@@ -531,9 +534,13 @@ const policyRouter = new Hono<{
 // unrelated routes that are registered after this sub-router (for example Agent-safe read
 // operations). Keep the guard explicitly scoped to the paths owned by this router.
 // Note: adminAuthMiddleware is already applied at the parent router level.
-const policyAdminRoles = ['system_admin', 'org_admin', 'admin'];
+//
+// Only changes are held to the role. A read goes by the permission the declared access table asks
+// for (`admin:settings:read`, `admin:clients:read`), which is what the viewer role is given.
+// `GET /tenant-policy` is the one read that keeps the role: when the tenant has no contract yet it
+// saves a default one, so it is not a read-only call.
+const policyAdminRoles = [...ADMIN_ROLE_GROUPS.tenantAdmin];
 for (const path of [
-  '/tenant-policy',
   '/tenant-policy/*',
   '/clients/:clientId/profile',
   '/clients/:clientId/profile/validate',
@@ -542,8 +549,9 @@ for (const path of [
   '/effective-policy',
   '/effective-policy/options',
 ]) {
-  policyRouter.use(path, requireAnyRole(policyAdminRoles));
+  policyRouter.use(path, requireTenantAdminForChanges());
 }
+policyRouter.use('/tenant-policy', requireAnyRole(policyAdminRoles));
 
 // =============================================================================
 // Tenant Policy Routes
@@ -970,7 +978,9 @@ policyRouter.get('/clients/:clientId/profile', async (c) => {
   const tenantContract = await getTenantContract(kv, c.env, tenantId);
 
   return c.json({
-    profile: contract,
+    // The client's JWKS is its public key set. A private member saved into it (the PUT does not
+    // refuse one) is not handed back, to a viewer any more than to anyone else.
+    profile: redactClientContract(contract),
     tenantPolicyVersion: tenantContract?.version ?? 0,
     _links: {
       self: `/api/admin/clients/${clientId}/profile`,
@@ -1468,7 +1478,8 @@ policyRouter.get('/effective-policy', async (c) => {
 
   return c.json({
     effectivePolicy: result.policy,
-    debug: result.debug,
+    // The trace echoes the contracts it read, the client's key set among them.
+    debug: redactResolutionDebug(result.debug),
     warnings: result.warnings,
     _links: {
       self: `/api/admin/effective-policy?client_id=${clientId}`,

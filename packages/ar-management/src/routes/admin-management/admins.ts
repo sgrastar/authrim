@@ -4,7 +4,7 @@
  * Endpoints for managing Admin users (stored in DB_ADMIN).
  * These are separate from EndUser management (stored in DB_CORE).
  *
- * Requires super_admin role or admin:admin_users:* permission.
+ * Requires the admin:admin_users:* permission.
  */
 
 import { Hono } from 'hono';
@@ -25,6 +25,9 @@ import {
   ADMIN_PERMISSIONS,
   hasAdminPermission,
   hasGlobalAdminPermission,
+  ADMIN_ROLES,
+  allOfGuards,
+  type AdminWriteGuard,
   requireDedicatedAdminDatabaseAdapter,
   type AdminUser,
 } from '@authrim/ar-lib-core';
@@ -34,9 +37,21 @@ import {
   callerOutranks,
   callerOutranksGlobally,
   loadAdminStanding,
+  isScopeAllowedForRole,
   mayActOnAdminAccount,
   mayRemoveAssignment,
 } from './admin-role-authority';
+import {
+  ensureTenantKeepsAdmin,
+  lastTenantAdminResponse,
+  tenantKeepsAdminGuard,
+} from './last-tenant-admin';
+import {
+  countActiveRoleHolders,
+  lastPlatformAdminResponse,
+  platformAdminKeptGuard,
+  roleKeepsHolderGuard,
+} from './last-platform-admin';
 
 // Create router
 export const adminUsersRouter = new Hono<{
@@ -77,7 +92,7 @@ function hasDeletePermission(authContext: AdminAuthContext): boolean {
 }
 
 function isPlatformAdminRole(roleName: string | undefined): boolean {
-  return roleName === 'super_admin';
+  return roleName === ADMIN_ROLES.SUPER_ADMIN;
 }
 
 function normalizeAdminAssignmentScope(
@@ -104,27 +119,12 @@ function normalizeAdminAssignmentScope(
   return { scopeType: 'tenant', scopeId: normalizedScopeId };
 }
 
-async function countActivePlatformAdmins(
+function countActivePlatformAdmins(
   adapter: ReturnType<typeof getAdminAdapter>,
   tenantId: string,
   roleId: string
 ): Promise<number> {
-  const now = Date.now();
-  const row = await adapter.queryOne<{ count: number }>(
-    `SELECT COUNT(DISTINCT au.id) as count
-     FROM admin_role_assignments ra
-     JOIN admin_users au
-       ON au.id = ra.admin_user_id
-      AND au.tenant_id = ra.tenant_id
-     WHERE ra.tenant_id = ?
-       AND ra.admin_role_id = ?
-       AND ra.scope_type = 'global'
-       AND au.is_active = 1
-       AND au.status = 'active'
-       AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-    [tenantId, roleId, now]
-  );
-  return Number(row?.count ?? 0);
+  return countActiveRoleHolders(adapter, tenantId, roleId, true);
 }
 
 async function userHasActivePlatformAdminRole(
@@ -144,11 +144,11 @@ async function userHasActivePlatformAdminRole(
       )
      WHERE ra.tenant_id = ?
        AND ra.admin_user_id = ?
-       AND r.name = 'super_admin'
+       AND r.name = ?
        AND ra.scope_type = 'global'
        AND (ra.expires_at IS NULL OR ra.expires_at > ?)
      LIMIT 1`,
-    [tenantId, adminUserId, now]
+    [tenantId, adminUserId, ADMIN_ROLES.SUPER_ADMIN, now]
   );
   return !!row;
 }
@@ -165,8 +165,8 @@ async function ensureNotRemovingLastPlatformAdmin(
   }
 
   const platformRole = await adapter.queryOne<{ id: string }>(
-    "SELECT id FROM admin_roles WHERE tenant_id = 'default' AND name = 'super_admin' AND is_system = 1 LIMIT 1",
-    []
+    "SELECT id FROM admin_roles WHERE tenant_id = 'default' AND name = ? AND is_system = 1 LIMIT 1",
+    [ADMIN_ROLES.SUPER_ADMIN]
   );
   if (!platformRole) {
     return null;
@@ -177,14 +177,46 @@ async function ensureNotRemovingLastPlatformAdmin(
     return null;
   }
 
-  return c.json(
-    {
-      error: 'last_platform_admin',
-      error_description:
-        'At least one active platform administrator must remain. Assign another platform administrator before changing this account.',
-    },
-    409
+  return lastPlatformAdminResponse(c, 'account');
+}
+
+/**
+ * The answer for a guarded write of an account that did not apply: the account is gone (404), or
+ * it was the last administrator by the time the write ran, which another request got to first.
+ */
+async function refusedAccountWrite(
+  c: AdminContext,
+  adapter: ReturnType<typeof getAdminAdapter>,
+  userRepo: AdminUserRepository,
+  tenantId: string,
+  adminUserId: string
+): Promise<Response> {
+  if (!(await userRepo.findByTenantAndId(tenantId, adminUserId))) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+  }
+  return (
+    (await ensureNotRemovingLastPlatformAdmin(c, adapter, tenantId, adminUserId)) ??
+    lastTenantAdminResponse(c)
   );
+}
+
+/**
+ * What stops an account from being taken out of service, decided by the write itself. An account
+ * that is not in service when the write runs has nothing to lose, so the guard holds for it: the
+ * state read before the request is not what decides whether to guard (it may have been
+ * re-activated since), the write is.
+ */
+function accountKeptGuard(tenantId: string, adminUserId: string): AdminWriteGuard {
+  const kept = allOfGuards(
+    platformAdminKeptGuard(tenantId, adminUserId),
+    tenantKeepsAdminGuard(tenantId, { adminUserId })
+  ) as AdminWriteGuard;
+  return {
+    sql: `NOT EXISTS (
+        SELECT 1 FROM admin_users WHERE id = ? AND is_active = 1 AND status = 'active'
+      ) OR (${kept.sql})`,
+    params: [adminUserId, ...kept.params],
+  };
 }
 
 /**
@@ -404,26 +436,46 @@ adminUsersRouter.patch('/:id', async (c) => {
       mfa_enabled?: boolean;
     }>();
 
-    // Check hierarchy - can't modify users with higher hierarchy level
-    if (authContext.hierarchyLevel !== undefined && existing.id !== authContext.userId) {
-      // This would require fetching the target user's hierarchy level
-      // For now, only super_admin can modify other admins
-      const permissions = authContext.permissions || [];
-      if (!hasAdminPermission(permissions, '*')) {
-        // Check if user is trying to modify someone else
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    // The account is active or suspended through this route; any other value is refused.
+    if (body.status !== undefined && body.status !== 'active' && body.status !== 'suspended') {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    // Making an account unable to sign in is held to the same protections as the suspend route.
+    const suspending = body.status === 'suspended' && existing.status === 'active';
+    if (suspending) {
+      const lastPlatformAdminResponse = await ensureNotRemovingLastPlatformAdmin(
+        c,
+        adapter,
+        tenantId,
+        id
+      );
+      if (lastPlatformAdminResponse) {
+        return lastPlatformAdminResponse;
+      }
+      const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+        adminUserId: id,
+      });
+      if (tenantAdminRefusal) {
+        return tenantAdminRefusal;
       }
     }
 
-    const user = await userRepo.updateAdminUser(id, {
-      name: body.name,
-      email: body.email?.toLowerCase(),
-      status: body.status,
-      mfa_enabled: body.mfa_enabled,
-    });
+    const user = await userRepo.updateAdminUser(
+      id,
+      {
+        name: body.name,
+        email: body.email?.toLowerCase(),
+        status: body.status,
+        mfa_enabled: body.mfa_enabled,
+      },
+      body.status === 'suspended' ? accountKeptGuard(tenantId, id) : undefined
+    );
 
     if (!user) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      return body.status === 'suspended'
+        ? refusedAccountWrite(c, adapter, userRepo, tenantId, id)
+        : createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Create audit log
@@ -488,8 +540,17 @@ adminUsersRouter.delete('/:id', async (c) => {
       return lastPlatformAdminResponse;
     }
 
+    const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+      adminUserId: id,
+    });
+    if (tenantAdminRefusal) {
+      return tenantAdminRefusal;
+    }
+
     // Soft delete (deactivate)
-    await userRepo.updateAdminUser(id, { is_active: false });
+    if (!(await userRepo.deactivateAccount(id, accountKeptGuard(tenantId, id)))) {
+      return refusedAccountWrite(c, adapter, userRepo, tenantId, id);
+    }
 
     // Create audit log
     await createAuditLog(c, 'admin_user.delete', id, 'success', {
@@ -553,7 +614,16 @@ adminUsersRouter.post('/:id/suspend', async (c) => {
       return lastPlatformAdminResponse;
     }
 
-    await userRepo.suspendAccount(id);
+    const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+      adminUserId: id,
+    });
+    if (tenantAdminRefusal) {
+      return tenantAdminRefusal;
+    }
+
+    if (!(await userRepo.suspendAccount(id, accountKeptGuard(tenantId, id)))) {
+      return refusedAccountWrite(c, adapter, userRepo, tenantId, id);
+    }
 
     // Create audit log
     await createAuditLog(c, 'admin_user.suspend', id, 'success');
@@ -717,6 +787,11 @@ adminUsersRouter.post('/:id/roles', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
+    // The super admin is held through a global assignment only.
+    if (!isScopeAllowedForRole(role.name, normalizedScope.scopeType)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
     // A global assignment is measured by the caller's global hierarchy, not the sum.
     if (
       normalizedScope.scopeType === 'global' &&
@@ -815,23 +890,38 @@ adminUsersRouter.delete('/:id/role-assignments/:assignmentId', async (c) => {
     if (isPlatformAdminRole(role.name)) {
       const activePlatformAdmins = await countActivePlatformAdmins(adapter, tenantId, role.id);
       if (activePlatformAdmins <= 1) {
-        return c.json(
-          {
-            error: 'last_platform_admin',
-            error_description:
-              'At least one active platform administrator must remain. Assign another platform administrator before removing this role.',
-          },
-          409
-        );
+        return lastPlatformAdminResponse(c, 'role');
       }
       if (id === authContext.userId) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
       }
     }
 
-    const removed = await roleAssignmentRepo.removeAssignmentById(assignmentId);
+    const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+      assignmentId,
+    });
+    if (tenantAdminRefusal) {
+      return tenantAdminRefusal;
+    }
+
+    const removed = await roleAssignmentRepo.removeAssignmentById(
+      assignmentId,
+      allOfGuards(
+        isPlatformAdminRole(role.name) ? roleKeepsHolderGuard(tenantId, role.id, true) : undefined,
+        role.name === ADMIN_ROLES.TENANT_ADMIN
+          ? tenantKeepsAdminGuard(tenantId, { assignmentId })
+          : undefined
+      )
+    );
     if (!removed) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // Gone, or the last administrator by the time the write ran: another request got there first.
+      if (!(await roleAssignmentRepo.getAssignment(assignmentId))) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      return isPlatformAdminRole(role.name) &&
+        (await countActivePlatformAdmins(adapter, tenantId, role.id)) <= 1
+        ? lastPlatformAdminResponse(c, 'role')
+        : lastTenantAdminResponse(c);
     }
 
     await createAuditLog(c, 'admin_user.role_assignment_remove', id, 'success', {
@@ -897,28 +987,51 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
     if (isPlatformAdminRole(role.name)) {
       const activePlatformAdmins = await countActivePlatformAdmins(adapter, tenantId, roleId);
       if (activePlatformAdmins <= 1) {
-        return c.json(
-          {
-            error: 'last_platform_admin',
-            error_description:
-              'At least one active platform administrator must remain. Assign another platform administrator before removing this role.',
-          },
-          409
-        );
+        return lastPlatformAdminResponse(c, 'role');
       }
     }
 
-    // Prevent removing own super_admin role
+    // Prevent removing own ar_super_admin role
     if (id === authContext.userId) {
       if (isPlatformAdminRole(role.name)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
       }
     }
 
-    const removed = await roleAssignmentRepo.removeAssignment(id, roleId);
+    if (role.name === ADMIN_ROLES.TENANT_ADMIN) {
+      const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+        adminUserId: id,
+      });
+      if (tenantAdminRefusal) {
+        return tenantAdminRefusal;
+      }
+    }
+
+    const removed = await roleAssignmentRepo.removeAssignment(
+      id,
+      roleId,
+      undefined,
+      undefined,
+      allOfGuards(
+        isPlatformAdminRole(role.name) ? roleKeepsHolderGuard(tenantId, roleId, true) : undefined,
+        role.name === ADMIN_ROLES.TENANT_ADMIN
+          ? tenantKeepsAdminGuard(tenantId, { adminUserId: id })
+          : undefined
+      )
+    );
 
     if (!removed) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // Nothing held (404), or the last administrator by the time the write ran.
+      const stillHeld = (await roleAssignmentRepo.getAssignmentsByUser(id, true)).some(
+        (assignment) => assignment.admin_role_id === roleId
+      );
+      if (!stillHeld) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      return isPlatformAdminRole(role.name) &&
+        (await countActivePlatformAdmins(adapter, tenantId, roleId)) <= 1
+        ? lastPlatformAdminResponse(c, 'role')
+        : lastTenantAdminResponse(c);
     }
 
     // Create audit log

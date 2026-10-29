@@ -45,6 +45,8 @@ import {
   type DirectoryAuthSupportBundleRow,
   type DirectoryAuthMigrationUserState,
   type DirectoryAuthSupportBundleRedactionLevel,
+  ADMIN_ROLES,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import {
   applyDirectoryConnectorFleetPolicy,
@@ -69,12 +71,9 @@ const DIRECTORY_AUTH_EVIDENCE_EXPORT_PERMISSION =
   ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE;
 const DIRECTORY_AUTH_MIGRATION_WRITE_PERMISSION = ADMIN_PERMISSIONS.DIRECTORY_AUTH_MIGRATION_WRITE;
 const DIRECTORY_AUTH_WRITE_PERMISSION = ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE;
-const DIRECTORY_AUTH_TENANT_ADMIN_ROLES = new Set([
-  'system_admin',
-  'distributor_admin',
-  'tenant_admin',
-  'admin',
-]);
+const DIRECTORY_AUTH_TENANT_ADMIN_ROLES: ReadonlySet<string> = new Set(
+  ADMIN_ROLE_GROUPS.tenantAdmin
+);
 
 const EmailCodeFallbackModeSchema = z.enum([
   'migration_recovery',
@@ -216,9 +215,7 @@ function adminActorId(c: Context<{ Bindings: Env }>): string {
 
 function isElevatedAdmin(c: Context<{ Bindings: Env }>): boolean {
   const adminAuth = getAdminAuth(c);
-  return Boolean(
-    adminAuth?.roles.some((role) => role === 'system_admin' || role === 'super_admin')
-  );
+  return Boolean(adminAuth?.roles.some((role) => role === ADMIN_ROLES.SUPER_ADMIN));
 }
 
 async function requireTenantAccess(c: Context<{ Bindings: Env }>, tenantId: string) {
@@ -231,7 +228,7 @@ async function requireTenantAdminRole(c: Context<{ Bindings: Env }>, reason: str
   if (roles.some((role) => DIRECTORY_AUTH_TENANT_ADMIN_ROLES.has(role))) return null;
   return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
     variables: {
-      required_role: 'tenant_admin',
+      required_role: ADMIN_ROLES.TENANT_ADMIN,
       reason,
     },
   });

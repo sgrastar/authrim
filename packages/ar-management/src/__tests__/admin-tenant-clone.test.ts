@@ -1344,7 +1344,7 @@ describe('admin tenant clone', () => {
           },
           {
             admin_user_id: 'admin-two',
-            admin_role_id: 'role_security_admin',
+            admin_role_id: 'role_ar_tenant_admin',
             scope_type: 'tenant',
             scope_id: 'source',
             expires_at: null,
@@ -1353,7 +1353,7 @@ describe('admin tenant clone', () => {
           },
           {
             admin_user_id: 'admin-three',
-            admin_role_id: 'role_security_admin',
+            admin_role_id: 'role_ar_tenant_admin',
             scope_type: 'org',
             scope_id: 'source-org',
             expires_at: null,
@@ -1362,7 +1362,7 @@ describe('admin tenant clone', () => {
           },
           {
             admin_user_id: 'admin-four',
-            admin_role_id: 'role_security_admin',
+            admin_role_id: 'role_ar_tenant_admin',
             scope_type: 'tenant',
             scope_id: 'other-tenant',
             expires_at: null,
@@ -1400,7 +1400,7 @@ describe('admin tenant clone', () => {
     expect(assignmentCalls).toHaveLength(2);
     expect(assignmentCalls[0]?.[1]).not.toContain('source-custom-role');
     expect(assignmentCalls[0]?.[1]).toContain('destination');
-    expect(assignmentCalls[1]?.[1]).toContain('role_security_admin');
+    expect(assignmentCalls[1]?.[1]).toContain('role_ar_tenant_admin');
     const assignmentRead = mocks.admin.query.mock.calls.find(([sql]) =>
       String(sql).includes('FROM admin_role_assignments')
     );
@@ -1415,7 +1415,7 @@ describe('admin tenant clone', () => {
             id: 'parent-custom',
             name: 'parent',
             permissions_json: '[]',
-            inherits_from: 'role_security_admin',
+            inherits_from: 'role_ar_tenant_admin',
           },
           {
             id: 'child-custom',
@@ -1425,7 +1425,7 @@ describe('admin tenant clone', () => {
           },
         ];
       }
-      if (sql.includes('WHERE is_system = 1')) return [{ id: 'role_security_admin' }];
+      if (sql.includes('WHERE is_system = 1')) return [{ id: 'role_ar_tenant_admin' }];
       return [];
     });
 
@@ -1442,7 +1442,7 @@ describe('admin tenant clone', () => {
     );
     expect(updates).toHaveLength(2);
     expect(
-      updates.some(([, params]) => (params as unknown[]).includes('role_security_admin'))
+      updates.some(([, params]) => (params as unknown[]).includes('role_ar_tenant_admin'))
     ).toBe(true);
     expect(updates.flatMap(([, params]) => params as unknown[])).not.toContain('parent-custom');
   });

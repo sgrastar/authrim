@@ -6,13 +6,10 @@ import {
   getTenantIdFromContext,
   hasGlobalAdminPermission,
   hasGlobalAdminRole,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 
-const PLATFORM_TENANT_MANAGEMENT_ROLES = new Set([
-  'super_admin',
-  'system_admin',
-  'distributor_admin',
-]);
+const PLATFORM_TENANT_MANAGEMENT_ROLES: ReadonlySet<string> = new Set(ADMIN_ROLE_GROUPS.platform);
 
 export function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | undefined {
   return (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as

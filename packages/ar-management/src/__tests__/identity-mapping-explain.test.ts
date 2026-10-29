@@ -415,7 +415,7 @@ describe('test users', () => {
 
   it('are read with the settings read permission and replaced with the write one, never by an Agent', async () => {
     const t = await setup();
-    const viewer = t.cookie([{ role: 'role_viewer', scope: 'tenant' }]);
+    const viewer = t.cookie([{ role: 'role_ar_viewer', scope: 'tenant' }]);
     expect((await t.call('GET', TEST_USERS, undefined, viewer)).status).toBe(200);
     expect((await t.putTestUsers([], viewer)).status).toBe(403);
     expect((await t.putTestUsers([], t.admin, { 'x-test-agent': '1' })).status).toBe(403);
@@ -792,12 +792,12 @@ describe('who may ask', () => {
     insertRole(t.db, {
       id: 'role_settings_only',
       // Signing in takes one of the Admin roles by name; the permissions are this role's own.
-      name: 'viewer',
+      name: 'ar_viewer',
       permissions: ['admin:settings:read'],
       hierarchy: 10,
     });
-    const viewer = t.cookie([{ role: 'role_viewer', scope: 'tenant' }]);
-    const support = t.cookie([{ role: 'role_support', scope: 'tenant' }]);
+    const viewer = t.cookie([{ role: 'role_ar_viewer', scope: 'tenant' }]);
+    const support = t.cookie([{ role: 'role_ar_support', scope: 'tenant' }]);
     const settingsOnly = t.cookie([{ role: 'role_settings_only', scope: 'tenant' }]);
 
     expect((await t.explain(ask(userId), viewer)).status).toBe(200);

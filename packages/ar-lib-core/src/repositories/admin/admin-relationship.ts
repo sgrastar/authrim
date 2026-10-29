@@ -210,24 +210,24 @@ export class AdminRelationshipRepository extends BaseRepository<AdminRelationshi
   }
 
   /**
-   * Check if a relationship exists
+   * Check if a relationship exists in the tenant
    */
   async hasRelationship(
     fromId: string,
     toId: string,
     relationshipType: string,
-    options?: { fromType?: string; toType?: string }
+    options: { tenantId: string; fromType?: string; toType?: string }
   ): Promise<boolean> {
     const now = getCurrentTimestamp();
-    const fromType = options?.fromType ?? 'admin_user';
-    const toType = options?.toType ?? 'admin_user';
+    const fromType = options.fromType ?? 'admin_user';
+    const toType = options.toType ?? 'admin_user';
 
     const row = await this.adapter.queryOne<{ count: number }>(
       `SELECT COUNT(*) as count FROM admin_relationships
-       WHERE relationship_type = ? AND from_type = ? AND from_id = ?
+       WHERE tenant_id = ? AND relationship_type = ? AND from_type = ? AND from_id = ?
        AND to_type = ? AND to_id = ?
        AND (expires_at IS NULL OR expires_at > ?)`,
-      [relationshipType, fromType, fromId, toType, toId, now]
+      [options.tenantId, relationshipType, fromType, fromId, toType, toId, now]
     );
 
     return (row?.count ?? 0) > 0;

@@ -72,7 +72,7 @@ const TENANT_SETTINGS = `/api/admin/tenants/${TENANT}/settings/identity-mapping`
 const PLATFORM_SETTINGS = '/api/admin/platform/settings/identity-mapping';
 
 /** A tenant admin of the tenant only, and one who can only read. */
-const TENANT_VIEWER: Assignment[] = [{ role: 'role_viewer', scope: 'tenant' }];
+const TENANT_VIEWER: Assignment[] = [{ role: 'role_ar_viewer', scope: 'tenant' }];
 
 function kvStore() {
   const store = new Map<string, string>();

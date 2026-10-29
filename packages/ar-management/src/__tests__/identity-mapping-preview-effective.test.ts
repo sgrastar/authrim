@@ -538,12 +538,12 @@ describe('what is asked', () => {
     insertRole(t.db, {
       id: 'role_settings_only',
       // Signing in takes one of the Admin roles by name; the permissions are this role's own.
-      name: 'viewer',
+      name: 'ar_viewer',
       permissions: ['admin:settings:read'],
       hierarchy: 10,
     });
     const settingsOnly = t.cookie([{ role: 'role_settings_only', scope: 'tenant' }]);
-    const viewer = t.cookie([{ role: 'role_viewer', scope: 'tenant' }]);
+    const viewer = t.cookie([{ role: 'role_ar_viewer', scope: 'tenant' }]);
 
     expect(
       (await t.preview({ client_id: 'app-1', proposal: { client: null } }, settingsOnly)).status
@@ -563,7 +563,7 @@ describe('what is asked', () => {
     t.app('app-1');
     insertRole(t.db, {
       id: 'role_clients_only',
-      name: 'viewer',
+      name: 'ar_viewer',
       permissions: ['admin:clients:read'],
       hierarchy: 10,
     });
@@ -754,7 +754,7 @@ describe('a comparison of two sets', () => {
 
   it('is a read of the settings, declared for GET only', async () => {
     const t = setup();
-    const viewer = t.cookie([{ role: 'role_viewer', scope: 'tenant' }]);
+    const viewer = t.cookie([{ role: 'role_ar_viewer', scope: 'tenant' }]);
     expect((await compare(t, 'set-a', 'set-a2', viewer)).status).toBe(200);
     expect(findAdminRouteAccessRule('GET', COMPARE)?.permissions).toEqual(['admin:settings:read']);
     expect(findAdminRouteAccessRule('GET', COMPARE)?.pattern).toBe(COMPARE);

@@ -38,7 +38,7 @@ export interface PolicySubject {
  * Role assigned to a subject with scope information
  */
 export interface SubjectRole {
-  /** Role name (e.g., 'system_admin', 'org_admin', 'end_user') */
+  /** Role name (e.g., 'admin', 'end_user', or a role the operator created) */
   name: string;
 
   /** Scope of the role */

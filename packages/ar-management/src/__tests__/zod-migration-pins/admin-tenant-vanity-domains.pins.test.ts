@@ -95,9 +95,9 @@ function context(body: unknown, asSystemAdmin = false, bodyError = false) {
   const auth = asSystemAdmin
     ? {
         userId: 'system-1',
-        roles: ['system_admin'],
+        roles: ['ar_super_admin'],
         permissions: [],
-        globalRoles: ['system_admin'],
+        globalRoles: ['ar_super_admin'],
         tenantScope: ['*'],
       }
     : {

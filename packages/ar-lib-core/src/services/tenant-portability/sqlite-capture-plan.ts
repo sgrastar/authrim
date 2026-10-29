@@ -1,5 +1,7 @@
-import { splitMigrationSql } from '../control-plane/migration-sql.js';
-import { sqliteSnapshotTriggers, type CaptureSchema } from './sqlite-snapshot.js';
+import { MIGRATION_SQL_LIMITS } from '../control-plane/migration-sql.js';
+import { sqliteSnapshotTriggerStatements, type CaptureSchema } from './sqlite-snapshot.js';
+
+const utf8 = new TextEncoder();
 
 function schemaSignature(schema: CaptureSchema): string {
   return JSON.stringify({
@@ -45,7 +47,7 @@ export function sqliteCapturePlan(
   const collected = new Map<string, CaptureSchema>();
   function visit(schema: CaptureSchema): void {
     // Validate before walking the graph; nested/cyclic parents are currently unsupported.
-    sqliteSnapshotTriggers(schema);
+    sqliteSnapshotTriggerStatements(schema);
     const previous = collected.get(schema.table);
     if (previous) {
       if (schemaSignature(previous) !== schemaSignature(schema))
@@ -60,13 +62,18 @@ export function sqliteCapturePlan(
   return {
     schemas: ordered,
     triggers: ordered.flatMap((schema) => {
-      const statements = splitMigrationSql(sqliteSnapshotTriggers(schema, representation));
-      if (statements.length !== 3) throw new Error('snapshot_invalid_trigger_count');
-      return statements.map((sql, index) => ({
-        name: `tenant_backup_${schema.table}_${['insert', 'update', 'delete'][index]}`,
-        table: schema.table,
-        sql: sql.trim().replace(/;+$/, ''),
-      }));
+      // The triggers come as three statements, so they are not lexed back out of a script. They
+      // stay under the statement size every migration statement is held to.
+      return sqliteSnapshotTriggerStatements(schema, representation).map((sql, index) => {
+        if (utf8.encode(sql).byteLength > MIGRATION_SQL_LIMITS.maxStatementBytes) {
+          throw new Error('migration_sql_statement_too_large');
+        }
+        return {
+          name: `tenant_backup_${schema.table}_${['insert', 'update', 'delete'][index]}`,
+          table: schema.table,
+          sql: sql.replace(/;+$/, ''),
+        };
+      });
     }),
   };
 }

@@ -416,9 +416,9 @@ describe('createDefaultPolicyEngine', () => {
   it('should create an engine with default RBAC rules', () => {
     const engine = createDefaultPolicyEngine();
 
-    // System admin should have access
+    // The preset admin role should have access
     const adminContext = createTestContext({
-      roles: [{ name: 'system_admin', scope: 'global' }],
+      roles: [{ name: 'admin', scope: 'global' }],
     });
     expect(engine.evaluate(adminContext).allowed).toBe(true);
 

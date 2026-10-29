@@ -9,6 +9,7 @@ import {
   isAdminRequestIpAllowedForTenant,
   requireAdminDatabaseAdapter,
   type Env,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_AGENT_LOGIN_HANDOFF_CODE_PATTERN,
@@ -262,7 +263,7 @@ export async function adminAgentLoginHandoffConsumeHandler(c: HandoffContext): P
   const liveAdmin = await authenticateAdminSessionForTenant(
     c,
     handoff.sourceSessionId,
-    ['super_admin', 'security_admin', 'admin', 'support', 'viewer'],
+    [...ADMIN_ROLE_GROUPS.anyAdmin],
     handoff.targetTenantId
   );
   if (
