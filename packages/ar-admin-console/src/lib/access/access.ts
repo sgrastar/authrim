@@ -10,6 +10,7 @@
  *   view — shown as read-only values, with one note on the page saying why
  *   edit — shown as controls
  */
+import { ADMIN_ROLE_GROUPS } from '@authrim/ar-lib-core/constants/admin-roles';
 import { hasAdminPermission } from '@authrim/ar-lib-core/types/admin-user';
 import {
 	CATEGORY_SCOPE_CONFIG,
@@ -60,13 +61,13 @@ export function permissionLevel(access: AdminAccess, read: string, write: string
 }
 
 /** Roles that open every settings category, whatever the category allows others. */
-const SETTINGS_SUPER_ROLES = ['super_admin', 'system_admin'];
+const SETTINGS_SUPER_ROLES: readonly string[] = ADMIN_ROLE_GROUPS.platform;
 
 /**
  * Settings of one category at one scope, as the settings API decides it for a person signed
  * in to the console (`checkRolePermission` in ar-management `routes/settings-v2`):
  * - by role name, not by permission — `admin:settings:*` alone does not open settings;
- * - `super_admin` and `system_admin` open every category;
+ * - `ar_super_admin` opens every category;
  * - a category no role may edit at a scope is read-only there, for everyone (infrastructure
  *   and encryption on the platform: they are set when deploying);
  * - a category not offered at the scope (session settings for the platform) is `none`;
@@ -82,7 +83,7 @@ export function settingsLevel(
 	const level = roleSettingsLevel(access, category, scope);
 	// The API asks for a role held through a global assignment. The session says only that the
 	// admin holds one (`platform`) and which roles they have, so an admin with a global read-only
-	// role who is a super_admin of one tenant is offered controls that the API then refuses.
+	// role who is an ar_super_admin of one tenant is offered controls that the API then refuses.
 	if (
 		level === 'edit' &&
 		scope === 'tenant' &&

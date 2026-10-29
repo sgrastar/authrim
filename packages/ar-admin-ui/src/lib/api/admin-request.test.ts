@@ -40,7 +40,7 @@ describe('buildAdminHeaders', () => {
 			userId: 'admin-1',
 			tenantId: 'first',
 			email: 'admin@example.test',
-			roles: ['system_admin'],
+			roles: ['ar_super_admin'],
 			permissions: ['*'],
 			adminScope: 'tenant',
 			isPlatformAdmin: false
@@ -78,7 +78,7 @@ describe('buildAdminHeaders', () => {
 			userId: 'admin-1',
 			tenantId: 'first',
 			email: 'admin@example.test',
-			roles: ['system_admin'],
+			roles: ['ar_super_admin'],
 			permissions: ['*'],
 			adminScope: 'tenant',
 			isPlatformAdmin: false

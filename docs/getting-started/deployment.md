@@ -445,7 +445,7 @@ Open this URL in your browser within 1 hour:
 1. **Open the setup URL** in a browser that supports Passkeys
 2. **Enter your email address** (this will be your admin account)
 3. **Register a Passkey** using your device's biometric or security key
-4. **Done!** You now have a `system_admin` account
+4. **Done!** You now have an `ar_super_admin` account
 
 ### Manual Token Upload
 

@@ -3493,7 +3493,7 @@ components:
               id: admin_123
               email: admin@example.com
               name: Admin User
-              role: system_admin
+              role: ar_super_admin
             message: Administrator account created. Please complete passkey registration on Admin UI.
             admin_ui_url: https://admin.example.com
             admin_ui_setup_url: https://admin.example.com/setup/complete?token=admin_setup_token_123
@@ -5620,7 +5620,7 @@ components:
                 - type: 'null'
             role:
               type: string
-              example: system_admin
+              example: ar_super_admin
         message:
           type: string
           example: Administrator account created. Please complete passkey registration on Admin UI.
