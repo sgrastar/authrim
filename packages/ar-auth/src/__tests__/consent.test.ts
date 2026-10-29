@@ -1401,7 +1401,13 @@ describe('Consent Handlers', () => {
       });
       const c = createMockContext({
         method: 'POST',
-        body: { challenge_id: 'consent-challenge-required', approved: true },
+        body: {
+          challenge_id: 'consent-challenge-required',
+          approved: true,
+          consent_item_versions: {
+            'stmt-required': { version_id: 'ver-required', content_hash: null },
+          },
+        },
         headers: { 'content-type': 'application/json' },
         challengeStore,
         db: mockDB,
@@ -1419,6 +1425,151 @@ describe('Consent Handlers', () => {
       expect(mockDB.prepare).not.toHaveBeenCalledWith(
         expect.stringContaining('oauth_client_consents')
       );
+    });
+
+    it.each(['missing', 'version', 'hash', 'removed'] as const)(
+      'rejects a changed displayed document (%s) before recording consent',
+      async (change) => {
+        vi.mocked(getConsentItemsForScreen).mockResolvedValue(
+          change === 'removed'
+            ? []
+            : [
+                {
+                  statement_id: 'stmt-required',
+                  slug: 'terms',
+                  category: 'terms_of_service',
+                  legal_basis: 'consent',
+                  title: 'Terms',
+                  description: 'Terms',
+                  version: '20260620',
+                  version_id: 'ver-required',
+                  content_hash: 'b'.repeat(64),
+                  is_required: true,
+                  enforcement: 'block',
+                  needs_version_upgrade: false,
+                  show_deletion_link: false,
+                  display_order: 1,
+                },
+              ]
+        );
+        const challengeStore = createMockChallengeStore({
+          id: 'changed-doc',
+          type: 'consent',
+          userId: 'user-123',
+          metadata: {
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid profile',
+            response_type: 'code',
+          },
+        });
+        const c = createMockContext({
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          challengeStore,
+          body: {
+            challenge_id: 'changed-doc',
+            approved: true,
+            consent_item_decisions: { 'stmt-required': 'granted' },
+            consent_item_versions:
+              change === 'missing'
+                ? undefined
+                : {
+                    'stmt-required': {
+                      version_id: change === 'version' ? 'old-version' : 'ver-required',
+                      content_hash: change === 'hash' ? 'c'.repeat(64) : 'b'.repeat(64),
+                    },
+                  },
+          },
+          db: createMockDB({ runResult: { success: true } }),
+        }) as unknown as Parameters<typeof consentPostHandler>[0];
+        const response = await consentPostHandler(c);
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toMatchObject({ error: 'document_changed' });
+        expect(processConsentItemDecisions).not.toHaveBeenCalled();
+        const stub = challengeStore.get() as {
+          consumeChallengeRpc: unknown;
+          getChallengeRpc(id: string): Promise<unknown>;
+        };
+        expect(stub.consumeChallengeRpc).not.toHaveBeenCalled();
+        expect(await stub.getChallengeRpc('changed-doc')).not.toBeNull();
+      }
+    );
+
+    it('issues a fresh session-bound consent challenge after a write-stage generation conflict', async () => {
+      vi.mocked(getConsentItemsForScreen).mockResolvedValue([
+        {
+          statement_id: 'stmt-required',
+          slug: 'terms',
+          category: 'terms_of_service',
+          legal_basis: 'consent',
+          title: 'Terms',
+          description: 'Terms',
+          version: '20260620',
+          version_id: 'ver-required',
+          content_hash: 'b'.repeat(64),
+          is_required: true,
+          enforcement: 'block',
+          needs_version_upgrade: false,
+          show_deletion_link: false,
+          display_order: 1,
+        },
+      ]);
+      vi.mocked(processConsentItemDecisions).mockRejectedValueOnce(
+        new Error('statement_consent_transition_rejected')
+      );
+      const expiresAt = Date.now() + 60_000;
+      const challengeStore = createMockChallengeStore({
+        id: 'racing-doc',
+        type: 'consent',
+        userId: 'user-123',
+        expiresAt,
+        metadata: {
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid profile',
+          response_type: 'code',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        body: {
+          challenge_id: 'racing-doc',
+          approved: true,
+          consent_item_decisions: { 'stmt-required': 'granted' },
+          consent_item_versions: {
+            'stmt-required': { version_id: 'ver-required', content_hash: 'b'.repeat(64) },
+          },
+        },
+        db: createMockDB({ runResult: { success: true } }),
+      }) as unknown as Parameters<typeof consentPostHandler>[0];
+      const response = await consentPostHandler(c);
+      expect(response.status).toBe(409);
+      const body: unknown = await response.json();
+      expect(body).toMatchObject({ error: 'document_changed' });
+      if (
+        !body ||
+        typeof body !== 'object' ||
+        !('error_details' in body) ||
+        !body.error_details ||
+        typeof body.error_details !== 'object' ||
+        !('consent_challenge_id' in body.error_details) ||
+        typeof body.error_details.consent_challenge_id !== 'string'
+      )
+        throw new Error('replacement_consent_challenge_missing');
+      const replacementId = body.error_details.consent_challenge_id;
+      expect(replacementId).not.toBe('racing-doc');
+      const stub = challengeStore.get() as { getChallengeRpc(id: string): Promise<unknown> };
+      const stored = (await stub.getChallengeRpc(replacementId)) as {
+        notAfterMs: number;
+        metadata: { session_id: string };
+        userId: string;
+      };
+      expect(stored.notAfterMs).toBe(expiresAt);
+      expect(stored.metadata.session_id).toBe('g1:apac:3:session_user_123');
+      expect(stored.userId).toBe('user-123');
     });
 
     it('accepts consent item decisions for required items', async () => {
@@ -1457,19 +1608,37 @@ describe('Consent Handlers', () => {
       const mockDB = createMockDB({
         runResult: { success: true },
       });
+      const accountDb = createMockDB({
+        runResult: { success: true },
+      });
       const c = createMockContext({
         method: 'POST',
         body: {
           challenge_id: 'consent-challenge-form-required',
           approved: true,
           consent_item_decisions: { 'stmt-required': 'granted' },
+          consent_item_versions: {
+            'stmt-required': { version_id: 'ver-required', content_hash: null },
+          },
         },
         headers: { 'content-type': 'application/json' },
         challengeStore,
         db: mockDB,
+        accountDb,
       });
 
       await consentPostHandler(c);
+
+      // Definitions are read from the metadata database; the decision is recorded in the account's.
+      const [stores] = vi.mocked(processConsentItemDecisions).mock.calls[0];
+      const prepared = (db: unknown) => (db as { prepare: ReturnType<typeof vi.fn> }).prepare;
+      prepared(mockDB).mockClear();
+      prepared(accountDb).mockClear();
+      await stores.account.query('SELECT 1');
+      expect(prepared(accountDb)).toHaveBeenCalledTimes(1);
+      expect(prepared(mockDB)).not.toHaveBeenCalled();
+      await stores.metadata.query('SELECT 1');
+      expect(prepared(mockDB)).toHaveBeenCalledTimes(1);
 
       expect(processConsentItemDecisions).toHaveBeenCalledWith(
         expect.anything(),
@@ -1482,9 +1651,11 @@ describe('Consent Handlers', () => {
           'stmt-required': {
             version_id: 'ver-required',
             version: '20260620',
+            content_hash: null,
             withdrawal_allowed: true,
           },
-        }
+        },
+        { env: (c as unknown as Parameters<typeof consentPostHandler>[0]).env }
       );
       expect(c.json).toHaveBeenCalledWith({
         redirect_url: expect.stringContaining('_consent_confirmation_challenge='),

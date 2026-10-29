@@ -6,14 +6,20 @@
  */
 
 import { Context } from 'hono';
-import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env, StatementConsentStores } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
+  lookupStatementDefinitions,
   getLogger,
   validateVersionFormat,
   activateVersion,
+  withdrawStatementConsent,
+  enqueueStatementConsentProjection,
 } from '@authrim/ar-lib-core';
+
+import { adminAccountCoreAdapter } from './admin-account-storage';
+import { getAdminAuth } from './admin-tenant-access';
 
 type PublicLinkUrlValidation =
   | { valid: true; value: string | null }
@@ -417,14 +423,20 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
       return c.json({ error: 'invalid_request', error_description: 'No fields to update' }, 400);
     }
 
+    sets.push('definition_generation = definition_generation + 1');
+    if (body.is_active === false) sets.push('closed_generation = closed_generation + 1');
     sets.push('updated_at = ?');
-    params.push(Date.now());
-    params.push(id);
-
-    await authCtx.coreAdapter.execute(
-      `UPDATE consent_statements SET ${sets.join(', ')} WHERE id = ?`,
-      params
-    );
+    const now = Date.now();
+    params.push(now, id, tenantId);
+    const result = await authCtx.coreAdapter.batch([
+      {
+        sql: `UPDATE consent_statements SET ${sets.join(', ')} WHERE id = ? AND tenant_id = ?`,
+        params,
+      },
+      enqueueStatementConsentProjection(tenantId, id, now),
+    ]);
+    if (result.length !== 2 || result.some((entry) => !entry.success))
+      throw new Error('statement_consent_definition_result_unknown');
 
     const updated = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statements WHERE id = ?`,
@@ -1215,22 +1227,47 @@ export async function adminConsentOverrideDeleteHandler(c: Context<{ Bindings: E
 // User Consent Records (Admin View)
 // =============================================================================
 
+/**
+ * The databases a user's statement consents live in: the tenant's definitions in the metadata
+ * database, the user's records and history in the user's own account database. Null when the user
+ * has no account route, i.e. no consents.
+ */
+async function resolveUserConsentStores(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<StatementConsentStores | null> {
+  const account = await adminAccountCoreAdapter(c, tenantId, userId);
+  return account ? { metadata: createAuthContextFromHono(c, tenantId).coreAdapter, account } : null;
+}
+
 /** GET /api/admin/users/:userId/consent-records */
 export async function adminUserConsentRecordsListHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN_CONSENT');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('userId')!;
+    const stores = await resolveUserConsentStores(c, tenantId, userId);
+    if (!stores) return c.json({ records: [] });
 
-    const rows = await authCtx.coreAdapter.query(
-      `SELECT ucr.*, cs.slug, cs.category
-       FROM user_consent_records ucr
-       LEFT JOIN consent_statements cs ON ucr.statement_id = cs.id
-       WHERE ucr.tenant_id = ? AND ucr.user_id = ?
-       ORDER BY ucr.updated_at DESC`,
+    const records = await stores.account.query<Record<string, unknown> & { statement_id: string }>(
+      `SELECT * FROM user_consent_records
+       WHERE tenant_id = ? AND user_id = ?
+       ORDER BY updated_at DESC`,
       [tenantId, userId]
     );
+    // A record whose statement was removed is still listed: it is the evidence of an agreement.
+    const definitions = await lookupStatementDefinitions(
+      stores.metadata,
+      tenantId,
+      { statementIds: records.map((record) => record.statement_id), versionIds: [] },
+      'en'
+    );
+    const rows = records.map((record) => ({
+      ...record,
+      slug: definitions.statements.get(record.statement_id)?.slug ?? null,
+      category: definitions.statements.get(record.statement_id)?.category ?? null,
+    }));
 
     return c.json({ records: rows });
   } catch (error) {
@@ -1248,11 +1285,12 @@ export async function adminUserConsentHistoryHandler(c: Context<{ Bindings: Env 
   const log = getLogger(c).module('ADMIN_CONSENT');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('userId')!;
     const statementId = c.req.param('statementId')!;
+    const stores = await resolveUserConsentStores(c, tenantId, userId);
+    if (!stores) return c.json({ history: [] });
 
-    const rows = await authCtx.coreAdapter.query(
+    const rows = await stores.account.query(
       `SELECT * FROM consent_item_history
        WHERE tenant_id = ? AND user_id = ? AND statement_id = ?
        ORDER BY created_at DESC`,
@@ -1271,40 +1309,26 @@ export async function adminUserConsentWithdrawHandler(c: Context<{ Bindings: Env
   const log = getLogger(c).module('ADMIN_CONSENT');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('userId')!;
     const statementId = c.req.param('statementId')!;
-    const now = Date.now();
-
-    // Verify the record exists and is granted
-    const existing = await authCtx.coreAdapter.query<{
-      status: string;
-      version_id: string;
-      version: string;
-      expires_at: number | null;
-      withdrawal_allowed: number | null;
-      record_retention_days: number | null;
-      reconsent_interval_days: number | null;
-    }>(
-      `SELECT r.status, r.version_id, r.version, r.expires_at, s.withdrawal_allowed,
-              s.record_retention_days, s.reconsent_interval_days
-         FROM user_consent_records r
-         JOIN consent_statements s ON s.id = r.statement_id AND s.tenant_id = r.tenant_id
-        WHERE r.tenant_id = ? AND r.user_id = ? AND r.statement_id = ?`,
-      [tenantId, userId, statementId]
-    );
-
-    if (existing.length === 0) {
+    const auth = getAdminAuth(c);
+    const actorId = auth?.actorId ?? auth?.userId;
+    if (!actorId) return c.json({ error: 'access_denied' }, 403);
+    const stores = await resolveUserConsentStores(c, tenantId, userId);
+    if (!stores)
       return c.json({ error: 'not_found', error_description: 'Consent record not found' }, 404);
-    }
-
-    if (existing[0].status !== 'granted') {
+    const result = await withdrawStatementConsent(stores, tenantId, userId, statementId, {
+      env: c.env,
+      actor: { id: actorId, type: 'admin' },
+    });
+    if (result === 'missing')
+      return c.json({ error: 'not_found', error_description: 'Consent record not found' }, 404);
+    if (result === 'not_granted')
       return c.json(
         { error: 'invalid_request', error_description: 'Can only withdraw granted consent (D3)' },
         400
       );
-    }
-    if (existing[0].withdrawal_allowed === 0) {
+    if (result === 'withdrawal_forbidden')
       return c.json(
         {
           error: 'invalid_request',
@@ -1312,92 +1336,18 @@ export async function adminUserConsentWithdrawHandler(c: Context<{ Bindings: Env
         },
         400
       );
-    }
-
-    const recordRetentionDays =
-      existing[0].record_retention_days !== null ? Number(existing[0].record_retention_days) : null;
-    const reconsentIntervalDays =
-      existing[0].reconsent_interval_days !== null
-        ? Number(existing[0].reconsent_interval_days)
-        : null;
-    const retainUntil =
-      recordRetentionDays !== null && recordRetentionDays >= 0
-        ? now + recordRetentionDays * 24 * 60 * 60 * 1000
-        : null;
-
-    await authCtx.coreAdapter.execute(
-      `UPDATE user_consent_records
-       SET status = 'withdrawn', withdrawn_at = ?, retain_until = ?,
-           consent_settings_snapshot_at = ?, record_retention_days_snapshot = ?,
-           reconsent_interval_days_snapshot = ?, updated_at = ?
-       WHERE tenant_id = ? AND user_id = ? AND statement_id = ?`,
-      [
-        now,
-        retainUntil,
-        now,
-        recordRetentionDays,
-        reconsentIntervalDays,
-        now,
-        tenantId,
-        userId,
-        statementId,
-      ]
-    );
-    await authCtx.coreAdapter.execute(
-      `UPDATE consent_item_history
-          SET retain_until = ?,
-              consent_settings_snapshot_at = ?,
-              record_retention_days_snapshot = ?,
-              reconsent_interval_days_snapshot = ?
-        WHERE tenant_id = ?
-          AND user_id = ?
-          AND statement_id = ?
-          AND (retain_until IS NULL OR retain_until < ?)`,
-      [
-        retainUntil,
-        now,
-        recordRetentionDays,
-        reconsentIntervalDays,
-        tenantId,
-        userId,
-        statementId,
-        retainUntil,
-      ]
-    );
-
-    // Record in history
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO consent_item_history
-       (id, tenant_id, user_id, statement_id, action,
-        version_id_before, version_id_after, version_before, version_after,
-        status_before, status_after, withdrawn_at, expires_at, retain_until,
-        consent_settings_snapshot_at, record_retention_days_snapshot,
-        reconsent_interval_days_snapshot,
-        metadata_json, created_at)
-       VALUES (?, ?, ?, ?, 'withdrawn', ?, ?, ?, ?, 'granted', 'withdrawn', ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        crypto.randomUUID(),
-        tenantId,
-        userId,
-        statementId,
-        existing[0].version_id,
-        existing[0].version_id,
-        existing[0].version,
-        existing[0].version,
-        now,
-        existing[0].expires_at,
-        retainUntil,
-        now,
-        recordRetentionDays,
-        reconsentIntervalDays,
-        JSON.stringify({ initiated_by: 'admin' }),
-        now,
-      ]
-    );
 
     log.info('Admin withdrew consent', { action: 'admin_withdraw', userId, statementId });
     return c.json({ success: true });
   } catch (error) {
+    if (error instanceof Error && error.message === 'statement_consent_atomic_backend_unsupported')
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Statement consent writes are unavailable on this database backend',
+        },
+        503
+      );
     log.error('Failed to withdraw consent', { action: 'admin_withdraw' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to withdraw consent' }, 500);
   }

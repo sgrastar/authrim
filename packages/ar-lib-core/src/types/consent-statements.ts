@@ -142,6 +142,8 @@ export interface ConsentStatementUserRecord {
   statement_id: string;
   version_id: string;
   version: string; // YYYYMMDD
+  /** Hash of the document text agreed to; absent on records made before it was kept. */
+  content_hash?: string;
   status: ConsentRecordStatus;
   granted_at?: number;
   withdrawn_at?: number;
@@ -255,6 +257,8 @@ export interface ConsentScreenItem {
   version: string;
   /** Version ID */
   version_id: string;
+  /** Hash of the displayed version, echoed with version_id on submission. */
+  content_hash?: string | null;
   /** Whether this item is required */
   is_required: boolean;
   /** Enforcement mode */

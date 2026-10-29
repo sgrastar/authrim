@@ -886,6 +886,7 @@ import {
   rolloutDynamicPluginBatchHandler,
 } from './routes/settings/plugins';
 import { processProviderReprojectionJobs } from './provider-reprojection-jobs';
+import { processStatementConsentProjectionJobs } from './statement-consent-projection-jobs';
 import { processTenantDisasterRecoveryLookupReprojection } from './tenant-disaster-recovery-lookup';
 import {
   getNativeSSOSettingsConfig,
@@ -4403,6 +4404,13 @@ async function handleCoveredScheduled(
     await processLegacySettingsImport(env);
   } catch (error) {
     log.warn('Settings import from the older stores did not complete', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  try {
+    await processStatementConsentProjectionJobs(env, log.module('CONSENT-PROJECTION'));
+  } catch (error) {
+    log.warn('Statement consent projection scheduler failed', {
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
   }

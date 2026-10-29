@@ -2,7 +2,7 @@ import type { PreparedStatement } from '../db/adapter';
 import type { StatementConsentAtomicCapability } from '../db/statement-consent-atomic';
 import type { ConsentItemAction, ConsentRecordStatus } from '../types/consent-statements';
 
-/** Private Step A: key transitions only. No activation, legacy bootstrap, or runtime wiring yet. */
+/** Account-local atomic transitions admitted by a trusted metadata definition snapshot. */
 export interface StatementConsentRawRecord {
   id: string;
   tenant_id: string;
@@ -24,6 +24,7 @@ export interface StatementConsentRawRecord {
   consent_settings_snapshot_at: number | null;
   record_retention_days_snapshot: number | null;
   reconsent_interval_days_snapshot: number | null;
+  content_hash: string | null;
 }
 
 export interface StatementConsentRawHistory {
@@ -50,6 +51,7 @@ export interface StatementConsentRawHistory {
   consent_settings_snapshot_at: number | null;
   record_retention_days_snapshot: number | null;
   reconsent_interval_days_snapshot: number | null;
+  content_hash_after: string | null;
 }
 
 export const STATEMENT_CONSENT_RECORD_COLUMNS = [
@@ -73,6 +75,7 @@ export const STATEMENT_CONSENT_RECORD_COLUMNS = [
   'consent_settings_snapshot_at',
   'record_retention_days_snapshot',
   'reconsent_interval_days_snapshot',
+  'content_hash',
 ] as const satisfies readonly (keyof StatementConsentRawRecord)[];
 
 export const STATEMENT_CONSENT_HISTORY_COLUMNS = [
@@ -99,6 +102,7 @@ export const STATEMENT_CONSENT_HISTORY_COLUMNS = [
   'consent_settings_snapshot_at',
   'record_retention_days_snapshot',
   'reconsent_interval_days_snapshot',
+  'content_hash_after',
 ] as const satisfies readonly (keyof StatementConsentRawHistory)[];
 
 const RECORD_PROJECTION = STATEMENT_CONSENT_RECORD_COLUMNS.filter(
@@ -110,7 +114,20 @@ const HISTORY_PROJECTION = STATEMENT_CONSENT_HISTORY_COLUMNS.filter(
 const MAX_BYTES = 32_768;
 const MAX_SAFE = Number.MAX_SAFE_INTEGER;
 
+export interface StatementConsentDefinitionSnapshot {
+  tenant_id: string;
+  statement_id: string;
+  version_id: string;
+  version: string;
+  content_hash: string | null;
+  definition_generation: number;
+  is_active: number;
+  version_status: string;
+}
+
 export interface StatementConsentTransition {
+  /** Read from metadata at submission time, never accepted from an HTTP body. */
+  definition: StatementConsentDefinitionSnapshot;
   operationId: string;
   actor: { id: string; type: string };
   /** Obtained from trusted resolution, never from the consent HTTP body. */
@@ -223,6 +240,25 @@ function validate(input: StatementConsentTransition): void {
     input.effectAt > input.expiresAt
   )
     invalid();
+  safe(input.definition.definition_generation);
+  if (![0, 1].includes(input.definition.is_active)) invalid();
+  for (const key of [
+    'tenant_id',
+    'statement_id',
+    'version_id',
+    'version',
+    'version_status',
+  ] as const)
+    text(input.definition[key]);
+  for (const hash of [
+    input.definition.content_hash,
+    input.after.content_hash,
+    input.before?.content_hash ?? null,
+    input.history?.content_hash_after ?? null,
+  ]) {
+    if (hash !== null && (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash))) invalid();
+  }
+  if (input.history && input.history.content_hash_after !== input.after.content_hash) invalid();
   checkRecord(input.after);
   if (input.before) checkRecord(input.before);
   const ownerMatches = (row: StatementConsentRawRecord | StatementConsentRawHistory) =>
@@ -306,6 +342,20 @@ function sqlJson(
   return `${fn}(${columns.map((column) => `'${column}', ${alias}.${column}`).join(', ')})`;
 }
 
+function statementConsentDefinitionGuard(dialect: 'd1' | 'postgres', alias: string): string {
+  const field = (source: string, key: string) =>
+    dialect === 'postgres'
+      ? `(${alias}.${source}::jsonb ->> '${key}')`
+      : `json_extract(${alias}.${source}, '$.${key}')`;
+  const d = (key: string) => field('definition_json', key);
+  const after = (key: string) => field('after_json', key);
+  return `${d('tenant_id')}=${alias}.tenant_id AND ${d('statement_id')}=${alias}.statement_id
+    AND CAST(${d('definition_generation')} AS ${dialect === 'postgres' ? 'BIGINT' : 'INTEGER'})=${alias}.expected_definition_generation
+    AND ${d('version_id')}=${after('version_id')} AND ${d('version')}=${after('version')}
+    AND (${d('content_hash')} ${dialect === 'postgres' ? 'IS NOT DISTINCT FROM' : 'IS'} ${after('content_hash')})
+    AND (${alias}.action<>'grant' OR (CAST(${d('is_active')} AS ${dialect === 'postgres' ? 'BIGINT' : 'INTEGER'})=1 AND ${d('version_status')}='active'))`;
+}
+
 /** Exported for real fault tests to remove a statement; not an externally supplied SQL list. */
 export async function prepareStatementConsentTransition(
   capability: StatementConsentAtomicCapability,
@@ -332,6 +382,7 @@ export async function prepareStatementConsentTransition(
         input.expected.closedGeneration,
       ],
       input.action,
+      input.definition,
       input.issuedAt,
       input.expiresAt,
       input.effectAt,
@@ -354,7 +405,8 @@ export async function prepareStatementConsentTransition(
   const projection = sqlJson(capability.dialect, 'r', RECORD_PROJECTION);
   const guard = `EXISTS (SELECT 1 FROM statement_consent_guards t JOIN statement_consent_guards s ON s.tenant_id=t.tenant_id
     WHERE t.tenant_id=p.tenant_id AND t.scope_kind='tenant' AND t.scope_key='' AND t.mode='enforced'
-      AND s.scope_kind='statement' AND s.scope_key=p.statement_id AND s.mode='enforced'
+      AND s.scope_kind='statement' AND s.scope_key=p.statement_id AND (s.mode='enforced' OR (p.action<>'grant' AND s.mode='closed'))
+      AND t.account_id=p.account_id AND s.account_id=p.account_id
       AND t.physical_id=p.physical_id AND s.physical_id=p.physical_id AND t.restore_epoch=p.restore_epoch AND s.restore_epoch=p.restore_epoch
       AND s.definition_generation=p.expected_definition_generation AND s.closed_generation=p.expected_closed_generation)
     AND EXISTS (SELECT 1 FROM statement_consent_key_states k WHERE k.tenant_id=p.tenant_id AND k.user_id=p.user_id AND k.statement_id=p.statement_id
@@ -363,8 +415,7 @@ export async function prepareStatementConsentTransition(
     AND ${now} BETWEEN p.issued_at AND p.expires_at
     AND ((p.before_json IS NULL AND NOT EXISTS(SELECT 1 FROM user_consent_records r WHERE r.tenant_id=p.tenant_id AND r.user_id=p.user_id AND r.statement_id=p.statement_id))
       OR EXISTS(SELECT 1 FROM user_consent_records r WHERE r.tenant_id=p.tenant_id AND r.user_id=p.user_id AND r.statement_id=p.statement_id AND ${projection}=${json('p.before_json')}))
-    AND EXISTS(SELECT 1 FROM consent_statement_versions v JOIN consent_statements d ON d.id=v.statement_id
-      WHERE v.id=? AND v.statement_id=p.statement_id AND v.tenant_id=p.tenant_id AND d.tenant_id=p.tenant_id AND (p.action<>'grant' OR v.status='active') AND v.version=?)
+    AND ${statementConsentDefinitionGuard(capability.dialect, 'p')}
     AND (p.is_noop=1 OR NOT EXISTS(SELECT 1 FROM consent_item_history h WHERE h.id=?))`;
   const columns = [
     'tenant_id',
@@ -389,6 +440,7 @@ export async function prepareStatementConsentTransition(
     'before_json',
     'after_json',
     'history_json',
+    'definition_json',
     'is_noop',
   ];
   const values: unknown[] = [
@@ -414,6 +466,7 @@ export async function prepareStatementConsentTransition(
     before,
     after,
     history,
+    JSON.stringify(input.definition),
     input.noop ? 1 : 0,
   ];
   const active = `EXISTS(SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id=? AND o.operation_id=? AND o.attempt_id=? AND o.status='executing' AND o.admitted=1 AND o.is_noop=0)`;
@@ -449,7 +502,7 @@ export async function prepareStatementConsentTransition(
       SELECT ${columns.map((column) => `p.${column}`).join(', ')}, CASE WHEN ${guard} THEN 1 ELSE 0 END FROM p
       WHERE NOT EXISTS(SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id=p.tenant_id AND o.operation_id=p.operation_id)
       ON CONFLICT(tenant_id,operation_id) DO NOTHING`,
-    params: [...values, input.after.version_id, input.after.version, input.history?.id ?? null],
+    params: [...values, input.history?.id ?? null],
   });
   statements.push({
     sql: `UPDATE statement_consent_key_states SET revision=revision+1,withdrawal_generation=withdrawal_generation+?,last_operation_id=?,updated_at=CASE WHEN updated_at>? THEN updated_at ELSE ? END

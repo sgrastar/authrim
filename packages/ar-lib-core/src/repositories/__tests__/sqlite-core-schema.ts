@@ -30,6 +30,7 @@ export function sqliteAdapter(plane: keyof typeof MIGRATIONS = 'core'): {
     return { success: true, rowsAffected: changes };
   };
   const adapter = {
+    getType: () => 'd1' as const,
     async query(sql: string, params?: unknown[]) {
       return db.prepare(sql).all(...values(params));
     },

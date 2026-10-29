@@ -78,6 +78,8 @@ const COMMON_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule
 };
 
 const CORE_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {
+  statement_consent_guards: { kind: 'shard_local' },
+  statement_consent_projection_jobs: { kind: 'tenant_column', column: 'tenant_id' },
   guest_core_mutation_epoch: { kind: 'shard_local' },
   tenants: { kind: 'tenant_row', column: 'id' },
   did_document_cache: { kind: 'global_reference' },

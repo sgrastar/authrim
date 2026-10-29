@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
+import { singleDatabaseStatementConsent } from '../../services/statement-consent-stores';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DatabaseAdapter } from '../../db';
 import {
   validateVersionFormat,
@@ -1264,18 +1266,22 @@ describe('Consent Statements Utility', () => {
       const adapter = {
         query: mockQuery,
         execute: vi.fn(),
+        batch: vi.fn(async (statements: { sql: string }[]) =>
+          statements.map(() => ({ success: true, rowsAffected: 1 }))
+        ),
       } as unknown as DatabaseAdapter;
 
       await expect(activateVersion(adapter, 'default', 'stmt-1', 'ver-1')).resolves.not.toThrow();
-      expect(adapter.execute).toHaveBeenCalledTimes(2); // Deactivate old + activate new
+      expect(adapter.batch).toHaveBeenCalledTimes(1);
+      const statements = vi.mocked(adapter.batch).mock.calls[0][0];
+      expect(statements).toHaveLength(4);
+      expect(statements[2].sql).toContain('definition_generation=definition_generation+1');
+      expect(statements[3].sql).toContain('statement_consent_projection_jobs');
       expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining('WHERE tenant_id = ? AND version_id = ?'),
         ['default', 'ver-1']
       );
-      expect(adapter.execute).toHaveBeenLastCalledWith(
-        expect.stringContaining('WHERE id = ? AND statement_id = ? AND tenant_id = ?'),
-        expect.arrayContaining(['ver-1', 'stmt-1', 'default'])
-      );
+      expect(statements[1].params).toEqual(expect.arrayContaining(['ver-1', 'stmt-1', 'default']));
     });
   });
 
@@ -1375,200 +1381,94 @@ describe('Consent Statements Utility', () => {
     });
   });
 
-  describe('processConsentItemDecisions', () => {
-    it('should insert new granted record', async () => {
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          ['user_records', []],
-          ['current_version', [{ id: 'ver-1', version: '20250206' }]],
-          [
-            'consent_statement_settings',
-            [{ record_retention_days: 365, reconsent_interval_days: 180 }],
-          ],
-        ]),
-      });
-
-      const decisions = { 'stmt-1': 'granted' as const };
-      const evidence: ConsentEvidence = {
-        client_id: 'client-1',
-        user_agent: 'Mozilla/5.0',
-      };
-
-      await processConsentItemDecisions(adapter, 'default', 'user-1', decisions, evidence);
-
-      const executeCalls = (adapter.execute as any).mock.calls;
-      const insertRecordCall = executeCalls.find((call: unknown[]) =>
-        String(call[0]).includes('INSERT INTO user_consent_records')
+  describe('processConsentItemDecisions (real SQLite)', () => {
+    let fixture: ReturnType<typeof sqliteAdapter>;
+    beforeEach(async () => {
+      fixture = sqliteAdapter('core');
+      await fixture.adapter.execute(
+        "INSERT INTO consent_statements(id,tenant_id,slug,record_retention_days,reconsent_interval_days,created_at,updated_at) VALUES('stmt-1','default','terms',365,180,1,1)"
       );
-      const historyCall = executeCalls.find((call: unknown[]) =>
-        String(call[0]).includes('INSERT INTO consent_item_history')
+      await fixture.adapter.execute(
+        "INSERT INTO consent_statement_versions(id,tenant_id,statement_id,version,effective_at,status,is_current,content_hash,created_at,updated_at) VALUES('ver-1','default','stmt-1','20250206',1,'active',1,?,1,1)",
+        ['b'.repeat(64)]
       );
-
-      expect(insertRecordCall?.[0]).toContain('expires_at');
-      expect(insertRecordCall?.[0]).toContain('retain_until');
-      expect(insertRecordCall?.[0]).toContain('consent_settings_snapshot_at');
-      expect(insertRecordCall?.[1]).toContain(365);
-      expect(insertRecordCall?.[1]).toContain(180);
-      expect(historyCall?.[0]).toContain('version_id_after');
-      expect(historyCall?.[0]).toContain('record_retention_days_snapshot');
-      expect(historyCall?.[0]).toContain('reconsent_interval_days_snapshot');
     });
+    afterEach(() => fixture.db.close());
+    const decide = (decision: 'granted' | 'denied') =>
+      processConsentItemDecisions(
+        singleDatabaseStatementConsent(fixture.adapter),
+        'default',
+        'user-1',
+        { 'stmt-1': decision },
+        { client_id: 'client-1' }
+      );
+    const row = () =>
+      fixture.adapter.queryOne<Record<string, unknown>>('SELECT * FROM user_consent_records');
 
-    it('should be idempotent for same version granted (D9)', async () => {
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'user_records',
-            [
-              {
-                statement_id: 'stmt-1',
-                version: '20250206',
-                status: 'granted',
-                granted_at: Date.now(),
-              },
-            ],
-          ],
-          ['current_version', [{ id: 'ver-1', version: '20250206' }]],
-        ]),
+    it('inserts a grant with hash and retention snapshots', async () => {
+      await decide('granted');
+      expect(await row()).toMatchObject({
+        status: 'granted',
+        content_hash: 'b'.repeat(64),
+        record_retention_days_snapshot: 365,
+        reconsent_interval_days_snapshot: 180,
       });
-
-      const decisions = { 'stmt-1': 'granted' as const };
-      const evidence: ConsentEvidence = { client_id: 'client-1' };
-
-      await processConsentItemDecisions(adapter, 'default', 'user-1', decisions, evidence);
-
-      // Should skip update (idempotent)
-      const executeCalls = (adapter.execute as any).mock.calls;
-      expect(executeCalls.length).toBe(0);
+      expect(
+        await fixture.adapter.queryOne('SELECT action,content_hash_after FROM consent_item_history')
+      ).toEqual({ action: 'granted', content_hash_after: 'b'.repeat(64) });
     });
-
-    it('should insert denied record (D10)', async () => {
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          ['user_records', []],
-          ['current_version', [{ id: 'ver-1', version: '20250206' }]],
-        ]),
-      });
-
-      const decisions = { 'stmt-1': 'denied' as const };
-      const evidence: ConsentEvidence = { client_id: 'client-1' };
-
-      await processConsentItemDecisions(adapter, 'default', 'user-1', decisions, evidence);
-
-      expect(adapter.execute).toHaveBeenCalled();
+    it('records an idempotent grant without another history or revision', async () => {
+      await decide('granted');
+      const before = await row();
+      await decide('granted');
+      expect(await row()).toEqual(before);
+      expect(
+        await fixture.adapter.queryOne('SELECT revision FROM statement_consent_key_states')
+      ).toEqual({ revision: 1 });
+      expect(await fixture.adapter.query('SELECT id FROM consent_item_history')).toHaveLength(1);
     });
-
-    it('should save the displayed fixed version when a decision target is supplied', async () => {
-      const adapter = createMockAdapter({
-        queryResults: new Map([['user_records', []]]),
-      });
-
+    it('inserts a refusal', async () => {
+      await decide('denied');
+      expect(await row()).toMatchObject({ status: 'denied', expires_at: null });
+    });
+    it('saves a supplied fixed active version', async () => {
+      await fixture.adapter.execute(
+        "INSERT INTO consent_statement_versions(id,tenant_id,statement_id,version,effective_at,status,is_current,content_hash,created_at,updated_at) VALUES('fixed-ver','default','stmt-1','20250101',1,'active',0,?,1,1)",
+        ['c'.repeat(64)]
+      );
       await processConsentItemDecisions(
-        adapter,
+        singleDatabaseStatementConsent(fixture.adapter),
         'default',
         'user-1',
         { 'stmt-1': 'granted' },
-        { client_id: 'client-1' },
+        {},
         undefined,
-        {
-          'stmt-1': {
-            version_id: 'fixed-ver-1',
-            version: '20250101',
-            withdrawal_allowed: true,
-          },
-        }
+        { 'stmt-1': { version_id: 'fixed-ver', version: '20250101' } }
       );
-
-      const insertCall = (adapter.execute as any).mock.calls.find((call: unknown[]) =>
-        String(call[0]).includes('INSERT INTO user_consent_records')
-      );
-      expect(insertCall?.[1]).toContain('fixed-ver-1');
-      expect(insertCall?.[1]).toContain('20250101');
-    });
-
-    it('should not withdraw an existing grant when withdrawal is not allowed', async () => {
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'user_records',
-            [
-              {
-                statement_id: 'stmt-1',
-                version: '20250206',
-                status: 'granted',
-                granted_at: Date.now(),
-              },
-            ],
-          ],
-        ]),
+      expect(await row()).toMatchObject({
+        version_id: 'fixed-ver',
+        version: '20250101',
+        content_hash: 'c'.repeat(64),
       });
-
-      await processConsentItemDecisions(
-        adapter,
-        'default',
-        'user-1',
-        { 'stmt-1': 'denied' },
-        { client_id: 'client-1' },
-        undefined,
-        {
-          'stmt-1': {
-            version_id: 'ver-1',
-            version: '20250206',
-            withdrawal_allowed: false,
-          },
-        }
-      );
-
-      expect(adapter.execute).not.toHaveBeenCalled();
     });
-
-    it('should extend prior audit history retention when granted consent is withdrawn', async () => {
-      const adapter = createMockAdapter({
-        queryResults: new Map([
-          [
-            'user_records',
-            [
-              {
-                statement_id: 'stmt-1',
-                version_id: 'ver-1',
-                version: '20250206',
-                status: 'granted',
-                granted_at: Date.now(),
-                expires_at: null,
-              },
-            ],
-          ],
-          [
-            'consent_statement_settings',
-            [{ record_retention_days: 365, reconsent_interval_days: 180 }],
-          ],
-        ]),
-      });
-
-      await processConsentItemDecisions(
-        adapter,
-        'default',
-        'user-1',
-        { 'stmt-1': 'denied' },
-        { client_id: 'client-1' },
-        undefined,
-        {
-          'stmt-1': {
-            version_id: 'ver-1',
-            version: '20250206',
-            withdrawal_allowed: true,
-          },
-        }
+    it('enforces metadata withdrawal settings even without a target', async () => {
+      await decide('granted');
+      await fixture.adapter.execute('UPDATE consent_statements SET withdrawal_allowed=0');
+      await decide('denied');
+      expect(await row()).toMatchObject({ status: 'granted' });
+    });
+    it('extends prior history retention atomically on withdrawal', async () => {
+      await decide('granted');
+      await fixture.adapter.execute('UPDATE consent_item_history SET retain_until=1');
+      await decide('denied');
+      const current = await row();
+      const histories = await fixture.adapter.query<{ retain_until: number }>(
+        'SELECT retain_until FROM consent_item_history'
       );
-
-      const retentionUpdateCall = (adapter.execute as any).mock.calls.find((call: unknown[]) =>
-        String(call[0]).includes('UPDATE consent_item_history')
+      expect(histories).toHaveLength(2);
+      expect(histories.every((history) => history.retain_until === current?.retain_until)).toBe(
+        true
       );
-
-      expect(retentionUpdateCall?.[0]).toContain('retain_until');
-      expect(retentionUpdateCall?.[0]).toContain('consent_settings_snapshot_at');
-      expect(retentionUpdateCall?.[1]).toContain(365);
-      expect(retentionUpdateCall?.[1]).toContain(180);
     });
   });
 

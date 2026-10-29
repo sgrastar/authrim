@@ -101,11 +101,21 @@ export class UnsupportedPostgresBackupProjectionError extends Error {
   }
 }
 
+// These contracts pin schema only. Source guards are rebuild state and admissions are held
+// authority; neither may become live in a new target before explicit PR7 rebinding.
+const STATEMENT_CONSENT_SOURCE_AUTHORITY_DATASETS: ReadonlySet<string> = new Set([
+  'core.statement_consent_guards',
+  'core.statement_consent_admissions',
+]);
+
 function projectionContracts(ids: ReadonlySet<string>, family: Family) {
   return [
     ...POSTGRES_RESTORE_TABLE_CONTRACTS.filter((spec) => spec.family === family),
     ...POSTGRES_RESTORE_EXTENSION_CONTRACTS.filter(
-      (spec) => spec.family === family && ids.has(spec.datasetId)
+      (spec) =>
+        spec.family === family &&
+        ids.has(spec.datasetId) &&
+        !STATEMENT_CONSENT_SOURCE_AUTHORITY_DATASETS.has(spec.datasetId)
     ),
   ];
 }
