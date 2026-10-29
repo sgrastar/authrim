@@ -123,6 +123,27 @@ export function buildVersionedKey(type: KVKeyType, id?: string): string {
   return id ? `${KV_KEY_VERSION}:${type}:${id}` : `${KV_KEY_VERSION}:${type}`;
 }
 
+/**
+ * The client a cache mode belongs to. A client ID alone is not enough: a copied tenant keeps its
+ * `client_id`s and the database key is `(tenant_id, client_id)`, so the mode is kept per tenant.
+ */
+export interface CacheModeClient {
+  tenantId: string;
+  clientId: string;
+}
+
+/**
+ * KV key of a client's cache mode override: `v1:cache-mode:client:<tenantId>:<clientId>`.
+ *
+ * Tenant and client IDs never contain ':', so the key cannot collide with another tenant's or with
+ * the former un-tenanted `v1:cache-mode:client:<clientId>`. Those older keys are not read: the
+ * tenant they belonged to cannot be told, and reading one would hand a tenant the setting of the
+ * other tenant that shares the client ID.
+ */
+export function buildClientCacheModeKey({ tenantId, clientId }: CacheModeClient): string {
+  return buildVersionedKey('cache-mode:client', `${tenantId}:${clientId}`);
+}
+
 // =============================================================================
 // Cache Mode Functions
 // =============================================================================
@@ -131,22 +152,22 @@ export function buildVersionedKey(type: KVKeyType, id?: string): string {
  * Get the current cache mode
  *
  * Evaluation order:
- * 1. Client-specific mode (v1:cache-mode:client:{clientId})
+ * 1. Client-specific mode (v1:cache-mode:client:{tenantId}:{clientId})
  * 2. Platform-level mode (v1:cache-mode:platform)
  * 3. Environment variable (CACHE_MODE)
  * 4. Default (fixed)
  *
  * @param env - Cloudflare environment bindings
- * @param clientId - Optional client ID for client-specific mode lookup
+ * @param client - Optional tenant and client for client-specific mode lookup
  * @returns Cache mode ('maintenance' or 'fixed')
  */
-export async function getCacheMode(env: Env, clientId?: string): Promise<CacheMode> {
+export async function getCacheMode(env: Env, client?: CacheModeClient): Promise<CacheMode> {
   const kv = env.AUTHRIM_CONFIG;
 
   // 1. Check client-specific mode
-  if (kv && clientId) {
+  if (kv && client) {
     try {
-      const clientModeKey = buildVersionedKey('cache-mode:client', clientId);
+      const clientModeKey = buildClientCacheModeKey(client);
       const clientMode = await kv.get(clientModeKey);
       if (clientMode === 'maintenance' || clientMode === 'fixed') {
         return clientMode;
@@ -181,19 +202,19 @@ export async function getCacheMode(env: Env, clientId?: string): Promise<CacheMo
  *
  * @param env - Cloudflare environment bindings
  * @param dataType - Data type key from CacheTTLConfig
- * @param clientId - Optional client ID for client-specific mode lookup
+ * @param client - Optional tenant and client for client-specific mode lookup
  * @returns TTL in seconds
  *
  * @example
- * const ttl = await getCacheTTL(env, 'clientMetadata', 'client123');
+ * const ttl = await getCacheTTL(env, 'clientMetadata', { tenantId: 'default', clientId: 'client123' });
  * // Returns 86400 (24h) in fixed mode, 30 in maintenance mode
  */
 export async function getCacheTTL(
   env: Env,
   dataType: keyof CacheTTLConfig,
-  clientId?: string
+  client?: CacheModeClient
 ): Promise<number> {
-  const mode = await getCacheMode(env, clientId);
+  const mode = await getCacheMode(env, client);
   const ttlConfig = mode === 'maintenance' ? MAINTENANCE_MODE_TTL : FIXED_MODE_TTL;
   return ttlConfig[dataType];
 }
@@ -202,11 +223,14 @@ export async function getCacheTTL(
  * Get the full TTL config based on current cache mode
  *
  * @param env - Cloudflare environment bindings
- * @param clientId - Optional client ID for client-specific mode lookup
+ * @param client - Optional tenant and client for client-specific mode lookup
  * @returns Full TTL configuration object
  */
-export async function getCacheTTLConfig(env: Env, clientId?: string): Promise<CacheTTLConfig> {
-  const mode = await getCacheMode(env, clientId);
+export async function getCacheTTLConfig(
+  env: Env,
+  client?: CacheModeClient
+): Promise<CacheTTLConfig> {
+  const mode = await getCacheMode(env, client);
   return mode === 'maintenance' ? MAINTENANCE_MODE_TTL : FIXED_MODE_TTL;
 }
 
@@ -234,12 +258,12 @@ export async function setPlatformCacheMode(env: Env, mode: CacheMode): Promise<v
  * Set client-specific cache mode
  *
  * @param env - Cloudflare environment bindings
- * @param clientId - Client ID
+ * @param client - Tenant and client the override belongs to
  * @param mode - Cache mode to set, or null to use platform default
  */
 export async function setClientCacheMode(
   env: Env,
-  clientId: string,
+  client: CacheModeClient,
   mode: CacheMode | null
 ): Promise<void> {
   const kv = env.AUTHRIM_CONFIG;
@@ -247,7 +271,7 @@ export async function setClientCacheMode(
     throw new Error('AUTHRIM_CONFIG KV namespace not available');
   }
 
-  const key = buildVersionedKey('cache-mode:client', clientId);
+  const key = buildClientCacheModeKey(client);
 
   if (mode === null) {
     await kv.delete(key);
@@ -260,17 +284,20 @@ export async function setClientCacheMode(
  * Get client-specific cache mode (without fallback)
  *
  * @param env - Cloudflare environment bindings
- * @param clientId - Client ID
+ * @param client - Tenant and client the override belongs to
  * @returns Client-specific mode, or null if not set
  */
-export async function getClientCacheMode(env: Env, clientId: string): Promise<CacheMode | null> {
+export async function getClientCacheMode(
+  env: Env,
+  client: CacheModeClient
+): Promise<CacheMode | null> {
   const kv = env.AUTHRIM_CONFIG;
   if (!kv) {
     return null;
   }
 
   try {
-    const key = buildVersionedKey('cache-mode:client', clientId);
+    const key = buildClientCacheModeKey(client);
     const mode = await kv.get(key);
     if (mode === 'maintenance' || mode === 'fixed') {
       return mode;

@@ -78,3 +78,29 @@ describe('operation-level Admin permissions', () => {
     ).toBe(true);
   });
 });
+
+describe('break-glass permissions', () => {
+  const request = ADMIN_PERMISSIONS.SUPPORT_OPS_BREAK_GLASS_REQUEST;
+  const reveal = ADMIN_PERMISSIONS.SUPPORT_OPS_BREAK_GLASS_REVEAL;
+
+  it.each([['*'], ['admin:*'], ['admin:support_ops:*'], ['admin:support_ops:break_glass:*']])(
+    'is not granted by the wildcard %s',
+    (wildcard) => {
+      expect(hasAdminPermission([wildcard], request)).toBe(false);
+      expect(hasAdminPermission([wildcard], reveal)).toBe(false);
+    }
+  );
+
+  it('is granted by its exact name only', () => {
+    expect(hasAdminPermission([request], request)).toBe(true);
+    expect(hasAdminPermission([request], reveal)).toBe(false);
+    expect(hasAdminPermission([reveal], request)).toBe(false);
+  });
+
+  it('leaves the other Support Ops permissions to the wildcards', () => {
+    expect(
+      hasAdminPermission(['admin:support_ops:*'], ADMIN_PERMISSIONS.SUPPORT_OPS_ACTIONS_APPROVE)
+    ).toBe(true);
+    expect(hasAdminPermission(['*'], ADMIN_PERMISSIONS.SUPPORT_OPS_ACTIONS_APPROVE)).toBe(true);
+  });
+});

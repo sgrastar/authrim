@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     createApprovalRequest: vi.fn(),
     getApprovalRequestByPublicId: vi.fn(),
     updateApprovalRequestStatus: vi.fn(),
+    recomputeApprovalRequestStatus: vi.fn(),
     listApprovalRequests: vi.fn(),
   },
   approvalRepo: {
@@ -295,6 +296,9 @@ describe('zod pins: ApprovalRequestCreateSchema (POST /approvals and POST /appro
   });
 
   it('explicit values override defaults', async () => {
+    // A shorter deadline than the policy preset's is kept; a longer one is cut to it (see
+    // admin-approvals-decision-integrity.test.ts).
+    const soon = Date.now() + 60_000;
     mocks.requestRepo.createApprovalRequest.mockRejectedValue(new Error('stop here'));
     await post(
       '',
@@ -302,7 +306,7 @@ describe('zod pins: ApprovalRequestCreateSchema (POST /approvals and POST /appro
         redaction_level: 'raw',
         reuse_scope: 'case',
         partial_access_allowed: true,
-        expires_at: 4102444800000,
+        expires_at: soon,
         reference: { system: 'jira', id: 'T-1' },
         reason_note: 'n',
       })
@@ -315,7 +319,7 @@ describe('zod pins: ApprovalRequestCreateSchema (POST /approvals and POST /appro
       redaction_level: 'raw',
       reuse_scope: 'case',
       partial_access_allowed: true,
-      expires_at: 4102444800000,
+      expires_at: soon,
       reason_note: 'n',
       reference: { system: 'jira', id: 'T-1' },
     });
