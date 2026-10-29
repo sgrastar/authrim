@@ -5,9 +5,11 @@ are read from tenant metadata; records, history, key states and operation receip
 to the resolved account store. Flow `consent_records` remains a separate contract.
 
 Core D1 036 / PostgreSQL 019 install the additive step-B tables, including metadata-owned durable
-`statement_consent_projection_jobs`. **They install no production trigger.** D1's record foreign keys
-remain until PR7: routed D1 writes must not be deployed before that rebuild and trigger installation.
-This PR is a foundation for that rollout, not proof that the cutover is ready.
+`statement_consent_projection_jobs`. Core D1 037 removes the two record-to-definition foreign keys
+and installs enforcement after the table rebuild; PostgreSQL 020 installs matching functions and
+triggers without a rebuild. Deploy these migrations and compatible Workers in one full release
+update. All physical metadata/account stores must be ready before Worker activation; database-only
+rollout and older writer rollback are prohibited. See [the rollout procedure](statement-consent-storage-rollout.md).
 
 The transition preparer and receipt decoder require an explicitly supplied atomic capability. D1 uses actual prepared/bound batch execution and primary-required receipt reads. PostgreSQL opens a fresh owned connection for each reader/writer; ordinary adapter operations retain their cached connection. Readers require an authoritative primary read-only transaction. Both factories synchronously reserve received objects before crossing another await boundary. An ordinary factory cannot lend its reserved object to an owned operation; an owned object cannot return to ordinary use, whether active or ended. Rejected borrowers do not close the other owner's connection. Unknown connection/transaction/close results remain errors; recovery requires a matching primary receipt.
 
@@ -45,8 +47,11 @@ participate in payload hashes, before/after projections and the SQL fixture's tr
 Legacy NULL hashes are preserved on withdrawal. Each statement key is atomic independently; a
 multi-item HTTP request is not a transaction across statement keys.
 
-Existing records bootstrap their key state with revision zero using insert-on-conflict, followed by
-a primary read. Revision and withdrawal generation, all timestamps and PostgreSQL BIGINT settings
+Existing records bootstrap their key state with revision zero using absent-row INSERT SELECT,
+followed by a validated primary read. Tenant/statement guards follow the same creation contract;
+BEFORE INSERT replacement defenses remain active. Ambiguous insertion results recover only from a
+matching primary row. Generation projection uses a single UPDATE→absent-row INSERT batch, conditioned
+on account/physical/restore identity and monotone generations; stale results fail and remain pending. Revision and withdrawal generation, all timestamps and PostgreSQL BIGINT settings
 are normalized with `Number()` before arithmetic or JSON projection. A retry after a lost native
 batch acknowledgement recovers only through a matching primary operation receipt.
 
@@ -111,14 +116,22 @@ statement-guard binding. A guard is never silently rebound by normal writes or p
 Guards and projection jobs are rebuild state and excluded from portable rows. Key states, terminal
 operations and admissions are users datasets. SQLite restore holds source admissions and executing
 operations. The direct PostgreSQL importer rejects nonempty source guards/admissions before opening
-a target; their column contracts alone do not authorize importing live source authority. `core.consent_item_history` remains history (including its created-at log window) but is
+a target and rejects unfinished operations inside its isolated transaction; column contracts alone
+do not authorize importing live source authority. `core.consent_item_history` remains history (including its created-at log window) but is
 exported/restored on `tenant_core/users`. PostgreSQL restore contracts pin every column and numeric
 column of the four atomic tables; guards' optional schema contract remains explicitly excluded from live PostgreSQL projection.
 
 **A restore to a different physical database requires explicit rebinding before any writer runs.**
-PR7 implements rebinding and rebuilds guards/projection work. Keep the target quiescent until it
-finishes; copying an entire database including its old guards cannot be distinguished from the
-source solely by reading those guards. This PR does not claim automatic physical identity discovery.
+The SQLite restore path now rewrites the atomic rows' identity from the pinned provisioning receipt
+and fenced import operation before insertion and during every readback. It rebuilds the tenant guard
+and enqueues fresh projection work from restored definitions at seal, and verifies all imported identities. Terminal receipts have a narrowly scoped loading-target
+insert path; executing operations/admissions remain held and never become live target authority.
+The isolated PostgreSQL importer performs the same transformation with a transaction-local terminal
+receipt context; unfinished operations reject its import. Neither path disables consent triggers.
+Rebuild statement guards from metadata through durable projection and complete the reference audit
+before enabling serving traffic. Keep the target quiescent through these steps. Copying an entire database
+including its old guards cannot be distinguished from the source solely by reading those guards;
+this is not automatic physical identity discovery.
 Existing multi-users-shard restore limitations, source/target audits, and a proved rollback floor
 remain rollout prerequisites. There are no existing routed environments requiring a data move;
 no relocation or cleanup job is included.
@@ -126,8 +139,8 @@ no relocation or cleanup job is included.
 ## Fixture provenance and verification limits
 
 The three assets under `src/services/__tests__/fixtures/statement-consent-step-a/` retain their
-historical filenames, but now describe step B. Their triggers/functions are test-only; production
-modules never load these assets. The D1 SQL, statement list, PostgreSQL SQL and TypeScript preparer
+historical filenames, but now describe step B. Production modules never load these assets; the numbered
+037/020 migrations install matching trigger/function definitions, pinned by static parity tests. The D1 SQL, statement list, PostgreSQL SQL and TypeScript preparer
 must be changed together. Numbered migrations 036/019 contain tables only.
 
 Local SQLite tests exercise separate stores, rollback on history/enqueue failure, lost batch
@@ -197,8 +210,8 @@ failure leaves that page pending and preserves completed shards. A changed targe
 physical route resets the pass. Tenant rotation uses AUTHRIM_CONFIG (KV fallback); failed tenants
 are revisited on a later rotation. Explicit nonrouted deployments scan tenants in their single Core
 binding and use that same database for definitions and records. No schema or DR column contract
-changes are required. Restored cursors are reset when the trusted target identities change; PR7's
-physical identity rebinding remains a separate prerequisite.
+changes are required. Restored cursors are reset when the trusted target identities change. Restore now binds atomic
+rows to that target explicitly; projection and a complete audit remain prerequisites for serving.
 
 Retention scans bounded history pages before record pages on each account shard. Snapshot rows
 use `retain_until` independently of current or missing definitions. Only rows with
@@ -226,7 +239,14 @@ The shard page setting bounds pages per tenant tick, including the separate hist
 phases for retention. Invalid values fail closed. PostgreSQL maintenance SQL is statically reviewed
 only in this environment; no real PostgreSQL execution has been performed.
 
-The test-only step-B delete guards currently reject direct evidence deletion when a tenant guard
-is enforced. PR7 must provide and verify an authorized retention deletion path before installing
-those production triggers. PR5 leaves trigger fixtures and published migrations unchanged; a
-blocked deletion remains pending rather than bypassing guards.
+Production delete guards reject ordinary evidence DELETE when a tenant guard is enforced or closed.
+Retention creates row-specific `statement_consent_retention_permits`, consumes them and removes them
+in the same atomic batch. The trigger rechecks bound physical identity, permit expiry, a non-future
+cutoff, the current row's strict deadline and status, and granted-history protection. The existing
+operation TTL setting bounds permits and preparation clock skew. Source permits are rebuild state,
+never restored. Legacy policy days still come only from trusted metadata. A failed or ambiguous page
+stays pending; retries do not bypass guards. SQLite tests exercise this installed enforcement.
+
+For the exact migration order, rollback floor, restore identity mapping and a short 0.5.0 release
+summary, follow [statement consent storage rollout](statement-consent-storage-rollout.md). PostgreSQL
+trigger, function and rebinding SQL remains statically reviewed only in this environment.

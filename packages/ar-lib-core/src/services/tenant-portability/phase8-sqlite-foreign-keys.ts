@@ -291,16 +291,6 @@ export const PHASE8_SQLITE_FOREIGN_KEY_RULES = [
     to: 'core.tenants',
   },
   {
-    from: 'core.user_consent_records',
-    columns: ['statement_id'],
-    to: 'core.consent_statements',
-  },
-  {
-    from: 'core.user_consent_records',
-    columns: ['version_id'],
-    to: 'core.consent_statement_versions',
-  },
-  {
     from: 'core.user_roles',
     columns: ['role_id'],
     to: 'core.roles',

@@ -1,5 +1,35 @@
--- PRIVATE UNNUMBERED d1 Step B fixture. Not applied, not activated, not runtime-verified.
+-- Step-B enforcement fixture; production trigger parity is pinned by tests.
 -- Existing consent tables/FKs/indexes are not rebuilt or altered.
+
+CREATE TABLE IF NOT EXISTS tenant_backup_restore_targets (
+  id TEXT NOT NULL PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  plan_digest TEXT NOT NULL CHECK(length(plan_digest)=64),
+  seed_fingerprint TEXT NOT NULL CHECK(length(seed_fingerprint)=64),
+  owner TEXT NOT NULL,
+  fencing_token INTEGER NOT NULL CHECK(fencing_token>0),
+  lease_expires_at INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('loading','sealed','invalid'))
+);
+
+CREATE TABLE statement_consent_retention_permits (
+  tenant_id TEXT NOT NULL,
+  permit_id TEXT NOT NULL,
+  row_kind TEXT NOT NULL CHECK (row_kind IN ('record','history')),
+  row_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  statement_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  physical_id TEXT NOT NULL,
+  restore_epoch TEXT NOT NULL,
+  cutoff_at INTEGER NOT NULL CHECK (cutoff_at BETWEEN 0 AND 9007199254740991) CHECK(typeof(cutoff_at)='integer'),
+  legacy_retention_days INTEGER CHECK (legacy_retention_days BETWEEN 0 AND 9007199254740991 / 86400000) CHECK(legacy_retention_days IS NULL OR typeof(legacy_retention_days)='integer'),
+  issued_at INTEGER NOT NULL CHECK (issued_at BETWEEN 0 AND 9007199254740991) CHECK(typeof(issued_at)='integer'),
+  expires_at INTEGER NOT NULL CHECK (expires_at BETWEEN issued_at AND 9007199254740991) CHECK(typeof(expires_at)='integer'),
+  PRIMARY KEY (tenant_id,permit_id)
+) WITHOUT ROWID;
 
 CREATE TABLE statement_consent_guards (
   tenant_id TEXT NOT NULL,
@@ -83,7 +113,11 @@ CREATE TABLE statement_consent_admissions (
 ) WITHOUT ROWID;
 
 CREATE TRIGGER statement_consent_operation_insert_guard BEFORE INSERT ON statement_consent_operations
-WHEN NEW.status <> 'executing' OR NEW.is_terminal <> 0 OR EXISTS (SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id = NEW.tenant_id AND (o.operation_id = NEW.operation_id OR (o.user_id = NEW.user_id AND o.statement_id = NEW.statement_id AND o.is_terminal = 0))) OR (NOT (json_extract(NEW.after_json, '$.tenant_id') IS NEW.tenant_id) OR NOT (json_extract(NEW.after_json, '$.user_id') IS NEW.user_id) OR NOT (json_extract(NEW.after_json, '$.statement_id') IS NEW.statement_id)
+WHEN NOT (NEW.is_terminal=1 AND NEW.status IN ('applied','rejected')
+    AND EXISTS (SELECT 1 FROM tenant_backup_restore_targets t WHERE t.tenant_id=NEW.tenant_id
+      AND t.state='loading' AND t.lease_expires_at>CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+      AND NEW.physical_id=t.resource_id AND NEW.restore_epoch=t.operation_id AND NEW.account_id='restore:' || t.resource_id)
+    AND NOT EXISTS (SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id=NEW.tenant_id AND o.operation_id=NEW.operation_id)) AND (NEW.status <> 'executing' OR NEW.is_terminal <> 0 OR EXISTS (SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id = NEW.tenant_id AND (o.operation_id = NEW.operation_id OR (o.user_id = NEW.user_id AND o.statement_id = NEW.statement_id AND o.is_terminal = 0))) OR (NOT (json_extract(NEW.after_json, '$.tenant_id') IS NEW.tenant_id) OR NOT (json_extract(NEW.after_json, '$.user_id') IS NEW.user_id) OR NOT (json_extract(NEW.after_json, '$.statement_id') IS NEW.statement_id)
       OR (NEW.is_noop = 1 AND (NEW.action <> 'grant' OR json(NEW.after_json) <> json(NEW.before_json) OR json_extract(NEW.after_json, '$.status') <> 'granted'))
       OR (NEW.is_noop = 0 AND (json_extract(NEW.history_json, '$.id') <> ('sc_' || NEW.operation_id || ':' || NEW.tenant_id)
         OR NOT (json_extract(NEW.history_json, '$.tenant_id') IS NEW.tenant_id)
@@ -116,7 +150,7 @@ WHEN NEW.status <> 'executing' OR NEW.is_terminal <> 0 OR EXISTS (SELECT 1 FROM 
         OR EXISTS (SELECT 1 FROM user_consent_records r WHERE r.tenant_id = NEW.tenant_id
           AND r.user_id = NEW.user_id AND r.statement_id = NEW.statement_id
           AND json_object('id', r.id, 'tenant_id', r.tenant_id, 'user_id', r.user_id, 'statement_id', r.statement_id, 'version_id', r.version_id, 'version', r.version, 'status', r.status, 'granted_at', r.granted_at, 'withdrawn_at', r.withdrawn_at, 'expires_at', r.expires_at, 'client_id', r.client_id, 'receipt_id', r.receipt_id, 'created_at', r.created_at, 'updated_at', r.updated_at, 'retain_until', r.retain_until, 'consent_settings_snapshot_at', r.consent_settings_snapshot_at, 'record_retention_days_snapshot', r.record_retention_days_snapshot, 'reconsent_interval_days_snapshot', r.reconsent_interval_days_snapshot, 'content_hash', r.content_hash) = json(NEW.before_json))) AND (json_extract(NEW.definition_json, '$.tenant_id')=NEW.tenant_id AND json_extract(NEW.definition_json, '$.statement_id')=NEW.statement_id AND CAST(json_extract(NEW.definition_json, '$.definition_generation') AS INTEGER)=NEW.expected_definition_generation AND json_extract(NEW.definition_json, '$.version_id')=json_extract(NEW.after_json, '$.version_id') AND json_extract(NEW.definition_json, '$.version')=json_extract(NEW.after_json, '$.version') AND (json_extract(NEW.definition_json, '$.content_hash') IS json_extract(NEW.after_json, '$.content_hash')) AND (NEW.action<>'grant' OR (CAST(json_extract(NEW.definition_json, '$.is_active') AS INTEGER)=1 AND json_extract(NEW.definition_json, '$.version_status')='active')))
-      AND (NEW.is_noop = 1 OR NOT EXISTS (SELECT 1 FROM consent_item_history h WHERE h.id = json_extract(NEW.history_json, '$.id'))) THEN 1 ELSE 0 END
+      AND (NEW.is_noop = 1 OR NOT EXISTS (SELECT 1 FROM consent_item_history h WHERE h.id = json_extract(NEW.history_json, '$.id'))) THEN 1 ELSE 0 END)
 BEGIN SELECT RAISE(ABORT, 'statement_consent_operation_insert_guard'); END;
 
 CREATE TRIGGER statement_consent_operation_finalize_guard BEFORE UPDATE ON statement_consent_operations
@@ -157,7 +191,16 @@ WHEN EXISTS (SELECT 1 FROM user_consent_records r WHERE (r.id = NEW.id OR r.rowi
 BEGIN SELECT RAISE(ABORT, 'statement_consent_user_consent_records_update_collision'); END;
 
 CREATE TRIGGER statement_consent_user_consent_records_delete_guard BEFORE DELETE ON user_consent_records
-WHEN (EXISTS (SELECT 1 FROM statement_consent_guards g WHERE g.tenant_id = OLD.tenant_id AND g.scope_kind = 'tenant' AND g.scope_key = '' AND g.mode <> 'disabled')) AND NOT (0)
+WHEN (EXISTS (SELECT 1 FROM statement_consent_guards g WHERE g.tenant_id = OLD.tenant_id AND g.scope_kind = 'tenant' AND g.scope_key = '' AND g.mode <> 'disabled')) AND NOT (EXISTS (SELECT 1 FROM statement_consent_retention_permits p
+    JOIN statement_consent_guards g ON g.tenant_id=p.tenant_id AND g.scope_kind='tenant' AND g.scope_key=''
+    WHERE p.tenant_id=OLD.tenant_id AND p.row_kind='record' AND p.row_id=OLD.id
+      AND p.user_id=OLD.user_id AND p.statement_id=OLD.statement_id
+      AND p.account_id=g.account_id AND p.physical_id=g.physical_id AND p.restore_epoch=g.restore_epoch
+      AND (CAST(strftime('%s','now') AS INTEGER)*1000+CAST(substr(strftime('%f','now'),4,3) AS INTEGER)) BETWEEN p.issued_at AND p.expires_at AND p.cutoff_at<=(CAST(strftime('%s','now') AS INTEGER)*1000+CAST(substr(strftime('%f','now'),4,3) AS INTEGER))
+      AND OLD.status IN ('withdrawn','denied','expired')
+      AND ((OLD.consent_settings_snapshot_at IS NOT NULL AND OLD.retain_until IS NOT NULL AND OLD.retain_until<p.cutoff_at)
+        OR (OLD.consent_settings_snapshot_at IS NULL AND p.legacy_retention_days IS NOT NULL
+          AND OLD.updated_at<p.cutoff_at-p.legacy_retention_days*86400000))))
 BEGIN SELECT RAISE(ABORT, 'statement_consent_user_consent_records_delete_guard'); END;
 
 CREATE TRIGGER statement_consent_consent_item_history_insert_guard BEFORE INSERT ON consent_item_history
@@ -181,7 +224,16 @@ WHEN EXISTS (SELECT 1 FROM consent_item_history r WHERE (r.id = NEW.id OR r.rowi
 BEGIN SELECT RAISE(ABORT, 'statement_consent_consent_item_history_update_collision'); END;
 
 CREATE TRIGGER statement_consent_consent_item_history_delete_guard BEFORE DELETE ON consent_item_history
-WHEN (EXISTS (SELECT 1 FROM statement_consent_guards g WHERE g.tenant_id = OLD.tenant_id AND g.scope_kind = 'tenant' AND g.scope_key = '' AND g.mode <> 'disabled')) AND NOT (0)
+WHEN (EXISTS (SELECT 1 FROM statement_consent_guards g WHERE g.tenant_id = OLD.tenant_id AND g.scope_kind = 'tenant' AND g.scope_key = '' AND g.mode <> 'disabled')) AND NOT (EXISTS (SELECT 1 FROM statement_consent_retention_permits p
+    JOIN statement_consent_guards g ON g.tenant_id=p.tenant_id AND g.scope_kind='tenant' AND g.scope_key=''
+    WHERE p.tenant_id=OLD.tenant_id AND p.row_kind='history' AND p.row_id=OLD.id
+      AND p.user_id=OLD.user_id AND p.statement_id=OLD.statement_id
+      AND p.account_id=g.account_id AND p.physical_id=g.physical_id AND p.restore_epoch=g.restore_epoch
+      AND (CAST(strftime('%s','now') AS INTEGER)*1000+CAST(substr(strftime('%f','now'),4,3) AS INTEGER)) BETWEEN p.issued_at AND p.expires_at AND p.cutoff_at<=(CAST(strftime('%s','now') AS INTEGER)*1000+CAST(substr(strftime('%f','now'),4,3) AS INTEGER))
+      AND NOT EXISTS (SELECT 1 FROM user_consent_records r WHERE r.tenant_id=OLD.tenant_id AND r.user_id=OLD.user_id AND r.statement_id=OLD.statement_id AND r.status='granted')
+      AND ((OLD.consent_settings_snapshot_at IS NOT NULL AND OLD.retain_until IS NOT NULL AND OLD.retain_until<p.cutoff_at)
+        OR (OLD.consent_settings_snapshot_at IS NULL AND p.legacy_retention_days IS NOT NULL
+          AND OLD.created_at<p.cutoff_at-p.legacy_retention_days*86400000))))
 BEGIN SELECT RAISE(ABORT, 'statement_consent_consent_item_history_delete_guard'); END;
 
 CREATE TRIGGER statement_consent_key_update_guard BEFORE UPDATE ON statement_consent_key_states
@@ -219,3 +271,6 @@ BEGIN SELECT RAISE(ABORT, 'statement_consent_guard_delete'); END;
 CREATE TRIGGER statement_consent_admission_immutable BEFORE UPDATE ON statement_consent_admissions
 WHEN 1
 BEGIN SELECT RAISE(ABORT, 'statement_consent_admission_immutable'); END;
+
+CREATE TRIGGER statement_consent_retention_permit_immutable BEFORE UPDATE ON statement_consent_retention_permits
+BEGIN SELECT RAISE(ABORT,'statement_consent_retention_permit_immutable'); END;

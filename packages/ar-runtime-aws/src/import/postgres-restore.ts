@@ -1,3 +1,7 @@
+import {
+  statementConsentRestoreIdentity,
+  STATEMENT_CONSENT_REBOUND_TABLES,
+} from '@authrim/ar-lib-core/services/tenant-portability/statement-consent-restore';
 import { createHash } from 'node:crypto';
 import { Client } from 'pg';
 import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
@@ -457,6 +461,12 @@ export async function restoreVerifiedPostgresFamily(
       if (prior.rowCount !== 0) invalid();
     }
     const suspended = extended ? await suspendSnapshotProjectionTriggers(client, specs) : [];
+    const consentBinding = statementConsentRestoreIdentity(targetId, targetId);
+    if (family === 'core') {
+      await client.query("SELECT set_config('authrim.statement_consent_restore',$1,true)", [
+        JSON.stringify({ tenant_id: tenantId, ...consentBinding }),
+      ]);
+    }
     const tableReceipts = new Map<string, PostgresRestoreTableReceipt>();
     for (const spec of insertionOrder(specs)) {
       const dataset = inManifest.get(spec.datasetId);
@@ -507,7 +517,23 @@ export async function restoreVerifiedPostgresFamily(
             invalid();
         }
         if (!alreadyHashed) recordSourceRow(rowJson);
-        const decoded = sourceRow(rowJson, spec, tenantId);
+        let targetRow = rowJson;
+        if (family === 'core' && STATEMENT_CONSENT_REBOUND_TABLES.has(spec.table)) {
+          const row = JSON.parse(rowJson) as Record<string, [string, string | null]>;
+          // The direct PG importer has no encrypted hold store: refuse unfinished authority.
+          if (
+            spec.table === 'statement_consent_operations' &&
+            (row.status?.[0] !== 'text' ||
+              !['applied', 'rejected'].includes(row.status[1] ?? '') ||
+              row.is_terminal?.[0] !== 'integer' ||
+              row.is_terminal[1] !== '1')
+          )
+            throw new Error('statement_consent_restore_source_operation_held');
+          for (const [column, value] of Object.entries(consentBinding))
+            if (spec.columns.includes(column)) row[column] = ['text', value];
+          targetRow = JSON.stringify(row);
+        }
+        const decoded = sourceRow(targetRow, spec, tenantId);
         if (expected.has(decoded.key)) invalid();
         let inserted;
         if (spec.datasetId === 'core.account_lifecycle_event_outbox') {
@@ -607,6 +633,53 @@ export async function restoreVerifiedPostgresFamily(
         [tenantId]
       );
       if (inconsistent.rows.length) invalid();
+    }
+    const consentTables = specs.filter(
+      (s) =>
+        s.family === 'core' &&
+        [
+          'user_consent_records',
+          'consent_item_history',
+          'statement_consent_key_states',
+          'statement_consent_operations',
+          'statement_consent_admissions',
+        ].includes(s.table)
+    );
+    const hasConsent =
+      family === 'core' &&
+      consentTables.length > 0 &&
+      (
+        await client.query(
+          `SELECT 1 AS present WHERE ${consentTables.map((s) => `EXISTS(SELECT 1 FROM ${identifier(s.table)} WHERE tenant_id=$1)`).join(' OR ')}`,
+          [tenantId]
+        )
+      ).rows.length > 0;
+    if (hasConsent) {
+      const now = Date.now();
+      const bound = await client.query(
+        `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,physical_id,restore_epoch,created_at,updated_at)
+         SELECT $1,'tenant','','enforced',$2,$3,$4,$5,$5 WHERE NOT EXISTS
+         (SELECT 1 FROM statement_consent_guards WHERE tenant_id=$1 AND scope_kind='tenant' AND scope_key='')`,
+        [
+          tenantId,
+          consentBinding.account_id,
+          consentBinding.physical_id,
+          consentBinding.restore_epoch,
+          now,
+        ]
+      );
+      if (bound.rowCount !== 1) invalid();
+    }
+    if (family === 'core' && specs.some((s) => s.table === 'consent_statements')) {
+      await client.query(
+        `INSERT INTO statement_consent_projection_jobs(tenant_id,statement_id,definition_generation,closed_generation,mode,targets_json,cursor_binding_ref,updated_at)
+         SELECT tenant_id,id,definition_generation,closed_generation,
+           CASE WHEN is_active=0 OR retired_at IS NOT NULL THEN 'closed' ELSE 'enforced' END,NULL,NULL,$2
+         FROM consent_statements WHERE tenant_id=$1
+         ON CONFLICT(tenant_id,statement_id) DO UPDATE SET definition_generation=excluded.definition_generation,
+           closed_generation=excluded.closed_generation,mode=excluded.mode,targets_json=NULL,cursor_binding_ref=NULL,updated_at=excluded.updated_at`,
+        [tenantId, Date.now()]
+      );
     }
     await restoreSnapshotProjectionTriggers(client, suspended);
     const tables = specs.map((spec) => {

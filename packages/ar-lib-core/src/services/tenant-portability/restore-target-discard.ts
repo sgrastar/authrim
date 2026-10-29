@@ -84,6 +84,7 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
     guest_core_mutation_epoch: null,
     statement_consent_guards: byTenantId,
     statement_consent_projection_jobs: byTenantId,
+    statement_consent_retention_permits: byTenantId,
     account_routing_outbox: byTenantId,
     contact_point_search_indexes: byTenantId,
     identity_binding_lookup_indexes: byTenantId,
@@ -519,6 +520,20 @@ export async function runTenantDiscardPage(input: {
    */
   schemaDefinitions?: string;
 }): Promise<TenantDiscardPageResult> {
+  // Generic rowid cleanup cannot remove consent replay/identity fences. Refuse before
+  // touching any dataset; dedicated unpublished resources can be discarded by their provider.
+  const protectedConsentTables = new Set([
+    'statement_consent_guards',
+    'statement_consent_key_states',
+    'statement_consent_operations',
+    'statement_consent_admissions',
+    'statement_consent_retention_permits',
+  ]);
+  for (const table of input.plan.tables.filter((t) => protectedConsentTables.has(t.table))) {
+    input.signal.throwIfAborted();
+    if (await remainingRows(input.database, table))
+      return { done: false, blocked: { table: table.table, reason: 'restricted' } };
+  }
   let budget = input.statements ?? 8;
   const schema =
     input.schemaDefinitions === undefined
@@ -555,9 +570,18 @@ export async function runTenantDiscardPage(input: {
     const before = await remainingRows(input.database, table);
     await input.authorize();
     try {
+      // The restore-generated queue is rebuild state with a composite primary key.
+      // Consent authority tables remain blocked above; never weaken their delete guards.
+      const key =
+        table.table === 'statement_consent_projection_jobs' ? '(tenant_id,statement_id)' : 'rowid';
+      const selectedKey =
+        table.table === 'statement_consent_projection_jobs'
+          ? 'backup_row.tenant_id,backup_row.statement_id'
+          : 'backup_row.rowid';
       const deleted = await input.database.execute(
-        `DELETE FROM ${name} WHERE rowid IN (SELECT backup_row.rowid FROM ${name} AS backup_row
-          WHERE ${table.owner.sql} AND NOT (${table.foreignChildren.sql}) LIMIT ${PAGE_ROWS})${schema.sql}`,
+        `DELETE FROM ${name} WHERE ${key} IN
+        (SELECT ${selectedKey} FROM ${name} AS backup_row
+         WHERE ${table.owner.sql} AND NOT (${table.foreignChildren.sql}) LIMIT ${PAGE_ROWS})${schema.sql}`,
         [...table.owner.params, ...table.foreignChildren.params, ...schema.params]
       );
       if (!deleted.success) throw fail('backup_import_discard_failed');

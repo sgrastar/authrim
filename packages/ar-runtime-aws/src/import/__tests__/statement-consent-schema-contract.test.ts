@@ -46,4 +46,29 @@ describe('statement consent additive schema restore contracts', () => {
     ])
       expect(ddl(dialect, number)).not.toMatch(/CREATE (?:TRIGGER|FUNCTION)/i);
   });
+  it('keeps retention permits in matching D1/PG rebuild-only schemas', () => {
+    const columns = (dialect: string, number: string) => {
+      const sql = readFileSync(
+        new URL(
+          `../../../../../migrations/core/${dialect}/${number}_statement_consent_enforcement.sql`,
+          import.meta.url
+        ),
+        'utf8'
+      );
+      const body = sql.match(
+        /CREATE TABLE statement_consent_retention_permits \(([\s\S]*?)\n\)/
+      )?.[1];
+      if (!body) throw new Error('retention_permit_schema_missing');
+      return [...body.matchAll(/^ {2}([a-z][a-z0-9_]*) (TEXT|INTEGER|BIGINT)/gm)].map((m) => [
+        m[1],
+        m[2] === 'TEXT' ? 'text' : 'integer',
+      ]);
+    };
+    expect(columns('d1', '037')).toEqual(columns('postgresql', '020'));
+    expect(
+      POSTGRES_RESTORE_EXTENSION_CONTRACTS.some(
+        (s) => s.table === 'statement_consent_retention_permits'
+      )
+    ).toBe(false);
+  });
 });

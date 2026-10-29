@@ -22,7 +22,7 @@ async function columns(
 
 describe('statement consent split foundation (additive migration)', () => {
   it('adds the hash and generation columns without touching existing rows or foreign keys', async () => {
-    const fixture = sqliteAdapter('core');
+    const fixture = sqliteAdapter('core', 36);
     const database = fixture.db as { close(): void };
     try {
       const { adapter } = fixture;
@@ -72,7 +72,7 @@ describe('statement consent split foundation (additive migration)', () => {
   });
 
   it('rejects a negative or non-numeric generation', async () => {
-    const fixture = sqliteAdapter('core');
+    const fixture = sqliteAdapter('core', 36);
     const database = fixture.db as { close(): void };
     try {
       await expect(

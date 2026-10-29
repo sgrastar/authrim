@@ -63,26 +63,81 @@ export async function projectStatementConsentGeneration(
       existing.restore_epoch !== tenant.restore_epoch)
   )
     throw new Error('statement_consent_restore_rebind_required');
-  await account.execute(
-    `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,definition_generation,closed_generation,physical_id,restore_epoch,created_at,updated_at)
-     VALUES(?,'statement',?,?,?,?,?,?,?,?,?)
-     ON CONFLICT(tenant_id,scope_kind,scope_key) DO UPDATE SET mode=excluded.mode,
-     definition_generation=excluded.definition_generation,closed_generation=excluded.closed_generation,updated_at=excluded.updated_at
-     WHERE statement_consent_guards.definition_generation<=excluded.definition_generation
-       AND statement_consent_guards.closed_generation<=excluded.closed_generation
-       AND statement_consent_guards.account_id=excluded.account_id
-       AND statement_consent_guards.physical_id=excluded.physical_id AND statement_consent_guards.restore_epoch=excluded.restore_epoch`,
-    [
-      tenantId,
-      projection.statement_id,
-      projection.mode,
-      tenant.account_id,
-      projection.definition_generation,
-      projection.closed_generation,
-      tenant.physical_id,
-      tenant.restore_epoch,
-      now,
-      now,
-    ]
-  );
+  const identity = [tenant.account_id, tenant.physical_id, tenant.restore_epoch];
+  const statements: PreparedStatement[] = [
+    {
+      sql: `UPDATE statement_consent_guards SET mode=?,definition_generation=?,closed_generation=?,
+        updated_at=CASE WHEN updated_at>? THEN updated_at ELSE ? END
+        WHERE tenant_id=? AND scope_kind='statement' AND scope_key=?
+          AND account_id=? AND physical_id=? AND restore_epoch=?
+          AND definition_generation<=? AND closed_generation<=?
+          AND (mode<>'closed' OR ?='closed' OR definition_generation<?)`,
+      params: [
+        projection.mode,
+        projection.definition_generation,
+        projection.closed_generation,
+        now,
+        now,
+        tenantId,
+        projection.statement_id,
+        ...identity,
+        projection.definition_generation,
+        projection.closed_generation,
+        projection.mode,
+        projection.definition_generation,
+      ],
+    },
+    {
+      sql: `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,definition_generation,closed_generation,physical_id,restore_epoch,created_at,updated_at)
+        SELECT ?,'statement',?,?,?,?,?,?,?,?,? WHERE NOT EXISTS
+        (SELECT 1 FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='statement' AND scope_key=?)`,
+      params: [
+        tenantId,
+        projection.statement_id,
+        projection.mode,
+        tenant.account_id,
+        projection.definition_generation,
+        projection.closed_generation,
+        tenant.physical_id,
+        tenant.restore_epoch,
+        now,
+        now,
+        tenantId,
+        projection.statement_id,
+      ],
+    },
+  ];
+  try {
+    const results = await account.batch(statements);
+    if (results.length !== 2 || results.some((r) => !r.success))
+      throw new Error('statement_consent_projection_result_unknown');
+    if (results.reduce((n, r) => n + Number(r.rowsAffected), 0) !== 1)
+      throw new Error('statement_consent_projection_stale');
+  } catch (error) {
+    // A lost response is recoverable only from the exact projected primary state. A
+    // concurrent creation of a different generation remains a retryable failure.
+    const row = await account.queryOne<{
+      account_id: string;
+      physical_id: string;
+      restore_epoch: string;
+      definition_generation: number | string;
+      closed_generation: number | string;
+      mode: string;
+    }>(
+      "SELECT * FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='statement' AND scope_key=?",
+      [tenantId, projection.statement_id],
+      { consistencyClass: 'primary_required' }
+    );
+    if (
+      row &&
+      row.account_id === tenant.account_id &&
+      row.physical_id === tenant.physical_id &&
+      row.restore_epoch === tenant.restore_epoch &&
+      Number(row.definition_generation) === projection.definition_generation &&
+      Number(row.closed_generation) === projection.closed_generation &&
+      row.mode === projection.mode
+    )
+      return;
+    throw error;
+  }
 }

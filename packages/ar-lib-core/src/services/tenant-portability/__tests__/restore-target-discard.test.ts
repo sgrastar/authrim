@@ -60,6 +60,45 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+it('blocks consent authority before partially deleting any ordinary restored data', async () => {
+  db.exec(`CREATE TABLE user_consent_records(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL);
+    INSERT INTO user_consent_records VALUES('record','a');
+    CREATE TABLE statement_consent_key_states(tenant_id TEXT NOT NULL,user_id TEXT NOT NULL,statement_id TEXT NOT NULL,PRIMARY KEY(tenant_id,user_id,statement_id)) WITHOUT ROWID;
+    INSERT INTO statement_consent_key_states VALUES('a','u','s');`);
+  const schema = await Promise.all(
+    ['user_consent_records', 'statement_consent_key_states'].map((table) =>
+      readBackupSqliteSchema(adapter(), table)
+    )
+  );
+  const records = dataset('user_consent_records', ['id', 'tenant_id'], 'users');
+  const keys = dataset(
+    'statement_consent_key_states',
+    ['tenant_id', 'user_id', 'statement_id'],
+    'users'
+  );
+  const datasets: TenantDiscardDataset[] = [
+    { ...records, id: 'core.user_consent_records' },
+    {
+      ...keys,
+      id: 'core.statement_consent_key_states',
+      capture: { ...keys.capture, primaryKey: ['tenant_id', 'user_id', 'statement_id'] },
+    },
+  ];
+  const discard = planTenantDiscard({ family: 'core', schema, datasets, identity });
+  expect(
+    await runTenantDiscardPage({
+      database: adapter(),
+      plan: discard,
+      authorize: async () => {},
+      signal,
+    })
+  ).toEqual({
+    done: false,
+    blocked: { table: 'statement_consent_key_states', reason: 'restricted' },
+  });
+  expect(db.prepare('SELECT count(*) AS n FROM user_consent_records').get()).toEqual({ n: 1 });
+});
+
 it('keeps immutable Guest denials while discarding ordinary restored lifecycle rows', async () => {
   db.exec(`CREATE TABLE guest_account_lifecycle(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,phase TEXT NOT NULL);
     INSERT INTO guest_account_lifecycle VALUES ('active','a','active'),('finalized','a','registered'),('pending','a','deleting'),('gone','a','deleted'),('foreign','b','active');
@@ -230,7 +269,7 @@ it('is not blocked when an earlier cleanup lease deletes the same rows meanwhile
   `);
   const discard = await plan([dataset('users', ['id', 'tenant_id'])]);
   const database = adapter();
-  const queryOne = database.queryOne;
+  const queryOne = database.queryOne.bind(database);
   let raced = false;
   database.queryOne = async (sql, params) => {
     // The stale worker's delete lands right after this worker found rows to delete.

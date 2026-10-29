@@ -168,7 +168,7 @@ describe('statement consent across metadata and account databases (current behav
       expect(fromAccount).toEqual([]);
     });
 
-    it('DEFECT: recording consent in the account database fails on the D1 foreign keys', async () => {
+    it('records consent after M2 without account-local definitions or foreign keys', async () => {
       await expect(
         processConsentItemDecisions(
           { metadata: metadata.adapter, account: account.adapter },
@@ -179,8 +179,8 @@ describe('statement consent across metadata and account databases (current behav
           'iphash',
           target
         )
-      ).rejects.toThrow(/FOREIGN KEY/i);
-      expect(await listUserStatementConsentRecords(account.adapter, TENANT, USER)).toEqual([]);
+      ).resolves.toBeUndefined();
+      expect(await listUserStatementConsentRecords(account.adapter, TENANT, USER)).toHaveLength(1);
     });
 
     it('takes the retention snapshot from the metadata definition even though the account database holds none', async () => {

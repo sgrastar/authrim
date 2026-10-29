@@ -81,12 +81,14 @@ describe('durable statement consent generation fan-out (real SQLite databases)',
       closed_generation: 1,
       mode: 'closed',
     });
-    await projectStatementConsentGeneration(f.first.adapter, 'tenant-a', {
-      statement_id: 'terms',
-      definition_generation: 1,
-      closed_generation: 0,
-      mode: 'enforced',
-    });
+    await expect(
+      projectStatementConsentGeneration(f.first.adapter, 'tenant-a', {
+        statement_id: 'terms',
+        definition_generation: 1,
+        closed_generation: 0,
+        mode: 'enforced',
+      })
+    ).rejects.toThrow('statement_consent_projection_stale');
     expect(await guard(f.first)).toEqual({
       definition_generation: 2,
       closed_generation: 1,
@@ -95,13 +97,13 @@ describe('durable statement consent generation fan-out (real SQLite databases)',
   });
   it('keeps a newer generation queued when an older worker is acknowledging a shard', async () => {
     const f = await setup();
-    const execute = f.first.adapter.execute.bind(f.first.adapter);
+    const batch = f.first.adapter.batch.bind(f.first.adapter);
     let bump = true;
     const racing = {
       ...f.first.adapter,
-      execute: async (...args: Parameters<typeof execute>) => {
-        const result = await execute(...args);
-        if (bump && args[0].includes("VALUES(?,'statement'")) {
+      batch: async (...args: Parameters<typeof batch>) => {
+        const result = await batch(...args);
+        if (bump) {
           bump = false;
           await f.metadata.adapter.execute(
             "UPDATE consent_statements SET definition_generation=2 WHERE tenant_id='tenant-a' AND id='terms'"

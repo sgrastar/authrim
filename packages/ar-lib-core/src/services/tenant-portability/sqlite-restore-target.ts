@@ -1,3 +1,7 @@
+import {
+  statementConsentRestoreIdentity,
+  STATEMENT_CONSENT_REBOUND_TABLES,
+} from './statement-consent-restore';
 import { samlDrAll } from './saml-dr-writer';
 import { backupOwnershipPredicate, type BackupRowOwnership } from './row-ownership';
 import { TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES } from './container-dataset-reader';
@@ -885,12 +889,22 @@ export class SqliteRestoreTarget {
   }
 
   private applyRestoreOverrides(policy: SqliteDatasetInspectionPolicy, rowJson: string): string {
-    if (!policy.restoreOverrides && !policy.restoreIdentityOverrides) return rowJson;
+    const consent =
+      policy.dataset.id === `core.${policy.schema.table}` &&
+      STATEMENT_CONSENT_REBOUND_TABLES.has(policy.schema.table);
+    if (!consent && !policy.restoreOverrides && !policy.restoreIdentityOverrides) return rowJson;
     const row = JSON.parse(rowJson) as Record<string, unknown>;
     for (const [column, value] of Object.entries(policy.restoreOverrides ?? {}))
       row[column] = value;
     for (const [column, value] of Object.entries(policy.restoreIdentityOverrides ?? {}))
       row[column] = value;
+    if (consent) {
+      for (const [column, value] of Object.entries(
+        statementConsentRestoreIdentity(this.identity.resourceId, this.identity.operationId)
+      ))
+        if (column !== 'account_id' || policy.schema.table !== 'statement_consent_admissions')
+          row[column] = ['text', value];
+    }
     return JSON.stringify(row);
   }
 
@@ -1357,10 +1371,100 @@ export class SqliteRestoreTarget {
     }
     await this.assertLive();
   }
+  private async rebuildStatementConsentTenantGuard(): Promise<void> {
+    if (
+      !(await this.database.queryOne(
+        "SELECT 1 AS present FROM sqlite_schema WHERE type='table' AND name='statement_consent_guards'"
+      ))
+    )
+      return;
+    // Empty/settings-only restores carry no consent authority and need no enforced guard.
+    const consent = await this.database.queryOne(
+      `SELECT 1 AS present WHERE
+      EXISTS(SELECT 1 FROM user_consent_records WHERE tenant_id=?) OR
+      EXISTS(SELECT 1 FROM consent_item_history WHERE tenant_id=?) OR
+      EXISTS(SELECT 1 FROM statement_consent_key_states WHERE tenant_id=?) OR
+      EXISTS(SELECT 1 FROM statement_consent_operations WHERE tenant_id=?) OR
+      EXISTS(SELECT 1 FROM statement_consent_admissions WHERE tenant_id=?)`,
+      Array.from({ length: 5 }, () => this.identity.tenantId)
+    );
+    if (!consent) return;
+    await this.assertLive();
+    const binding = statementConsentRestoreIdentity(
+      this.identity.resourceId,
+      this.identity.operationId
+    );
+    // A target is never sealed with source-bound key/receipt/admission authority.
+    for (const table of STATEMENT_CONSENT_REBOUND_TABLES) {
+      if (
+        await this.database.queryOne(
+          `SELECT 1 AS invalid FROM ${table} WHERE tenant_id=?
+        AND (${table === 'statement_consent_admissions' ? '' : 'account_id<>? OR '}physical_id<>? OR restore_epoch<>?) LIMIT 1`,
+          [
+            this.identity.tenantId,
+            ...(table === 'statement_consent_admissions' ? [] : [binding.account_id]),
+            binding.physical_id,
+            binding.restore_epoch,
+          ]
+        )
+      )
+        throw new Error('statement_consent_restore_rebind_required');
+    }
+    if (
+      await this.database.queryOne(
+        `SELECT 1 AS invalid WHERE
+      EXISTS(SELECT 1 FROM statement_consent_admissions WHERE tenant_id=?) OR
+      EXISTS(SELECT 1 FROM statement_consent_operations WHERE tenant_id=? AND (is_terminal<>1 OR status='executing'))`,
+        [this.identity.tenantId, this.identity.tenantId]
+      )
+    )
+      throw new Error('statement_consent_restore_rebind_required');
+    const result = await this.database.execute(
+      `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,physical_id,restore_epoch,created_at,updated_at)
+       SELECT ?,'tenant','','enforced',?,?,?,?,? WHERE ${SEALABLE_GUARD}
+       AND NOT EXISTS(SELECT 1 FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='tenant' AND scope_key='')`,
+      [
+        this.identity.tenantId,
+        binding.account_id,
+        binding.physical_id,
+        binding.restore_epoch,
+        this.now(),
+        this.now(),
+        ...this.guard(),
+        this.identity.tenantId,
+      ]
+    );
+    if (!result.success) throw error();
+    const bound = await this.database.queryOne(
+      `SELECT 1 AS bound FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='tenant' AND scope_key=''
+        AND mode='enforced' AND account_id=? AND physical_id=? AND restore_epoch=?`,
+      [this.identity.tenantId, binding.account_id, binding.physical_id, binding.restore_epoch]
+    );
+    if (!bound) throw new Error('statement_consent_restore_rebind_required');
+  }
+
   /** Freeze this target against further importer writes; this is not application activation. */
   async seal(): Promise<void> {
     if (this.mode === 'verify') throw error();
     await this.authorize();
+    await this.rebuildStatementConsentTenantGuard();
+    // Definition generations are the source of projection work, never source job cursors.
+    if (
+      await this.database.queryOne(
+        "SELECT 1 AS present FROM sqlite_schema WHERE type='table' AND name='statement_consent_projection_jobs'"
+      )
+    ) {
+      const projected = await this.database.execute(
+        `INSERT INTO statement_consent_projection_jobs(tenant_id,statement_id,definition_generation,closed_generation,mode,targets_json,cursor_binding_ref,updated_at)
+         SELECT tenant_id,id,definition_generation,closed_generation,
+           CASE WHEN is_active=0 OR retired_at IS NOT NULL THEN 'closed' ELSE 'enforced' END,NULL,NULL,?
+         FROM consent_statements WHERE tenant_id=? AND ${SEALABLE_GUARD}
+         ON CONFLICT(tenant_id,statement_id) DO UPDATE SET definition_generation=excluded.definition_generation,
+           closed_generation=excluded.closed_generation,mode=excluded.mode,targets_json=NULL,cursor_binding_ref=NULL,updated_at=excluded.updated_at`,
+        [this.now(), this.identity.tenantId, ...this.guard()]
+      );
+      if (!projected.success) throw error();
+    }
     const result = await this.database.execute(
       `UPDATE tenant_backup_restore_targets SET state='sealed'
       WHERE ${SEALABLE_GUARD} AND id=?`,

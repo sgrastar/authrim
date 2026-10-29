@@ -500,8 +500,7 @@ export async function prepareStatementConsentTransition(
     sql: `WITH p AS (SELECT ${columns.map((column) => `${pg ? `CAST(? AS ${numeric.has(column) ? 'BIGINT' : 'TEXT'})` : '?'} AS ${column}`).join(', ')})
       INSERT INTO statement_consent_operations (${columns.join(', ')},admitted)
       SELECT ${columns.map((column) => `p.${column}`).join(', ')}, CASE WHEN ${guard} THEN 1 ELSE 0 END FROM p
-      WHERE NOT EXISTS(SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id=p.tenant_id AND o.operation_id=p.operation_id)
-      ON CONFLICT(tenant_id,operation_id) DO NOTHING`,
+      WHERE NOT EXISTS(SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id=p.tenant_id AND o.operation_id=p.operation_id)`,
     params: [...values, input.history?.id ?? null],
   });
   statements.push({
