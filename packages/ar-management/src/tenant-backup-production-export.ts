@@ -12,7 +12,11 @@ import { portablePiiLogValues } from '@authrim/ar-lib-core/services/tenant-porta
 import { portableTotpSecret } from '@authrim/ar-lib-core/services/tenant-portability/portable-totp-secret';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import { TenantBackupExecutionInventory } from '@authrim/ar-lib-core/services/tenant-portability/execution-inventory';
-import { assertSamlDrWriterCoverage } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import {
+  assertSamlDrWriterCoverage,
+  runSamlDrCoveredOperation,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import { runTenantBackupImportOperationStep } from './tenant-backup-import-dispatcher';
 import { resolveInstalledSqliteDatasets } from '@authrim/ar-lib-core/services/tenant-portability/installed-sqlite-datasets';
 import { PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS } from '@authrim/ar-lib-core/services/tenant-portability/phase8-sqlite-modules';
 import { phase8SqliteRestoreTargetRole } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
@@ -38,6 +42,7 @@ import { createTenantBackupIcebergLogSnapshotPorts } from './tenant-backup-icebe
 import { createTenantBackupSamlPorts } from './tenant-backup-saml-port';
 import type { TenantBackupInstalledOperationAdapter } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupRestoreTargets } from './tenant-backup-production-restore-targets';
+import { createProductionGuestRestoreAuthority } from './tenant-backup-guest-authority-production';
 import { createTenantBackupImportDiscard } from './tenant-backup-import-discard';
 import { assertIdentityMappingHistoryBoundaryReady } from './identity-mapping-history-maintenance';
 import { createProductionSamlDrSnapshotSources } from './tenant-backup-saml-dr-production-source';
@@ -122,7 +127,9 @@ async function resolveRestoreTenantKey(
   const lifecycleStates =
     context.operation.state === 'cancelling'
       ? ['provisioning', 'active', 'deleted']
-      : [context.operation.phase === 'verify_restore_activation' ? 'active' : 'provisioning'];
+      : context.operation.phase === 'activate_restore'
+        ? ['provisioning', 'active']
+        : [context.operation.phase === 'verify_restore_activation' ? 'active' : 'provisioning'];
   const row = await ensureDatabaseAdapter(env.DB, 'tenant-backup-restore-platform').queryOne<{
     tenant_key: string;
   }>(
@@ -292,6 +299,9 @@ export async function createProductionTenantBackupExportAdapter(
     })());
   const piiLog = createTenantBackupPiiLogTransformPort(env, async () => unavailable());
   const restore = importing ? createProductionTenantBackupRestoreTargets({ env, tenantKey }) : null;
+  const guestAuthority = importing
+    ? createProductionGuestRestoreAuthority(env, now, currentContext)
+    : null;
   // A cancelled or permanently failed import that already wrote discards its restored tenant.
   const discard = restore
     ? createTenantBackupImportDiscard({
@@ -312,8 +322,11 @@ export async function createProductionTenantBackupExportAdapter(
     }));
   const assertInstalled = async () => {
     await plan();
-    if (importing) await restore?.databaseForRole(currentContext(), 'tenant_core/default');
-    else if ((await resolveTenantKey(env, currentContext())) !== tenantKey)
+    if (importing) {
+      await restore?.databaseForRole(currentContext(), 'tenant_core/default');
+      if (currentContext().operation.state === 'running')
+        await guestAuthority?.enabled(currentContext());
+    } else if ((await resolveTenantKey(env, currentContext())) !== tenantKey)
       throw new Error('backup_phase8_tenant_key_changed');
   };
   const installed = createPhase8TenantBackupInstalledAdapter({
@@ -321,6 +334,7 @@ export async function createProductionTenantBackupExportAdapter(
     loadPlanned: plan,
     now,
     ports: {
+      ...(guestAuthority ? { guestAuthority } : {}),
       tenantKey,
       icebergLogs,
       async allowSqliteSource(rowInput) {
@@ -373,17 +387,31 @@ export async function createProductionTenantBackupExportAdapter(
           await env.CONTROL.publishTenantBackupRuntimeState();
           await restore.assertUnpublished(restoreContext);
         },
-        async activate(restoreContext) {
+        async activate(restoreContext, planDigest, admission) {
           if (!restore) unavailable();
-          await restore.assertUnpublished(restoreContext);
+          const mutationEnv = admission?.scopedEnv ?? env;
+          const activationRestore = admission
+            ? createProductionTenantBackupRestoreTargets({ env: mutationEnv, tenantKey })
+            : restore;
+          if (admission) await activationRestore.assertActivationReady(restoreContext, planDigest);
+          else await activationRestore.assertUnpublished(restoreContext);
+          await admission?.assertHeld();
           await activateProvisionedTenantLifecycle({
-            platformAdapter: restore.platform,
-            tenantAdapter: await restore.databaseForRole(restoreContext, 'tenant_core/default'),
+            platformAdapter: activationRestore.platform,
+            tenantAdapter: await activationRestore.databaseForRole(
+              restoreContext,
+              'tenant_core/default'
+            ),
             tenantId: restoreContext.lease.tenantId,
             now: Math.floor(now() / 1000),
+            ...(admission ? { admissionDeadlineMs: admission.deadlineAt } : {}),
           });
-          await putTenantExistsCache(env.AUTHRIM_CONFIG, restoreContext.lease.tenantId);
-          await resolveActiveTenantRuntimeRouteObservation(env, restoreContext.lease.tenantId);
+          await admission?.assertHeld();
+          await putTenantExistsCache(mutationEnv.AUTHRIM_CONFIG, restoreContext.lease.tenantId);
+          await resolveActiveTenantRuntimeRouteObservation(
+            mutationEnv,
+            restoreContext.lease.tenantId
+          );
         },
         async verifyActivation(restoreContext) {
           if (!restore) unavailable();
@@ -533,6 +561,34 @@ export async function createProductionTenantBackupExportAdapter(
   });
   return {
     ...installed,
+    async runExclusiveImportActivation(activationContext, clock) {
+      if (
+        activationContext.operation.kind !== 'import' ||
+        activationContext.operation.phase !== 'activate_restore' ||
+        !guestAuthority
+      )
+        unavailable();
+      if (
+        activationContext.lease.tenantId !== context.lease.tenantId ||
+        activationContext.lease.operationId !== context.lease.operationId ||
+        activationContext.lease.owner !== context.lease.owner ||
+        activationContext.lease.fencingToken !== context.lease.fencingToken
+      )
+        unavailable();
+      activeContext = activationContext;
+      if (await guestAuthority.enabled(activationContext))
+        return runTenantBackupImportOperationStep(env, activationContext, installed.import, clock);
+      // Non-users imports keep normal writer coverage; only the verified Guest coordinator
+      // replaces it with an actual held tenant boundary.
+      return runSamlDrCoveredOperation(env, undefined, async (covered) => {
+        const fresh = await createProductionTenantBackupExportAdapter(
+          covered,
+          activationContext,
+          clock
+        );
+        return runTenantBackupImportOperationStep(covered, activationContext, fresh.import, clock);
+      });
+    },
     ...(samlDr ? { export: withSamlDrSupplementExport(installed.export, samlDr) } : {}),
     bindContext(next) {
       if (

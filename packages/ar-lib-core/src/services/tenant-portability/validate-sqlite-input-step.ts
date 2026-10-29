@@ -108,10 +108,38 @@ export async function runSqliteInputValidationStep(
   let rows = cursor.rows;
   let bytes = 0;
   let complete = false;
+  let prepared: Array<{ rowJson: string; nextCursor: string }> | undefined;
+  let preparedComplete = false;
+  if (input.policy.admitRow?.prepareRows) {
+    prepared = [];
+    let next = sourceCursor;
+    let preparedBytes = 0;
+    while (prepared.length < 500) {
+      const row = await input.readNextRow(next);
+      if (!row) {
+        preparedComplete = true;
+        break;
+      }
+      if (!row.nextCursor || row.nextCursor.length > 4096 || row.nextCursor === next) fail();
+      const size = new TextEncoder().encode(row.rowJson).length;
+      if (size > TENANT_BACKUP_CONTAINER_MAX_ROW_BYTES)
+        throw new Error('backup_sqlite_row_too_large');
+      if (prepared.length && preparedBytes + size > VALIDATION_BATCH_BYTES) break;
+      if (input.policy.dataset.store === 'database') assertTenantBackupSqliteRowFits(row.rowJson);
+      prepared.push(row);
+      preparedBytes += size;
+      next = row.nextCursor;
+    }
+    await input.policy.admitRow.prepareRows(
+      context,
+      prepared.map((row) => row.rowJson)
+    );
+    await assertPinned();
+  }
   for (let count = 0; count < VALIDATION_BATCH_ROWS; count++) {
-    const row = await input.readNextRow(sourceCursor);
+    const row = prepared ? prepared[count] : await input.readNextRow(sourceCursor);
     if (!row) {
-      complete = true;
+      complete = prepared ? preparedComplete : true;
       break;
     }
     if (

@@ -770,6 +770,7 @@ export { RUNTIME_LOOKUP_HMAC_TEST_VECTOR } from './entrypoints/RuntimeSmokeEntry
 export * from './services/guest-lifecycle';
 export * from './services/guest-settings';
 export * from './repositories/guest-lifecycle';
+export * from './services/guest-pii-erasure';
 
 export * from './services/guest-session';
 

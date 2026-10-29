@@ -41,6 +41,14 @@ export interface SqliteDatasetInspectionPolicy {
      * these stay within the restore statement budget. Absent: the transform issues none.
      */
     statementsPerRow?: number;
+    /** Fixed primary-read cost for an invocation-local bounded authority preflight. */
+    statementsPerBatch?: number;
+    prepareRows?(
+      context: TenantBackupStepContext,
+      rowJsons: readonly string[],
+      mode: 'write' | 'defer' | 'verify'
+    ): Promise<void>;
+    assertPreparedRows?(context: TenantBackupStepContext): Promise<void>;
     transform(
       context: TenantBackupStepContext,
       rowJson: string,
@@ -54,6 +62,8 @@ export interface SqliteDatasetInspectionPolicy {
    */
   admitRow?: {
     id: string;
+    /** Prepare one bounded primary read set; each row still passes `admit` afterwards. */
+    prepareRows?(context: TenantBackupStepContext, rowJsons: readonly string[]): Promise<void>;
     admit(context: TenantBackupStepContext, rowJson: string): Promise<void>;
   };
   /** Quarantine selected source work instead of inserting it into a live target queue. */
@@ -92,6 +102,9 @@ export function cloneSqliteDatasetInspectionPolicy(
 ): SqliteDatasetInspectionPolicy {
   const { inspectRow, identityAliases, restoreTransform, restoreHold, admitRow, ...serializable } =
     policy;
+  const prepareTransformRows = restoreTransform?.prepareRows?.bind(restoreTransform);
+  const assertPreparedTransformRows = restoreTransform?.assertPreparedRows?.bind(restoreTransform);
+  const prepareAdmissionRows = admitRow?.prepareRows?.bind(admitRow);
   return {
     ...structuredClone(serializable),
     inspectRow,
@@ -110,6 +123,24 @@ export function cloneSqliteDatasetInspectionPolicy(
             ...(restoreTransform.statementsPerRow !== undefined
               ? { statementsPerRow: restoreTransform.statementsPerRow }
               : {}),
+            ...(restoreTransform.statementsPerBatch !== undefined
+              ? { statementsPerBatch: restoreTransform.statementsPerBatch }
+              : {}),
+            ...(prepareTransformRows
+              ? {
+                  prepareRows: (
+                    context: TenantBackupStepContext,
+                    rows: readonly string[],
+                    mode: 'write' | 'defer' | 'verify'
+                  ) => prepareTransformRows(context, rows, mode),
+                }
+              : {}),
+            ...(assertPreparedTransformRows
+              ? {
+                  assertPreparedRows: (context: TenantBackupStepContext) =>
+                    assertPreparedTransformRows(context),
+                }
+              : {}),
             transform: (context, rowJson, mode) =>
               restoreTransform.transform(context, rowJson, mode),
           },
@@ -119,6 +150,12 @@ export function cloneSqliteDatasetInspectionPolicy(
       ? {
           admitRow: {
             id: admitRow.id,
+            ...(prepareAdmissionRows
+              ? {
+                  prepareRows: (context: TenantBackupStepContext, rows: readonly string[]) =>
+                    prepareAdmissionRows(context, rows),
+                }
+              : {}),
             admit: (context: TenantBackupStepContext, rowJson: string) =>
               admitRow.admit(context, rowJson),
           },

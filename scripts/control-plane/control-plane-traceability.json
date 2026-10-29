@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "ci": {
     "workflow": ".github/workflows/ci.yml",
-    "backendCommand": "pnpm run test:coverage:api",
+    "backendCommand": "pnpm exec turbo run test $(node scripts/ci-test-shards.mjs filters ${{ matrix.shard }})",
     "uiCommand": "pnpm run test:ui",
     "controlPlaneCommand": "pnpm run control-plane:test"
   },

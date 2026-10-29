@@ -79,6 +79,7 @@ describe('tenant placement migration inventory', () => {
       'tenant_backup_snapshots',
       'tenant_backup_preimages',
       'tenant_backup_restore_targets',
+      'guest_core_mutation_epoch',
     ]) {
       expect(result.tables.find((entry) => entry.table === table)).toMatchObject({
         disposition: 'retain_target_local',
@@ -101,7 +102,9 @@ describe('tenant placement migration inventory', () => {
       disposition: 'retain_target_local',
       ownership: { kind: 'global_reference' },
     });
-    expect(() => orderTenantMigrationTables(result.tables)).not.toThrow();
+    expect(orderTenantMigrationTables(result.tables).map(({ table }) => table)).not.toContain(
+      'guest_core_mutation_epoch'
+    );
   }, 15_000);
 
   it('classifies every table in the current PII migration stream', () => {
@@ -112,12 +115,20 @@ describe('tenant placement migration inventory', () => {
       'tenant_backup_snapshots',
       'tenant_backup_preimages',
       'tenant_backup_restore_targets',
+      'guest_pii_mutation_epoch',
     ]) {
       expect(result.tables.find((entry) => entry.table === table)).toMatchObject({
         disposition: 'retain_target_local',
         ownership: { kind: 'shard_local' },
       });
     }
+    const ordered = orderTenantMigrationTables(result.tables).map(({ table }) => table);
+    expect(ordered).not.toContain('guest_pii_mutation_epoch');
+    expect(ordered).toContain('guest_pii_erasure_markers');
+    expect(result.tables.find(({ table }) => table === 'guest_pii_erasure_markers')).toMatchObject({
+      disposition: 'migrate',
+      ownership: { kind: 'tenant_column', column: 'tenant_id' },
+    });
     expect(result.tables.find((table) => table.table === 'users_pii')?.ownership).toEqual({
       kind: 'tenant_column',
       column: 'tenant_id',
@@ -138,6 +149,27 @@ describe('tenant placement migration inventory', () => {
       parentTenantColumn: 'tenant_id',
     });
   }, 15_000);
+
+  it('does not classify a Guest epoch from the wrong database family as tenant data', () => {
+    for (const [dataRole, name] of [
+      ['tenant_core/users', 'guest_pii_mutation_epoch'],
+      ['tenant_pii', 'guest_core_mutation_epoch'],
+    ] as const)
+      expect(
+        classifyTenantMigrationSchema(dataRole, [
+          {
+            name,
+            columns: [
+              { name: 'id', primaryKeyPosition: 1 },
+              { name: 'revision', primaryKeyPosition: 0 },
+            ],
+          },
+        ])
+      ).toMatchObject({
+        state: 'blocked',
+        blockedReasons: [`tenant_migration_table_unclassified:${name}`],
+      });
+  });
 
   it('blocks an unclassified table and a broken indirect ownership rule', () => {
     const unknown = classifyTenantMigrationSchema('tenant_core/users', [

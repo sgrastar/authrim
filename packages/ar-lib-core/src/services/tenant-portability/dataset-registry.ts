@@ -111,6 +111,7 @@ const TABLE_GROUPS: Partial<
       tenant_placement_migration_captures tenant_placement_migration_outbox
     `,
     ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages
+      guest_core_mutation_epoch
       authrim_runtime_probes
       ciba_requests credential_offers device_codes external_idp_auth_states
       flow_interaction_steps flow_interactions password_reset_tokens sessions
@@ -123,7 +124,7 @@ const TABLE_GROUPS: Partial<
     // can authorize work in the target environment.
     users: `
       account_webhook_delivery_fields account_webhook_outbox account_webhook_snapshots external_identifier_unlink_operations
-      guest_upgrade_operations identity_identifier_replacement_challenges identity_identifier_replacement_operations identity_sensitive_values linked_identities
+      guest_upgrade_operations guest_pii_erasure_markers identity_identifier_replacement_challenges identity_identifier_replacement_operations identity_sensitive_values linked_identities
       pairwise_subject_identifiers pii_log_purge_operations service_group_inputs service_group_write_boundaries subject_identifiers user_anonymization_map
       users_pii users_pii_tombstone
     `,
@@ -132,6 +133,7 @@ const TABLE_GROUPS: Partial<
     `,
     rebuild: `
       authrim_migrations migration_metadata tenant_database_migration_state
+      guest_pii_mutation_epoch
       authrim_control_plane_shard_metadata identity_identifier_replacement_outbox identity_identifier_replacement_projections
       tenant_placement_migration_captures tenant_placement_migration_outbox
     `,

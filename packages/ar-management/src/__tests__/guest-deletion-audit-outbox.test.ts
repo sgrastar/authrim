@@ -9,8 +9,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
 }));
 
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { GuestLifecycleRepository } from '@authrim/ar-lib-core';
+import {
+  GuestLifecycleRepository,
+  createGuestDeletionProgress,
+  guestErasureBoundaryId,
+  type GuestDeletionReceiptV2,
+} from '@authrim/ar-lib-core';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
+import { openCoreStore } from './helpers/core-schema-sqlite';
 import {
   createGuestDeletionAuditTaskFromContext,
   GuestDeletionAuditOutboxRepository,
@@ -528,5 +534,244 @@ describe('guest deletion audit reconciliation outbox', () => {
     ).toEqual({ processed: 1, succeeded: 0, retrying: 0 });
     expect(writeAudit).not.toHaveBeenCalled();
     expect(await repository.get('account-guest-deleted-operation-stale')).toBeNull();
+  });
+});
+
+// Actual fully migrated SQLite, labelled D1 for the SQL repository; native D1 is covered
+// separately by the Core transport suite. Only audit delivery is substituted here.
+describe('Guest v2 terminal audit and acknowledgement gate', () => {
+  const opened: SQLiteDatabase[] = [];
+  afterEach(() => opened.splice(0).forEach((db) => db.close()));
+  async function fixture() {
+    const { db, adapter: base } = openCoreStore('tenant-v2');
+    opened.push(db);
+    db.exec('PRAGMA foreign_keys=ON');
+    const adapter: DatabaseAdapter = { ...base, getType: () => 'd1' };
+    const userId = '10000000-0000-4000-8000-000000000001';
+    const accountId = '20000000-0000-4000-8000-000000000001';
+    const accepted: GuestDeletionReceiptV2 = {
+      schemaVersion: 2,
+      tenantId: 'tenant-v2',
+      userId,
+      accountId,
+      operationId: 'guest-deletion-fixed',
+      accountRouteGeneration: 1,
+      corePin: {
+        databaseId: 'physical-core',
+        bindingRef: 'CORE_A',
+        dataRole: 'tenant_core/users',
+        residencyPartition: 'region-a',
+        shardId: 'core-a',
+        assignmentGeneration: 1,
+        bindingRouteGeneration: 1,
+      },
+      piiPin: {
+        databaseId: 'physical-pii',
+        bindingRef: 'PII_A',
+        dataRole: 'tenant_pii',
+        residencyPartition: 'region-a',
+        shardId: 'pii-a',
+        assignmentGeneration: 1,
+        bindingRouteGeneration: 1,
+      },
+      routeProjection: {
+        schemaVersion: 1,
+        accountRouteGeneration: 1,
+        residencyPolicyId: 'fixture-policy',
+        targets: [
+          {
+            dataRole: 'tenant_core/users',
+            residencyPartition: 'region-a',
+            shardId: 'core-a',
+            bindingRef: 'CORE_A',
+            requiredBindingRouteGeneration: 1,
+          },
+          {
+            dataRole: 'tenant_pii',
+            residencyPartition: 'region-a',
+            shardId: 'pii-a',
+            bindingRef: 'PII_A',
+            requiredBindingRouteGeneration: 1,
+          },
+        ],
+      },
+      completionAuditMode: 'outbox',
+      completionAuditId: 'audit-v2',
+      origin: 'admin',
+      execution: { phase: 'accepted', boundaryId: null, erasureStartedAtMs: null },
+    };
+    db.prepare(
+      `INSERT INTO identity_accounts(id,tenant_id,account_type,lifecycle_state,legacy_user_id,registration_state,directory_publication_state,created_at,updated_at) VALUES(?,?,'user','active',?,'guest','active',100,100)`
+    ).run(accountId, accepted.tenantId, userId);
+    const lifecycle = new GuestLifecycleRepository(adapter, accepted.tenantId);
+    await lifecycle.enroll({
+      userId,
+      clientId: 'app',
+      createdAt: 100,
+      deletionAfterDays: null,
+      policyVersion: 'policy:1',
+    });
+    const metadata = JSON.stringify({
+      guestDeletionVersion: 2,
+      operationId: accepted.operationId,
+      registration_state: 'guest',
+      reason: 'admin_action',
+    });
+    await lifecycle.admitDeletion({
+      userId,
+      accountId,
+      operationId: accepted.operationId,
+      routeJson: JSON.stringify(accepted),
+      expectedRevision: 1,
+      accountRouteGeneration: 1,
+      now: 1000,
+      startedAtMs: 1000000,
+      origin: 'admin',
+      task: {
+        auditId: accepted.completionAuditId,
+        actorUserId: 'original-admin',
+        ipAddress: '192.0.2.1',
+        userAgent: 'original-agent',
+        metadataJson: metadata,
+        createdAt: 1000,
+      },
+    });
+    const route = {
+      ...accepted,
+      execution: {
+        phase: 'erasure_started' as const,
+        boundaryId: await guestErasureBoundaryId(accepted.operationId),
+        erasureStartedAtMs: 1000001,
+      },
+    };
+    const routeJson = JSON.stringify(route);
+    await lifecycle.confirmErasureStart({
+      userId,
+      accountId,
+      operationId: route.operationId,
+      expectedRevision: 2,
+      acceptedRouteJson: JSON.stringify(accepted),
+      erasureStartedRouteJson: routeJson,
+      accountRouteGeneration: 1,
+      now: 1001,
+    });
+    const progress = {
+      ...(await createGuestDeletionProgress(route, [1])),
+      stage: 'final_core' as const,
+    };
+    db.prepare('UPDATE guest_deletion_audit_outbox SET execution_progress_json=?').run(
+      JSON.stringify(progress)
+    );
+    const next = {
+      ...progress,
+      revision: progress.revision + 2,
+      stage: 'directory_ready' as const,
+    };
+    expect(
+      await lifecycle.finishCoreErasure({
+        routeJson,
+        userId,
+        expectedProgressJson: JSON.stringify(progress),
+        nextProgressJson: JSON.stringify(next),
+        now: 1002,
+      })
+    ).toBe(true);
+    const repository = new GuestDeletionAuditOutboxRepository(adapter, accepted.tenantId);
+    const stage = (value: 'compact_pii' | 'terminal') =>
+      db
+        .prepare('UPDATE guest_deletion_audit_outbox SET execution_progress_json=?')
+        .run(JSON.stringify({ ...next, revision: next.revision + 1, stage: value }));
+    const process = (
+      writeAudit: NonNullable<Parameters<typeof processGuestDeletionAuditOutbox>[3]>['writeAudit'],
+      now = 2000
+    ) =>
+      processGuestDeletionAuditOutbox(
+        {} as Env,
+        [{ tenantId: accepted.tenantId, adapters: [{ adapter, bindingRef: 'CORE_A' }] }],
+        { info: vi.fn(), warn: vi.fn() },
+        { now: () => now, nowMs: () => 0, deadlineMs: 1, writeAudit }
+      );
+    return { db, adapter, repository, route, metadata, stage, process };
+  }
+  it('preserves a Core-terminal task until PII compaction has reached terminal progress', async () => {
+    const f = await fixture();
+    f.stage('compact_pii');
+    const writeAudit = vi.fn();
+    expect(await f.process(writeAudit)).toEqual({ processed: 1, succeeded: 0, retrying: 1 });
+    expect(writeAudit).not.toHaveBeenCalled();
+    expect(await f.repository.get(f.route.completionAuditId)).toEqual(
+      expect.objectContaining({
+        actor_user_id: 'original-admin',
+        ip_address: '192.0.2.1',
+        metadata_json: f.metadata,
+        status: 'retry',
+      })
+    );
+  });
+  it('retries delivery with original task identity and deletes the full task after durable success', async () => {
+    const f = await fixture();
+    f.stage('terminal');
+    const delivery = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('delivery_failed'))
+      .mockResolvedValue(undefined);
+    expect(await f.process(delivery)).toEqual({ processed: 1, succeeded: 0, retrying: 1 });
+    expect(await f.repository.get(f.route.completionAuditId)).not.toBeNull();
+    expect(await f.process(delivery, 3000)).toEqual({ processed: 1, succeeded: 1, retrying: 0 });
+    expect(delivery).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        audit_id: f.route.completionAuditId,
+        actor_user_id: 'original-admin',
+        ip_address: '192.0.2.1',
+        user_agent: 'original-agent',
+        metadata_json: f.metadata,
+        created_at: 1000,
+      }),
+      f.adapter,
+      1002000
+    );
+    expect(await f.repository.get(f.route.completionAuditId)).toBeNull();
+    expect(f.db.prepare('SELECT * FROM guest_deletion_audit_outbox').all()).toEqual([]);
+  });
+  it('confirms an acknowledgement lost after the actual DELETE from primary absence and terminal evidence', async () => {
+    const f = await fixture();
+    f.stage('terminal');
+    const execute = f.adapter.execute.bind(f.adapter);
+    f.adapter.execute = vi.fn(async (sql: string, params?: unknown[]) => {
+      await execute(sql, params);
+      throw new Error('lost_delete_ack');
+    });
+    await expect(f.repository.markSucceeded(f.route.completionAuditId)).resolves.toBeUndefined();
+    expect(await f.repository.get(f.route.completionAuditId)).toBeNull();
+  });
+  it('retains the original task when the acknowledgement did not commit', async () => {
+    const f = await fixture();
+    f.stage('terminal');
+    const before = await f.repository.get(f.route.completionAuditId);
+    f.adapter.execute = vi.fn().mockRejectedValue(new Error('delete_unavailable'));
+    await expect(f.repository.markSucceeded(f.route.completionAuditId)).rejects.toThrow(
+      'guest_deletion_audit_ack_unknown'
+    );
+    expect(await f.repository.get(f.route.completionAuditId)).toEqual(before);
+  });
+  it('refuses a stale task whose request metadata was replaced after it was read', async () => {
+    const f = await fixture();
+    f.stage('terminal');
+    const task = await f.repository.get(f.route.completionAuditId);
+    if (!task) throw new Error('fixture_task_missing');
+    f.db.prepare("UPDATE guest_deletion_audit_outbox SET ip_address='192.0.2.2'").run();
+    await expect(f.repository.acknowledgeV2(task)).rejects.toThrow(
+      'guest_deletion_audit_ack_unknown'
+    );
+    expect(await f.repository.get(f.route.completionAuditId)).toEqual(
+      expect.objectContaining({ ip_address: '192.0.2.2' })
+    );
+  });
+  it('never treats a v2 receipt as a legacy acknowledgement after the metadata version was removed', async () => {
+    const f = await fixture();
+    f.stage('terminal');
+    f.db.prepare("UPDATE guest_deletion_audit_outbox SET metadata_json='{}'").run();
+    await expect(f.repository.markSucceeded(f.route.completionAuditId)).rejects.toThrow();
+    expect(await f.repository.get(f.route.completionAuditId)).not.toBeNull();
   });
 });

@@ -5,6 +5,8 @@ import {
   assertSamlDrWriterCoverage,
   runSamlDrCoveredFetch,
   runSamlDrCoveredOperation,
+  runSamlDrHeldTenantOperation,
+  isSamlDrCoveredOperation,
   samlDrWaitUntil,
   samlDrAll,
 } from '../saml-dr-writer';
@@ -35,6 +37,73 @@ function fixture() {
 }
 
 describe('opt-in SAML source writer guard', () => {
+  it('retains a live held tenant scope through deferred effects without widening it', async () => {
+    const { env, context, control, order } = fixture();
+    const assertHeld = vi.fn(async () => {
+      order.push('held');
+    });
+    let release: () => void = () => {};
+    const deferred = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = runSamlDrHeldTenantOperation(
+      env,
+      context,
+      { tenantId: 'tenant-a', assertHeld },
+      async (scoped, tracked) => {
+        expect(hasTenantBackupMutationCoverage(scoped, { tenantId: 'tenant-a' })).toBe(true);
+        expect(hasTenantBackupMutationCoverage(scoped, { tenantId: 'tenant-b' })).toBe(false);
+        expect(hasTenantBackupMutationCoverage(scoped, { environment: true })).toBe(false);
+        expect(isSamlDrCoveredOperation(scoped)).toBe(false);
+        await expect(runSamlDrCoveredOperation(scoped, undefined, async () => {})).rejects.toThrow(
+          'saml_dr_environment_scope_required'
+        );
+        tracked?.waitUntil(
+          deferred.then(() => {
+            order.push('effect');
+          })
+        );
+        order.push('callback');
+        return 'ok';
+      }
+    );
+    await vi.waitFor(() => expect(order).toEqual(['held', 'held', 'callback']));
+    expect(assertHeld).toHaveBeenCalledTimes(2);
+    release();
+    await expect(running).resolves.toBe('ok');
+    expect(order).toEqual(['held', 'held', 'callback', 'effect', 'held']);
+    expect(control.acquireEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+  });
+  it('rejects held scope without live authority and from an existing writer operation', async () => {
+    const { env, control } = fixture();
+    const effect = vi.fn(async () => {});
+    await expect(
+      runSamlDrHeldTenantOperation(
+        env,
+        undefined,
+        {
+          tenantId: 'tenant-a',
+          assertHeld: async () => {
+            throw new Error('lost_hold');
+          },
+        },
+        effect
+      )
+    ).rejects.toThrow('lost_hold');
+    expect(effect).not.toHaveBeenCalled();
+    await runSamlDrCoveredOperation(env, undefined, async (scoped) => {
+      await expect(
+        runSamlDrHeldTenantOperation(
+          scoped,
+          undefined,
+          { tenantId: 'tenant-a', assertHeld: async () => {} },
+          effect
+        )
+      ).rejects.toThrow('saml_dr_held_tenant_scope_invalid');
+    });
+    expect(effect).not.toHaveBeenCalled();
+    expect(control.completeEnvironmentBackupMutationPermit).toHaveBeenCalledOnce();
+  });
   it('preserves the environment/context and makes no Control call by default', async () => {
     const { env, context, control } = fixture();
     env.ENABLE_SAML_DR_EXPORT = 'false';

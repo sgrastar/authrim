@@ -59,7 +59,7 @@ describe('Phase 8 restored work holds', () => {
   });
 
   it('keeps a finite reviewed rule registry and rejects malformed discriminator fields', () => {
-    expect(Object.keys(PHASE8_RESTORE_HOLD_RULES)).toHaveLength(44);
+    expect(Object.keys(PHASE8_RESTORE_HOLD_RULES)).toHaveLength(46);
     expect(
       phase8RestoreHoldReason(
         'core.account_lifecycle_event_outbox',
@@ -68,6 +68,45 @@ describe('Phase 8 restored work holds', () => {
     ).toBe('source_outbox');
     expect(() =>
       phase8RestoreHoldReason('core.plugin_hook_outbox', JSON.stringify({ id: text('row-a') }))
+    ).toThrow('backup_phase8_restore_hold_invalid');
+  });
+
+  it('never activates source Guest workflows or unfinished PII erasure on the target', () => {
+    const lifecycle = (phase: string, finalized: readonly [string, string | null] = nil) =>
+      JSON.stringify({ phase: text(phase), upgrade_finalized_at: finalized });
+    for (const phase of ['upgrading', 'deleting', 'registered'])
+      expect(phase8RestoreHoldReason('core.guest_account_lifecycle', lifecycle(phase))).toBe(
+        'source_guest_workflow'
+      );
+    for (const phase of ['active', 'deleted'])
+      expect(phase8RestoreHoldReason('core.guest_account_lifecycle', lifecycle(phase))).toBeNull();
+    expect(
+      phase8RestoreHoldReason(
+        'core.guest_account_lifecycle',
+        lifecycle('registered', ['integer', '100'])
+      )
+    ).toBeNull();
+    expect(() =>
+      phase8RestoreHoldReason('core.guest_account_lifecycle', lifecycle('registered', text('100')))
+    ).toThrow('backup_phase8_restore_hold_invalid');
+    expect(PHASE8_RESTORE_HOLD_RULES['core.guest_account_lifecycle']).toBeDefined();
+    expect(
+      phase8RestoreHoldReason(
+        'pii.guest_pii_erasure_markers',
+        JSON.stringify({ state: text('erasing') })
+      )
+    ).toBe('source_guest_erasure');
+    expect(
+      phase8RestoreHoldReason(
+        'pii.guest_pii_erasure_markers',
+        JSON.stringify({ state: text('deleted') })
+      )
+    ).toBeNull();
+    expect(() =>
+      phase8RestoreHoldReason(
+        'pii.guest_pii_erasure_markers',
+        JSON.stringify({ state: text('active') })
+      )
     ).toThrow('backup_phase8_restore_hold_invalid');
   });
 
