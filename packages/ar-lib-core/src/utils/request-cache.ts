@@ -22,7 +22,7 @@ import { createAuthContextFromHono } from '../context';
 import { getClient } from './kv';
 import { loadTenantContract, loadClientContract } from './contract-loader';
 import { getTenantProfile } from '../types/contracts/tenant-profile';
-import { buildVersionedKey, getCacheTTL } from './cache-config';
+import { buildClientCacheModeKey, buildVersionedKey, getCacheTTL } from './cache-config';
 import { buildKVKey } from './tenant-context';
 import { getTenantSettingsDocument } from './tenant-settings';
 import {
@@ -544,8 +544,8 @@ export async function invalidateClientCacheOnDelete(
 ): Promise<void> {
   // Use the same key format as kv.ts getClient()
   const cacheKey = buildKVKey('client', clientId, tenantId);
-  // Cache mode uses versioned key format
-  const cacheModeKey = buildVersionedKey('cache-mode:client', clientId);
+  // Cache mode uses versioned key format, per tenant
+  const cacheModeKey = buildClientCacheModeKey({ tenantId, clientId });
 
   await Promise.all([
     env.CLIENTS_CACHE?.delete(cacheKey).catch(() => {}),

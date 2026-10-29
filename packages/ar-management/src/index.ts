@@ -702,6 +702,7 @@ import {
   cancelTenantInvitationHandler,
 } from './admin-tenant-invitations';
 import { requireSupportedTenantParam } from './single-tenant-guard';
+import { requireTenantAdminForChanges } from './admin-role-gates';
 import { adminTenantPolicyMiddleware } from './admin-tenant-policy';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getAuthenticationMethodsHandler } from './authentication-methods';
@@ -2286,15 +2287,10 @@ app.delete('/api/admin/rate-limits/profile-override', requireSystemAdmin(), clea
 app.get('/api/admin/settings/cache-mode', requireSystemAdmin(), getPlatformCacheModeHandler);
 app.post('/api/admin/settings/cache-mode', requireSystemAdmin(), setPlatformCacheModeHandler);
 app.get('/api/admin/settings/cache-mode/info', requireSystemAdmin(), getCacheModeInfoHandler);
-// Client-specific cache mode overrides
+// Client-specific cache mode overrides. The mode is kept per tenant and client, and the handlers
+// check the client belongs to the request's tenant, so a tenant administrator sets its own.
 app.get('/api/admin/clients/:clientId/cache-mode', getClientCacheModeHandler);
-// The mode is kept under the client ID alone, which two tenants can share (a copied tenant), so
-// setting it is the platform's.
-app.post(
-  '/api/admin/clients/:clientId/cache-mode',
-  requireSystemAdmin(),
-  setClientCacheModeHandler
-);
+app.post('/api/admin/clients/:clientId/cache-mode', setClientCacheModeHandler);
 
 // [DEPRECATED] Admin IP Security Configuration
 // → Migrate to: /api/admin/tenants/:tenantId/settings/security
@@ -2456,10 +2452,10 @@ app.get('/api/admin/users/:id/effective-permissions', adminUserEffectivePermissi
 // ReBAC Management (Relationship-Based Access Control)
 // =============================================================================
 // Manages relation definitions (Zanzibar-style DSL) and relationship tuples.
-// RBAC: Requires ar_tenant_admin or higher (the handlers keep every read and write inside the
-// caller's tenant).
-app.use('/api/admin/rebac', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
-app.use('/api/admin/rebac/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+// RBAC: Reads need the permission the access table declares; changes need ar_tenant_admin or
+// higher (the handlers keep every read and write inside the caller's tenant).
+app.use('/api/admin/rebac', requireTenantAdminForChanges());
+app.use('/api/admin/rebac/*', requireTenantAdminForChanges());
 
 // Relation definitions management
 app.get('/api/admin/rebac/relation-definitions', adminRelationDefinitionsListHandler);
@@ -2484,8 +2480,8 @@ app.get('/api/admin/rebac/object-types', adminObjectTypesListHandler);
 // =============================================================================
 // Manages user attributes for ABAC policy evaluation.
 // Attributes can come from VCs, SAML, or manual assignment.
-app.use('/api/admin/attributes', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
-app.use('/api/admin/attributes/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+app.use('/api/admin/attributes', requireTenantAdminForChanges());
+app.use('/api/admin/attributes/*', requireTenantAdminForChanges());
 
 // Attribute management
 app.get('/api/admin/attributes', adminAttributesListHandler);
@@ -2504,10 +2500,10 @@ app.delete('/api/admin/attributes/expired', adminDeleteExpiredAttributesHandler)
 // Defines and manages custom claim field schemas.
 // Controls field types, validation rules, PII classification,
 // and OIDC token/endpoint inclusion settings.
-// RBAC: Requires ar_tenant_admin or higher role.
+// Reads need the read permission the access table declares; changes need ar_tenant_admin or higher.
 
-app.use('/api/admin/custom-claims', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
-app.use('/api/admin/custom-claims/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+app.use('/api/admin/custom-claims', requireTenantAdminForChanges());
+app.use('/api/admin/custom-claims/*', requireTenantAdminForChanges());
 
 app.get('/api/admin/custom-claims', adminCustomClaimsListHandler);
 app.post('/api/admin/custom-claims', adminCustomClaimCreateHandler);
@@ -2552,11 +2548,11 @@ app.delete('/api/admin/policies/:id', adminPolicyDeleteHandler);
 // =============================================================================
 // Manages authentication/authorization flows per tenant/client.
 // Flows define the steps and capabilities required for different auth scenarios.
-// RBAC: Requires ar_tenant_admin or higher role.
+// Reads need the read permission the access table declares; changes need ar_tenant_admin or higher.
 
-app.use('/api/admin/flows', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
-app.use('/api/admin/flows/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
-app.use('/api/admin/flow-assignments', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+app.use('/api/admin/flows', requireTenantAdminForChanges());
+app.use('/api/admin/flows/*', requireTenantAdminForChanges());
+app.use('/api/admin/flow-assignments', requireTenantAdminForChanges());
 
 // Flow CRUD endpoints
 app.get('/api/admin/flows', adminFlowsListHandler);
@@ -2657,10 +2653,10 @@ app.delete(
 // =============================================================================
 // Real-time access decision logs for debugging and monitoring.
 // Shows which rules allowed/denied access and why.
-// RBAC: Requires ar_tenant_admin or higher role.
+// Reads need the read permission the access table declares; changes need ar_tenant_admin or higher.
 
-app.use('/api/admin/access-trace', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
-app.use('/api/admin/access-trace/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+app.use('/api/admin/access-trace', requireTenantAdminForChanges());
+app.use('/api/admin/access-trace/*', requireTenantAdminForChanges());
 
 // Access trace endpoints
 app.get('/api/admin/access-trace', adminAccessTraceListHandler);
@@ -2683,8 +2679,8 @@ app.use('/api/admin/access-control/*', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require admin role for access control stats
-app.use('/api/admin/access-control/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+// RBAC: Reads need the permission the access table declares (the stats are read-only)
+app.use('/api/admin/access-control/*', requireTenantAdminForChanges());
 
 // Access Control Hub endpoints
 app.get('/api/admin/access-control/stats', adminAccessControlStatsHandler);
@@ -3700,7 +3696,7 @@ app.route('/api/admin/support-ops', supportOpsRouter);
 // =============================================================================
 // Time-series and aggregate statistics for administrative dashboards.
 // Supports date range filtering, interval selection, and timezone output.
-// RBAC: Requires ar_tenant_admin or higher role.
+// Reads need the read permission the access table declares; changes need ar_tenant_admin or higher.
 // Rate limit: moderate profile.
 
 // Rate limiting for Stats endpoints
@@ -3713,8 +3709,8 @@ app.use('/api/admin/stats/*', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require ar_tenant_admin or higher for statistics access
-app.use('/api/admin/stats/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+// RBAC: Reads need the permission the access table declares; changes need ar_tenant_admin or higher
+app.use('/api/admin/stats/*', requireTenantAdminForChanges());
 
 app.get('/api/admin/stats/tokens', adminStatsTokensHandler);
 app.get('/api/admin/stats/auth', adminStatsAuthHandler);
@@ -3731,7 +3727,7 @@ app.get('/api/admin/stats/clients/:id', adminStatsClientHandler);
 // - POST /api/admin/security/alerts/:id/acknowledge - Acknowledge alert
 //
 // Security:
-// - RBAC: ar_tenant_admin or higher required
+// - RBAC: reads need the declared permission; changes need ar_tenant_admin or higher
 // - Rate limit: moderate profile
 // - Tenant isolation: All queries scoped by tenant_id
 // =============================================================================
@@ -3746,8 +3742,8 @@ app.use('/api/admin/security/*', async (c, next) => {
   })(c, next);
 });
 
-// RBAC: Require ar_tenant_admin or higher for security alerts
-app.use('/api/admin/security/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+// RBAC: Reads need the declared permission; changes need ar_tenant_admin or higher
+app.use('/api/admin/security/*', requireTenantAdminForChanges());
 
 app.get('/api/admin/security/alerts', adminSecurityAlertsListHandler);
 app.post('/api/admin/security/alerts/:id/acknowledge', adminSecurityAlertAcknowledgeHandler);
@@ -3765,10 +3761,11 @@ app.post('/api/admin/security/ip-reputation', adminSecurityIpReputationHandler);
 // - /api/admin/compliance/reports[/:id[/download]]
 //
 // Security:
-// - RBAC: ar_tenant_admin or higher required
+// - RBAC: reads need the declared permission (the report file itself needs ar_tenant_admin or
+//   higher); changes need ar_tenant_admin or higher
 // - Tenant isolation: All data scoped by tenant_id
 // =============================================================================
-app.use('/api/admin/compliance/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
+app.use('/api/admin/compliance/*', requireTenantAdminForChanges());
 
 app.get('/api/admin/compliance/status', adminComplianceStatusHandler);
 app.get('/api/admin/compliance/access-reviews', listAccessReviews);
@@ -3781,7 +3778,12 @@ app.post('/api/admin/compliance/access-reviews/:id/cancel', cancelAccessReview);
 app.get('/api/admin/compliance/reports', listComplianceReports);
 app.post('/api/admin/compliance/reports', createComplianceReport);
 app.get('/api/admin/compliance/reports/:id', getComplianceReport);
-app.get('/api/admin/compliance/reports/:id/download', downloadComplianceReport);
+// The file is an export of the tenant's records, so it stays with the tenant administrators.
+app.get(
+  '/api/admin/compliance/reports/:id/download',
+  requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin),
+  downloadComplianceReport
+);
 
 // =============================================================================
 // Data Retention API (Phase 3)
@@ -3798,6 +3800,9 @@ app.get('/api/admin/compliance/reports/:id/download', downloadComplianceReport);
 // - RBAC: ar_tenant_admin or higher required
 // - Tenant isolation: All data scoped by tenant_id
 // =============================================================================
+// Reads stay with the tenant administrators too: the status and categories answers carry the state
+// of the installation-wide maintenance tasks, the data `GET /api/admin/jobs/schedules` keeps for the
+// platform roles.
 app.use('/api/admin/data-retention/*', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin));
 app.get('/api/admin/data-retention/status', getDataRetentionStatus);
 app.get('/api/admin/data-retention/estimate', getDataRetentionEstimate);

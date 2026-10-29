@@ -239,18 +239,16 @@ export class ApprovalRequestRepository extends BaseRepository<ApprovalRequestEnt
   }
 
   /**
-   * The public ID is not unique across tenants in what a caller may guess or learn, so a caller
-   * that acts for one tenant passes it: a request of another tenant is then not found.
+   * A request belongs to one tenant, and its public ID is not a secret (it appears in
+   * notifications, receipts and audit entries), so it is only ever looked up within a tenant.
    */
   async getApprovalRequestByPublicId(
     publicRequestId: string,
-    tenantId?: string
+    tenantId: string
   ): Promise<ApprovalRequest | null> {
     const row = await this.adapter.queryOne<ApprovalRequestEntity>(
-      tenantId === undefined
-        ? 'SELECT * FROM approval_requests WHERE public_request_id = ?'
-        : 'SELECT * FROM approval_requests WHERE public_request_id = ? AND tenant_id = ?',
-      tenantId === undefined ? [publicRequestId] : [publicRequestId, tenantId]
+      'SELECT * FROM approval_requests WHERE public_request_id = ? AND tenant_id = ?',
+      [publicRequestId, requireTenantId(tenantId, 'Approval request lookup')]
     );
     return row ? this.entityToApprovalRequest(row) : null;
   }
@@ -271,6 +269,40 @@ export class ApprovalRequestRepository extends BaseRepository<ApprovalRequestEnt
       [status, decidedAt, now, id]
     );
 
+    return this.getApprovalRequestById(id);
+  }
+
+  /**
+   * Works the request's status out from its steps as they are when the statement runs, in the
+   * statement itself (same precedence as `syncApprovalRequestStatus`: denied, cancelled, expired,
+   * all approved, some approved, pending). Two steps decided together each end with a recompute,
+   * and the last one to run sees both, so a stale reading cannot put the request back.
+   */
+  async recomputeApprovalRequestStatus(id: string): Promise<ApprovalRequest | null> {
+    const now = getCurrentTimestamp();
+    const steps = (status: string) =>
+      `EXISTS (SELECT 1 FROM approval_request_approvals a
+                WHERE a.approval_request_id = approval_requests.id AND a.status = '${status}')`;
+    const derived = `CASE
+        WHEN ${steps('denied')} THEN 'denied'
+        WHEN ${steps('cancelled')} THEN 'cancelled'
+        WHEN ${steps('expired')} THEN 'expired'
+        WHEN EXISTS (SELECT 1 FROM approval_request_approvals a
+                      WHERE a.approval_request_id = approval_requests.id)
+         AND NOT EXISTS (SELECT 1 FROM approval_request_approvals a
+                          WHERE a.approval_request_id = approval_requests.id AND a.status <> 'approved')
+          THEN 'approved'
+        WHEN ${steps('approved')} THEN 'partially_approved'
+        ELSE 'pending'
+      END`;
+    await this.adapter.execute(
+      `UPDATE approval_requests
+          SET status = ${derived},
+              decided_at = CASE WHEN ${derived} IN ('approved', 'denied') THEN ? ELSE NULL END,
+              updated_at = ?
+        WHERE id = ?`,
+      [now, now, id]
+    );
     return this.getApprovalRequestById(id);
   }
 
@@ -478,7 +510,16 @@ export class ApprovalRequestApprovalRepository extends BaseRepository<ApprovalRe
 
   async updateApproval(
     id: string,
-    input: ApprovalRequestApprovalUpdateInput
+    input: ApprovalRequestApprovalUpdateInput,
+    options?: {
+      expectedStatus?: ApprovalDecisionStatus;
+      /**
+       * Decide only if, at this moment and as the write lands, the step has not expired and its
+       * request is still open (pending or partially approved) and not past its deadline. A
+       * request denied or cancelled through another step in the meantime takes no more decisions.
+       */
+      openAt?: number;
+    }
   ): Promise<ApprovalRequestApproval | null> {
     const existing = await this.findById(id);
     if (!existing) {
@@ -541,10 +582,31 @@ export class ApprovalRequestApprovalRepository extends BaseRepository<ApprovalRe
     values.push(getCurrentTimestamp());
     values.push(id);
 
-    await this.adapter.execute(
-      `UPDATE approval_request_approvals SET ${updates.join(', ')} WHERE id = ?`,
+    // A decision applies to a step that is still in the state the caller saw: a step that was
+    // denied (or approved, or expired) in the meantime is not decided a second time.
+    let guard = '';
+    if (options?.expectedStatus) {
+      guard += ' AND status = ?';
+      values.push(options.expectedStatus);
+    }
+    if (options?.openAt !== undefined) {
+      guard += ` AND expires_at > ?
+        AND EXISTS (
+          SELECT 1 FROM approval_requests r
+           WHERE r.id = approval_request_approvals.approval_request_id
+             AND r.status IN ('pending', 'partially_approved')
+             AND r.expires_at > ?
+        )`;
+      values.push(options.openAt, options.openAt);
+    }
+    const guarded = options?.expectedStatus !== undefined || options?.openAt !== undefined;
+    const result = await this.adapter.execute(
+      `UPDATE approval_request_approvals SET ${updates.join(', ')} WHERE id = ?${guard}`,
       values
     );
+    if (guarded && result.rowsAffected === 0) {
+      return null;
+    }
 
     const updated = await this.findById(id);
     return updated ? this.entityToApproval(updated) : null;
@@ -599,7 +661,15 @@ export class ElevationGrantRepository extends BaseRepository<ElevationGrantEntit
     });
   }
 
-  async createElevationGrant(input: ElevationGrantCreateInput): Promise<ElevationGrant> {
+  async createElevationGrant(input: ElevationGrantCreateInput): Promise<ElevationGrant>;
+  async createElevationGrant(
+    input: ElevationGrantCreateInput,
+    options: { onlyIfNoActiveGrant: true }
+  ): Promise<ElevationGrant | null>;
+  async createElevationGrant(
+    input: ElevationGrantCreateInput,
+    options?: { onlyIfNoActiveGrant?: boolean }
+  ): Promise<ElevationGrant | null> {
     const id = generateId();
     const now = getCurrentTimestamp();
     const issuedAt = input.issued_at ?? now;
@@ -629,16 +699,31 @@ export class ElevationGrantRepository extends BaseRepository<ElevationGrantEntit
       updated_at: now,
     };
 
-    await this.adapter.execute(
-      `INSERT INTO elevation_grants (
-        id, public_grant_id, approval_request_id, tenant_id, status,
+    // D1 has no interactive transaction, so the INSERT itself decides that there is no active
+    // grant yet and that the request is still approved: two approvers finishing a request
+    // together cannot both create one, and a request cancelled in the meantime gets none.
+    const columns = `id, public_grant_id, approval_request_id, tenant_id, status,
         target_audience, resource_class, redaction_level,
         scope_canonical, scope_json, authorization_details_json,
         requester_subject_type, requester_subject_id,
         actor_subject_type, actor_subject_id,
         issued_at, expires_at, revoked_at, revoke_reason,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        created_at, updated_at`;
+    const placeholders = '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?';
+    const guard = options?.onlyIfNoActiveGrant
+      ? ` WHERE NOT EXISTS (
+          SELECT 1 FROM elevation_grants
+           WHERE approval_request_id = ? AND status = 'active'
+             AND revoked_at IS NULL AND expires_at > ?
+        ) AND EXISTS (
+          SELECT 1 FROM approval_requests
+           WHERE id = ? AND tenant_id = ? AND status = 'approved' AND expires_at > ?
+        )`
+      : '';
+    const result = await this.adapter.execute(
+      options?.onlyIfNoActiveGrant
+        ? `INSERT INTO elevation_grants (${columns}) SELECT ${placeholders}${guard}`
+        : `INSERT INTO elevation_grants (${columns}) VALUES (${placeholders})`,
       [
         entity.id,
         entity.public_grant_id,
@@ -661,16 +746,25 @@ export class ElevationGrantRepository extends BaseRepository<ElevationGrantEntit
         entity.revoke_reason,
         entity.created_at,
         entity.updated_at,
+        ...(options?.onlyIfNoActiveGrant
+          ? [entity.approval_request_id, now, entity.approval_request_id, entity.tenant_id, now]
+          : []),
       ]
     );
 
+    if (options?.onlyIfNoActiveGrant && result.rowsAffected === 0) {
+      return null;
+    }
     return this.entityToGrant(entity);
   }
 
-  async getElevationGrantByPublicId(publicGrantId: string): Promise<ElevationGrant | null> {
+  async getElevationGrantByPublicId(
+    publicGrantId: string,
+    tenantId: string
+  ): Promise<ElevationGrant | null> {
     const row = await this.adapter.queryOne<ElevationGrantEntity>(
-      'SELECT * FROM elevation_grants WHERE public_grant_id = ?',
-      [publicGrantId]
+      'SELECT * FROM elevation_grants WHERE public_grant_id = ? AND tenant_id = ?',
+      [publicGrantId, requireTenantId(tenantId, 'Elevation grant lookup')]
     );
     return row ? this.entityToGrant(row) : null;
   }
