@@ -12,13 +12,13 @@
  * import { requireRole, requireAnyRole, requireAllRoles } from '@authrim/ar-lib-core';
  *
  * // Require a single role
- * app.get('/admin', requireRole('system_admin'), handler);
+ * app.get('/admin', requireRole(ADMIN_ROLES.SUPER_ADMIN), handler);
  *
  * // Require any of multiple roles
- * app.get('/admin', requireAnyRole(['system_admin', 'org_admin']), handler);
+ * app.get('/admin', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin), handler);
  *
  * // Require all roles
- * app.get('/super', requireAllRoles(['system_admin', 'audit_role']), handler);
+ * app.get('/super', requireAllRoles([ADMIN_ROLES.SUPER_ADMIN, 'audit_role']), handler);
  * ```
  */
 
@@ -26,6 +26,7 @@ import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import type { AdminAuthContext } from '../types/admin';
 import { hasGlobalAdminRole, hasGlobalMachinePermission } from './admin-auth';
+import { ADMIN_ROLES, ADMIN_ROLE_GROUPS } from '../constants/admin-roles';
 
 /**
  * Error response for RBAC failures
@@ -33,22 +34,21 @@ import { hasGlobalAdminRole, hasGlobalMachinePermission } from './admin-auth';
 interface RBACErrorResponse {
   error: string;
   error_description: string;
-  required_roles?: string[];
+  required_roles?: readonly string[];
 }
 
 /**
  * Super admin roles that have all privileges
  *
  * These roles bypass all role checks - they are the highest privilege level.
- * Used for Admin/EndUser separation where super_admin is the Admin-side
- * equivalent of system_admin.
+ * Only the standard super admin role: the roles of the service's own users are another world.
  */
-const SUPER_ADMIN_ROLES = ['super_admin', 'system_admin'] as const;
+const SUPER_ADMIN_ROLES = ADMIN_ROLE_GROUPS.platform;
 
 /**
  * Check if the user has super admin privileges
  *
- * Super admins (super_admin, system_admin) bypass all role checks.
+ * Super admins bypass all role checks.
  *
  * @param roles - User's roles
  * @returns true if user has super admin privileges
@@ -83,15 +83,15 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
  * @param requiredRoles - Roles that were required
  * @returns RBACErrorResponse
  */
-function createAccessDeniedResponse(requiredRoles: string[]): RBACErrorResponse {
+function createAccessDeniedResponse(requiredRoles: readonly string[]): RBACErrorResponse {
   return {
     error: 'access_denied',
     error_description: `This action requires one of the following roles: ${requiredRoles.join(', ')}`,
-    required_roles: requiredRoles,
+    required_roles: [...requiredRoles],
   };
 }
 
-function assertRequiredRoles(roleNames: string[]): void {
+function assertRequiredRoles(roleNames: readonly string[]): void {
   if (roleNames.length === 0 || roleNames.some((role) => role.trim().length === 0)) {
     throw new Error('RBAC middleware requires at least one non-empty role');
   }
@@ -108,7 +108,7 @@ function assertRequiredRoles(roleNames: string[]): void {
  *
  * @example
  * ```typescript
- * app.get('/admin/users', requireRole('system_admin'), handler);
+ * app.get('/admin/users', requireRole(ADMIN_ROLES.SUPER_ADMIN), handler);
  * ```
  */
 export function requireRole(roleName: string) {
@@ -150,10 +150,10 @@ export function requireRole(roleName: string) {
  *
  * @example
  * ```typescript
- * app.get('/admin/dashboard', requireAnyRole(['system_admin', 'org_admin']), handler);
+ * app.get('/admin/dashboard', requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin), handler);
  * ```
  */
-export function requireAnyRole(roleNames: string[]) {
+export function requireAnyRole(roleNames: readonly string[]) {
   assertRequiredRoles(roleNames);
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authContext = getAdminAuth(c);
@@ -194,10 +194,10 @@ export function requireAnyRole(roleNames: string[]) {
  *
  * @example
  * ```typescript
- * app.get('/admin/audit', requireAllRoles(['system_admin', 'audit_access']), handler);
+ * app.get('/admin/audit', requireAllRoles([ADMIN_ROLES.SUPER_ADMIN, 'audit_access']), handler);
  * ```
  */
-export function requireAllRoles(roleNames: string[]) {
+export function requireAllRoles(roleNames: readonly string[]) {
   assertRequiredRoles(roleNames);
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authContext = getAdminAuth(c);
@@ -237,28 +237,11 @@ export function requireAllRoles(roleNames: string[]) {
 }
 
 /**
- * Require admin role
- *
- * Convenience middleware that checks for any admin role.
- * Equivalent to: requireAnyRole(['system_admin', 'distributor_admin', 'org_admin', 'admin'])
- *
- * @returns Hono middleware
- *
- * @example
- * ```typescript
- * app.get('/admin/settings', requireAdmin(), handler);
- * ```
- */
-export function requireAdmin() {
-  return requireAnyRole(['system_admin', 'distributor_admin', 'org_admin', 'admin']);
-}
-
-/**
  * Require system admin role
  *
  * Convenience middleware for platform-wide operations: the role has to come from a global
  * assignment. `authContext.roles` adds up every assignment that applies to the request, so a
- * system_admin or super_admin role held only for one tenant is in it too, and must not open an
+ * super admin role held only for one tenant is in it too, and must not open an
  * operation that takes effect across tenants.
  *
  * @returns Hono middleware
@@ -291,21 +274,6 @@ export function requireSystemAdmin() {
       return next();
     }
 
-    return c.json(createAccessDeniedResponse(['system_admin']), 403);
+    return c.json(createAccessDeniedResponse([ADMIN_ROLES.SUPER_ADMIN]), 403);
   };
 }
-
-/**
- * Predefined role names for Phase 1 RBAC
- *
- * These match the DEFAULT_ROLES in types/rbac.ts
- * Note: super_admin is the Admin-side equivalent of system_admin (from Admin/EndUser separation)
- */
-export const RBAC_ROLES = {
-  SUPER_ADMIN: 'super_admin',
-  SYSTEM_ADMIN: 'system_admin',
-  DISTRIBUTOR_ADMIN: 'distributor_admin',
-  ORG_ADMIN: 'org_admin',
-  TENANT_ADMIN: 'tenant_admin',
-  END_USER: 'end_user',
-} as const;

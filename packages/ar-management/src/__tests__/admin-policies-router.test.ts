@@ -50,7 +50,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         c.set('adminAuth', {
           userId: 'admin_1',
           email: 'admin@example.com',
-          roles: (c.req.header('x-test-roles') ?? 'system_admin').split(',').filter(Boolean),
+          roles: (c.req.header('x-test-roles') ?? 'ar_super_admin').split(',').filter(Boolean),
           permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
           org_id: c.req.header('x-test-org-id') ?? undefined,
         });

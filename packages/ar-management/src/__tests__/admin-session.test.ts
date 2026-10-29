@@ -130,7 +130,7 @@ describe('Admin Session Handlers', () => {
     mockAdminAdapter.query.mockResolvedValue([
       {
         id: 'role-viewer',
-        name: 'viewer',
+        name: 'ar_viewer',
         permissions_json: '["admin:logging:overview:read"]',
         hierarchy_level: 10,
         inherits_from: null,
@@ -156,7 +156,7 @@ describe('Admin Session Handlers', () => {
       tenant_id: 'tenant-a',
       email: 'admin@example.com',
       name: 'Admin User',
-      roles: ['viewer'],
+      roles: ['ar_viewer'],
       permissions: ['admin:logging:overview:read'],
       admin_scope: 'tenant',
       is_platform_admin: false,
@@ -172,7 +172,7 @@ describe('Admin Session Handlers', () => {
     ]);
   });
 
-  it('marks super_admin sessions as platform scoped', async () => {
+  it('marks ar_super_admin sessions as platform scoped', async () => {
     mockGetCookie.mockReturnValue('admin-session-123');
     mockAdminSessionRepo.getSession.mockResolvedValue({
       id: 'admin-session-123',
@@ -184,7 +184,7 @@ describe('Admin Session Handlers', () => {
     mockAdminAdapter.query.mockResolvedValue([
       {
         id: 'role-super-admin',
-        name: 'super_admin',
+        name: 'ar_super_admin',
         permissions_json: '["*"]',
         hierarchy_level: 1000,
         inherits_from: null,
@@ -204,7 +204,7 @@ describe('Admin Session Handlers', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      roles: ['super_admin'],
+      roles: ['ar_super_admin'],
       permissions: ['*'],
       admin_scope: 'platform',
       is_platform_admin: true,
@@ -224,7 +224,7 @@ describe('Admin Session Handlers', () => {
       .mockResolvedValueOnce([
         {
           id: 'role-child',
-          name: 'admin',
+          name: 'ar_tenant_admin',
           permissions_json: '["admin:logging:exports:create"]',
           hierarchy_level: 100,
           inherits_from: 'role-parent',
@@ -235,14 +235,14 @@ describe('Admin Session Handlers', () => {
       .mockResolvedValueOnce([
         {
           id: 'role-child',
-          name: 'admin',
+          name: 'ar_tenant_admin',
           permissions_json: '["admin:logging:exports:create"]',
           hierarchy_level: 100,
           inherits_from: 'role-parent',
         },
         {
           id: 'role-parent',
-          name: 'viewer',
+          name: 'ar_viewer',
           permissions_json: '["admin:logging:overview:read"]',
           hierarchy_level: 10,
           inherits_from: null,
@@ -260,14 +260,14 @@ describe('Admin Session Handlers', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      roles: ['admin'],
+      roles: ['ar_tenant_admin'],
       permissions: ['admin:logging:exports:create', 'admin:logging:overview:read'],
       admin_scope: 'tenant',
       is_platform_admin: false,
     });
   });
 
-  it('does not mark tenant-scoped super_admin sessions as platform scoped', async () => {
+  it('does not mark tenant-scoped ar_super_admin sessions as platform scoped', async () => {
     mockGetCookie.mockReturnValue('admin-session-123');
     mockAdminSessionRepo.getSession.mockResolvedValue({
       id: 'admin-session-123',
@@ -279,7 +279,7 @@ describe('Admin Session Handlers', () => {
     mockAdminAdapter.query.mockResolvedValue([
       {
         id: 'role-super-admin',
-        name: 'super_admin',
+        name: 'ar_super_admin',
         permissions_json: '["*"]',
         hierarchy_level: 1000,
         inherits_from: null,
@@ -299,7 +299,7 @@ describe('Admin Session Handlers', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      roles: ['super_admin'],
+      roles: ['ar_super_admin'],
       permissions: ['*'],
       admin_scope: 'tenant',
       is_platform_admin: false,
@@ -318,7 +318,7 @@ describe('Admin Session Handlers', () => {
     mockAdminAdapter.query.mockResolvedValue([
       {
         id: 'role-viewer',
-        name: 'viewer',
+        name: 'ar_viewer',
         permissions_json: '["admin:logging:overview:read"]',
         hierarchy_level: 10,
         inherits_from: null,

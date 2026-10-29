@@ -407,7 +407,10 @@ async function notifyPendingApproval(
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -775,7 +778,10 @@ adminApprovalsRouter.get('/:requestId', async (c) => {
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
     const requestId = c.req.param('requestId')!;
-    const request = await requestRepo.getApprovalRequestByPublicId(requestId);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      requestId,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -798,7 +804,10 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/subject-token', async (c)
     const adapter = getAdminAdapter(c);
     const requestRepo = new ApprovalRequestRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -944,7 +953,10 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/revoke', async (c) => {
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1044,7 +1056,10 @@ adminApprovalsRouter.post('/:requestId/steps/:approvalId/artifacts', async (c) =
     const adapter = getAdminAdapter(c);
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1171,7 +1186,10 @@ adminApprovalsRouter.get('/:requestId/evidence', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const requestRepo = new ApprovalRequestRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1215,7 +1233,10 @@ adminApprovalsRouter.get('/:requestId/receipts', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const requestRepo = new ApprovalRequestRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1275,7 +1296,10 @@ adminApprovalsRouter.get('/:requestId/steps/:approvalId/guide', async (c) => {
     const adapter = getAdminAdapter(c);
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1310,7 +1334,10 @@ async function updateApprovalDecision(
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1394,7 +1421,10 @@ adminApprovalsRouter.post('/:requestId/cancel', async (c) => {
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
-    const request = await requestRepo.getApprovalRequestByPublicId(c.req.param('requestId')!);
+    const request = await requestRepo.getApprovalRequestByPublicId(
+      c.req.param('requestId')!,
+      getTenantIdFromContext(c)
+    );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }

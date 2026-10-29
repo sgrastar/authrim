@@ -406,7 +406,7 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         INSERT INTO admin_role_assignments(
           id,tenant_id,admin_user_id,admin_role_id,scope_type,scope_id,assigned_by,created_at
         ) VALUES(
-          'assignment-global','tenant-a','source-admin','role_admin','global',NULL,'source-admin',1
+          'assignment-global','tenant-a','source-admin','role_ar_tenant_admin','global',NULL,'source-admin',1
         );
         INSERT INTO tenant_settings_documents(
           tenant_id,scope_type,scope_id,category,document_json,version,revision,projection_state,

@@ -457,6 +457,39 @@ describe('admin ReBAC security boundaries', () => {
     expect(mocks.getRelationshipsFrom).not.toHaveBeenCalled();
   });
 
+  it('refuses a relationship whose end is another tenant admin, without probing for it', async () => {
+    // from_id is found, to_id (another tenant's admin) is not.
+    mocks.findAdmin.mockResolvedValueOnce({ id: 'admin-a' }).mockResolvedValueOnce(null);
+
+    const response = await request('/api/admin/admin-relationships', 'POST', {
+      relationship_type: 'manager',
+      from_id: 'admin-a',
+      to_id: 'admin-of-tenant-b',
+    });
+
+    expect(response.status).toBe(404);
+    expect(mocks.hasRelationship).not.toHaveBeenCalled();
+    expect(mocks.createRelationship).not.toHaveBeenCalled();
+  });
+
+  it('looks for a duplicate relationship inside the tenant only', async () => {
+    mocks.hasRelationship.mockResolvedValue(false);
+    mocks.createRelationship.mockResolvedValue(relationship());
+
+    await request('/api/admin/admin-relationships', 'POST', {
+      relationship_type: 'manager',
+      from_id: 'admin-a',
+      to_id: 'admin-c',
+    });
+
+    expect(mocks.hasRelationship).toHaveBeenCalledWith(
+      'admin-a',
+      'admin-c',
+      'manager',
+      expect.objectContaining({ tenantId: 'tenant-a' })
+    );
+  });
+
   it('creates user relationships only for an admin in the current tenant', async () => {
     mocks.findAdmin.mockResolvedValueOnce(null);
     expect(

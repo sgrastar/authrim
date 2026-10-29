@@ -48,7 +48,7 @@ describe('system initialization database authority', () => {
     expect(mocks.ensureDatabaseAdapter).toHaveBeenCalledTimes(1);
   });
 
-  it('assigns only the DB_ADMIN super_admin role', async () => {
+  it('assigns only the DB_ADMIN ar_super_admin role', async () => {
     mocks.queryOne.mockResolvedValueOnce({ id: 'role-super-admin' }).mockResolvedValueOnce(null);
     mocks.execute.mockResolvedValueOnce({ rowsAffected: 1 });
 

@@ -11,7 +11,7 @@
  * Every other category answers where it is changed instead. Deletion is done by the scheduled
  * retention tasks and by expiry, not on request.
  *
- * Security: tenant_admin or higher; every query is scoped to the tenant; changes are audited.
+ * Security: ar_tenant_admin or higher; every query is scoped to the tenant; changes are audited.
  */
 
 import type { Context } from 'hono';

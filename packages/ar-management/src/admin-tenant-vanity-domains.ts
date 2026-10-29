@@ -21,6 +21,8 @@ import {
   resolveTenantDatabaseSourceFromRegistry,
   safeFetch,
   type DatabaseSource,
+  ADMIN_ROLES,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import {
   disableTenantDiscoveryAliasDirectory,
@@ -107,15 +109,13 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
  * what is given for one tenant only.
  */
 function isSystemAdmin(auth: AdminAuthContext | null): boolean {
-  return hasGlobalAdminRole(auth ?? undefined, ['system_admin', 'super_admin']);
+  return hasGlobalAdminRole(auth ?? undefined, ADMIN_ROLE_GROUPS.platform);
 }
 
 /** A tenant's own domains: roles and permissions here are the ones worked out for that tenant. */
 function hasPermission(c: Context<{ Bindings: Env }>, permission: string): boolean {
   const auth = getAdminAuth(c);
-  const holdsSystemRole = !!auth?.roles?.some(
-    (role) => role === 'system_admin' || role === 'super_admin'
-  );
+  const holdsSystemRole = !!auth?.roles?.some((role) => role === ADMIN_ROLES.SUPER_ADMIN);
   return holdsSystemRole || hasAdminPermission(auth?.permissions ?? [], permission);
 }
 

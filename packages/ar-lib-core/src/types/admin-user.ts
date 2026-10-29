@@ -126,7 +126,7 @@ export interface AdminRole {
   id: string;
   /** Tenant ID for multi-tenant support */
   tenant_id: string;
-  /** Machine-readable name (e.g., 'super_admin') */
+  /** Machine-readable name (e.g., 'ar_super_admin') */
   name: string;
   /** Human-readable name (e.g., 'Super Administrator') */
   display_name: string | null;
@@ -179,7 +179,7 @@ export interface AdminRoleUpdateInput {
 
 /**
  * Scope type for role assignment
- * - global: Role applies to all tenants (super_admin only)
+ * - global: Role applies to all tenants (ar_super_admin only)
  * - tenant: Role applies to specific tenant
  * - org: Reserved for future Admin scope binding; current Admin APIs do not create it
  */

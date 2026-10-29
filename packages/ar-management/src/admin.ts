@@ -375,7 +375,7 @@ const LOCK_REASON_CODES = new Set([
  * Suspend a user account with reason code
  *
  * Security:
- * - RBAC: tenant_admin or higher
+ * - RBAC: ar_tenant_admin or higher
  * - Tenant isolation: operation scoped to tenant
  * - Audit: reason_code logged (not reason_detail for privacy)
  *
@@ -564,7 +564,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
  * Lock a user account (more severe than suspend)
  *
  * Security:
- * - RBAC: tenant_admin or higher
+ * - RBAC: ar_tenant_admin or higher
  * - Tenant isolation: operation scoped to tenant
  * - Audit: reason_code logged (not reason_detail for privacy)
  *
@@ -769,7 +769,7 @@ const ACTIVATE_REASON_CODES = new Set([
  * Activate (restore) a suspended or locked user account
  *
  * Security:
- * - RBAC: tenant_admin or higher
+ * - RBAC: ar_tenant_admin or higher
  * - Tenant isolation: operation scoped to tenant
  * - Audit: reason_code logged (not reason_detail for privacy)
  *

@@ -587,29 +587,55 @@ export async function setTokenRefreshConfig(
   return normalized;
 }
 
+/**
+ * The runs that concern `tenantId`. A run is one pass over several tenants, so what a tenant sees
+ * of it is its own part: with `view: 'tenant'` the cursors (they name other tenants), the
+ * detail catalog and the totals of the whole pass are left out, and the counts are the tenant's.
+ * The shared configuration the run recorded (`config_json`) is never returned.
+ */
 export async function listTokenRefreshRuns(
   env: Env,
   tenantId: string,
-  limit: number = 50
+  limit: number = 50,
+  view: 'tenant' | 'platform' = 'tenant'
 ): Promise<TokenRefreshRunSummary[]> {
   const adapter = ensureAdminDatabaseAdapter(env, 'bridge-token-refresh-runs');
   if (!adapter) {
     return [];
   }
   const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
+  const columns =
+    view === 'platform'
+      ? `r.id, r.trigger_type, r.status, r.requested_tenant_id, r.actor_type, r.actor_id,
+         r.selected_tenants_count, r.processed_tenants, r.failed_tenants, r.tokens_refreshed,
+         r.cursor_before, r.cursor_after, r.detail_object_catalog_id, r.error_message,
+         r.started_at, r.completed_at`
+      : `r.id, r.trigger_type,
+         CASE WHEN r.requested_tenant_id = ? THEN r.status
+              WHEN t.status = 'failed' THEN 'failed' ELSE 'completed' END AS status,
+         r.requested_tenant_id, r.actor_type, r.actor_id,
+         CASE WHEN r.requested_tenant_id = ? THEN r.selected_tenants_count ELSE 1 END AS selected_tenants_count,
+         CASE WHEN r.requested_tenant_id = ? THEN r.processed_tenants
+              WHEN t.status = 'completed' THEN 1 ELSE 0 END AS processed_tenants,
+         CASE WHEN r.requested_tenant_id = ? THEN r.failed_tenants
+              WHEN t.status = 'failed' THEN 1 ELSE 0 END AS failed_tenants,
+         CASE WHEN r.requested_tenant_id = ? THEN r.tokens_refreshed
+              ELSE COALESCE(t.tokens_refreshed, 0) END AS tokens_refreshed,
+         NULL AS cursor_before, NULL AS cursor_after, NULL AS detail_object_catalog_id,
+         CASE WHEN r.requested_tenant_id = ? THEN r.error_message ELSE t.error_message END AS error_message,
+         r.started_at, r.completed_at`;
+  const columnParams =
+    view === 'platform' ? [] : [tenantId, tenantId, tenantId, tenantId, tenantId, tenantId];
   try {
     return await adapter.query<TokenRefreshRunSummary>(
-      `SELECT *
-       FROM admin_external_token_refresh_runs
-       WHERE requested_tenant_id = ?
-          OR id IN (
-            SELECT run_id
-            FROM admin_external_token_refresh_tenant_runs
-            WHERE tenant_id = ?
-          )
-       ORDER BY started_at DESC
+      `SELECT ${columns}
+       FROM admin_external_token_refresh_runs r
+       LEFT JOIN admin_external_token_refresh_tenant_runs t
+         ON t.run_id = r.id AND t.tenant_id = ?
+       WHERE r.requested_tenant_id = ? OR t.tenant_id IS NOT NULL
+       ORDER BY r.started_at DESC
        LIMIT ?`,
-      [tenantId, tenantId, safeLimit]
+      [...columnParams, tenantId, tenantId, safeLimit]
     );
   } catch (error) {
     log.warn('Token refresh run history unavailable', {

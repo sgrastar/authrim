@@ -259,7 +259,10 @@ function createValidAdminUser(userId: string = 'admin-user-123') {
   };
 }
 
-function createAdminRoles(roleNames: string[] = ['admin'], hasGlobalScope: boolean = false) {
+function createAdminRoles(
+  roleNames: string[] = ['ar_tenant_admin'],
+  hasGlobalScope: boolean = false
+) {
   return roleNames.map((name, i) => ({
     id: `role_${name}`,
     name,
@@ -752,7 +755,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(),
         adminUser: createValidAdminUser(),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
         machinePrincipal: fixture.machinePrincipal,
         machineCredential: fixture.machineCredential,
       });
@@ -777,7 +780,7 @@ describe('adminAuthMiddleware', () => {
       expect(data.adminAuth).toMatchObject({
         userId: 'admin-user-123',
         authMethod: 'session',
-        roles: ['admin'],
+        roles: ['ar_tenant_admin'],
         tenantId: 'default',
         transportAuth: {
           authMethod: 'machine_access_token',
@@ -795,7 +798,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(),
         adminUser: createValidAdminUser(),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
       const app = createTestApp(createMockEnv({ DB: db }));
 
@@ -818,7 +821,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(),
         adminUser: createValidAdminUser(),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
         machinePrincipal: fixture.machinePrincipal,
         machineCredential: fixture.machineCredential,
       });
@@ -915,7 +918,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(),
         adminUser: createValidAdminUser(),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
         machinePrincipal: fixture.machinePrincipal,
         machineCredential: fixture.machineCredential,
         machinePrincipalTenantScopes: [{ scope_mode: 'all', tenant_id: null }],
@@ -1304,7 +1307,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin', 'viewer']),
+        roles: createAdminRoles(['ar_tenant_admin', 'ar_viewer']),
       });
 
       const env = createMockEnv({ DB: db });
@@ -1322,7 +1325,7 @@ describe('adminAuthMiddleware', () => {
       const data = (await response.json()) as Record<string, unknown>;
       expect(data.adminAuth.userId).toBe(userId);
       expect(data.adminAuth.authMethod).toBe('session');
-      expect(data.adminAuth.roles).toContain('admin');
+      expect(data.adminAuth.roles).toContain('ar_tenant_admin');
     });
 
     it('should enforce middleware MFA and permission requirements on a session', async () => {
@@ -1330,8 +1333,8 @@ describe('adminAuthMiddleware', () => {
       const session = { ...createValidSession(userId), mfa_verified: 1 };
       const roles = [
         {
-          id: 'role_admin',
-          name: 'admin',
+          id: 'role_ar_tenant_admin',
+          name: 'ar_tenant_admin',
           permissions_json: JSON.stringify(['admin:users:*']),
           hierarchy_level: 80,
           inherits_from: null,
@@ -1361,7 +1364,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
       const app = createTestApp(createMockEnv({ DB: db }), { requireMfa: true });
 
@@ -1379,8 +1382,8 @@ describe('adminAuthMiddleware', () => {
       const userId = 'admin-user-malformed-role';
       const roles = [
         {
-          id: 'role_admin',
-          name: 'admin',
+          id: 'role_ar_tenant_admin',
+          name: 'ar_tenant_admin',
           permissions_json: JSON.stringify(['admin:users:read', 42]),
           hierarchy_level: 80,
           inherits_from: 'role_malformed',
@@ -1397,7 +1400,7 @@ describe('adminAuthMiddleware', () => {
           name: 'non_array',
           permissions_json: JSON.stringify({ permission: 'admin:users:write' }),
           hierarchy_level: 60,
-          inherits_from: 'role_admin',
+          inherits_from: 'role_ar_tenant_admin',
         },
       ];
       const db = createMockDB({
@@ -1423,7 +1426,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
         ipAllowlistEntries: [{ ip_range: '203.0.113.9', ip_version: 4 }],
       });
       const app = createTestApp(createMockEnv({ DB: db }), { skipIpCheck: true });
@@ -1442,7 +1445,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
         ipAllowlistEntries: [],
       });
 
@@ -1465,7 +1468,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
         ipAllowlistEntries: [{ ip_range: '203.0.113.9', ip_version: 4 }],
       });
 
@@ -1490,7 +1493,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
         throwOnIpAllowlist: true,
       });
 
@@ -1523,7 +1526,7 @@ describe('adminAuthMiddleware', () => {
         const db = createMockDB({
           session: createValidSession(userId),
           adminUser: createValidAdminUser(userId),
-          roles: createAdminRoles(['admin']),
+          roles: createAdminRoles(['ar_tenant_admin']),
           ipAllowlistEntries: [{ ip_range: ipRange, ip_version: ipRange.includes(':') ? 6 : 4 }],
         });
         const app = createTestApp(createMockEnv({ DB: db }));
@@ -1555,7 +1558,7 @@ describe('adminAuthMiddleware', () => {
         const db = createMockDB({
           session: createValidSession(userId),
           adminUser: createValidAdminUser(userId),
-          roles: createAdminRoles(['admin']),
+          roles: createAdminRoles(['ar_tenant_admin']),
           ipAllowlistEntries: [{ ip_range: ipRange, ip_version: ipRange.includes(':') ? 6 : 4 }],
         });
         const app = createTestApp(createMockEnv({ DB: db }));
@@ -1600,7 +1603,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({ DB: db });
@@ -1631,7 +1634,7 @@ describe('adminAuthMiddleware', () => {
       const roles = [
         {
           id: 'role_child_admin',
-          name: 'admin',
+          name: 'ar_tenant_admin',
           permissions_json: JSON.stringify(['admin:users:read']),
           hierarchy_level: 80,
           inherits_from: 'role_parent_storage',
@@ -1703,7 +1706,7 @@ describe('adminAuthMiddleware', () => {
           parent_session_id: null,
         },
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
       const app = createTestApp(createMockEnv({ DB: db }));
 
@@ -1732,7 +1735,7 @@ describe('adminAuthMiddleware', () => {
           parent_session_id: null,
         },
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
       const app = createTestApp(
         createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test', DEFAULT_TENANT_ID: 'default' })
@@ -1774,7 +1777,7 @@ describe('adminAuthMiddleware', () => {
         session: childSession,
         parentSession: null,
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
       const app = createTestApp(createMockEnv({ DB: db }));
 
@@ -1857,7 +1860,7 @@ describe('adminAuthMiddleware', () => {
           mfa_verified: 0,
         },
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({ DB: db });
@@ -1929,7 +1932,7 @@ describe('adminAuthMiddleware', () => {
           is_active: 1,
           status: 'suspended', // Account is suspended
         },
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({ DB: db });
@@ -1950,7 +1953,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({
@@ -1979,7 +1982,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin'], true),
+        roles: createAdminRoles(['ar_tenant_admin'], true),
       });
 
       const env = createMockEnv({
@@ -2007,7 +2010,7 @@ describe('adminAuthMiddleware', () => {
     });
 
     it('keeps what only the global assignments give apart from the sum of all of them', async () => {
-      // One admin: a viewer everywhere, and a super_admin for this tenant only. `roles` and
+      // One admin: a viewer everywhere, and a ar_super_admin for this tenant only. `roles` and
       // `permissions` add the two up; the global part is the viewer alone.
       const userId = 'admin-user-mixed-scope';
       const role = (name: string, level: number, global: boolean, permissions: string[]) => ({
@@ -2022,8 +2025,8 @@ describe('adminAuthMiddleware', () => {
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
         roles: [
-          role('super_admin', 100, false, ['*']),
-          role('viewer', 10, true, ['admin:users:read']),
+          role('ar_super_admin', 100, false, ['*']),
+          role('ar_viewer', 10, true, ['admin:users:read']),
         ],
       });
       const app = createTestApp(createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test' }));
@@ -2040,9 +2043,9 @@ describe('adminAuthMiddleware', () => {
       expect(response.status).toBe(200);
       const { adminAuth } = (await response.json()) as { adminAuth: Record<string, unknown> };
       expect(adminAuth).toMatchObject({
-        roles: ['super_admin', 'viewer'],
+        roles: ['ar_super_admin', 'ar_viewer'],
         permissions: expect.arrayContaining(['*', 'admin:users:read']),
-        globalRoles: ['viewer'],
+        globalRoles: ['ar_viewer'],
         globalPermissions: ['admin:users:read'],
         tenantScope: ['*'],
       });
@@ -2055,8 +2058,8 @@ describe('adminAuthMiddleware', () => {
         adminUser: createValidAdminUser(userId),
         roles: [
           {
-            id: 'role_super_admin',
-            name: 'super_admin',
+            id: 'role_ar_super_admin',
+            name: 'ar_super_admin',
             permissions_json: JSON.stringify(['admin:own:*']),
             hierarchy_level: 100,
             inherits_from: 'role_base',
@@ -2065,8 +2068,8 @@ describe('adminAuthMiddleware', () => {
         ],
         allRoles: [
           {
-            id: 'role_super_admin',
-            name: 'super_admin',
+            id: 'role_ar_super_admin',
+            name: 'ar_super_admin',
             permissions_json: JSON.stringify(['admin:own:*']),
             hierarchy_level: 100,
             inherits_from: 'role_base',
@@ -2092,7 +2095,7 @@ describe('adminAuthMiddleware', () => {
       );
 
       const { adminAuth } = (await response.json()) as { adminAuth: Record<string, string[]> };
-      expect(adminAuth.globalRoles).toEqual(['super_admin']);
+      expect(adminAuth.globalRoles).toEqual(['ar_super_admin']);
       expect([...adminAuth.globalPermissions].sort()).toEqual([...adminAuth.permissions].sort());
     });
 
@@ -2101,7 +2104,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['super_admin'], false),
+        roles: createAdminRoles(['ar_super_admin'], false),
       });
       const app = createTestApp(
         createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test' }),
@@ -2117,7 +2120,7 @@ describe('adminAuthMiddleware', () => {
 
       const { adminAuth } = (await response.json()) as { adminAuth: Record<string, unknown> };
       expect(adminAuth).toMatchObject({
-        roles: ['super_admin'],
+        roles: ['ar_super_admin'],
         globalRoles: [],
         globalPermissions: [],
         tenantScope: ['default'],
@@ -2129,7 +2132,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({
@@ -2158,7 +2161,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({
@@ -2184,7 +2187,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
       const app = createTestApp(
         createMockEnv({ DB: db, BASE_DOMAIN: 'authrim.test', DEFAULT_TENANT_ID: 'default' })
@@ -2221,7 +2224,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({
@@ -2250,7 +2253,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({ DB: db });
@@ -2275,7 +2278,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({ DB: db });
@@ -2377,7 +2380,7 @@ describe('adminAuthMiddleware', () => {
       const db = createMockDB({
         session: createValidSession(userId),
         adminUser: createValidAdminUser(userId),
-        roles: createAdminRoles(['admin']),
+        roles: createAdminRoles(['ar_tenant_admin']),
       });
 
       const env = createMockEnv({ DB: db });
@@ -2529,27 +2532,30 @@ describe('hasGlobalAdminRole', () => {
 
   it('needs the role among the global ones and a global tenant scope', () => {
     expect(
-      hasGlobalAdminRole(context({ globalRoles: ['system_admin'], tenantScope: ['*'] }), [
-        'super_admin',
-        'system_admin',
+      hasGlobalAdminRole(context({ globalRoles: ['ar_super_admin'], tenantScope: ['*'] }), [
+        'ar_super_admin',
+        'ar_super_admin',
       ])
     ).toBe(true);
   });
 
   it.each([
-    ['the role only in the sum', { roles: ['super_admin'], globalRoles: ['viewer'] }],
-    ['the role only in the sum, no global part at all', { roles: ['super_admin'] }],
-    ['a global role under a tenant scope', { globalRoles: ['super_admin'], tenantScope: ['acme'] }],
-    ['a global role and no scope', { globalRoles: ['super_admin'], tenantScope: undefined }],
-    ['another global role', { globalRoles: ['viewer'], tenantScope: ['*'] }],
+    ['the role only in the sum', { roles: ['ar_super_admin'], globalRoles: ['ar_viewer'] }],
+    ['the role only in the sum, no global part at all', { roles: ['ar_super_admin'] }],
+    [
+      'a global role under a tenant scope',
+      { globalRoles: ['ar_super_admin'], tenantScope: ['acme'] },
+    ],
+    ['a global role and no scope', { globalRoles: ['ar_super_admin'], tenantScope: undefined }],
+    ['another global role', { globalRoles: ['ar_viewer'], tenantScope: ['*'] }],
   ])('is false for %s', (_name, overrides) => {
-    expect(hasGlobalAdminRole(context({ tenantScope: ['*'], ...overrides }), ['super_admin'])).toBe(
-      false
-    );
+    expect(
+      hasGlobalAdminRole(context({ tenantScope: ['*'], ...overrides }), ['ar_super_admin'])
+    ).toBe(false);
   });
 
   it('is false without a context', () => {
-    expect(hasGlobalAdminRole(undefined, ['super_admin'])).toBe(false);
+    expect(hasGlobalAdminRole(undefined, ['ar_super_admin'])).toBe(false);
   });
 });
 
@@ -2562,16 +2568,19 @@ describe('hasGlobalPlatformAuthority', () => {
       hasGlobalPlatformAuthority(context({ globalPermissions: ['*'], tenantScope: ['*'] }))
     ).toBe(true);
     expect(
-      hasGlobalPlatformAuthority(context({ globalRoles: ['system_admin'], tenantScope: ['*'] }))
+      hasGlobalPlatformAuthority(context({ globalRoles: ['ar_super_admin'], tenantScope: ['*'] }))
     ).toBe(true);
   });
 
   it.each([
     [
       'a global viewer with the wildcard held for a tenant',
-      { permissions: ['*'], roles: ['viewer', 'super_admin'], globalRoles: ['viewer'] },
+      { permissions: ['*'], roles: ['ar_viewer', 'ar_super_admin'], globalRoles: ['ar_viewer'] },
     ],
-    ['a global scope alone', { globalRoles: ['viewer'], globalPermissions: ['admin:users:read'] }],
+    [
+      'a global scope alone',
+      { globalRoles: ['ar_viewer'], globalPermissions: ['admin:users:read'] },
+    ],
   ])('rejects %s', (_name, overrides) => {
     expect(hasGlobalPlatformAuthority(context({ tenantScope: ['*'], ...overrides }))).toBe(false);
   });
@@ -2600,7 +2609,7 @@ describe('hasGlobalPlatformAuthority', () => {
     });
     const person = context({
       tenantScope: ['*'],
-      globalRoles: ['viewer'],
+      globalRoles: ['ar_viewer'],
       globalPermissions: ['admin:control_plane:read'],
     });
 

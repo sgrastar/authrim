@@ -51,7 +51,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           actual.ADMIN_PERMISSIONS.APPROVALS_APPROVE,
           'admin:approvals:grant:issue',
         ],
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         hierarchyLevel: 50,
         mfaVerified: true,
       });

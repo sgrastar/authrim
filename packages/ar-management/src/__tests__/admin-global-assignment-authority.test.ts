@@ -27,6 +27,12 @@ function openAdminDatabase(): SQLiteDatabase {
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
   );
+  db.exec(
+    readFileSync(
+      resolve(REPO_ROOT, 'migrations/admin/d1/054_admin_roles_ar_prefix.sql'),
+      'utf8'
+    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+  );
   return db;
 }
 
@@ -142,8 +148,8 @@ function setup() {
   return { db, call, globalAssignments };
 }
 
-const TENANT_SUPER_ADMIN: Assignment[] = [{ role: 'role_super_admin', scope: 'tenant' }];
-const GLOBAL_SUPER_ADMIN: Assignment[] = [{ role: 'role_super_admin', scope: 'global' }];
+const TENANT_SUPER_ADMIN: Assignment[] = [{ role: 'role_ar_super_admin', scope: 'tenant' }];
+const GLOBAL_SUPER_ADMIN: Assignment[] = [{ role: 'role_ar_super_admin', scope: 'global' }];
 
 /** The chain: make a custom role that holds the wildcard, then assign it to oneself globally. */
 async function escalate(context: ReturnType<typeof setup>, assignments: Assignment[]) {
@@ -165,7 +171,7 @@ async function escalate(context: ReturnType<typeof setup>, assignments: Assignme
 }
 
 describe('giving an Admin a global assignment', () => {
-  it('refuses a tenant-limited super_admin the chain of a wildcard role and a global self-assignment', async () => {
+  it('refuses a tenant-limited ar_super_admin the chain of a wildcard role and a global self-assignment', async () => {
     const context = setup();
 
     const { actor, assigned } = await escalate(context, TENANT_SUPER_ADMIN);
@@ -205,7 +211,7 @@ describe('giving an Admin a global assignment', () => {
     expect(context.globalAssignments()).toEqual({ n: 0 });
   });
 
-  it('refuses a tenant-limited super_admin a global assignment through the Admin user route', async () => {
+  it('refuses a tenant-limited ar_super_admin a global assignment through the Admin user route', async () => {
     const context = setup();
     const actor = signIn(context.db, TENANT_SUPER_ADMIN);
     const created = await context.call(actor.cookie, 'POST', '/api/admin/admin-roles', {
@@ -228,7 +234,7 @@ describe('giving an Admin a global assignment', () => {
   it('refuses an Admin whose wildcard is held for the tenant while a global role is only a viewer', async () => {
     const context = setup();
     const actor = signIn(context.db, [
-      { role: 'role_viewer', scope: 'global' },
+      { role: 'role_ar_viewer', scope: 'global' },
       ...TENANT_SUPER_ADMIN,
     ]);
     const created = await context.call(actor.cookie, 'POST', '/api/admin/admin-roles', {
@@ -249,7 +255,7 @@ describe('giving an Admin a global assignment', () => {
     expect(context.globalAssignments()).toEqual({ n: 1 });
   });
 
-  it('still lets a global super_admin do it', async () => {
+  it('still lets a global ar_super_admin do it', async () => {
     const context = setup();
 
     const { assigned } = await escalate(context, GLOBAL_SUPER_ADMIN);
@@ -258,10 +264,10 @@ describe('giving an Admin a global assignment', () => {
     expect(assigned.json.scope_type).toBe('global');
   });
 
-  it('lets a global super_admin widen an assignment, and give one through the Admin user route', async () => {
+  it('lets a global ar_super_admin widen an assignment, and give one through the Admin user route', async () => {
     const context = setup();
     const actor = signIn(context.db, [
-      { role: 'role_viewer', scope: 'tenant' },
+      { role: 'role_ar_viewer', scope: 'tenant' },
       ...GLOBAL_SUPER_ADMIN,
     ]);
     const created = await context.call(actor.cookie, 'POST', '/api/admin/admin-roles', {
@@ -287,14 +293,14 @@ describe('giving an Admin a global assignment', () => {
       actor.cookie,
       'POST',
       `/api/admin/admins/${actor.userId}/roles`,
-      { role_id: 'role_support', scope_type: 'global' }
+      { role_id: 'role_ar_support', scope_type: 'global' }
     );
 
     expect(widened.status).toBe(200);
     expect(viaUserRoute.status).toBe(201);
   });
 
-  it('lets a tenant-limited super_admin assign roles within the tenant', async () => {
+  it('lets a tenant-limited ar_super_admin assign roles within the tenant', async () => {
     const context = setup();
     const actor = signIn(context.db, TENANT_SUPER_ADMIN);
     const created = await context.call(actor.cookie, 'POST', '/api/admin/admin-roles', {

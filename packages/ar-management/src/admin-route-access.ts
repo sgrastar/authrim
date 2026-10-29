@@ -5,6 +5,7 @@ import {
   getLogger,
   hasAdminPermission,
   hasGlobalAdminRole,
+  ADMIN_ROLE_GROUPS,
   type AdminAuthContext,
 } from '@authrim/ar-lib-core';
 
@@ -28,8 +29,8 @@ const READ_METHODS: AdminRouteMethod[] = ['GET'];
 const WRITE_METHODS: AdminRouteMethod[] = ['POST', 'PUT', 'PATCH'];
 const DELETE_METHODS: AdminRouteMethod[] = ['DELETE'];
 const ALL_METHODS: AdminRouteMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-const TENANT_ADMIN_ROLES = ['system_admin', 'distributor_admin', 'tenant_admin', 'admin'];
-const PLATFORM_ADMIN_ROLES = ['super_admin', 'system_admin'];
+const TENANT_ADMIN_ROLES = [...ADMIN_ROLE_GROUPS.tenantAdmin];
+const PLATFORM_ADMIN_ROLES = [...ADMIN_ROLE_GROUPS.platform];
 
 function rule(input: RuleInput): AdminRouteAccessRule {
   return {
@@ -790,7 +791,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'contract tenant policy',
-    ['system_admin', 'org_admin', 'admin']
+    TENANT_ADMIN_ROLES
   ),
   ...byMethod(
     '/api/admin/tenant-policy/*',
@@ -798,7 +799,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'contract tenant policy',
-    ['system_admin', 'org_admin', 'admin']
+    TENANT_ADMIN_ROLES
   ),
   ...byMethod(
     '/api/admin/client-profile-presets',
@@ -1866,7 +1867,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ROLES_WRITE,
     ADMIN_PERMISSIONS.ROLES_DELETE,
     'ReBAC definitions',
-    PLATFORM_ADMIN_ROLES
+    TENANT_ADMIN_ROLES
   ),
   ...byMethod(
     '/api/admin/rebac/*',
@@ -1874,7 +1875,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ROLES_WRITE,
     ADMIN_PERMISSIONS.ROLES_DELETE,
     'ReBAC definitions',
-    PLATFORM_ADMIN_ROLES
+    TENANT_ADMIN_ROLES
   ),
   ...byMethod(
     '/api/admin/compliance',

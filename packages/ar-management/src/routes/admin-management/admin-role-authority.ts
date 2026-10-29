@@ -11,21 +11,31 @@
 import type { AdminAuthContext, AdminRole, DatabaseAdapter } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
+  ADMIN_ROLES,
   hasAdminPermission,
   hasGlobalAdminPermission,
+  isReservedAdminRoleName,
 } from '@authrim/ar-lib-core';
 
 /**
- * Role names that Admin checks read as authority (platform and tenant administrators), whether or
- * not a system role carries them: a custom role must not take one.
+ * Whether a custom role may take this name. Admin checks read the standard roles' names as
+ * authority, so every name that starts with the reserved prefix is the standard roles' alone.
  */
-export const RESERVED_ROLE_NAMES: ReadonlySet<string> = new Set([
-  'super_admin',
-  'system_admin',
-  'distributor_admin',
-  'tenant_admin',
-  'org_admin',
-]);
+export function isRoleNameReserved(name: string): boolean {
+  return isReservedAdminRoleName(name.trim());
+}
+
+/**
+ * Where a role may be assigned. The super admin reaches every tenant and the platform, so it is
+ * held through a global assignment only; the other standard roles, and custom roles, may be given
+ * for a tenant or globally.
+ */
+export function isScopeAllowedForRole(roleName: string, scopeType: string): boolean {
+  if (roleName === ADMIN_ROLES.SUPER_ADMIN) {
+    return scopeType === 'global';
+  }
+  return scopeType === 'global' || scopeType === 'tenant';
+}
 
 /** Whether the caller's hierarchy is above `level`. A caller without a hierarchy outranks nothing. */
 export function callerOutranks(auth: AdminAuthContext, level: number): boolean {

@@ -10,7 +10,7 @@ import { logQueryErrorResponse } from './log-archive-query';
  * - GET  /api/admin/security/threats                  - List detected threats (Phase 2)
  *
  * Security:
- * - RBAC: tenant_admin or higher required
+ * - RBAC: ar_tenant_admin or higher required
  * - Rate limit: moderate profile
  * - Tenant isolation: All queries filtered by tenant_id
  *

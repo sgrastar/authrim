@@ -4,7 +4,7 @@
  * Endpoints for managing Admin users (stored in DB_ADMIN).
  * These are separate from EndUser management (stored in DB_CORE).
  *
- * Requires super_admin role or admin:admin_users:* permission.
+ * Requires the admin:admin_users:* permission.
  */
 
 import { Hono } from 'hono';
@@ -25,6 +25,7 @@ import {
   ADMIN_PERMISSIONS,
   hasAdminPermission,
   hasGlobalAdminPermission,
+  ADMIN_ROLES,
   requireDedicatedAdminDatabaseAdapter,
   type AdminUser,
 } from '@authrim/ar-lib-core';
@@ -34,9 +35,11 @@ import {
   callerOutranks,
   callerOutranksGlobally,
   loadAdminStanding,
+  isScopeAllowedForRole,
   mayActOnAdminAccount,
   mayRemoveAssignment,
 } from './admin-role-authority';
+import { ensureTenantKeepsAdmin } from './last-tenant-admin';
 
 // Create router
 export const adminUsersRouter = new Hono<{
@@ -77,7 +80,7 @@ function hasDeletePermission(authContext: AdminAuthContext): boolean {
 }
 
 function isPlatformAdminRole(roleName: string | undefined): boolean {
-  return roleName === 'super_admin';
+  return roleName === ADMIN_ROLES.SUPER_ADMIN;
 }
 
 function normalizeAdminAssignmentScope(
@@ -144,11 +147,11 @@ async function userHasActivePlatformAdminRole(
       )
      WHERE ra.tenant_id = ?
        AND ra.admin_user_id = ?
-       AND r.name = 'super_admin'
+       AND r.name = ?
        AND ra.scope_type = 'global'
        AND (ra.expires_at IS NULL OR ra.expires_at > ?)
      LIMIT 1`,
-    [tenantId, adminUserId, now]
+    [tenantId, adminUserId, ADMIN_ROLES.SUPER_ADMIN, now]
   );
   return !!row;
 }
@@ -165,8 +168,8 @@ async function ensureNotRemovingLastPlatformAdmin(
   }
 
   const platformRole = await adapter.queryOne<{ id: string }>(
-    "SELECT id FROM admin_roles WHERE tenant_id = 'default' AND name = 'super_admin' AND is_system = 1 LIMIT 1",
-    []
+    "SELECT id FROM admin_roles WHERE tenant_id = 'default' AND name = ? AND is_system = 1 LIMIT 1",
+    [ADMIN_ROLES.SUPER_ADMIN]
   );
   if (!platformRole) {
     return null;
@@ -404,14 +407,27 @@ adminUsersRouter.patch('/:id', async (c) => {
       mfa_enabled?: boolean;
     }>();
 
-    // Check hierarchy - can't modify users with higher hierarchy level
-    if (authContext.hierarchyLevel !== undefined && existing.id !== authContext.userId) {
-      // This would require fetching the target user's hierarchy level
-      // For now, only super_admin can modify other admins
-      const permissions = authContext.permissions || [];
-      if (!hasAdminPermission(permissions, '*')) {
-        // Check if user is trying to modify someone else
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    // The account is active or suspended through this route; any other value is refused.
+    if (body.status !== undefined && body.status !== 'active' && body.status !== 'suspended') {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    // Making an account unable to sign in is held to the same protections as the suspend route.
+    if (body.status === 'suspended' && existing.status === 'active') {
+      const lastPlatformAdminResponse = await ensureNotRemovingLastPlatformAdmin(
+        c,
+        adapter,
+        tenantId,
+        id
+      );
+      if (lastPlatformAdminResponse) {
+        return lastPlatformAdminResponse;
+      }
+      const lastTenantAdminResponse = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+        adminUserId: id,
+      });
+      if (lastTenantAdminResponse) {
+        return lastTenantAdminResponse;
       }
     }
 
@@ -488,6 +504,13 @@ adminUsersRouter.delete('/:id', async (c) => {
       return lastPlatformAdminResponse;
     }
 
+    const lastTenantAdminResponse = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+      adminUserId: id,
+    });
+    if (lastTenantAdminResponse) {
+      return lastTenantAdminResponse;
+    }
+
     // Soft delete (deactivate)
     await userRepo.updateAdminUser(id, { is_active: false });
 
@@ -551,6 +574,13 @@ adminUsersRouter.post('/:id/suspend', async (c) => {
     );
     if (lastPlatformAdminResponse) {
       return lastPlatformAdminResponse;
+    }
+
+    const lastTenantAdminResponse = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+      adminUserId: id,
+    });
+    if (lastTenantAdminResponse) {
+      return lastTenantAdminResponse;
     }
 
     await userRepo.suspendAccount(id);
@@ -717,6 +747,11 @@ adminUsersRouter.post('/:id/roles', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
+    // The super admin is held through a global assignment only.
+    if (!isScopeAllowedForRole(role.name, normalizedScope.scopeType)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
     // A global assignment is measured by the caller's global hierarchy, not the sum.
     if (
       normalizedScope.scopeType === 'global' &&
@@ -829,6 +864,13 @@ adminUsersRouter.delete('/:id/role-assignments/:assignmentId', async (c) => {
       }
     }
 
+    const lastTenantAdminResponse = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+      assignmentId,
+    });
+    if (lastTenantAdminResponse) {
+      return lastTenantAdminResponse;
+    }
+
     const removed = await roleAssignmentRepo.removeAssignmentById(assignmentId);
     if (!removed) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -908,10 +950,19 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
       }
     }
 
-    // Prevent removing own super_admin role
+    // Prevent removing own ar_super_admin role
     if (id === authContext.userId) {
       if (isPlatformAdminRole(role.name)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+      }
+    }
+
+    if (role.name === ADMIN_ROLES.TENANT_ADMIN) {
+      const lastTenantAdminResponse = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+        adminUserId: id,
+      });
+      if (lastTenantAdminResponse) {
+        return lastTenantAdminResponse;
       }
     }
 

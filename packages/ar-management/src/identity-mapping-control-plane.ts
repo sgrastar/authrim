@@ -37,6 +37,7 @@ import {
   sensitiveClassificationRank,
   toMappingSourceReference,
   validateExternalUrl,
+  ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
 import {
   isProtectedIdentityMappingDestinationClaim,
@@ -3374,6 +3375,9 @@ export class IdentityMappingControlPlaneRepository {
     if (!isRecord(input.template)) {
       throw badRequest('template must be an object');
     }
+    if (input.templateScope !== undefined) {
+      validateRequiredString(input.templateScope, 'templateScope');
+    }
     const now = this.now();
     const id = createId('mapping_template');
     await this.adapter.execute(
@@ -3406,7 +3410,7 @@ export class IdentityMappingControlPlaneRepository {
   async listMappingTemplates(tenantId: string) {
     const rows = await this.adapter.query<MappingTemplateRow>(
       `SELECT * FROM mapping_templates
-        WHERE tenant_id = ? OR tenant_id = ?
+        WHERE tenant_id = ? OR (tenant_id = ? AND template_scope <> 'tenant')
         ORDER BY template_scope ASC, template_key ASC`,
       [tenantId, 'default']
     );
@@ -8554,9 +8558,19 @@ export async function adminIdentityMappingTemplatesListHandler(c: AdminContext) 
 }
 
 export async function adminIdentityMappingTemplateCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'template.create', async (repository, tenantId, body) =>
-    repository.createMappingTemplate(tenantId, body as CreateMappingTemplateRequest)
-  );
+  return handleMutation(c, 'template.create', async (repository, tenantId, body) => {
+    // The default tenant's templates other than its own (`tenant` scope) are shared with every
+    // tenant, so offering one takes platform authority.
+    if (isRecord(body) && body.templateScope !== undefined) {
+      if (typeof body.templateScope !== 'string' || body.templateScope.length === 0) {
+        throw badRequest('templateScope must be a non-empty string');
+      }
+      if (body.templateScope !== 'tenant' && !hasPlatformOwnerScopeAuthority(c)) {
+        throw forbidden('a shared mapping template requires platform admin authority');
+      }
+    }
+    return repository.createMappingTemplate(tenantId, body as CreateMappingTemplateRequest);
+  });
 }
 
 export async function adminIdentityFieldMappingSetsListHandler(c: AdminContext) {
@@ -9102,9 +9116,7 @@ export function hasPlatformOwnerScopeAuthority(c: AdminContext): boolean {
   const globalRoles = auth?.globalRoles ?? [];
   const globalPermissions = auth?.globalPermissions ?? [];
   const hasPlatformRole =
-    globalRoles.includes('super_admin') ||
-    globalRoles.includes('system_admin') ||
-    globalPermissions.includes('*');
+    globalRoles.includes(ADMIN_ROLES.SUPER_ADMIN) || globalPermissions.includes('*');
   const hasGlobalScope = Array.isArray(auth?.tenantScope) && auth.tenantScope.includes('*');
   return hasPlatformRole && hasGlobalScope;
 }

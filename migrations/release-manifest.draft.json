@@ -426,6 +426,10 @@
             {
               "path": "053_log_iceberg_storage.sql",
               "checksum": "493c29521086a72229037e944d85b036e5caa8bec6cf2fd7814285637f8c3817"
+            },
+            {
+              "path": "054_admin_roles_ar_prefix.sql",
+              "checksum": "add8c4dac52af4330c2443e0b2351678b2a8edb79d4d957a855083ddbb6fef7b"
             }
           ]
         },
@@ -1087,6 +1091,10 @@
         {
           "path": "053_log_iceberg_storage.sql",
           "checksum": "493c29521086a72229037e944d85b036e5caa8bec6cf2fd7814285637f8c3817"
+        },
+        {
+          "path": "054_admin_roles_ar_prefix.sql",
+          "checksum": "add8c4dac52af4330c2443e0b2351678b2a8edb79d4d957a855083ddbb6fef7b"
         }
       ]
     },

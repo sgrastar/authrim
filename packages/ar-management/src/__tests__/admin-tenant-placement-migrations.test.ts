@@ -134,7 +134,7 @@ describe('Admin tenant placement migration API', () => {
       c.set('adminAuth', {
         userId: 'admin@example.com',
         authMethod: 'session',
-        roles: ['system_admin'],
+        roles: ['ar_super_admin'],
       });
       await next();
     });

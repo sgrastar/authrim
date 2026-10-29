@@ -772,7 +772,7 @@ export async function adminTenantRuntimeRegistryEmergencyPurgeHandler(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message === 'tenant_runtime_registry_purge_requires_system_admin') {
+    if (message === 'tenant_runtime_registry_purge_requires_super_admin') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
         variables: { resource: 'tenant_runtime_registry_snapshot' },
       });

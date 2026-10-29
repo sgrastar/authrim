@@ -31,7 +31,7 @@ const TEST_TENANT = 'default';
 const systemRole: Record<string, unknown> = {
   id: 'role-system-super',
   tenant_id: TEST_TENANT,
-  name: 'super_admin',
+  name: 'ar_super_admin',
   display_name: 'Super Administrator',
   description: 'Full system access',
   permissions_json: JSON.stringify(['*']),
@@ -61,7 +61,7 @@ const builtinRole: Record<string, unknown> = {
 const customRole: Record<string, unknown> = {
   id: 'role-custom-security',
   tenant_id: TEST_TENANT,
-  name: 'security_admin',
+  name: 'ar_tenant_admin',
   display_name: 'Security Administrator',
   description: 'Manages security settings',
   permissions_json: JSON.stringify(['admin:admin_audit:read', 'admin:ip_allowlist:write']),
@@ -225,11 +225,11 @@ describe('AdminRoleRepository', () => {
     it('should find role by name', async () => {
       adapter.seed('admin_roles', [customRole]);
 
-      const role = await repo.findByName(TEST_TENANT, 'security_admin');
+      const role = await repo.findByName(TEST_TENANT, 'ar_tenant_admin');
 
       expect(role).not.toBeNull();
       expect(role!.id).toBe('role-custom-security');
-      expect(role!.name).toBe('security_admin');
+      expect(role!.name).toBe('ar_tenant_admin');
     });
 
     it('should return null if role not found', async () => {
@@ -244,7 +244,7 @@ describe('AdminRoleRepository', () => {
       const otherTenantRole = { ...customRole, tenant_id: 'other-tenant' };
       adapter.seed('admin_roles', [otherTenantRole]);
 
-      const role = await repo.findByName(TEST_TENANT, 'security_admin');
+      const role = await repo.findByName(TEST_TENANT, 'ar_tenant_admin');
 
       expect(role).toBeNull();
     });
@@ -258,8 +258,8 @@ describe('AdminRoleRepository', () => {
 
       expect(roles.length).toBe(3);
       // Should be ordered by hierarchy_level DESC, name ASC
-      expect(roles[0].hierarchy_level).toBe(100); // super_admin
-      expect(roles[1].hierarchy_level).toBe(50); // security_admin
+      expect(roles[0].hierarchy_level).toBe(100); // ar_super_admin
+      expect(roles[1].hierarchy_level).toBe(50); // ar_tenant_admin
       expect(roles[2].hierarchy_level).toBe(10); // viewer
     });
 
@@ -288,7 +288,7 @@ describe('AdminRoleRepository', () => {
 
       expect(roles.length).toBe(1);
       expect(roles[0].is_system).toBe(true);
-      expect(roles[0].name).toBe('super_admin');
+      expect(roles[0].name).toBe('ar_super_admin');
     });
 
     it('should ignore legacy tenant-scoped system role copies', async () => {
@@ -319,7 +319,7 @@ describe('AdminRoleRepository', () => {
       const systemRole2 = {
         ...systemRole,
         id: 'role-system-admin',
-        name: 'system_admin',
+        name: 'ar_super_admin',
         hierarchy_level: 90,
       };
       adapter.seed('admin_roles', [systemRole, systemRole2]);

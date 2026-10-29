@@ -109,7 +109,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         authMethod: c.req.header('X-Admin-Auth-Method') ?? 'session',
         tenantId: 'tenant-a',
         permissions: ['admin:approvals:write'],
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         hierarchyLevel: 50,
         mfaVerified: c.req.header('X-Admin-Mfa-Verified') !== 'false',
         sessionId: c.req.header('X-Admin-Session-Id') ?? 'admin-session-1',

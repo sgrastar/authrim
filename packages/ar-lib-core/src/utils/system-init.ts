@@ -13,6 +13,7 @@ import type { Env } from '../types/env';
 import { ensureDatabaseAdapter } from '../db';
 import { createLogger } from './logger';
 import { DEFAULT_TENANT_ID } from './tenant-context';
+import { ADMIN_ROLES } from '../constants/admin-roles';
 
 const log = createLogger().module('SYSTEM_INIT');
 
@@ -20,22 +21,22 @@ const log = createLogger().module('SYSTEM_INIT');
  * System initialization status
  */
 export interface SystemInitStatus {
-  /** Whether a super_admin user exists */
+  /** Whether an ar_super_admin user exists */
   initialized: boolean;
-  /** Number of super_admin users (usually 1) */
+  /** Number of ar_super_admin users (usually 1) */
   adminCount: number;
 }
 
 /**
- * Check if the system has been initialized with at least one super_admin
+ * Check if the system has been initialized with at least one ar_super_admin
  *
  * The system is considered initialized if there is at least one active Admin user
- * with the super_admin role that hasn't expired.
+ * with the ar_super_admin role that hasn't expired.
  *
  * DB_ADMIN is the only authority for this check.
  *
  * @param env - Cloudflare Workers environment
- * @returns true if system is initialized (has at least one super_admin)
+ * @returns true if system is initialized (has at least one ar_super_admin)
  */
 export async function isSystemInitialized(env: Env): Promise<boolean> {
   const status = await getSystemInitStatus(env);
@@ -57,11 +58,11 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
        FROM admin_role_assignments ra
        JOIN admin_roles r ON ra.admin_role_id = r.id
        JOIN admin_users u ON ra.admin_user_id = u.id
-       WHERE r.name = 'super_admin'
+       WHERE r.name = ?
          AND u.is_active = 1
          AND u.status = 'active'
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-      [now]
+      [ADMIN_ROLES.SUPER_ADMIN, now]
     );
     const adminCount = result?.count ?? 0;
     return {
@@ -78,9 +79,9 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
 }
 
 /**
- * Assign super_admin role to an Admin user
+ * Assign ar_super_admin role to an Admin user
  *
- * Used during initial setup to grant the first Admin user super_admin privileges.
+ * Used during initial setup to grant the first Admin user ar_super_admin privileges.
  * Uses DB_ADMIN as the sole administration authority.
  *
  * @param env - Cloudflare Workers environment
@@ -95,15 +96,15 @@ export async function assignSystemAdminRole(
 ): Promise<void> {
   const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'admin-init');
 
-  // Get the super_admin role ID
+  // Get the ar_super_admin role ID
   const role = await adminAdapter.queryOne<{ id: string }>(
-    "SELECT id FROM admin_roles WHERE name = 'super_admin' AND tenant_id = 'default' AND is_system = 1 LIMIT 1",
-    []
+    "SELECT id FROM admin_roles WHERE name = ? AND tenant_id = 'default' AND is_system = 1 LIMIT 1",
+    [ADMIN_ROLES.SUPER_ADMIN]
   );
 
   if (!role) {
     throw new Error(
-      'super_admin role not found in DB_ADMIN. Database may not be properly initialized.'
+      `${ADMIN_ROLES.SUPER_ADMIN} role not found in DB_ADMIN. Database may not be properly initialized.`
     );
   }
 
@@ -122,7 +123,7 @@ export async function assignSystemAdminRole(
   const assignmentId = crypto.randomUUID();
   const now = Date.now(); // Milliseconds for new architecture
 
-  // Create the role assignment (no expiration for super_admin)
+  // Create the role assignment (no expiration for ar_super_admin)
   // scope_type='global' means system-wide access
   await adminAdapter.execute(
     `INSERT INTO admin_role_assignments (id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, expires_at, assigned_by, created_at)
@@ -130,7 +131,7 @@ export async function assignSystemAdminRole(
     [assignmentId, tenantId, adminUserId, role.id, now]
   );
 
-  log.info('Assigned super_admin role to Admin user', {
+  log.info('Assigned ar_super_admin role to Admin user', {
     adminUserId: adminUserId.substring(0, 8) + '...',
     roleId: role.id.substring(0, 8) + '...',
   });

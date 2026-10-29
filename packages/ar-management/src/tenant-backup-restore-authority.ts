@@ -19,6 +19,7 @@ import type { LogIcebergRuntimeEnv } from '@authrim/ar-lib-core/services/log-ice
  * shared Admin database already holds for other tenants or for the platform.
  */
 import {
+  ADMIN_ROLE_DEFINITIONS,
   CATEGORY_SCOPE_CONFIG,
   categoryTenantEditRequiresPlatformAuthority,
   hasGlobalAdminPermission,
@@ -38,7 +39,7 @@ import {
   type SqliteDatasetInspectionPolicy,
 } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
 import { hasPlatformAuthorityForTenantEdit } from './routes/settings-v2/settings-authorization';
-import { RESERVED_ROLE_NAMES } from './routes/admin-management/admin-role-authority';
+import { isRoleNameReserved } from './routes/admin-management/admin-role-authority';
 
 export const TENANT_SETTINGS_DOCUMENTS_DATASET = 'admin.tenant_settings_documents';
 export const ADMIN_ROLE_ASSIGNMENTS_DATASET = 'admin.admin_role_assignments';
@@ -71,7 +72,7 @@ export function tenantBackupImportAuthority(
  *
  * This differs from a new global assignment by the Admin API, which needs a level above the role
  * (`callerOutranksGlobally`), so that no one can give their own top level to someone else. With
- * that rule no one could restore a global super_admin, and a DR restore of the tenant the platform
+ * that rule no one could restore a global ar_super_admin, and a DR restore of the tenant the platform
  * administrators belong to would leave no one able to sign in to administer the platform. A
  * restore is meant to put back assignments that existed, not to make new ones; but a bundle is
  * not signed by Authrim (its key comes from a passphrase the requester holds, and the format is
@@ -499,7 +500,8 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
 
   /**
    * The level a role row takes: as a system role itself (a platform-tenant row with is_system), as
-   * one named like a system role, or as one with a reserved name (the highest system level). Null
+   * one named like a system role, or as one with a reserved name (a standard role's name that no
+   * system role carries is refused). Null
    * for an ordinary role. The system roles are the database's, except that on a platform-tenant
    * restore the bundle's replace them, so the answer does not change as the restore writes them;
    * the row itself never counts as one of the others.
@@ -522,10 +524,21 @@ export function createTenantBackupRestoreAuthorityGuard(input: {
       ...(own.system ? [own.level] : []),
       ...catalog.filter((role) => role.name === own.name).map((role) => role.hierarchy_level),
     ];
-    if (RESERVED_ROLE_NAMES.has(own.name)) {
-      // A reserved name with no system role at all is refused outright.
-      if (!catalog.length && !own.system) refused();
-      levels.push(...catalog.map((role) => role.hierarchy_level));
+    if (isRoleNameReserved(own.name)) {
+      // A reserved name is read as authority by Admin checks. A standard role's name takes at
+      // least that role's canonical level: what the bundle declares for the row itself
+      // (`is_system`, `hierarchy_level`) can only raise it. Any other reserved name is no role at
+      // all, so it takes the highest system level there is, and is refused outright when nothing
+      // in the catalog accounts for it.
+      const standard = ADMIN_ROLE_DEFINITIONS.find(
+        (definition) => definition.name === own.name.trim().toLowerCase()
+      );
+      if (standard) {
+        levels.push(standard.hierarchyLevel);
+      } else {
+        if (!catalog.length && !own.system) refused();
+        levels.push(...catalog.map((role) => role.hierarchy_level));
+      }
     }
     return levels.length ? Math.max(...levels) : null;
   }

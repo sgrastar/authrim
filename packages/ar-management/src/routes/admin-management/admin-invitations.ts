@@ -15,6 +15,7 @@ import {
   normalizeAdminInvitationIpRanges,
   requireDedicatedAdminDatabaseAdapter,
   adminAuthMiddleware,
+  ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { callerOutranksGlobally } from './admin-role-authority';
@@ -295,10 +296,10 @@ adminInvitationsRouter.post('/', async (c) => {
   if (!role || (role.tenant_id !== tenantId && !(role.tenant_id === 'default' && role.is_system))) {
     return c.json({ error: 'role_not_found' }, 404);
   }
-  // A global invitation (and a super_admin one is always global) takes effect for every tenant,
+  // A global invitation (and an ar_super_admin one is always global) takes effect for every tenant,
   // so it needs the wildcard from a global assignment, not one that is only held for this tenant.
   const wildcardAuthority = hasGlobalAdminPermission(auth, '*');
-  const invitingPeerSuperAdmin = role.name === 'super_admin' && wildcardAuthority;
+  const invitingPeerSuperAdmin = role.name === ADMIN_ROLES.SUPER_ADMIN && wildcardAuthority;
   if (
     auth.hierarchyLevel !== undefined &&
     role.hierarchy_level >= auth.hierarchyLevel &&
@@ -307,17 +308,18 @@ adminInvitationsRouter.post('/', async (c) => {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
 
-  const scopeType = requestedScopeType ?? (role.name === 'super_admin' ? 'global' : 'tenant');
+  const scopeType =
+    requestedScopeType ?? (role.name === ADMIN_ROLES.SUPER_ADMIN ? 'global' : 'tenant');
   const scopeId = scopeType === 'tenant' ? requestedScopeId || tenantId : null;
   if (
-    (role.name === 'super_admin' && scopeType !== 'global') ||
+    (role.name === ADMIN_ROLES.SUPER_ADMIN && scopeType !== 'global') ||
     (scopeType === 'global' && !wildcardAuthority) ||
     (scopeType === 'tenant' && scopeId !== tenantId)
   ) {
     return c.json({ error: 'invalid_scope' }, 400);
   }
   // A global invitation is a global assignment once accepted, so the role is measured by the
-  // caller's global hierarchy (a peer super_admin invitation is the one exception, as above).
+  // caller's global hierarchy (a peer ar_super_admin invitation is the one exception, as above).
   if (
     scopeType === 'global' &&
     !invitingPeerSuperAdmin &&
@@ -474,11 +476,11 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
   if (!invitation) return c.json({ error: 'invitation_not_found' }, 404);
 
   // A resend gives the invitation a new code and a new 24 hours, which brings an expired one back.
-  // An invitation for a global assignment (a super_admin one always is) takes effect for every
+  // An invitation for a global assignment (an ar_super_admin one always is) takes effect for every
   // tenant once accepted, so bringing it back takes the wildcard from a global assignment, as
   // creating it did.
   if (
-    (invitation.scope_type === 'global' || invitation.role_name === 'super_admin') &&
+    (invitation.scope_type === 'global' || invitation.role_name === ADMIN_ROLES.SUPER_ADMIN) &&
     !hasGlobalAdminPermission(auth, '*')
   ) {
     return c.json({ error: 'insufficient_permissions' }, 403);
@@ -549,7 +551,7 @@ adminInvitationsRouter.delete('/:id', async (c) => {
   const adapter = getAdapter(c);
   const tenantId = getTenantIdFromContext(c);
 
-  // An invitation for a global assignment (a super_admin one always is) is revoked on the wildcard
+  // An invitation for a global assignment (an ar_super_admin one always is) is revoked on the wildcard
   // from a global assignment, as creating and resending it are.
   const pending = await adapter.queryOne<{ scope_type: string; role_name: string | null }>(
     `SELECT scope_type, admin_role_name AS role_name FROM admin_invitations
@@ -558,7 +560,7 @@ adminInvitationsRouter.delete('/:id', async (c) => {
   );
   if (!pending) return c.json({ error: 'invitation_not_found' }, 404);
   if (
-    (pending.scope_type === 'global' || pending.role_name === 'super_admin') &&
+    (pending.scope_type === 'global' || pending.role_name === ADMIN_ROLES.SUPER_ADMIN) &&
     !hasGlobalAdminPermission(auth, '*')
   ) {
     return c.json({ error: 'insufficient_permissions' }, 403);

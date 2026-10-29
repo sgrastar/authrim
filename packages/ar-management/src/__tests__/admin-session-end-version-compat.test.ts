@@ -157,7 +157,7 @@ describe('versioned single-session logout: actual job storage', () => {
           userId: 'admin-a',
           authMethod: 'session',
           tenantId: 'tenant-a',
-          roles: ['tenant_admin'],
+          roles: ['ar_tenant_admin'],
           permissions,
           hierarchyLevel: 50,
           mfaVerified: true,

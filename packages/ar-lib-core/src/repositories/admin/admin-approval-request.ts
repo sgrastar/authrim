@@ -238,10 +238,19 @@ export class ApprovalRequestRepository extends BaseRepository<ApprovalRequestEnt
     return row ? this.entityToApprovalRequest(row) : null;
   }
 
-  async getApprovalRequestByPublicId(publicRequestId: string): Promise<ApprovalRequest | null> {
+  /**
+   * The public ID is not unique across tenants in what a caller may guess or learn, so a caller
+   * that acts for one tenant passes it: a request of another tenant is then not found.
+   */
+  async getApprovalRequestByPublicId(
+    publicRequestId: string,
+    tenantId?: string
+  ): Promise<ApprovalRequest | null> {
     const row = await this.adapter.queryOne<ApprovalRequestEntity>(
-      'SELECT * FROM approval_requests WHERE public_request_id = ?',
-      [publicRequestId]
+      tenantId === undefined
+        ? 'SELECT * FROM approval_requests WHERE public_request_id = ?'
+        : 'SELECT * FROM approval_requests WHERE public_request_id = ? AND tenant_id = ?',
+      tenantId === undefined ? [publicRequestId] : [publicRequestId, tenantId]
     );
     return row ? this.entityToApprovalRequest(row) : null;
   }

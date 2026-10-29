@@ -12,7 +12,7 @@ import {
  * Endpoints for viewing Admin operation audit logs (stored in DB_ADMIN).
  * These are separate from general audit logs (EndUser operations).
  *
- * Requires super_admin role or admin:admin_audit:read permission.
+ * Requires the admin:admin_audit:read permission.
  */
 
 import { Hono } from 'hono';

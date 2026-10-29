@@ -32,6 +32,7 @@ import {
   SUBJECT_UPDATED_AT_FORWARD_SQL,
   createAuditLog,
   createLogger,
+  ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
 import {
   initializeFromAccount,
@@ -992,8 +993,8 @@ function normalizeTenantBackupRetentionDays(configValue: unknown, env: Env): num
 function assertTenantDatabaseRestoreDryRunApproval(
   config: TenantDatabaseRestoreDryRunConfig
 ): void {
-  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes('system_admin')) {
-    throw new Error('tenant_database_restore_dry_run_requires_system_admin');
+  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
+    throw new Error('tenant_database_restore_dry_run_requires_super_admin');
   }
   if (config.break_glass_confirmation !== TENANT_DATABASE_RESTORE_DRY_RUN_CONFIRMATION) {
     throw new Error('tenant_database_restore_dry_run_requires_break_glass_confirmation');
@@ -1004,8 +1005,8 @@ function assertTenantDatabaseRestoreDryRunApproval(
 }
 
 function assertTenantDatabaseBackupPurgeApproval(config: TenantDatabasePurgeBackupConfig): void {
-  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes('system_admin')) {
-    throw new Error('tenant_database_backup_purge_requires_system_admin');
+  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
+    throw new Error('tenant_database_backup_purge_requires_super_admin');
   }
   if (config.break_glass_confirmation !== TENANT_DATABASE_BACKUP_PURGE_CONFIRMATION) {
     throw new Error('tenant_database_backup_purge_requires_break_glass_confirmation');

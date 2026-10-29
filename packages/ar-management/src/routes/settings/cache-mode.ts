@@ -26,6 +26,7 @@ import {
   setClientCacheMode,
   getCacheMode,
 } from '@authrim/ar-lib-core';
+import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
 // =============================================================================
 // Types
@@ -146,6 +147,25 @@ export async function setPlatformCacheModeHandler(
 // =============================================================================
 
 /**
+ * Whether the client belongs to the tenant of the request. The cache mode of a client is one shared
+ * KV key, so a tenant administrator must not reach one that is not its own.
+ */
+async function clientBelongsToRequestTenant(
+  c: Context<{ Bindings: Env }>,
+  clientId: string
+): Promise<boolean> {
+  const row = await resolveSettingsCoreAdapter(c).queryOne<{ client_id: string }>(
+    'SELECT client_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+    [resolveSettingsTenantId(c), clientId]
+  );
+  return row !== null;
+}
+
+function clientNotFound(c: Context<{ Bindings: Env }>): Response {
+  return c.json({ error: 'not_found', error_description: 'Client not found' }, 404);
+}
+
+/**
  * GET /api/admin/clients/:clientId/cache-mode
  * Get client-specific cache mode configuration
  */
@@ -161,6 +181,10 @@ export async function getClientCacheModeHandler(c: Context<{ Bindings: Env }>): 
         },
         400
       );
+    }
+
+    if (!(await clientBelongsToRequestTenant(c, clientId))) {
+      return clientNotFound(c);
     }
 
     const clientMode = await getClientCacheMode(c.env, clientId);
@@ -219,6 +243,10 @@ export async function setClientCacheModeHandler(c: Context<{ Bindings: Env }>): 
         },
         400
       );
+    }
+
+    if (!(await clientBelongsToRequestTenant(c, clientId))) {
+      return clientNotFound(c);
     }
 
     await setClientCacheMode(c.env, clientId, body.mode as CacheMode | null);

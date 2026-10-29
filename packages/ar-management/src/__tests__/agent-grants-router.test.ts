@@ -67,7 +67,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         userId: 'admin-1',
         actorType: 'human',
         authMethod: 'session',
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         tenantId: 'tenant-a',
         permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
       });

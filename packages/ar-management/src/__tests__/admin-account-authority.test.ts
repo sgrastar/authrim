@@ -21,7 +21,7 @@ import {
  * Acting on another Admin's account (changing, suspending, deleting, activating, unlocking it, or
  * removing a role it holds) when the account holds a global assignment, or a role above the
  * caller's own. `permissions` and `hierarchyLevel` add up what the caller holds for one tenant, so
- * a global viewer who is a super_admin of one tenant has the wildcard and the top hierarchy; such
+ * a global viewer who is a ar_super_admin of one tenant has the wildcard and the top hierarchy; such
  * an account is reached only with the permission and the hierarchy of the global assignments.
  *
  * These run the real admin-auth middleware and the real routers on the real Admin schema.
@@ -37,8 +37,8 @@ function setup() {
 
 type Context = ReturnType<typeof setup>;
 
-const GLOBAL_VIEWER: Assignment[] = [{ role: 'role_viewer', scope: 'global' }];
-const TENANT_VIEWER: Assignment[] = [{ role: 'role_viewer', scope: 'tenant' }];
+const GLOBAL_VIEWER: Assignment[] = [{ role: 'role_ar_viewer', scope: 'global' }];
+const TENANT_VIEWER: Assignment[] = [{ role: 'role_ar_viewer', scope: 'tenant' }];
 
 function accountOf(context: Context, userId: string) {
   return context.db
@@ -71,7 +71,7 @@ describe('acting on an account that holds a global assignment', () => {
   for (const action of ACTIONS) {
     it(`refuses ${action.name} by an Admin whose global assignment is only a viewer`, async () => {
       const context = setup();
-      // A second global super_admin, so the last-administrator guard is not what answers.
+      // A second global ar_super_admin, so the last-administrator guard is not what answers.
       signIn(context.db, GLOBAL_SUPER_ADMIN);
       const target = signIn(context.db, GLOBAL_SUPER_ADMIN);
       const actor = signIn(context.db, GLOBAL_VIEWER_TENANT_SUPER_ADMIN);
@@ -87,7 +87,7 @@ describe('acting on an account that holds a global assignment', () => {
       expect(accountOf(context, target.userId)).toEqual({ status: 'active', is_active: 1 });
     });
 
-    it(`refuses ${action.name} of a global viewer by a super_admin of the tenant only`, async () => {
+    it(`refuses ${action.name} of a global viewer by a ar_super_admin of the tenant only`, async () => {
       const context = setup();
       const target = signIn(context.db, GLOBAL_VIEWER);
       const actor = signIn(context.db, TENANT_SUPER_ADMIN);
@@ -104,7 +104,7 @@ describe('acting on an account that holds a global assignment', () => {
     });
   }
 
-  it('lets a global super_admin suspend, activate, update and delete such accounts', async () => {
+  it('lets a global ar_super_admin suspend, activate, update and delete such accounts', async () => {
     const context = setup();
     const actor = signIn(context.db, GLOBAL_SUPER_ADMIN);
     const peer = signIn(context.db, GLOBAL_SUPER_ADMIN);
@@ -148,7 +148,7 @@ describe('acting on an account that outranks the caller within the tenant', () =
     insertRole(context.db, {
       id: 'role_manager',
       // Signing in takes one of the Admin roles by name; the permissions are the manager's own.
-      name: 'support',
+      name: 'ar_support',
       permissions: [
         'admin:admin_users:read',
         'admin:admin_users:write',
@@ -161,7 +161,7 @@ describe('acting on an account that outranks the caller within the tenant', () =
   }
   const manager: Assignment = { role: 'role_manager', scope: 'tenant' };
 
-  it('refuses a manager on a tenant super_admin, and lets it manage a viewer', async () => {
+  it('refuses a manager on a tenant ar_super_admin, and lets it manage a viewer', async () => {
     const context = withManager();
     const above = signIn(context.db, TENANT_SUPER_ADMIN);
     const below = signIn(context.db, TENANT_VIEWER);
@@ -184,7 +184,7 @@ describe('acting on an account that outranks the caller within the tenant', () =
     expect(accountOf(context, below.userId).status).toBe('suspended');
   });
 
-  it('lets a super_admin of the tenant act on another super_admin of the tenant', async () => {
+  it('lets a ar_super_admin of the tenant act on another ar_super_admin of the tenant', async () => {
     const context = setup();
     const peer = signIn(context.db, TENANT_SUPER_ADMIN);
     const actor = signIn(context.db, TENANT_SUPER_ADMIN);
@@ -232,7 +232,7 @@ describe('removing a role assignment', () => {
     signIn(context.db, GLOBAL_SUPER_ADMIN);
     const actor = signIn(context.db, GLOBAL_VIEWER_TENANT_SUPER_ADMIN);
 
-    for (const [index, role] of ['role_viewer', 'role_super_admin'].entries()) {
+    for (const [index, role] of ['role_ar_viewer', 'role_ar_super_admin'].entries()) {
       const target = signIn(context.db, [{ role, scope: 'global' }]);
       for (const path of removals(target.userId, role)) {
         const response = await context.call(actor.cookie, 'DELETE', path);
@@ -242,26 +242,26 @@ describe('removing a role assignment', () => {
     }
   });
 
-  it('lets a global super_admin remove a global assignment, by each route', async () => {
+  it('lets a global ar_super_admin remove a global assignment, by each route', async () => {
     const context = setup();
     const actor = signIn(context.db, GLOBAL_SUPER_ADMIN);
-    // Another super_admin, so the last-administrator guard is not what answers.
+    // Another ar_super_admin, so the last-administrator guard is not what answers.
     signIn(context.db, GLOBAL_SUPER_ADMIN);
 
     for (const [index] of [0, 1, 2].entries()) {
       const target = signIn(context.db, GLOBAL_VIEWER);
-      const path = removals(target.userId, 'role_viewer')[index];
+      const path = removals(target.userId, 'role_ar_viewer')[index];
       const response = await context.call(actor.cookie, 'DELETE', path);
       expect(response.status, path).toBe(200);
       expect(assignmentCount(context, target.userId)).toBe(0);
     }
   });
 
-  it('refuses removing a role above the caller from a tenant assignment, and lets a super_admin of the tenant remove one', async () => {
+  it('refuses removing a role above the caller from a tenant assignment, and lets a ar_super_admin of the tenant remove one', async () => {
     const context = setup();
     insertRole(context.db, {
       id: 'role_manager',
-      name: 'support',
+      name: 'ar_support',
       permissions: ['admin:admin_users:read', 'admin:admin_roles:write'],
       hierarchy: 50,
     });
@@ -270,7 +270,7 @@ describe('removing a role assignment', () => {
     const superAdmin = signIn(context.db, TENANT_SUPER_ADMIN);
     const viewer = signIn(context.db, TENANT_VIEWER);
 
-    for (const path of removals(above.userId, 'role_super_admin')) {
+    for (const path of removals(above.userId, 'role_ar_super_admin')) {
       const response = await context.call(manager.cookie, 'DELETE', path);
       expect(response.status, path).toBe(403);
     }
@@ -279,7 +279,7 @@ describe('removing a role assignment', () => {
     const removed = await context.call(
       superAdmin.cookie,
       'DELETE',
-      removals(viewer.userId, 'role_viewer')[0]
+      removals(viewer.userId, 'role_ar_viewer')[0]
     );
     expect(removed.status).toBe(200);
     expect(assignmentCount(context, viewer.userId)).toBe(0);
@@ -290,13 +290,13 @@ describe('moving a global assignment to a tenant', () => {
   it('is judged as removing the global assignment', async () => {
     const context = setup();
     signIn(context.db, GLOBAL_SUPER_ADMIN);
-    const target = signIn(context.db, [{ role: 'role_viewer', scope: 'global' }]);
+    const target = signIn(context.db, [{ role: 'role_ar_viewer', scope: 'global' }]);
     const actor = signIn(context.db, GLOBAL_VIEWER_TENANT_SUPER_ADMIN);
 
     const response = await context.call(
       actor.cookie,
       'PATCH',
-      `/api/admin/admin-roles/role_viewer/assignments/${target.userId}-assignment-0`,
+      `/api/admin/admin-roles/role_ar_viewer/assignments/${target.userId}-assignment-0`,
       { scope_type: 'tenant' }
     );
 
@@ -307,15 +307,15 @@ describe('moving a global assignment to a tenant', () => {
     expect(row.scope_type).toBe('global');
   });
 
-  it('is allowed to a global super_admin', async () => {
+  it('is allowed to a global ar_super_admin', async () => {
     const context = setup();
     const actor = signIn(context.db, GLOBAL_SUPER_ADMIN);
-    const target = signIn(context.db, [{ role: 'role_viewer', scope: 'global' }]);
+    const target = signIn(context.db, [{ role: 'role_ar_viewer', scope: 'global' }]);
 
     const response = await context.call(
       actor.cookie,
       'PATCH',
-      `/api/admin/admin-roles/role_viewer/assignments/${target.userId}-assignment-0`,
+      `/api/admin/admin-roles/role_ar_viewer/assignments/${target.userId}-assignment-0`,
       { scope_type: 'tenant' }
     );
 
@@ -359,7 +359,7 @@ describe('revoking an invitation', () => {
   it('needs the wildcard from a global assignment for a global invitation', async () => {
     const context = setup();
     const actor = signIn(context.db, GLOBAL_VIEWER_TENANT_SUPER_ADMIN);
-    const id = invite(context, 'global', 'super_admin');
+    const id = invite(context, 'global', 'ar_super_admin');
 
     const response = await context.call(
       actor.cookie,
@@ -371,7 +371,7 @@ describe('revoking an invitation', () => {
     expect(statusOf(context, id)).toBe('pending');
   });
 
-  it('lets a global super_admin revoke it, and a super_admin of the tenant revoke a tenant one', async () => {
+  it('lets a global ar_super_admin revoke it, and a ar_super_admin of the tenant revoke a tenant one', async () => {
     const context = setup();
     const globalActor = signIn(context.db, GLOBAL_SUPER_ADMIN);
     const tenantActor = signIn(context.db, GLOBAL_VIEWER_TENANT_SUPER_ADMIN);

@@ -9,18 +9,13 @@ import {
   type AdminAuthContext,
   type DatabaseAdapter,
   type Env,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import { getAdminAuth } from './admin-tenant-access';
 import { writeAdminAuditLog } from './admin-shared';
 
 const SAFE_ID = /^[a-zA-Z0-9_-][a-zA-Z0-9._:-]{0,255}$/u;
-const PRIVILEGED_ROLES = new Set([
-  'super_admin',
-  'system_admin',
-  'distributor_admin',
-  'tenant_admin',
-  'admin',
-]);
+const PRIVILEGED_ROLES: ReadonlySet<string> = new Set(ADMIN_ROLE_GROUPS.tenantAdmin);
 const FILTER_STATUSES = new Set([
   'requested',
   'retrying',
