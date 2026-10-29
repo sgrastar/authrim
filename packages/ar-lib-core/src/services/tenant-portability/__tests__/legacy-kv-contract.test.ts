@@ -103,11 +103,23 @@ describe('reviewed legacy KV backup keys', () => {
     });
   });
 
-  it('requires the pinned client inventory for legacy client overrides', () => {
+  it('requires the pinned client inventory for client cache mode overrides', () => {
+    expect(
+      classifyLegacyKvKey('AUTHRIM_CONFIG', 'v1:cache-mode:client:tenant-a:client-a', context)
+    ).toEqual({ kind: 'client_setting', clientId: 'client-a' });
+    expect(
+      classifyLegacyKvKey('AUTHRIM_CONFIG', 'v1:cache-mode:client:tenant-a:client-b', context)
+    ).toEqual({ kind: 'unsupported' });
+  });
+
+  it('does not take the cache mode override of another tenant, whatever the client ID', () => {
+    expect(
+      classifyLegacyKvKey('AUTHRIM_CONFIG', 'v1:cache-mode:client:tenant-b:client-a', context)
+    ).toEqual({ kind: 'foreign_tenant' });
+  });
+
+  it('leaves the former un-tenanted cache mode key unsupported', () => {
     expect(classifyLegacyKvKey('AUTHRIM_CONFIG', 'v1:cache-mode:client:client-a', context)).toEqual(
-      { kind: 'client_setting', clientId: 'client-a' }
-    );
-    expect(classifyLegacyKvKey('AUTHRIM_CONFIG', 'v1:cache-mode:client:client-b', context)).toEqual(
       { kind: 'unsupported' }
     );
   });
