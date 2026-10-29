@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
+import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import type { Phase8ValidatedSqliteRestoreDataset } from '@authrim/ar-lib-core/services/tenant-portability/phase8-restore-targets';
 
@@ -102,6 +103,79 @@ const context = {
   lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
   signal: new AbortController().signal,
 } as never;
+
+it('resumes a partial activation only for this operation and plan with a positively sealed users target', async () => {
+  const platformDb = new DatabaseSync(':memory:'),
+    coreDb = new DatabaseSync(':memory:');
+  const live = (database: SQLiteDatabase): DatabaseAdapter => ({
+    query: async <T>(sql: string, params: unknown[] = []) =>
+      database.prepare(sql).all(...(params as SQLInputValue[])) as T[],
+    queryOne: async <T>(sql: string, params: unknown[] = []) =>
+      (database.prepare(sql).get(...(params as SQLInputValue[])) as T) ?? null,
+    execute: async (sql, params = []) => ({
+      success: true,
+      rowsAffected: Number(database.prepare(sql).run(...(params as SQLInputValue[])).changes),
+    }),
+    batch: vi.fn(),
+    transaction: vi.fn(),
+    isHealthy: async () => ({ healthy: true, latencyMs: 0, type: 'd1' }),
+    getType: () => 'd1',
+    close: async () => {},
+  });
+  try {
+    platformDb.exec(
+      "CREATE TABLE tenants(id TEXT PRIMARY KEY,lifecycle_state TEXT);INSERT INTO tenants VALUES('tenant-a','active')"
+    );
+    coreDb.exec(
+      "CREATE TABLE tenants(id TEXT PRIMARY KEY,lifecycle_state TEXT);INSERT INTO tenants VALUES('tenant-a','provisioning');CREATE TABLE tenant_backup_restore_targets(id TEXT PRIMARY KEY,tenant_id TEXT,operation_id TEXT,resource_id TEXT,plan_digest TEXT,state TEXT)"
+    );
+    coreDb
+      .prepare('INSERT INTO tenant_backup_restore_targets VALUES(?,?,?,?,?,?)')
+      .run('operation-a:core-db', 'tenant-a', 'operation-a', 'core-db', 'a'.repeat(64), 'loading');
+    mocks.resources.mockResolvedValue([
+      {
+        databaseId: 'core-db',
+        database: live(coreDb),
+        assignments: [
+          { dataRole: 'tenant_core/default', assignmentGeneration: 7 },
+          { dataRole: 'tenant_core/users', assignmentGeneration: 7 },
+        ],
+      },
+    ]);
+    const provider = createProductionTenantBackupRestoreTargets({
+      env: { DB: live(platformDb), DB_ADMIN: admin } as unknown as Env,
+      tenantKey: 'tenant-key-a',
+    });
+    const value = {
+      lease: { tenantId: 'tenant-a', operationId: 'operation-a' },
+      operation: { phase: 'activate_restore' },
+      signal: new AbortController().signal,
+    } as never;
+    await expect(provider.assertActivationReady(value, 'a'.repeat(64))).rejects.toThrow(
+      'restore_target_invalid'
+    );
+    coreDb.exec("UPDATE tenant_backup_restore_targets SET state='sealed'");
+    await expect(provider.assertActivationReady(value, 'a'.repeat(64))).resolves.toBeUndefined();
+    await expect(provider.assertActivationReady(value, 'b'.repeat(64))).rejects.toThrow(
+      'restore_target_invalid'
+    );
+    coreDb.exec("UPDATE tenant_backup_restore_targets SET operation_id='different'");
+    await expect(provider.assertActivationReady(value, 'a'.repeat(64))).rejects.toThrow(
+      'restore_target_invalid'
+    );
+    coreDb.exec(
+      "UPDATE tenant_backup_restore_targets SET operation_id='operation-a';UPDATE tenants SET lifecycle_state='active'"
+    );
+    await expect(provider.assertActivationReady(value, 'a'.repeat(64))).resolves.toBeUndefined();
+    platformDb.exec("UPDATE tenants SET lifecycle_state='provisioning'");
+    await expect(provider.assertActivationReady(value, 'a'.repeat(64))).rejects.toThrow(
+      'restore_target_invalid'
+    );
+  } finally {
+    platformDb.close();
+    coreDb.close();
+  }
+});
 
 let platform: TestAdapter;
 let admin: TestAdapter;

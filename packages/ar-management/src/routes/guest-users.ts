@@ -15,13 +15,35 @@
 
 import type { Context } from 'hono';
 import {
+  compareGuestCleanupKey,
+  decodeGuestCleanupCursor,
+  encodeGuestCleanupCursor,
+  guestCleanupInventoryDigest,
+} from '../guest-cleanup-cursor';
+import { createGuestPiiErasurePort } from '@authrim/ar-lib-core/services/guest-pii-erasure';
+import {
+  guestStoresFromContext,
+  guestMapStores,
+  findGuestCoreOwner,
+  resolveGuestOwnerStorage,
+  type GuestCoreOwner,
+  type GuestCoreStore,
+} from '../guest-account-storage';
+import {
+  parseGuestDeletionRoute,
+  verifyGuestDeletionPins,
+  guestErasureBoundaryId,
+} from '../guest-deletion-route';
+import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
   GuestLifecycleRepository,
   getTenantIdFromContext,
   getLogger,
+  getSessionRevocationStore,
   createAuditLogFromContext,
+  type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
 import { findActiveAccountLegalHold } from '../account-legal-hold-guard';
@@ -29,7 +51,8 @@ import { createGuestDeletionRoute, deleteOneGuestAccount } from '../guest-lifecy
 import {
   createGuestDeletionAuditTaskFromContext,
   GuestDeletionAuditOutboxRepository,
-  type GuestDeletionAuditOutboxRow,
+  requireGuestDeletionAuditTask,
+  writeGuestDeletionAudit,
 } from '../guest-deletion-audit-outbox';
 
 function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string) {
@@ -58,97 +81,6 @@ function parseIntegerQuery(
 function invalidRequest(c: Context<{ Bindings: Env }>, description: string): Response {
   return c.json({ error: 'invalid_request', error_description: description }, 400);
 }
-
-interface GuestDeletionAuditLogger {
-  warn(message: string, context?: Record<string, unknown>): void;
-  error(message: string, context?: Record<string, unknown>, error?: Error): void;
-}
-
-async function deliverGuestDeletionCompletionAudit(
-  c: Context<{ Bindings: Env }>,
-  input: {
-    repository: GuestDeletionAuditOutboxRepository;
-    task: GuestDeletionAuditOutboxRow;
-    completedAt: number;
-    metadata: Record<string, unknown>;
-    log: GuestDeletionAuditLogger;
-    logActionPrefix: 'guest_user_delete' | 'guest_cleanup_user_delete';
-  }
-): Promise<void> {
-  let deliveryError: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      await createAuditLogFromContext(
-        c,
-        'user.deleted',
-        'user',
-        input.task.user_id,
-        input.metadata,
-        'info',
-        input.task.audit_id,
-        input.completedAt * 1000,
-        true
-      );
-      try {
-        await input.repository.markSucceeded(input.task.audit_id);
-      } catch (outboxError) {
-        // The pending task remains durable and the audit ID is idempotent, so the scheduler can
-        // safely replay it and finish the acknowledgement later.
-        input.log.error(
-          'Guest deletion audit succeeded but outbox acknowledgement is pending',
-          {
-            action: `${input.logActionPrefix}_audit_ack_pending`,
-            tenantId: input.task.tenant_id,
-            operationId: input.task.operation_id,
-          },
-          outboxError as Error
-        );
-      }
-      return;
-    } catch (error) {
-      deliveryError = error;
-      if (attempt === 0) {
-        input.log.warn('Retrying guest deletion completion audit', {
-          action: `${input.logActionPrefix}_audit_retry`,
-          tenantId: input.task.tenant_id,
-          operationId: input.task.operation_id,
-        });
-      }
-    }
-  }
-
-  try {
-    await input.repository.markRetry(
-      input.task,
-      Math.floor(Date.now() / 1000),
-      'audit_log_write_failed'
-    );
-  } catch (outboxError) {
-    // The task was persisted before deletion and remains pending if this update fails.
-    input.log.error(
-      'Guest deletion audit retry scheduling update failed',
-      {
-        action: `${input.logActionPrefix}_audit_retry_schedule_failed`,
-        tenantId: input.task.tenant_id,
-        operationId: input.task.operation_id,
-      },
-      outboxError as Error
-    );
-  }
-  input.log.error(
-    'Guest account deletion committed; completion audit is queued for reconciliation',
-    {
-      action: `${input.logActionPrefix}_audit_pending`,
-      tenantId: input.task.tenant_id,
-      operationId: input.task.operation_id,
-    },
-    deliveryError as Error
-  );
-}
-
-// ============================================================================
-// Guest Account Management API
-// ============================================================================
 
 /**
  * GET /api/admin/guest-users
@@ -264,7 +196,7 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('id')!;
+    const userId = c.req.param('id');
 
     if (!userId) {
       return c.json(
@@ -377,7 +309,7 @@ export async function getGuestUserUpgrades(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('id')!;
+    const userId = c.req.param('id');
 
     if (!userId) {
       return c.json(
@@ -437,147 +369,223 @@ export async function getGuestUserUpgrades(c: Context<{ Bindings: Env }>) {
  * DELETE /api/admin/guest-users/:id
  * Delete a guest account and its browser-resume records
  */
-export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('GuestUsersAPI');
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const userId = c.req.param('id')!;
+function guestFailure(c: Context<{ Bindings: Env }>, error: unknown): Response {
+  const code =
+    error instanceof Error && /^guest_[a-z0-9_]+$/u.test(error.message)
+      ? error.message
+      : 'server_error';
+  return c.json(
+    { error: code, error_description: 'Guest operation could not be verified or completed' },
+    code === 'server_error' ? 500 : 503
+  );
+}
 
-    if (!userId) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'User ID is required',
-        },
-        400
-      );
-    }
+async function guestTerminalProof(
+  c: Context<{ Bindings: Env }>,
+  core: DatabaseAdapter,
+  route: import('../guest-deletion-route').GuestDeletionRouteV2
+): Promise<boolean> {
+  const row = await new GuestLifecycleRepository(core, route.tenantId).get(route.userId);
+  if (
+    !row ||
+    row.phase !== 'deleted' ||
+    row.deletion_operation_id !== route.operationId ||
+    !row.deleted_at ||
+    row.deletion_route_json !== JSON.stringify(route) ||
+    route.execution.phase !== 'erasure_started' ||
+    route.execution.boundaryId !== (await guestErasureBoundaryId(route.operationId)) ||
+    route.execution.erasureStartedAtMs === null
+  )
+    return false;
+  const account = await core.queryOne<{ id: string }>(
+    `SELECT account.id FROM identity_accounts account JOIN account_legal_hold_states authority ON authority.tenant_id=account.tenant_id AND authority.account_id=account.id
+    WHERE account.tenant_id=? AND account.id=? AND account.legacy_user_id=? AND account.account_route_generation=? AND account.lifecycle_state='deleted'
+      AND authority.projection_state='inactive' AND authority.active_hold_id IS NULL
+      AND NOT EXISTS (SELECT 1 FROM legal_holds hold WHERE hold.tenant_id=account.tenant_id AND hold.subject_id=account.id AND hold.subject_type='account' AND hold.state='active')`,
+    [route.tenantId, route.accountId, route.userId, route.accountRouteGeneration],
+    { consistencyClass: 'primary_required' }
+  );
+  if (!account) return false;
+  const authentication = await getSessionRevocationStore(
+    c.env,
+    route.tenantId,
+    route.userId
+  ).getAccountStateRpc(route.tenantId, route.userId, `account:${route.userId}`);
+  if (
+    authentication.lifecycle !== 'deleted' ||
+    authentication.lifecycleOperationId !== `${route.operationId}:complete` ||
+    authentication.lifecycleVersionMs !== route.execution.erasureStartedAtMs + 1
+  )
+    throw new Error('guest_deletion_authentication_unverified');
+  const verified = await verifyGuestDeletionPins(c.env, route);
+  const marker = await createGuestPiiErasurePort(verified.pii, route.piiPin).get({
+    tenantId: route.tenantId,
+    userId: route.userId,
+    accountId: route.accountId,
+    accountRouteGeneration: route.accountRouteGeneration,
+    operationId: route.operationId,
+    boundaryId: route.execution.boundaryId,
+    sourceStartedAtMs: route.execution.erasureStartedAtMs,
+    piiPin: route.piiPin,
+  });
+  return marker?.state === 'deleted';
+}
 
-    // Verify the user exists and is still a guest.
-    const runtimeUsers = createRuntimeUserStore(c, tenantId);
-    const user = await runtimeUsers.findById(userId, { includeInactive: true });
-
-    if (!user) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'Guest account not found',
-        },
-        404
-      );
-    }
-
-    if (user.registration_state !== 'guest') {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'User is not a guest account. Use regular user deletion.',
-        },
-        400
-      );
-    }
-
-    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
-    if (legalHold) {
-      return c.json(
-        {
-          error: 'legal_hold_active',
-          error_description: 'Guest account is under legal hold and cannot be deleted',
-          hold_id: legalHold.holdId,
-        },
-        409
-      );
-    }
-
-    const deletionOperationId = crypto.randomUUID();
-    const auditMetadata = {
-      operationId: deletionOperationId,
-      registration_state: 'guest',
-      reason: 'admin_action',
-      source: 'guest_admin_api',
-    };
-    const deletionRoute = await createGuestDeletionRoute(c.env, {
+/** One request resumes only the original immutable operation/actor, never replaces its task. */
+async function performGuestDeletion(
+  c: Context<{ Bindings: Env }>,
+  owner: GuestCoreOwner,
+  reason: 'admin_action' | 'manual_cleanup'
+): Promise<'deleted' | 'pending' | 'held'> {
+  const tenantId = getTenantIdFromContext(c);
+  if (!owner.pin || owner.adapter.getType() !== 'd1')
+    throw new Error('guest_deletion_backend_unsupported');
+  let lifecycle = new GuestLifecycleRepository(owner.adapter, tenantId),
+    row = await lifecycle.get(owner.userId);
+  if (!row) throw new Error('guest_deletion_source_unverified');
+  if (await findActiveAccountLegalHold(owner.adapter, tenantId, owner.userId)) return 'held';
+  if (row.phase === 'active') {
+    if (
+      !owner.account ||
+      owner.account.account_type !== 'user' ||
+      owner.account.registration_state !== 'guest'
+    )
+      throw new Error('guest_deletion_conflict');
+    const operationId = crypto.randomUUID(),
+      auditId = `account-guest-deleted-${operationId}`;
+    const route = await createGuestDeletionRoute(c.env, {
       tenantId,
-      userId,
-      completionAuditMode: 'outbox',
+      userId: owner.userId,
+      operationId,
+      completionAuditId: auditId,
+      origin: 'admin',
+      owner,
     });
-    const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
+    const metadata = {
+      guestDeletionVersion: 2,
+      operationId,
+      registration_state: 'guest',
+      reason,
+      source: reason === 'admin_action' ? 'guest_admin_api' : 'guest_cleanup_api',
+    };
+    const task = createGuestDeletionAuditTaskFromContext(c, {
+      auditId,
+      userId: owner.userId,
+      operationId,
+      metadata,
+    });
     await createAuditLogFromContext(
       c,
       'account.guest.deletion_started',
       'user',
-      userId,
-      auditMetadata,
+      owner.userId,
+      metadata,
       'info',
-      `account-guest-delete-started-${deletionOperationId}`
+      `account-guest-delete-started-${operationId}`
     );
-    const auditOutbox = new GuestDeletionAuditOutboxRepository(authCtx.coreAdapter, tenantId);
-    const auditTask = await auditOutbox.enqueue(
-      createGuestDeletionAuditTaskFromContext(c, {
-        auditId: completionAuditId,
-        userId,
-        operationId: deletionOperationId,
-        metadata: auditMetadata,
-      })
-    );
-
-    const deletingVersionMs = Date.now();
-    const lifecycle = new GuestLifecycleRepository(authCtx.coreAdapter, tenantId);
-    const deletionClaimed = await lifecycle.beginAdministrativeDeletion(
-      userId,
-      deletionOperationId,
-      Math.floor(deletingVersionMs / 1000),
-      JSON.stringify(deletionRoute),
-      deletingVersionMs
-    );
-    if (!deletionClaimed) {
-      await auditOutbox.remove(auditTask.audit_id);
-      throw new Error('guest_administrative_deletion_conflict');
-    }
-    const completedAt = Math.floor(Date.now() / 1000);
-    const claimedLifecycle = await lifecycle.get(userId);
-    if (
-      !claimedLifecycle ||
-      (await deleteOneGuestAccount(c.env, {
-        tenantId,
-        core: authCtx.coreAdapter,
-        coreBindingRef: deletionRoute.coreBindingRef,
-        candidate: claimedLifecycle,
-        now: completedAt,
-      })) !== 'deleted'
-    ) {
-      throw new Error('guest_administrative_deletion_completion_conflict');
-    }
-
-    await deliverGuestDeletionCompletionAudit(c, {
-      repository: auditOutbox,
-      task: auditTask,
-      completedAt,
-      metadata: auditMetadata,
-      log,
-      logActionPrefix: 'guest_user_delete',
+    const at = Date.now();
+    task.createdAt = Math.floor(at / 1000);
+    row = await lifecycle.admitDeletion({
+      userId: owner.userId,
+      accountId: route.accountId,
+      operationId,
+      routeJson: JSON.stringify(route),
+      expectedRevision: row.revision,
+      accountRouteGeneration: route.accountRouteGeneration,
+      now: task.createdAt,
+      startedAtMs: at,
+      origin: 'admin',
+      task,
     });
-    log.info('Guest account deleted by administrator', {
-      action: 'guest_user_delete',
+    if (!row) {
+      if (await findActiveAccountLegalHold(owner.adapter, tenantId, owner.userId)) return 'held';
+      throw new Error('guest_deletion_conflict');
+    }
+  }
+  if (!row.deletion_operation_id || !['deleting', 'deleted'].includes(row.phase))
+    throw new Error('guest_deletion_conflict');
+  const route = parseGuestDeletionRoute(row.deletion_route_json, {
+    tenantId,
+    userId: owner.userId,
+    operationId: row.deletion_operation_id,
+  });
+  const verified = await verifyGuestDeletionPins(c.env, route);
+  lifecycle = new GuestLifecycleRepository(verified.core, tenantId);
+  const outbox = new GuestDeletionAuditOutboxRepository(verified.core, tenantId);
+  const existing = await outbox.get(route.completionAuditId);
+  if (!existing) {
+    if (await guestTerminalProof(c, verified.core, route)) return 'deleted';
+    throw new Error('guest_deletion_source_unverified');
+  }
+  const result = await deleteOneGuestAccount(c.env, {
+    tenantId,
+    core: verified.core,
+    coreBindingRef: route.corePin.bindingRef,
+    candidate: row,
+    now: Math.floor(Date.now() / 1000),
+  });
+  if (result === 'held') return 'held';
+  if (result !== 'deleted') return 'pending';
+  if (!(await guestTerminalProof(c, verified.core, route)))
+    throw new Error('guest_deletion_completion_unknown');
+  const terminal = await lifecycle.get(owner.userId);
+  if (!terminal?.deleted_at) throw new Error('guest_deletion_completion_unknown');
+  const task = await requireGuestDeletionAuditTask(verified.core, route);
+  try {
+    await writeGuestDeletionAudit(c.env, task, terminal.deleted_at * 1000);
+    await outbox.acknowledgeV2(task);
+  } catch {
+    await outbox.markRetry(task, Math.floor(Date.now() / 1000), 'guest_deletion_audit_pending');
+  }
+  return 'deleted';
+}
+
+export async function deleteGuestUser(c: Context<{ Bindings: Env }>): Promise<Response> {
+  try {
+    const tenantId = getTenantIdFromContext(c),
+      requested = c.req.param('id');
+    if (!requested) return invalidRequest(c, 'User ID is required');
+    const owner = await findGuestCoreOwner(
+      await guestStoresFromContext(c, tenantId),
       tenantId,
-      userId,
-    });
-
+      requested
+    );
+    if (!owner)
+      return c.json({ error: 'not_found', error_description: 'Guest account not found' }, 404);
+    if (
+      owner.account &&
+      (owner.account.account_type !== 'user' || owner.account.registration_state !== 'guest')
+    )
+      return invalidRequest(c, 'User is not a guest account. Use regular user deletion.');
+    const result = await performGuestDeletion(c, owner, 'admin_action');
+    if (result === 'held')
+      return c.json(
+        {
+          error: 'legal_hold_active',
+          error_description:
+            'Guest deletion is paused by an active legal hold; the original request is retained',
+        },
+        409
+      );
+    if (result === 'pending') {
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'guest_deletion_pending',
+          error_description: 'Guest deletion is in progress; retry resumes the same request',
+        },
+        503
+      );
+    }
     return c.json({
       success: true,
-      deleted_user_id: userId,
+      deleted_user_id: owner.userId,
       note: 'Upgrade history preserved for audit purposes.',
     });
   } catch (error) {
-    log.error('Error deleting user', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to delete guest account',
-      },
-      500
-    );
+    if (error instanceof Error && error.message === 'guest_deletion_conflict')
+      return c.json({ error: 'conflict', error_description: 'Guest lifecycle changed' }, 409);
+    return guestFailure(c, error);
   }
 }
 
@@ -591,196 +599,305 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
  *   "limit": number (default: 100, max: 1000)
  * }
  */
-export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('GuestUsersAPI');
+export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-
     const body = await c.req
-      .json<{
-        dry_run?: boolean;
-        limit?: number;
-      }>()
-      .catch(() => ({ dry_run: true, limit: 100 }));
-
-    if (body.dry_run !== undefined && typeof body.dry_run !== 'boolean') {
-      return invalidRequest(c, 'dry_run must be a boolean');
-    }
-    if (body.limit !== undefined && (!Number.isSafeInteger(body.limit) || body.limit < 1)) {
-      return invalidRequest(c, 'limit must be a positive integer');
-    }
-    const dryRun = body.dry_run !== false; // Default to true (safe mode)
-    const limit = Math.min(body.limit ?? 100, 1000);
-    const now = Date.now();
-
-    // Find expired guest browser-resume records.
-    const expiredCredentials = await authCtx.coreAdapter.query<{
-      user_id: string;
-      credential_id: string;
-      expires_at: number;
-    }>(
-      `SELECT ad.user_id, ad.id as credential_id, ad.expires_at
-       FROM guest_devices ad
-       INNER JOIN identity_accounts uc
-         ON uc.tenant_id = ad.tenant_id AND uc.legacy_user_id = ad.user_id
-       WHERE ad.tenant_id = ? AND ad.is_active = 1 AND ad.expires_at IS NOT NULL AND ad.expires_at < ?
-         AND uc.account_type = 'user' AND uc.registration_state = 'guest' AND uc.deleted_at IS NULL
-       ORDER BY ad.expires_at ASC
-       LIMIT ?`,
-      [tenantId, now, limit]
+      .json<{ dry_run?: unknown; limit?: unknown; cursor?: unknown }>()
+      .catch(() => ({ dry_run: true, limit: 100, cursor: undefined }));
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      Array.isArray(body) ||
+      (body.dry_run !== undefined && typeof body.dry_run !== 'boolean') ||
+      (body.limit !== undefined &&
+        (typeof body.limit !== 'number' || !Number.isSafeInteger(body.limit) || body.limit < 1))
+    )
+      return invalidRequest(c, 'Invalid cleanup request');
+    const limit = Math.min(typeof body.limit === 'number' ? body.limit : 100, 1000),
+      now = Date.now();
+    const stores = (await guestStoresFromContext(c, tenantId)).sort((a, b) =>
+      compareGuestCleanupKey(a.pin?.databaseId ?? a.bindingRef, b.pin?.databaseId ?? b.bindingRef)
     );
-
-    if (dryRun) {
+    const inventoryDigest = await guestCleanupInventoryDigest(stores);
+    let cursor: ReturnType<typeof decodeGuestCleanupCursor>;
+    try {
+      cursor = decodeGuestCleanupCursor(body.cursor, tenantId, inventoryDigest);
+    } catch {
+      return invalidRequest(c, 'Invalid or stale cleanup cursor');
+    }
+    if (cursor && cursor.source >= stores.length)
+      return invalidRequest(c, 'Invalid cleanup cursor');
+    type Candidate = {
+      user_id: string;
+      credential_id: string | null;
+      expires_at: number;
+      store: GuestCoreStore;
+    };
+    const pageSize = Math.min(limit, 16);
+    // Accepted/started/terminal-but-unacknowledged jobs survive deletion of the last credential.
+    const pendingSql = `SELECT guest.user_id,NULL AS credential_id,guest.updated_at AS expires_at
+      FROM guest_account_lifecycle guest WHERE guest.tenant_id=? AND
+        (guest.phase='deleting' OR (guest.phase='deleted' AND EXISTS (
+          SELECT 1 FROM guest_deletion_audit_outbox task WHERE task.tenant_id=guest.tenant_id AND task.user_id=guest.user_id
+          AND task.operation_id=guest.deletion_operation_id AND task.status IN ('pending','retry'))))
+      ORDER BY guest.updated_at,guest.user_id LIMIT ?`;
+    const expiredSql = `SELECT device.user_id,device.id AS credential_id,device.expires_at FROM guest_devices device
+      JOIN identity_accounts account ON account.tenant_id=device.tenant_id AND account.legacy_user_id=device.user_id
+      WHERE device.tenant_id=? AND device.is_active=1 AND device.expires_at IS NOT NULL AND device.expires_at<?
+        AND account.account_type='user' AND account.registration_state='guest' AND account.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM guest_account_lifecycle guest WHERE guest.tenant_id=device.tenant_id
+          AND guest.user_id=device.user_id AND guest.phase IN ('deleting','deleted'))
+      ORDER BY device.expires_at,device.id LIMIT ?`;
+    const pendingPages =
+      cursor?.phase === 'expired'
+        ? []
+        : await guestMapStores(stores, async (store) =>
+            (
+              await store.adapter.query<Omit<Candidate, 'store'>>(
+                cursor?.phase === 'pending'
+                  ? pendingSql.replace(
+                      'ORDER BY',
+                      `AND (guest.updated_at>? OR (guest.updated_at=? AND (guest.user_id>? OR (guest.user_id=? AND ?>?)))) ORDER BY`
+                    )
+                  : pendingSql,
+                cursor?.phase === 'pending'
+                  ? [
+                      tenantId,
+                      cursor.at,
+                      cursor.at,
+                      cursor.id,
+                      cursor.id,
+                      stores.indexOf(store),
+                      cursor.source,
+                      pageSize + 1,
+                    ]
+                  : [tenantId, pageSize + 1],
+                {
+                  consistencyClass: 'primary_required',
+                }
+              )
+            ).map((row) => ({ ...row, store }))
+          );
+    const expiredPages = await guestMapStores(stores, async (store) =>
+      (
+        await store.adapter.query<Omit<Candidate, 'store'>>(
+          cursor?.phase === 'expired'
+            ? expiredSql.replace(
+                'ORDER BY',
+                `AND (device.expires_at>? OR (device.expires_at=? AND (device.id>? OR (device.id=? AND ?>?)))) ORDER BY`
+              )
+            : expiredSql,
+          cursor?.phase === 'expired'
+            ? [
+                tenantId,
+                now,
+                cursor.at,
+                cursor.at,
+                cursor.id,
+                cursor.id,
+                stores.indexOf(store),
+                cursor.source,
+                pageSize + 1,
+              ]
+            : [tenantId, now, pageSize + 1],
+          { consistencyClass: 'primary_required' }
+        )
+      ).map((row) => ({ ...row, store }))
+    );
+    const pendingCandidates = pendingPages
+      .flat()
+      .sort(
+        (a, b) =>
+          a.expires_at - b.expires_at ||
+          compareGuestCleanupKey(a.user_id, b.user_id) ||
+          stores.indexOf(a.store) - stores.indexOf(b.store)
+      );
+    const expiredCandidates = expiredPages
+      .flat()
+      .sort(
+        (a, b) =>
+          a.expires_at - b.expires_at ||
+          compareGuestCleanupKey(a.credential_id ?? '', b.credential_id ?? '') ||
+          stores.indexOf(a.store) - stores.indexOf(b.store)
+      );
+    const selected = [...pendingCandidates, ...expiredCandidates].slice(0, pageSize);
+    let hasMore = pendingCandidates.length + expiredCandidates.length > selected.length;
+    const cursorFor = (candidate: Candidate | null) =>
+      candidate
+        ? encodeGuestCleanupCursor({
+            version: 1,
+            tenantId,
+            inventoryDigest,
+            phase: candidate.credential_id === null ? 'pending' : 'expired',
+            at: candidate.expires_at,
+            id: candidate.credential_id ?? candidate.user_id,
+            source: stores.indexOf(candidate.store),
+          })
+        : null;
+    if (body.dry_run !== false)
       return c.json({
         dry_run: true,
-        expired_count: expiredCredentials.length,
-        expired_credentials: expiredCredentials.map((credential) => ({
-          user_id: credential.user_id,
-          credential_id: credential.credential_id,
-          expired_at: credential.expires_at,
-          expired_since_hours: Math.floor((now - credential.expires_at) / (1000 * 60 * 60)),
-        })),
-        note: 'Set dry_run=false to actually delete these users.',
+        expired_count: selected.filter((row) => row.credential_id !== null).length,
+        pending_users: selected.filter((row) => row.credential_id === null).length,
+        expired_credentials: selected
+          .filter((row) => row.credential_id !== null)
+          .map((row) => ({
+            user_id: row.user_id,
+            credential_id: row.credential_id,
+            expired_at: row.expires_at,
+            expired_since_hours: Math.floor((now - row.expires_at) / 3600000),
+          })),
+        has_more: hasMore,
+        next_cursor: hasMore ? cursorFor(selected.at(-1) ?? null) : null,
+        note: 'Set dry_run=false to resume deletions and clean expired credentials.',
       });
-    }
-
-    // Collect unique user IDs
-    const userIds = [...new Set(expiredCredentials.map((credential) => credential.user_id))];
-
-    // Delete in transaction-like manner
-    let deletedCredentials = 0;
-    let deactivatedCredentials = 0;
-    let deletedUsers = 0;
-
-    for (const userId of userIds) {
-      // Check if the user has any active browser-resume credential.
-      const activeCredential = await authCtx.coreAdapter.queryOne<{ id: string }>(
-        `SELECT id FROM guest_devices
-         WHERE tenant_id = ? AND user_id = ? AND is_active = 1
-           AND (expires_at IS NULL OR expires_at > ?)`,
-        [tenantId, userId, now]
+    let deletedUsers = 0,
+      deletedCredentials = 0,
+      deactivated = 0,
+      pending = 0,
+      held = 0;
+    const deadline = Date.now() + 5000,
+      seen = new Set<string>();
+    const resume = async (owner: GuestCoreOwner, credentialCount: number) => {
+      const result = await performGuestDeletion(c, owner, 'manual_cleanup');
+      if (result === 'deleted') {
+        deletedUsers++;
+        deletedCredentials += credentialCount;
+      } else if (result === 'held') held++;
+      else pending++;
+    };
+    let lastVisited: Candidate | null = null;
+    for (const candidate of selected) {
+      if (seen.has(candidate.user_id)) {
+        lastVisited = candidate;
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        hasMore = true;
+        break;
+      }
+      lastVisited = candidate;
+      seen.add(candidate.user_id);
+      const owner = await findGuestCoreOwner(stores, tenantId, candidate.user_id);
+      if (!owner || !owner.pin || owner.pin.databaseId !== candidate.store.pin?.databaseId)
+        throw new Error('guest_account_owner_unverified');
+      const lifecycle = new GuestLifecycleRepository(owner.adapter, tenantId);
+      const current = await lifecycle.get(owner.userId);
+      const credentials = selected.filter(
+        (entry) => entry.user_id === owner.userId && entry.credential_id !== null
       );
-
-      if (!activeCredential) {
-        const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
-        if (legalHold) {
+      // A previously accepted intent always resumes; active credentials cannot divert it.
+      if (current && ['deleting', 'deleted'].includes(current.phase)) {
+        await resume(owner, credentials.length);
+        continue;
+      }
+      if (!current || current.phase !== 'active') throw new Error('guest_deletion_conflict');
+      const active = await owner.adapter.queryOne<{ id: string }>(
+        `SELECT id FROM guest_devices WHERE tenant_id=? AND user_id=? AND is_active=1 AND (expires_at IS NULL OR expires_at>?) LIMIT 1`,
+        [tenantId, owner.userId, now],
+        { consistencyClass: 'primary_required' }
+      );
+      if (!active) {
+        await resume(owner, credentials.length);
+        continue;
+      }
+      if (await findActiveAccountLegalHold(owner.adapter, tenantId, owner.userId)) {
+        held++;
+        continue;
+      }
+      const verified = await resolveGuestOwnerStorage(c.env, owner, tenantId);
+      const ids = credentials.flatMap((entry) =>
+        entry.credential_id === null ? [] : [entry.credential_id]
+      );
+      if (!ids.length) {
+        pending++;
+        continue;
+      }
+      const updated = await owner.adapter.execute(
+        `UPDATE guest_devices SET is_active=0 WHERE tenant_id=? AND user_id=? AND id IN (${ids.map(() => '?').join(',')})
+          AND is_active=1 AND expires_at IS NOT NULL AND expires_at<?
+          AND EXISTS (SELECT 1 FROM identity_accounts account JOIN account_legal_hold_states authority
+            ON authority.tenant_id=account.tenant_id AND authority.account_id=account.id
+            JOIN guest_account_lifecycle guest ON guest.tenant_id=account.tenant_id AND guest.user_id=account.legacy_user_id
+            WHERE account.tenant_id=guest_devices.tenant_id AND account.legacy_user_id=guest_devices.user_id
+              AND account.id=? AND account.account_route_generation=? AND account.account_type='user'
+              AND account.registration_state='guest' AND account.lifecycle_state='active' AND account.deleted_at IS NULL
+              AND guest.phase='active' AND authority.projection_state='inactive' AND authority.active_hold_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM legal_holds hold WHERE hold.tenant_id=account.tenant_id
+                AND hold.subject_type='account' AND hold.subject_id=account.id AND hold.state='active'))`,
+        [
+          tenantId,
+          owner.userId,
+          ...ids,
+          now,
+          verified.account.id,
+          verified.account.account_route_generation,
+        ]
+      );
+      if (!updated.success) throw new Error('guest_cleanup_deactivation_unknown');
+      const reflected = await owner.adapter.query<{ id: string; is_active: number }>(
+        `SELECT id,is_active FROM guest_devices WHERE tenant_id=? AND user_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+        [tenantId, owner.userId, ...ids],
+        { consistencyClass: 'primary_required' }
+      );
+      if (reflected.length !== ids.length || reflected.some((entry) => entry.is_active !== 0)) {
+        if (await findActiveAccountLegalHold(owner.adapter, tenantId, owner.userId)) {
+          held++;
           continue;
         }
-        const deletionOperationId = crypto.randomUUID();
-        const auditMetadata = {
-          operationId: deletionOperationId,
-          registration_state: 'guest',
-          reason: 'manual_cleanup',
-          source: 'guest_cleanup_api',
-        };
-        const deletionRoute = await createGuestDeletionRoute(c.env, {
-          tenantId,
-          userId,
-          completionAuditMode: 'outbox',
-        });
-        const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
-        await createAuditLogFromContext(
-          c,
-          'account.guest.deletion_started',
-          'user',
-          userId,
-          auditMetadata,
-          'info',
-          `account-guest-delete-started-${deletionOperationId}`
-        );
-        const auditOutbox = new GuestDeletionAuditOutboxRepository(authCtx.coreAdapter, tenantId);
-        const auditTask = await auditOutbox.enqueue(
-          createGuestDeletionAuditTaskFromContext(c, {
-            auditId: completionAuditId,
-            userId,
-            operationId: deletionOperationId,
-            metadata: auditMetadata,
-          })
-        );
-
-        const deletingVersionMs = Date.now();
-        const lifecycle = new GuestLifecycleRepository(authCtx.coreAdapter, tenantId);
-        const deletionClaimed = await lifecycle.beginAdministrativeDeletion(
-          userId,
-          deletionOperationId,
-          Math.floor(deletingVersionMs / 1000),
-          JSON.stringify(deletionRoute),
-          deletingVersionMs
-        );
-        if (!deletionClaimed) {
-          await auditOutbox.remove(auditTask.audit_id);
-          throw new Error('guest_administrative_deletion_conflict');
+        const raced = await lifecycle.get(owner.userId);
+        if (raced && ['deleting', 'deleted'].includes(raced.phase)) {
+          await resume(owner, credentials.length);
+          continue;
         }
-        const completedAt = Math.floor(Date.now() / 1000);
-        const claimedLifecycle = await lifecycle.get(userId);
-        if (
-          !claimedLifecycle ||
-          (await deleteOneGuestAccount(c.env, {
-            tenantId,
-            core: authCtx.coreAdapter,
-            coreBindingRef: deletionRoute.coreBindingRef,
-            candidate: claimedLifecycle,
-            now: completedAt,
-          })) !== 'deleted'
-        ) {
-          throw new Error('guest_administrative_deletion_completion_conflict');
-        }
-        await deliverGuestDeletionCompletionAudit(c, {
-          repository: auditOutbox,
-          task: auditTask,
-          completedAt,
-          metadata: auditMetadata,
-          log,
-          logActionPrefix: 'guest_cleanup_user_delete',
-        });
-        deletedUsers++;
-        deletedCredentials += expiredCredentials.filter(
-          (credential) => credential.user_id === userId
-        ).length;
-      } else {
-        // Keep the account and deactivate only expired resume credentials.
-        await authCtx.coreAdapter.execute(
-          `UPDATE guest_devices SET is_active = 0
-           WHERE tenant_id = ? AND user_id = ? AND expires_at IS NOT NULL AND expires_at < ?`,
-          [tenantId, userId, now]
-        );
-        await createAuditLogFromContext(c, 'guest.resume_credentials.deactivated', 'user', userId, {
-          reason: 'manual_cleanup',
-          source: 'guest_cleanup_api',
-          expired_credential_count: expiredCredentials.filter(
-            (credential) => credential.user_id === userId
-          ).length,
-        });
-        deactivatedCredentials += expiredCredentials.filter(
-          (credential) => credential.user_id === userId
-        ).length;
+        throw new Error('guest_cleanup_deactivation_unknown');
       }
+      await createAuditLogFromContext(
+        c,
+        'guest.resume_credentials.deactivated',
+        'user',
+        owner.userId,
+        {
+          reason: 'manual_cleanup',
+          source: 'guest_cleanup_api',
+          expired_credential_count: ids.length,
+        }
+      );
+      deactivated += ids.length;
     }
-
-    log.info('Guest account cleanup completed', {
-      action: 'guest_cleanup',
-      tenantId,
-      deletedUsers,
-      deletedCredentials,
-      deactivatedCredentials,
-    });
-
+    const remaining = await guestMapStores(
+      stores,
+      async (store) =>
+        (
+          await store.adapter.query(pendingSql, [tenantId, 1], {
+            consistencyClass: 'primary_required',
+          })
+        ).length > 0 ||
+        (
+          await store.adapter.query(expiredSql, [tenantId, now, 1], {
+            consistencyClass: 'primary_required',
+          })
+        ).length > 0
+    );
+    hasMore ||=
+      remaining.some(Boolean) ||
+      pending > 0 ||
+      held > 0 ||
+      seen.size < new Set(selected.map((entry) => entry.user_id)).size;
     return c.json({
       success: true,
       dry_run: false,
+      complete: !hasMore,
+      has_more: hasMore,
+      next_cursor: hasMore ? cursorFor(lastVisited) : null,
       deleted_users: deletedUsers,
       deleted_credentials: deletedCredentials,
-      deactivated_credentials: deactivatedCredentials,
+      deactivated_credentials: deactivated,
+      pending_users: pending,
+      held_users: held,
     });
   } catch (error) {
-    log.error('Error during cleanup', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to cleanup expired guest accounts',
-      },
-      500
-    );
+    return guestFailure(c, error);
   }
 }

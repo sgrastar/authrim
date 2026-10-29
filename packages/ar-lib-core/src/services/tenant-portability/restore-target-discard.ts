@@ -44,6 +44,8 @@ export const TENANT_DISCARD_DERIVED_REFERENCE_DATASETS: ReadonlySet<string> = ne
 export const TENANT_DISCARD_PROTECTED_DATASETS: ReadonlySet<string> = new Set([
   'core.tenants',
   'core.plugin_account_metadata_mutations',
+  // A writable PII store must never forget that an identity was erased.
+  'pii.guest_pii_erasure_markers',
 ]);
 
 const byTenantId: BackupRowOwnership = {
@@ -79,6 +81,7 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
     // Keep the tiny source publication witness so an import's audit can finish
     // publication/recovery even after its restored user state is discarded.
     log_iceberg_core_publications: null,
+    guest_core_mutation_epoch: null,
     account_routing_outbox: byTenantId,
     contact_point_search_indexes: byTenantId,
     identity_binding_lookup_indexes: byTenantId,
@@ -113,6 +116,7 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
     tenant_backup_snapshots: null,
     tenant_backup_preimages: null,
     authrim_runtime_probes: null,
+    guest_pii_mutation_epoch: null,
     identity_identifier_replacement_outbox: byTenantId,
     identity_identifier_replacement_projections: {
       kind: 'parent',
@@ -428,6 +432,12 @@ export function planTenantDiscard(input: {
     tables: ordered.map((table) => {
       const owner = ownerGuard(table, 'backup_row');
       if (!owner) throw fail();
+      // The existing Guest boundary is denial authority, not disposable restored work.
+      // Active/finalized lifecycle rows remain ordinary discard targets.
+      if (input.family === 'core' && table === 'guest_account_lifecycle') {
+        if (!tables.get(table)?.columns.some((column) => column.name === 'phase')) throw fail();
+        owner.sql = `(${owner.sql}) AND backup_row.phase NOT IN ('deleting','deleted')`;
+      }
       const foreignChildren = foreignReach(table, 'backup_row', 0);
       // D1 binds at most 100 parameters per statement; the delete carries both guards.
       if (owner.params.length + foreignChildren.params.length > STATEMENT_PARAMETERS)

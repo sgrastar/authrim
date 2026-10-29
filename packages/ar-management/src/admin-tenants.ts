@@ -880,24 +880,46 @@ export async function activateProvisionedTenantLifecycle(input: {
   tenantAdapter: DatabaseAdapter;
   tenantId: string;
   now: number;
+  /** Internal DR mutation-fence deadline; evaluated again by each actual database statement. */
+  admissionDeadlineMs?: number;
 }): Promise<void> {
+  const deadline = input.admissionDeadlineMs;
+  if (deadline !== undefined && (!Number.isSafeInteger(deadline) || deadline < 1))
+    throw new Error('tenant_provisioning_lifecycle_commit_failed');
+  const timed = (database: DatabaseAdapter) => {
+    if (deadline === undefined) return { sql: '', params: [] as unknown[] };
+    const type = database.getType();
+    if (!['d1', 'postgres'].includes(type))
+      throw new Error('tenant_provisioning_lifecycle_commit_failed');
+    const clock =
+      type === 'postgres'
+        ? 'GREATEST(?,CAST(FLOOR(EXTRACT(EPOCH FROM clock_timestamp())*1000) AS BIGINT))'
+        : "MAX(?,CAST(ROUND((julianday('now')-2440587.5)*86400000) AS INTEGER))";
+    return { sql: ` AND ? > ${clock}`, params: [deadline, input.now * 1000] };
+  };
+  const platformGuard = timed(input.platformAdapter),
+    tenantGuard = timed(input.tenantAdapter);
   await input.platformAdapter.execute(
-    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
-    [input.now, input.tenantId]
+    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'" +
+      platformGuard.sql,
+    [input.now, input.tenantId, ...platformGuard.params]
   );
   // Runtime destination validation reads this row, so it is the final activation commit.
   await input.tenantAdapter.execute(
-    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
-    [input.now, input.tenantId]
+    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'" +
+      tenantGuard.sql,
+    [input.now, input.tenantId, ...tenantGuard.params]
   );
   const [tenantRow, platformRow] = await Promise.all([
     input.tenantAdapter.queryOne<{ lifecycle_state: string }>(
-      'SELECT lifecycle_state FROM tenants WHERE id = ?',
-      [input.tenantId]
+      'SELECT lifecycle_state FROM tenants WHERE id = ?' + tenantGuard.sql,
+      [input.tenantId, ...tenantGuard.params],
+      { consistencyClass: 'primary_required' }
     ),
     input.platformAdapter.queryOne<{ lifecycle_state: string }>(
-      'SELECT lifecycle_state FROM tenants WHERE id = ?',
-      [input.tenantId]
+      'SELECT lifecycle_state FROM tenants WHERE id = ?' + platformGuard.sql,
+      [input.tenantId, ...platformGuard.params],
+      { consistencyClass: 'primary_required' }
     ),
   ]);
   if (tenantRow?.lifecycle_state !== 'active' || platformRow?.lifecycle_state !== 'active') {

@@ -134,6 +134,39 @@ and that exact version appears in `compatibleWorkerVersions`. A successful datab
 records `database_only_verified`, retains both the Workers and installed `productVersion`, and leaves
 the normal full update available. Compatibility is never inferred from schema shape or a SemVer range.
 
+### Guest erasure compatibility boundary
+
+Guest erasure requires the Core admission migration and the PII denial-marker migration on every
+physical account store before its version 2 deletion worker starts. It is a full release update:
+schema presence on one store and a successful Worker upload do not establish fleet readiness.
+There is no database-only compatibility declaration for the older Guest deletion worker.
+
+During this transition, exclude older and in-flight mutation producers, including authentication,
+Bridge/SAML provisioning, background jobs, queued retries, and restore workers. Use the environment's
+existing mutation admission and release procedure, drain admitted work, deploy the complete enabled
+release, and verify its physical-store inventory before resuming writes. Admin `read_only` alone
+does not stop authentication or background writers. The Guest runtime does not perform that fleet
+drain itself.
+
+A version 1, malformed, or unverifiable saved Guest deletion receipt remains blocked for inspection;
+it is not converted into fresh deletion authority. Once erasure starts, the receipt and its physical
+owner cannot be retargeted or reset to accepted. After completion, the local PII store retains the
+minimum denial record for that owner while it remains writable. Older code cannot safely resume this
+protocol; recovery must keep the admission guards and denial records in place.
+
+New legal holds are admitted until the same-Core irreversible boundary, including after the deletion
+request was accepted. A hold that wins that boundary preserves the original deletion task and its
+data without reactivating authentication. An active hold continues to block deletion until its
+audited release or expiry transition. The existing audit, webhook snapshot, tombstone, and anonymous
+identifier retention policies keep their existing lifetimes; the new terminal denial record adds no
+operation ID, timestamp, actor, or raw personal value.
+
+Tenant placement migration still stops on immutable Guest lifecycle/denial rows and existing
+immutable hold ledgers when its generic copy replay or source purge cannot preserve their guards.
+It must not remove these guards or denial records to finish a move. This release does not add a
+Guest-aware placement-migration protocol. The disposable DSQL identity experiment also remains
+unsupported for Guest erasure; it is not a serving-runtime compatibility claim.
+
 ## Managed database rollout
 
 Control must snapshot the eligible target inventory when accepting the handoff. Targets discovered

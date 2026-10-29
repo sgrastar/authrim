@@ -1,467 +1,687 @@
-import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
-import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   GuestLifecycleRepository,
+  GuestUpgradeRepository,
+  lookupVirtualBucket,
+  type AccountDirectoryPublication,
   type DatabaseAdapter,
   type Env,
-  type GuestLifecycleRow,
 } from '@authrim/ar-lib-core';
+import type { GuestCoreOwner } from '../guest-account-storage';
+import { openGuestStore, guestReceiptFixture } from './helpers/guest-erasure-fixture';
+
+// This suite covers the scheduler/step boundary. Worker authorization and erasure effects are
+// exercised by guest-deletion-worker.integration.test.ts, not approved through mocked SQL here.
 const mocks = vi.hoisted(() => ({
-  resolve: vi.fn(),
-  piiSource: vi.fn(),
-  piiExecute: vi.fn(),
-  piiQuery: vi.fn(),
-  transition: vi.fn(),
-  state: vi.fn(),
-  prepare: vi.fn(),
-  erase: vi.fn(),
-  writeDelete: vi.fn(),
-  ready: vi.fn(),
-  remove: vi.fn(),
-  cache: vi.fn(),
-  audit: vi.fn(),
-  hold: vi.fn(),
-  recover: vi.fn(),
-  releaseReservation: vi.fn(),
-  events: [] as string[],
+  step: vi.fn<typeof import('../guest-deletion-worker').runGuestDeletionStep>(),
+  stores: vi.fn<typeof import('../guest-account-storage').guestCoreStores>(),
+  storage: vi.fn<typeof import('../guest-account-storage').resolveGuestOwnerStorage>(),
+  route: vi.fn<typeof import('../guest-account-storage').makeGuestDeletionRoute>(),
+  verify: vi.fn<typeof import('../guest-deletion-route').verifyGuestDeletionPins>(),
+  recover: vi.fn<typeof import('../account-guest-upgrade').recoverAccountGuestUpgrade>(),
+  release: vi.fn<(publication: AccountDirectoryPublication) => Promise<void>>(),
+  lookup: vi.fn(),
+}));
+vi.mock('../guest-deletion-worker', () => ({ runGuestDeletionStep: mocks.step }));
+vi.mock('../guest-account-storage', async (original) => ({
+  ...(await original<typeof import('../guest-account-storage')>()),
+  guestCoreStores: mocks.stores,
+  resolveGuestOwnerStorage: mocks.storage,
+  makeGuestDeletionRoute: mocks.route,
+}));
+vi.mock('../guest-deletion-route', async (original) => ({
+  ...(await original<typeof import('../guest-deletion-route')>()),
+  verifyGuestDeletionPins: mocks.verify,
 }));
 vi.mock('../account-guest-upgrade', () => ({ recoverAccountGuestUpgrade: mocks.recover }));
-vi.mock('../account-legal-hold-guard', () => ({ findActiveAccountLegalHold: mocks.hold }));
-vi.mock('../account-directory-removal-producer', () => ({
-  prepareAccountDirectoryRemoval: mocks.prepare,
-  eraseAccountPiiAfterDirectoryRemovalPrepared: mocks.erase,
-  markAccountDirectoryRemovalsReady: mocks.ready,
-  attemptImmediateAccountDirectoryRemovals: mocks.remove,
-}));
-vi.mock('../account-identifier-addition', () => ({
-  buildAccountEmailAddition: vi.fn(),
-  buildAccountExternalSubjectAddition: vi.fn(),
-}));
 vi.mock('../account-directory-reservation', () => ({
   InitialAccountIdentifierReservationService: vi.fn(function () {
-    return { release: mocks.releaseReservation };
+    return { release: mocks.release };
   }),
 }));
 vi.mock('../lookup-bucket-write-route', () => ({
-  createLookupBucketWriteResolver: vi.fn(async () => vi.fn()),
-}));
-vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
-  validateAccountDirectoryPublication: vi.fn(async (value) => value),
-  resolveAccountDataContext: mocks.resolve,
-  resolveTenantDatabaseSourceFromRegistry: mocks.piiSource,
-  ensureDatabaseAdapter: () => ({ execute: mocks.piiExecute, query: mocks.piiQuery }),
-  transitionAccountAuthenticationState: mocks.transition,
-  getSessionRevocationStore: () => ({ getAccountStateRpc: mocks.state }),
-  CanonicalIdentityRepository: vi.fn(function () {}),
-  CanonicalRuntimeUserWriter: vi.fn(function () {
-    return { deleteRuntimeUser: mocks.writeDelete };
-  }),
-  invalidateUserCache: mocks.cache,
-  createAuditLog: mocks.audit,
+  createLookupBucketWriteResolver: mocks.lookup,
 }));
 import {
+  createGuestDeletionRoute,
   deleteOneGuestAccount,
   cleanupExpiredGuestProofs,
   processGuestLifecycleMaintenance,
 } from '../guest-lifecycle-scheduled';
 
-describe('hourly guest deletion state transitions', () => {
-  let db: SQLiteDatabase;
-  let core: DatabaseAdapter;
-  let lifecycle: GuestLifecycleRepository;
-  let candidate: GuestLifecycleRow;
-  const env = {} as Env;
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    mocks.events.length = 0;
-    db = new DatabaseSync(':memory:');
-    db.exec(`CREATE TABLE identity_accounts (tenant_id TEXT, legacy_user_id TEXT, account_type TEXT, deleted_at INTEGER, registration_state TEXT, updated_at INTEGER);
-    INSERT INTO identity_accounts VALUES ('tenant', 'guest', 'user', NULL, 'guest', 0);
-    CREATE TABLE guest_devices (tenant_id TEXT, user_id TEXT);
-    INSERT INTO guest_devices VALUES ('tenant', 'guest');
-    INSERT INTO guest_devices VALUES ('other', 'guest');
-    CREATE TABLE passkeys (tenant_id TEXT, user_id TEXT);`);
-    db.exec(
-      readFileSync(
-        new URL('../../../../migrations/core/d1/002_guest_account_lifecycle.sql', import.meta.url),
-        'utf8'
-      )
-    );
-    core = {
-      async queryOne<T>(sql: string, params: unknown[] = []) {
-        return (db.prepare(sql).get(...(params as SQLInputValue[])) ?? null) as T | null;
-      },
-      async query<T>(sql: string, params: unknown[] = []) {
-        return db.prepare(sql).all(...(params as SQLInputValue[])) as T[];
-      },
-      async execute(sql: string, params: unknown[] = []) {
-        return {
-          success: true,
-          rowsAffected: Number(db.prepare(sql).run(...(params as SQLInputValue[])).changes),
-        };
-      },
-    } as DatabaseAdapter;
-    lifecycle = new GuestLifecycleRepository(core, 'tenant');
-    candidate = await lifecycle.enroll({
-      userId: 'guest',
-      clientId: 'client',
-      createdAt: 1,
-      deletionAfterDays: 1,
-      policyVersion: 'policy',
-    });
-    mocks.resolve.mockResolvedValue({
-      tenantId: 'tenant',
-      legacyUserId: 'guest',
-      coreBindingRef: 'CORE',
-      piiBindingRef: 'PII',
-      piiResidencyPartition: 'default',
-      membership: { routeProjection: { schemaVersion: 1 } },
-    });
-    mocks.piiSource.mockResolvedValue({ source: {} });
-    mocks.piiQuery.mockResolvedValue([]);
-    mocks.hold.mockResolvedValue(null);
-    mocks.state.mockResolvedValue({ lifecycle: 'active' });
-    mocks.transition.mockImplementation(async (_env: unknown, input: { lifecycle: string }) => {
-      mocks.events.push(input.lifecycle);
-    });
-    mocks.prepare.mockImplementation(async () => {
-      mocks.events.push('prepare');
-      return [];
-    });
-    mocks.erase.mockImplementation(async () => {
-      mocks.events.push('erase');
-    });
-    mocks.writeDelete.mockImplementation(async () => {
-      mocks.events.push('delete-account');
-    });
-    mocks.ready.mockImplementation(async () => {
-      mocks.events.push('ready');
-    });
-    mocks.audit.mockImplementation(async () => {
-      mocks.events.push('audit');
-    });
+const stores: ReturnType<typeof openGuestStore>[] = [];
+afterEach(() => {
+  for (const store of stores.splice(0)) store.db.close();
+  vi.useRealTimers();
+});
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(90_000_000);
+  mocks.step.mockResolvedValue('pending');
+  mocks.recover.mockResolvedValue('pending');
+  mocks.release.mockResolvedValue(undefined);
+  mocks.lookup.mockResolvedValue(async () => {
+    throw new Error('unused_lookup_transport');
   });
-  afterEach(() => db.close());
-  const run = (now = 90000) =>
-    deleteOneGuestAccount(env, {
-      tenantId: 'tenant',
-      core,
-      coreBindingRef: 'CORE',
-      candidate,
-      now,
-    });
-  it('cleans abandoned proof with retention disabled while retaining the account', async () => {
-    await lifecycle.applyRetention('guest', candidate.revision, null, 'off', 2);
-    mocks.piiQuery.mockResolvedValue([
-      {
-        operation_id: 'expired',
-        user_id: 'guest',
-        expires_at: 500,
-        state: 'verified',
-        reservation_publication_json: null,
-      },
-    ]);
-    await cleanupExpiredGuestProofs(env, 'tenant', core, 'CORE', 'guest', 1000);
-    expect((await lifecycle.get('guest'))?.phase).toBe('active');
-    expect((await lifecycle.get('guest'))?.deletion_due_at).toBeNull();
-    expect(await lifecycle.beginUpgrade('guest', 'expired', 499, 500)).toBe(false);
-    expect(mocks.piiExecute).toHaveBeenCalledWith(
-      expect.stringContaining('proof_payload_json = NULL'),
-      [1000, 'tenant', 'expired', 1000]
-    );
-    expect(mocks.writeDelete).not.toHaveBeenCalled();
+});
+async function fixture() {
+  const core = openGuestStore('core'),
+    pii = openGuestStore('pii');
+  stores.push(core, pii);
+  const raw = guestReceiptFixture();
+  const route = GuestLifecycleRepository.parseDeletionRouteV2(JSON.stringify(raw), {
+    tenantId: raw.tenantId,
+    userId: raw.userId,
   });
-  it('rejects cleanup across a mismatched tenant route before touching proof', async () => {
-    await expect(
-      cleanupExpiredGuestProofs(env, 'other', core, 'CORE', 'guest', 1000)
-    ).rejects.toThrow('guest_proof_cleanup_route_mismatch');
-    expect(mocks.piiQuery).not.toHaveBeenCalled();
-    expect(mocks.piiExecute).not.toHaveBeenCalled();
+  core.db
+    .prepare(
+      "INSERT INTO tenants(id,tenant_code,tenant_key,name,created_at,updated_at) VALUES(?,?,?,'Fixture',1,1)"
+    )
+    .run(route.tenantId, route.tenantId, 'key-guest');
+  core.db
+    .prepare(
+      `INSERT INTO identity_accounts(id,tenant_id,account_type,lifecycle_state,legacy_user_id,registration_state,directory_publication_state,account_route_generation,created_at,updated_at) VALUES(?,?,'user','active',?,'guest','active',1,1,1)`
+    )
+    .run(route.accountId, route.tenantId, route.userId);
+  const lifecycle = new GuestLifecycleRepository(core.adapter, route.tenantId);
+  const candidate = await lifecycle.enroll({
+    userId: route.userId,
+    clientId: 'app',
+    createdAt: 1,
+    deletionAfterDays: 1,
+    policyVersion: 'policy',
   });
-  it('does not erase proof accepted for crash recovery', async () => {
-    await lifecycle.beginUpgrade('guest', 'accepted', 400, 500);
-    mocks.piiQuery.mockResolvedValue([
-      {
-        operation_id: 'accepted',
-        user_id: 'guest',
-        expires_at: 500,
-        state: 'verified',
-        reservation_publication_json: null,
-      },
-    ]);
-    await cleanupExpiredGuestProofs(env, 'tenant', core, 'CORE', 'guest', 1000);
-    expect(mocks.piiExecute).not.toHaveBeenCalled();
-  });
-  it('records a failed deletion attempt and replaces it after successful retry', async () => {
-    const values = new Map<string, string>();
-    const config = {
-      get: async (key: string) => values.get(key) ?? null,
-      put: async (key: string, value: string) => {
-        values.set(key, value);
-      },
+  const source = {
+    adapter: core.adapter,
+    bindingRef: route.corePin.bindingRef,
+    pin: route.corePin,
+  };
+  mocks.stores.mockResolvedValue([source]);
+  mocks.storage.mockImplementation(async (_env: Env, owner: GuestCoreOwner, tenantId: string) => {
+    if (!owner.account || tenantId !== route.tenantId)
+      throw new Error('fixture_storage_scope_mismatch');
+    return {
+      account: owner.account,
+      core: core.adapter,
+      pii: pii.adapter,
+      routeProjection: route.routeProjection,
+      corePin: route.corePin,
+      piiPin: route.piiPin,
     };
-    const log = { info: vi.fn(), warn: vi.fn() };
-    mocks.erase.mockRejectedValueOnce(new Error('private provider failure: customer@example.com'));
-    const targets = [{ tenantId: 'tenant', adapters: [{ bindingRef: 'CORE', adapter: core }] }];
-    await processGuestLifecycleMaintenance(
-      { ...env, AUTHRIM_CONFIG: config } as unknown as Env,
-      targets,
-      log
+  });
+  mocks.route.mockResolvedValue(route);
+  mocks.verify.mockResolvedValue({ core: core.adapter, pii: pii.adapter });
+  const operations = new GuestUpgradeRepository(pii.adapter, route.tenantId);
+  const seedProof = async (
+    operationId = 'expired',
+    publication: AccountDirectoryPublication | null = null
+  ) => {
+    await operations.create({
+      operationId,
+      userId: route.userId,
+      clientId: 'app',
+      sessionId: 'session',
+      requestTokenHash: 'a'.repeat(64),
+      method: 'email',
+      payloadJson: '{"fixtureProof":true}',
+      verifier: 'verifier',
+      now: 1,
+      expiresAt: 500,
+    });
+    await pii.adapter.execute(
+      "UPDATE guest_upgrade_operations SET state='verified',reservation_publication_json=? WHERE operation_id=?",
+      [publication === null ? null : JSON.stringify(publication), operationId]
     );
-    expect(JSON.parse(values.get('guest-maintenance-status:tenant:guest')!)).toMatchObject({
+  };
+  return { core, pii, route, source, lifecycle, candidate, operations, seedProof };
+}
+function configFixture(failState?: string) {
+  const values = new Map<string, string>();
+  const get = vi.fn(async (key: string) => values.get(key) ?? null);
+  const put = vi.fn(async (key: string, value: string) => {
+    if (
+      key.startsWith('guest-maintenance-status:') &&
+      (failState === 'all' || (JSON.parse(value) as { state: string }).state === failState)
+    )
+      throw new Error('observation_unavailable');
+    values.set(key, value);
+  });
+  const env = { AUTHRIM_CONFIG: { get, put } } as unknown as Env;
+  return { env, values, get, put };
+}
+const logger = () => ({ info: vi.fn(), warn: vi.fn() });
+function readStatus(
+  values: Map<string, string>,
+  tenantId: string,
+  userId: string
+): { state: string; attempted_at: number } {
+  const value = values.get(`guest-maintenance-status:${tenantId}:${userId}`);
+  if (!value) throw new Error('missing_status');
+  return JSON.parse(value) as { state: string; attempted_at: number };
+}
+async function publication(
+  f: Awaited<ReturnType<typeof fixture>>
+): Promise<AccountDirectoryPublication> {
+  const digest = 'ab'.repeat(32);
+  return {
+    operationId: 'upgrade-reservation',
+    idempotencyKey: 'upgrade-reservation',
+    tenantId: f.route.tenantId,
+    accountId: f.route.accountId,
+    routeProjection: f.route.routeProjection,
+    indexes: [
+      {
+        indexKind: 'account_id',
+        normalizationVersion: 1,
+        hmacKeyGeneration: 1,
+        digest,
+        virtualBucket: await lookupVirtualBucket('account_id', digest),
+      },
+    ],
+  };
+}
+
+describe('v2 deletion step wrapper', () => {
+  it.each(['pending', 'deleted', 'held', 'skipped'] as const)(
+    'passes %s through without inventing bulk erasure effects',
+    async (result) => {
+      const f = await fixture(),
+        env = {} as Env;
+      const input = {
+        tenantId: f.route.tenantId,
+        core: f.core.adapter,
+        coreBindingRef: f.route.corePin.bindingRef,
+        candidate: f.candidate,
+        now: 90000,
+      };
+      mocks.step.mockResolvedValueOnce(result);
+      expect(await deleteOneGuestAccount(env, input)).toBe(result);
+      expect(mocks.step).toHaveBeenCalledExactlyOnceWith(env, input);
+      expect(mocks.step.mock.calls[0]?.[1]).toBe(input);
+      // A boundary mock is not evidence of a durable deletion, even when its return value is deleted.
+      expect((await f.lifecycle.get(f.route.userId))?.phase).toBe('active');
+      expect(mocks.storage).not.toHaveBeenCalled();
+    }
+  );
+  it('preserves step failure so the scheduler can retry the pinned durable job', async () => {
+    const f = await fixture(),
+      error = new Error('pii_temporarily_unavailable');
+    mocks.step.mockRejectedValueOnce(error);
+    await expect(
+      deleteOneGuestAccount({} as Env, {
+        tenantId: f.route.tenantId,
+        core: f.core.adapter,
+        coreBindingRef: f.route.corePin.bindingRef,
+        candidate: f.candidate,
+        now: 90000,
+      })
+    ).rejects.toBe(error);
+    expect((await f.lifecycle.get(f.route.userId))?.phase).toBe('active');
+  });
+  it('constructs a v2 route from the canonical owner and verifies actual PII schema before returning it', async () => {
+    const f = await fixture(),
+      env = {} as Env;
+    const input = {
+      tenantId: f.route.tenantId,
+      userId: f.route.userId,
+      operationId: f.route.operationId,
+      completionAuditId: f.route.completionAuditId,
+      origin: 'admin' as const,
+    };
+    expect(await createGuestDeletionRoute(env, input)).toEqual(f.route);
+    expect(mocks.route.mock.calls[0]?.[1]).toMatchObject({
+      userId: f.route.userId,
+      account: { id: f.route.accountId },
+      bindingRef: f.route.corePin.bindingRef,
+      pin: f.route.corePin,
+    });
+    expect(mocks.route.mock.calls[0]?.[2]).toEqual(input);
+    expect(mocks.verify).toHaveBeenCalledExactlyOnceWith(env, f.route);
+    expect(f.route.accountId).not.toBe(f.route.userId);
+  });
+  it('rejects a v2 route whose physical PII schema lacks a source guard', async () => {
+    const f = await fixture();
+    f.pii.db.exec('DROP TRIGGER trg_guest_pii_users_pii_delete');
+    await expect(
+      createGuestDeletionRoute({} as Env, {
+        tenantId: f.route.tenantId,
+        userId: f.route.userId,
+        operationId: f.route.operationId,
+        completionAuditId: f.route.completionAuditId,
+        origin: 'admin',
+      })
+    ).rejects.toThrow('guest_pii_erasure_schema_unsupported');
+  });
+});
+
+describe('expired Guest proof cleanup on actual Core and PII repositories', () => {
+  it('fences abandoned proof with retention disabled and keeps the account', async () => {
+    const f = await fixture();
+    await f.seedProof();
+    await f.lifecycle.applyRetention(f.route.userId, f.candidate.revision, null, 'off', 2);
+    await cleanupExpiredGuestProofs(
+      {} as Env,
+      f.route.tenantId,
+      f.core.adapter,
+      f.route.corePin.bindingRef,
+      f.route.userId,
+      1000
+    );
+    expect(await f.lifecycle.get(f.route.userId)).toMatchObject({
+      phase: 'active',
+      deletion_due_at: null,
+      upgrade_admission_floor: 500,
+    });
+    expect(await f.operations.get('expired')).toMatchObject({
+      state: 'canceled',
+      proof_payload_json: null,
+      challenge_verifier: null,
+      reservation_publication_json: null,
+    });
+    expect(await f.lifecycle.beginUpgrade(f.route.userId, 'expired', 499, 500)).toBe(false);
+    expect(mocks.step).not.toHaveBeenCalled();
+  });
+  it('rejects a mismatched tenant or binding before proof access', async () => {
+    const f = await fixture();
+    await f.seedProof();
+    const query = vi.spyOn(f.pii.adapter, 'query'),
+      execute = vi.spyOn(f.pii.adapter, 'execute');
+    for (const [tenant, binding] of [
+      ['other', f.route.corePin.bindingRef],
+      [f.route.tenantId, 'DB_OTHER'],
+    ])
+      await expect(
+        cleanupExpiredGuestProofs({} as Env, tenant, f.core.adapter, binding, f.route.userId, 1000)
+      ).rejects.toThrow('guest_proof_cleanup_route_mismatch');
+    expect(query).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(mocks.storage).not.toHaveBeenCalled();
+  });
+  it('preserves same-operation proof already accepted for upgrade recovery', async () => {
+    const f = await fixture();
+    await f.seedProof('accepted');
+    expect(await f.lifecycle.beginUpgrade(f.route.userId, 'accepted', 400, 500)).toBe(true);
+    await cleanupExpiredGuestProofs(
+      {} as Env,
+      f.route.tenantId,
+      f.core.adapter,
+      f.route.corePin.bindingRef,
+      f.route.userId,
+      1000
+    );
+    expect(await f.operations.get('accepted')).toMatchObject({
+      state: 'verified',
+      proof_payload_json: '{"fixtureProof":true}',
+      challenge_verifier: 'verifier',
+    });
+    expect((await f.lifecycle.get(f.route.userId))?.phase).toBe('upgrading');
+  });
+  it('releases a validated canonical-account reservation after the Core fence and before clearing PII', async () => {
+    const f = await fixture(),
+      reserved = await publication(f);
+    await f.seedProof('reserved', reserved);
+    const events: string[] = [];
+    mocks.release.mockImplementation(async (value) => {
+      events.push('release');
+      expect(value).toEqual(reserved);
+      expect((await f.lifecycle.get(f.route.userId))?.upgrade_admission_floor).toBe(500);
+      expect((await f.operations.get('reserved'))?.proof_payload_json).not.toBeNull();
+    });
+    const execute = f.pii.adapter.execute.bind(f.pii.adapter);
+    vi.spyOn(f.pii.adapter, 'execute').mockImplementation(async (sql, params) => {
+      if (sql.includes('proof_payload_json = NULL')) events.push('clear');
+      return execute(sql, params);
+    });
+    await cleanupExpiredGuestProofs(
+      {} as Env,
+      f.route.tenantId,
+      f.core.adapter,
+      f.route.corePin.bindingRef,
+      f.route.userId,
+      1000
+    );
+    expect(events).toEqual(['release', 'clear']);
+    expect((await f.operations.get('reserved'))?.reservation_publication_json).toBeNull();
+  });
+  it('keeps raw proof after release failure and safely clears it on retry', async () => {
+    const f = await fixture();
+    await f.seedProof('reserved', await publication(f));
+    mocks.release.mockRejectedValueOnce(new Error('lookup_unavailable'));
+    await expect(
+      cleanupExpiredGuestProofs(
+        {} as Env,
+        f.route.tenantId,
+        f.core.adapter,
+        f.route.corePin.bindingRef,
+        f.route.userId,
+        1000
+      )
+    ).rejects.toThrow('lookup_unavailable');
+    expect((await f.operations.get('reserved'))?.proof_payload_json).not.toBeNull();
+    await cleanupExpiredGuestProofs(
+      {} as Env,
+      f.route.tenantId,
+      f.core.adapter,
+      f.route.corePin.bindingRef,
+      f.route.userId,
+      1001
+    );
+    expect(mocks.release).toHaveBeenCalledTimes(2);
+    expect((await f.operations.get('reserved'))?.proof_payload_json).toBeNull();
+  });
+  it('does not confuse the legacy user ID with the canonical reservation account', async () => {
+    const f = await fixture(),
+      reserved = await publication(f);
+    await f.seedProof('reserved', { ...reserved, accountId: f.route.userId });
+    await expect(
+      cleanupExpiredGuestProofs(
+        {} as Env,
+        f.route.tenantId,
+        f.core.adapter,
+        f.route.corePin.bindingRef,
+        f.route.userId,
+        1000
+      )
+    ).rejects.toThrow('guest_proof_cleanup_publication_mismatch');
+    expect(mocks.release).not.toHaveBeenCalled();
+    expect((await f.operations.get('reserved'))?.proof_payload_json).not.toBeNull();
+  });
+});
+
+describe('hourly scheduler cursor, attempt and observation contracts', () => {
+  it('records a failed step attempt and replaces retrying with completed only on the worker result', async () => {
+    const f = await fixture(),
+      config = configFixture(),
+      log = logger();
+    const targets = [
+      {
+        tenantId: f.route.tenantId,
+        adapters: [{ bindingRef: f.source.bindingRef, adapter: f.core.adapter }],
+      },
+    ];
+    mocks.step.mockRejectedValueOnce(new Error('private failure: person@example.invalid'));
+    await processGuestLifecycleMaintenance(config.env, targets, log);
+    expect(readStatus(config.values, f.route.tenantId, f.route.userId)).toEqual({
       state: 'retrying',
-      attempted_at: expect.any(Number) as unknown,
+      attempted_at: 90000,
     });
     expect(log.warn).toHaveBeenCalledWith('Guest lifecycle deletion failed', {
-      tenantId: 'tenant',
-      userId: 'guest',
-      bindingRef: 'CORE',
+      tenantId: f.route.tenantId,
+      userId: f.route.userId,
+      bindingRef: f.source.bindingRef,
       errorCode: 'guest_maintenance_internal_error',
     });
-    expect((await lifecycle.get('guest'))?.phase).toBe('deleting');
-    await processGuestLifecycleMaintenance(
-      { ...env, AUTHRIM_CONFIG: config } as unknown as Env,
-      targets,
-      log
-    );
-    expect(JSON.parse(values.get('guest-maintenance-status:tenant:guest')!)).toMatchObject({
+    // Proof cleanup and the deletion attempt each advance the Core scheduling priority.
+    // The observation above deliberately keeps wall-clock attempted_at=90000.
+    expect((await f.lifecycle.get(f.route.userId))?.updated_at).toBe(90001);
+    mocks.step.mockResolvedValueOnce('deleted');
+    vi.setSystemTime(93_600_000);
+    await processGuestLifecycleMaintenance(config.env, targets, log);
+    expect(readStatus(config.values, f.route.tenantId, f.route.userId)).toEqual({
       state: 'completed',
+      attempted_at: 93600,
     });
-    expect((await lifecycle.get('guest'))?.phase).toBe('deleted');
+    expect(log.info).toHaveBeenLastCalledWith('Guest lifecycle maintenance completed', {
+      upgraded: 0,
+      deleted: 1,
+      failed: 0,
+    });
   });
-  it.each(['processing', 'completed', 'all'])(
-    'finishes deletion when optional %s observation writes fail',
-    async (failedState) => {
-      const config = {
-        get: async () => null,
-        put: vi.fn(async (key: string, value: string) => {
-          if (
-            key.startsWith('guest-maintenance-status:') &&
-            (failedState === 'all' ||
-              (JSON.parse(value) as { state: string }).state === failedState)
-          ) {
-            throw new Error('private provider failure');
-          }
-        }),
-      };
-      const log = { info: vi.fn(), warn: vi.fn() };
+  it.each(['pending', 'held', 'skipped'] as const)(
+    'does not report %s as a completed deletion',
+    async (result) => {
+      const f = await fixture(),
+        config = configFixture(),
+        log = logger();
+      mocks.step.mockResolvedValueOnce(result);
       await processGuestLifecycleMaintenance(
-        { ...env, AUTHRIM_CONFIG: config } as unknown as Env,
-        [{ tenantId: 'tenant', adapters: [{ bindingRef: 'CORE', adapter: core }] }],
+        config.env,
+        [
+          {
+            tenantId: f.route.tenantId,
+            adapters: [{ bindingRef: f.source.bindingRef, adapter: f.core.adapter }],
+          },
+        ],
         log
       );
-      expect((await lifecycle.get('guest'))?.phase).toBe('deleted');
-      expect(mocks.writeDelete).toHaveBeenCalledTimes(1);
+      expect(readStatus(config.values, f.route.tenantId, f.route.userId).state).toBe('pending');
+      expect(log.info).toHaveBeenCalledWith('Guest lifecycle maintenance completed', {
+        upgraded: 0,
+        deleted: 0,
+        failed: 0,
+      });
+    }
+  );
+  it.each(['processing', 'completed', 'all'])(
+    'keeps step results authoritative when optional %s status writes fail',
+    async (failedState) => {
+      const f = await fixture(),
+        config = configFixture(failedState),
+        log = logger();
+      mocks.step.mockResolvedValueOnce('deleted');
+      await processGuestLifecycleMaintenance(
+        config.env,
+        [
+          {
+            tenantId: f.route.tenantId,
+            adapters: [{ bindingRef: f.source.bindingRef, adapter: f.core.adapter }],
+          },
+        ],
+        log
+      );
+      expect(mocks.step).toHaveBeenCalledTimes(1);
+      expect(
+        config.put.mock.calls.filter(([key]) => key.startsWith('guest-maintenance-status:'))
+      ).toHaveLength(2);
       expect(log.info).toHaveBeenCalledWith('Guest lifecycle maintenance completed', {
         upgraded: 0,
         deleted: 1,
         failed: 0,
       });
       expect(log.warn).not.toHaveBeenCalled();
-      expect(
-        config.put.mock.calls.filter(([key]) => key.startsWith('guest-maintenance-status:'))
-      ).toHaveLength(2);
     }
   );
-  it('advances the shard cursor before a failed shard so later work still runs', async () => {
-    const values = new Map<string, string>();
-    const config = {
-      get: vi.fn(async (key: string) => values.get(key) ?? null),
-      put: vi.fn(async (key: string, value: string) => {
-        values.set(key, value);
-      }),
-    };
+  it('persists the next shard cursor before a failed shard and still visits a healthy actual-SQL shard', async () => {
+    const f = await fixture(),
+      config = configFixture(),
+      log = logger();
+    const brokenQuery = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    const broken = { query: brokenQuery } as unknown as DatabaseAdapter;
+    const healthy = openGuestStore('core');
+    stores.push(healthy);
+    const query = vi.spyOn(healthy.adapter, 'query');
+    const targets = [
+      {
+        tenantId: f.route.tenantId,
+        adapters: [
+          { bindingRef: 'bad', adapter: broken },
+          { bindingRef: 'good', adapter: healthy.adapter },
+        ],
+      },
+    ];
+    await processGuestLifecycleMaintenance(config.env, targets, log);
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(config.put.mock.calls.map(([, value]) => value)).toEqual(['1', '0']);
+    expect(config.put.mock.invocationCallOrder[0]).toBeLessThan(
+      brokenQuery.mock.invocationCallOrder[0]
+    );
+    expect(config.put.mock.invocationCallOrder[1]).toBeLessThan(query.mock.invocationCallOrder[0]);
+    expect(log.warn).toHaveBeenCalledWith('Guest lifecycle operations remain pending for retry', {
+      failed: 1,
+    });
+  });
+  it('resumes at the saved shard after the deadline expires on a failed shard', async () => {
+    const f = await fixture(),
+      config = configFixture(),
+      log = logger();
+    const healthy = openGuestStore('core');
+    stores.push(healthy);
+    const query = vi.spyOn(healthy.adapter, 'query');
     const broken = {
       query: vi.fn(async () => {
+        vi.setSystemTime(Date.now() + 21000);
         throw new Error('offline');
       }),
     } as unknown as DatabaseAdapter;
-    const healthyQuery = vi.fn(async () => []);
-    const healthy = { query: healthyQuery } as unknown as DatabaseAdapter;
-    const log = { info: vi.fn(), warn: vi.fn() };
+    const targets = [
+      {
+        tenantId: f.route.tenantId,
+        adapters: [
+          { bindingRef: 'bad', adapter: broken },
+          { bindingRef: 'good', adapter: healthy.adapter },
+        ],
+      },
+    ];
+    await processGuestLifecycleMaintenance(config.env, targets, log);
+    expect(query).not.toHaveBeenCalled();
+    expect(config.put.mock.calls.map(([, value]) => value)).toEqual(['1']);
+    await processGuestLifecycleMaintenance(config.env, targets, log);
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(config.put.mock.calls.map(([, value]) => value)).toEqual(['1', '0', '1']);
+  });
+  it('records upgrade attempts and counts only a completed recovery', async () => {
+    const f = await fixture(),
+      config = configFixture(),
+      log = logger();
+    expect(await f.lifecycle.beginUpgrade(f.route.userId, 'accepted', 80000, 100000)).toBe(true);
+    mocks.recover.mockResolvedValueOnce('pending');
     await processGuestLifecycleMaintenance(
-      { AUTHRIM_CONFIG: config } as unknown as Env,
+      config.env,
       [
         {
-          tenantId: 'tenant',
-          adapters: [
-            { bindingRef: 'bad', adapter: broken },
-            { bindingRef: 'good', adapter: healthy },
-          ],
+          tenantId: f.route.tenantId,
+          adapters: [{ bindingRef: f.source.bindingRef, adapter: f.core.adapter }],
         },
       ],
       log
     );
-    expect(healthyQuery).toHaveBeenCalledTimes(3);
-    expect(config.put.mock.calls.map((call) => call[1])).toEqual(['1', '0']);
-    expect(log.warn).toHaveBeenCalledWith(expect.any(String), { failed: 1 });
-  });
-  it('revokes authentication before erasure, preserves another tenant and records completion', async () => {
-    expect(await run()).toBe('deleted');
-    expect(mocks.events).toEqual([
-      'deleting',
-      'prepare',
-      'erase',
-      'delete-account',
-      'deleted',
-      'ready',
-      'audit',
-    ]);
-    expect(await lifecycle.get('guest')).toMatchObject({ phase: 'deleted', deleted_at: 90000 });
-    expect(db.prepare('SELECT * FROM guest_devices').all()).toEqual([
-      { tenant_id: 'other', user_id: 'guest' },
-    ]);
-    expect(mocks.audit).toHaveBeenCalledWith(
-      env,
-      expect.objectContaining({
-        tenantId: 'tenant',
-        userId: 'system',
-        action: 'user.deleted',
-        resourceId: 'guest',
-      })
+    expect(mocks.recover).toHaveBeenCalledExactlyOnceWith(
+      config.env,
+      f.route.tenantId,
+      f.route.userId,
+      'accepted'
     );
-  });
-  it('releases verified upgrade reservations and clears proof before completing deletion', async () => {
-    const publication = { operationId: 'verified-upgrade-reservation' };
-    mocks.piiQuery.mockResolvedValueOnce([
-      {
-        operation_id: 'verified-upgrade',
-        user_id: 'guest',
-        state: 'verified',
-        reservation_publication_json: JSON.stringify(publication),
-      },
-    ]);
-
-    expect(await run()).toBe('deleted');
-    expect(mocks.releaseReservation).toHaveBeenCalledWith(publication);
-    expect(mocks.piiExecute).toHaveBeenCalledWith(
-      expect.stringContaining("SET state = 'canceled', proof_payload_json = NULL"),
-      [90000, 'tenant', 'guest']
-    );
-    expect((await lifecycle.get('guest'))?.phase).toBe('deleted');
-  });
-  it.each(['registered', 'upgrading'])('does not delete a guest that became %s', async (phase) => {
-    await core.execute('UPDATE guest_account_lifecycle SET phase = ?', [phase]);
-    expect(await run()).toBe('skipped');
-    expect(mocks.resolve).not.toHaveBeenCalled();
-    expect(mocks.erase).not.toHaveBeenCalled();
-  });
-  it('honors a legal hold without claiming deletion', async () => {
-    mocks.hold.mockResolvedValue({ holdId: 'hold' });
-    expect(await run()).toBe('held');
-    expect((await lifecycle.get('guest'))?.phase).toBe('active');
-    expect(mocks.transition).not.toHaveBeenCalled();
-  });
-  it('never applies human deletion to a machine or registered identity', async () => {
-    await core.execute("UPDATE identity_accounts SET account_type = 'device'");
-    expect(await run()).toBe('skipped');
-    expect(mocks.transition).not.toHaveBeenCalled();
-  });
-  it('does not delete before the deadline or during the one-time hold', async () => {
-    expect(await run(86400)).toBe('skipped');
-    await lifecycle.acquireHold('guest', 90000, 10);
-    expect(await run(90001)).toBe('skipped');
-    expect(mocks.erase).not.toHaveBeenCalled();
-  });
-  it('loses safely if registration wins while resolving the route', async () => {
-    mocks.resolve.mockImplementationOnce(async () => {
-      await lifecycle.beginUpgrade('guest', 'upgrade', 90000, 90600);
-      return {
-        tenantId: 'tenant',
-        legacyUserId: 'guest',
-        coreBindingRef: 'CORE',
-        piiBindingRef: 'PII',
-        piiResidencyPartition: 'default',
-        membership: { routeProjection: {} },
-      };
+    expect((await f.lifecycle.get(f.route.userId))?.updated_at).toBe(90000);
+    expect(log.info).toHaveBeenLastCalledWith('Guest lifecycle maintenance completed', {
+      upgraded: 0,
+      deleted: 0,
+      failed: 0,
     });
-    expect(await run()).toBe('skipped');
-    expect(mocks.transition).not.toHaveBeenCalled();
-  });
-  it('retries using the pinned PII target without an account lookup after erasure failure', async () => {
-    mocks.erase.mockRejectedValueOnce(new Error('pii_temporarily_unavailable'));
-    await expect(run()).rejects.toThrow('pii_temporarily_unavailable');
-    expect((await lifecycle.get('guest'))?.phase).toBe('deleting');
-    mocks.resolve.mockRejectedValue(new Error('account_route_removed'));
-    expect(await run(93600)).toBe('deleted');
-    expect(mocks.resolve).toHaveBeenCalledTimes(1);
-    expect(mocks.piiSource).toHaveBeenLastCalledWith(
-      env,
-      expect.objectContaining({ tenantId: 'tenant', bindingRef: 'PII', role: 'tenant_pii' })
+    mocks.recover.mockResolvedValueOnce('completed');
+    await processGuestLifecycleMaintenance(
+      config.env,
+      [
+        {
+          tenantId: f.route.tenantId,
+          adapters: [{ bindingRef: f.source.bindingRef, adapter: f.core.adapter }],
+        },
+      ],
+      log
     );
-  });
-  it('resumes an administrative deletion from its pinned route without duplicating its audit', async () => {
-    const routeJson = JSON.stringify({
-      schemaVersion: 1,
-      tenantId: 'tenant',
-      userId: 'guest',
-      coreBindingRef: 'CORE',
-      piiBindingRef: 'PII',
-      piiResidencyPartition: 'default',
-      routeProjection: { schemaVersion: 1 },
-      completionAuditMode: 'outbox',
+    expect(log.info).toHaveBeenLastCalledWith('Guest lifecycle maintenance completed', {
+      upgraded: 1,
+      deleted: 0,
+      failed: 0,
     });
-    expect(
-      await lifecycle.beginAdministrativeDeletion(
-        'guest',
-        'admin-delete',
-        90000,
-        routeJson,
-        90000000
+    expect(mocks.step).not.toHaveBeenCalled();
+  });
+  it('contains upgrade/proof-cleanup failure to its candidate and continues deletion work', async () => {
+    const f = await fixture(),
+      config = configFixture(),
+      log = logger();
+    await f.seedProof('reserved', await publication(f));
+    mocks.release.mockRejectedValueOnce(new Error('private provider failure'));
+    mocks.step.mockResolvedValueOnce('pending');
+    await processGuestLifecycleMaintenance(
+      config.env,
+      [
+        {
+          tenantId: f.route.tenantId,
+          adapters: [{ bindingRef: f.source.bindingRef, adapter: f.core.adapter }],
+        },
+      ],
+      log
+    );
+    expect(log.warn).toHaveBeenCalledWith('Guest lifecycle proof cleanup failed', {
+      tenantId: f.route.tenantId,
+      userId: f.route.userId,
+      bindingRef: f.source.bindingRef,
+      errorCode: 'guest_maintenance_internal_error',
+    });
+    expect(mocks.step).toHaveBeenCalledTimes(1);
+    expect(readStatus(config.values, f.route.tenantId, f.route.userId).state).toBe('pending');
+    expect((await f.operations.get('reserved'))?.proof_payload_json).not.toBeNull();
+  });
+  it.each(['fixed', 'backward'] as const)(
+    'continues revisiting all 21 held guests when the clock is %s',
+    async (clock) => {
+      const f = await fixture(),
+        config = configFixture(),
+        log = logger();
+      mocks.step.mockResolvedValue('held');
+      const userIds = [f.route.userId];
+      for (let n = 2; n <= 21; n++) {
+        const suffix = String(n).padStart(12, '0'),
+          userId = `10000000-0000-4000-8000-${suffix}`,
+          accountId = `20000000-0000-4000-8000-${suffix}`;
+        f.core.db
+          .prepare(
+            "INSERT INTO identity_accounts(id,tenant_id,account_type,lifecycle_state,legacy_user_id,registration_state,directory_publication_state,account_route_generation,created_at,updated_at) VALUES(?,?,'user','active',?,'guest','active',1,1,1)"
+          )
+          .run(accountId, f.route.tenantId, userId);
+        await f.lifecycle.enroll({
+          userId,
+          clientId: 'app',
+          createdAt: 1,
+          deletionAfterDays: 1,
+          policyVersion: 'policy',
+        });
+        userIds.push(userId);
+      }
+      const targets = [
+        {
+          tenantId: f.route.tenantId,
+          adapters: [{ bindingRef: f.source.bindingRef, adapter: f.core.adapter }],
+        },
+      ];
+      await processGuestLifecycleMaintenance(config.env, targets, log);
+      expect(mocks.step).toHaveBeenCalledTimes(20);
+      if (clock === 'backward') vi.setSystemTime(89_000_000);
+      await processGuestLifecycleMaintenance(config.env, targets, log);
+      if (clock === 'backward') vi.setSystemTime(88_000_000);
+      await processGuestLifecycleMaintenance(config.env, targets, log);
+      const counts = new Map<string, number>();
+      for (const [, input] of mocks.step.mock.calls)
+        counts.set(input.candidate.user_id, (counts.get(input.candidate.user_id) ?? 0) + 1);
+      for (const userId of userIds)
+        expect(counts.get(userId) ?? 0, userId).toBeGreaterThanOrEqual(2);
+      for (const userId of userIds)
+        expect(await f.lifecycle.get(userId)).toMatchObject({
+          phase: 'active',
+          deletion_due_at: 86401,
+          deletion_started_at_ms: null,
+          deleted_at: null,
+        });
+      expect(log.warn).not.toHaveBeenCalled();
+    }
+  );
+  it('requires persistent scheduler cursor storage before doing work', async () => {
+    const f = await fixture();
+    await expect(
+      processGuestLifecycleMaintenance(
+        {} as Env,
+        [
+          {
+            tenantId: f.route.tenantId,
+            adapters: [{ bindingRef: f.source.bindingRef, adapter: f.core.adapter }],
+          },
+        ],
+        logger()
       )
-    ).toBe(true);
-    expect(await lifecycle.get('guest')).toMatchObject({
-      phase: 'deleting',
-      deletion_route_json: routeJson,
-      deletion_operation_id: 'admin-delete',
-    });
-    mocks.erase.mockRejectedValueOnce(new Error('pii_temporarily_unavailable'));
-
-    await expect(run()).rejects.toThrow('pii_temporarily_unavailable');
-    expect((await lifecycle.get('guest'))?.phase).toBe('deleting');
-    expect(mocks.transition).toHaveBeenLastCalledWith(
-      env,
-      expect.objectContaining({
-        lifecycle: 'deleting',
-        operationId: 'admin-delete',
-        sourceVersionMs: 90000000,
-      })
-    );
-
-    mocks.resolve.mockRejectedValue(new Error('account_route_removed'));
-    expect(await run(93600)).toBe('deleted');
-    expect(mocks.resolve).not.toHaveBeenCalled();
-    expect(mocks.audit).not.toHaveBeenCalled();
-    expect(
-      mocks.transition.mock.calls
-        .filter(([, input]) => input.lifecycle === 'deleting')
-        .map(([, input]) => input.operationId)
-    ).toEqual(['admin-delete', 'admin-delete']);
-    expect(mocks.transition).toHaveBeenLastCalledWith(
-      env,
-      expect.objectContaining({ lifecycle: 'deleted', operationId: 'admin-delete' })
-    );
-  });
-  it('does not regress deleted authentication when retrying the final audit step', async () => {
-    mocks.audit.mockRejectedValueOnce(new Error('audit_unavailable'));
-    await expect(run()).rejects.toThrow('audit_unavailable');
-    mocks.state.mockResolvedValue({ lifecycle: 'deleted' });
-    mocks.transition.mockClear();
-    expect(await run(93600)).toBe('deleted');
-    expect(mocks.transition).not.toHaveBeenCalled();
-  });
-  it('rejects a corrupted cross-tenant recovery route before PII access', async () => {
-    await lifecycle.beginDeletion(
-      'guest',
-      'delete',
-      90000,
-      JSON.stringify({ schemaVersion: 1, tenantId: 'other' }),
-      90000000
-    );
-    await expect(run()).rejects.toThrow('guest_deletion_route_invalid');
-    expect(mocks.piiSource).not.toHaveBeenCalled();
-    expect(mocks.erase).not.toHaveBeenCalled();
+    ).rejects.toThrow('guest_maintenance_config_unavailable');
+    expect(mocks.step).not.toHaveBeenCalled();
   });
 });

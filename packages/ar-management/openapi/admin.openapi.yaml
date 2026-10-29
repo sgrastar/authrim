@@ -7061,8 +7061,11 @@ paths:
       operationId: deleteApiAdminGuestUsersById
       summary: Delete a guest account.
       description: >-
-        Deletes a guest account and all browser resume credentials for that account. Upgrade history is
-        preserved for audit purposes. An active account legal hold rejects deletion with 409.
+        Accepts or resumes one guest deletion request across bounded pages. A new legal hold can pause
+        the original request until erasure starts; active holds return 409. A 503 guest_deletion_pending
+        response with Retry-After means the same request is still running. Success is returned only
+        after Core erasure, the minimal PII deny marker, and authentication-state proof are confirmed.
+        Upgrade history is preserved under its existing retention policy.
       responses:
         '200':
           $ref: '#/components/responses/GuestUserDelete'
@@ -7075,6 +7078,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -7150,8 +7155,13 @@ paths:
       operationId: postApiAdminGuestUsersCleanup
       summary: Clean up expired guest accounts.
       description: >-
-        Finds expired browser resume credentials and optionally deletes the associated guest accounts. The
-        default dry-run mode reports what would be removed without mutating data.
+        Reports expired browser resume credentials and existing deletion requests without mutation by
+        default. With dry_run=false, resumes original deletion requests first, then processes at most
+        16 credential or job candidates per request. Pass next_cursor back as cursor to continue beyond
+        held or pending candidates while has_more is true. A null next_cursor restarts the next sweep.
+        Cursors expire when the verified storage inventory changes. complete=false
+        includes pending work and legal holds; a partial response does not mean all guests are erased.
+        A 503 reports unavailable or unverified storage rather than a successful empty cleanup.
       responses:
         '200':
           $ref: '#/components/responses/GuestUserCleanup'
@@ -7160,6 +7170,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/GuestUserCleanup'
@@ -54829,6 +54841,11 @@ components:
       type: object
       additionalProperties: false
       properties:
+        cursor:
+          type: string
+          nullable: true
+          maxLength: 2048
+          description: Opaque selection position from next_cursor; it does not grant authority.
         dry_run:
           type: boolean
           default: true
@@ -54843,6 +54860,9 @@ components:
           required:
             - dry_run
             - expired_count
+            - pending_users
+            - has_more
+            - next_cursor
             - expired_credentials
             - note
           properties:
@@ -54850,6 +54870,15 @@ components:
               type: boolean
               enum:
                 - true
+            pending_users:
+              type: integer
+              minimum: 0
+            has_more:
+              type: boolean
+            next_cursor:
+              type: string
+              nullable: true
+              maxLength: 2048
             expired_count:
               type: integer
               minimum: 0
@@ -54878,6 +54907,11 @@ components:
             - deleted_users
             - deleted_credentials
             - deactivated_credentials
+            - complete
+            - has_more
+            - next_cursor
+            - pending_users
+            - held_users
           properties:
             success:
               type: boolean
@@ -54885,6 +54919,20 @@ components:
               type: boolean
               enum:
                 - false
+            complete:
+              type: boolean
+            has_more:
+              type: boolean
+            next_cursor:
+              type: string
+              nullable: true
+              maxLength: 2048
+            pending_users:
+              type: integer
+              minimum: 0
+            held_users:
+              type: integer
+              minimum: 0
             deleted_users:
               type: integer
               minimum: 0

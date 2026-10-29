@@ -1,44 +1,26 @@
 import {
-  CanonicalIdentityRepository,
-  CanonicalRuntimeUserWriter,
   GuestLifecycleRepository,
   GuestUpgradeRepository,
   validateAccountDirectoryPublication,
-  createAuditLog,
-  ensureDatabaseAdapter,
-  invalidateUserCache,
-  getSessionRevocationStore,
-  resolveAccountDataContext,
-  resolveTenantDatabaseSourceFromRegistry,
-  transitionAccountAuthenticationState,
   type AccountDirectoryPublication,
-  type AccountRouteProjection,
   type DatabaseAdapter,
   type Env,
-  type GuestLifecycleRow,
-  type GuestUpgradeOperation,
 } from '@authrim/ar-lib-core';
 import { recoverAccountGuestUpgrade } from './account-guest-upgrade';
-import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import {
-  prepareAccountDirectoryRemoval,
-  eraseAccountPiiAfterDirectoryRemovalPrepared,
-  markAccountDirectoryRemovalsReady,
-  attemptImmediateAccountDirectoryRemovals,
-} from './account-directory-removal-producer';
+  findGuestCoreOwner,
+  guestCoreStores,
+  makeGuestDeletionRoute,
+  resolveGuestOwnerStorage,
+  type GuestCoreOwner,
+} from './guest-account-storage';
+import { verifyGuestDeletionPins } from './guest-deletion-route';
+import { runGuestDeletionStep, type GuestDeletionStepResult } from './guest-deletion-worker';
+import { createGuestPiiErasurePort } from '@authrim/ar-lib-core/services/guest-pii-erasure';
 import { InitialAccountIdentifierReservationService } from './account-directory-reservation';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 
-export interface GuestDeletionRoute {
-  schemaVersion: 1;
-  tenantId: string;
-  userId: string;
-  coreBindingRef: string;
-  piiBindingRef: string;
-  piiResidencyPartition: string;
-  routeProjection: AccountRouteProjection;
-  completionAuditMode?: 'outbox';
-}
+export type GuestDeletionRoute = import('./guest-deletion-route').GuestDeletionRouteV2;
 export interface GuestMaintenanceTarget {
   tenantId: string;
   adapters: Array<{ adapter: DatabaseAdapter; bindingRef: string }>;
@@ -55,236 +37,56 @@ function maintenanceErrorCode(error: unknown): string {
     : 'guest_maintenance_internal_error';
 }
 
-function readRoute(
-  json: string | null,
-  tenantId: string,
-  userId: string,
-  coreBindingRef: string
-): GuestDeletionRoute {
-  const route = JSON.parse(json ?? 'null') as GuestDeletionRoute | null;
-  if (
-    !route ||
-    route.schemaVersion !== 1 ||
-    route.tenantId !== tenantId ||
-    route.userId !== userId ||
-    route.coreBindingRef !== coreBindingRef ||
-    typeof route.piiBindingRef !== 'string' ||
-    !route.piiBindingRef ||
-    typeof route.piiResidencyPartition !== 'string' ||
-    (route.completionAuditMode !== undefined && route.completionAuditMode !== 'outbox') ||
-    !route.routeProjection
-  )
-    throw new Error('guest_deletion_route_invalid');
-  return route;
-}
-
 export async function createGuestDeletionRoute(
   env: Env,
   input: {
     tenantId: string;
     userId: string;
-    completionAuditMode?: 'outbox';
+    operationId: string;
+    completionAuditId: string;
+    origin: 'admin' | 'retention';
+    owner?: GuestCoreOwner;
   }
 ): Promise<GuestDeletionRoute> {
-  const account = await resolveAccountDataContext(env, {
-    tenantId: input.tenantId,
-    accountId: input.userId,
-  });
-  if (account.tenantId !== input.tenantId || account.legacyUserId !== input.userId)
-    throw new Error('guest_deletion_account_route_changed');
-  return {
-    schemaVersion: 1,
-    tenantId: input.tenantId,
-    userId: input.userId,
-    coreBindingRef: account.coreBindingRef,
-    piiBindingRef: account.piiBindingRef,
-    piiResidencyPartition: account.piiResidencyPartition,
-    routeProjection: account.membership.routeProjection,
-    ...(input.completionAuditMode ? { completionAuditMode: input.completionAuditMode } : {}),
-  };
-}
-
-/** Remove reservations made by verified attempts that lost to deletion; never remove another owner. */
-async function releaseUncommittedReservations(
-  env: Env,
-  pii: DatabaseAdapter,
-  route: GuestDeletionRoute
-): Promise<void> {
-  const operations = await pii.query<GuestUpgradeOperation>(
-    `SELECT * FROM guest_upgrade_operations WHERE tenant_id = ? AND user_id = ? AND state = 'verified'`,
-    [route.tenantId, route.userId],
-    { consistencyClass: 'primary_required' }
-  );
-  if (!operations.length) return;
-  const reservations = new InitialAccountIdentifierReservationService({
-    lookupForBucket: await createLookupBucketWriteResolver(env),
-    now: () => Math.floor(Date.now() / 1000),
-  });
-  for (const operation of operations) {
-    if (operation.reservation_publication_json)
-      await reservations.release(
-        await validateAccountDirectoryPublication(
-          JSON.parse(operation.reservation_publication_json) as AccountDirectoryPublication
-        )
-      );
-  }
+  const owner =
+    input.owner ??
+    (await findGuestCoreOwner(
+      await guestCoreStores(env, input.tenantId),
+      input.tenantId,
+      input.userId
+    ));
+  if (!owner || owner.userId !== input.userId) throw new Error('guest_account_owner_unverified');
+  const route = await makeGuestDeletionRoute(env, owner, input);
+  const verified = await verifyGuestDeletionPins(env, route);
+  await createGuestPiiErasurePort(verified.pii, route.piiPin).tables();
+  return route;
 }
 
 export async function deleteOneGuestAccount(
   env: Env,
-  input: {
-    tenantId: string;
-    core: DatabaseAdapter;
-    coreBindingRef: string;
-    candidate: GuestLifecycleRow;
-    now: number;
-  }
-): Promise<'deleted' | 'skipped' | 'held'> {
-  const { tenantId, core, coreBindingRef, now } = input;
-  const lifecycle = new GuestLifecycleRepository(core, tenantId);
-  let row = await lifecycle.get(input.candidate.user_id);
-  if (!row || !['active', 'deleting'].includes(row.phase)) return 'skipped';
-  if (await findActiveAccountLegalHold(core, tenantId, row.user_id)) return 'held';
-  if (row.phase === 'active') {
-    const route = await createGuestDeletionRoute(env, { tenantId, userId: row.user_id });
-    if (route.coreBindingRef !== coreBindingRef)
-      throw new Error('guest_deletion_account_route_changed');
-    const identity = await core.queryOne<{ account_type: string; registration_state: string }>(
-      'SELECT account_type, registration_state FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ? AND deleted_at IS NULL',
-      [tenantId, row.user_id],
-      { consistencyClass: 'primary_required' }
-    );
-    if (identity?.account_type !== 'user' || identity.registration_state !== 'guest')
-      return 'skipped';
-    const operationId = `guest-delete:${crypto.randomUUID()}`;
-    if (
-      !(await lifecycle.beginDeletion(
-        row.user_id,
-        operationId,
-        now,
-        JSON.stringify(route),
-        Date.now()
-      ))
-    )
-      return 'skipped';
-    row = (await lifecycle.get(row.user_id))!;
-  }
-  if (!row.deletion_operation_id || !row.deletion_started_at_ms)
-    throw new Error('guest_deletion_operation_invalid');
-  const route = readRoute(row.deletion_route_json, tenantId, row.user_id, coreBindingRef);
-  // Resolve the persisted PII target through the tenant registry even after account lookup removal.
-  const piiSource = await resolveTenantDatabaseSourceFromRegistry(env, {
-    tenantId,
-    role: 'tenant_pii',
-    dataRole: 'tenant_pii',
-    bindingRef: route.piiBindingRef,
-    residencyPartition: route.piiResidencyPartition,
-  });
-  const pii = ensureDatabaseAdapter(piiSource.source, `guest-deletion:${route.piiBindingRef}`);
-  const authentication = await getSessionRevocationStore(
-    env,
-    tenantId,
-    row.user_id
-  ).getAccountStateRpc(tenantId, row.user_id, `account:${row.user_id}`);
-  const resumesAdministrativeTransition = route.completionAuditMode === 'outbox';
-  if (authentication.lifecycle !== 'deleted')
-    await transitionAccountAuthenticationState(env, {
-      tenantId,
-      userId: row.user_id,
-      lifecycle: 'deleting',
-      operationId: resumesAdministrativeTransition
-        ? row.deletion_operation_id
-        : `${row.deletion_operation_id}:begin`,
-      sourceVersionMs: row.deletion_started_at_ms,
-      revokeSessions: true,
-    });
-  const removals = await prepareAccountDirectoryRemoval(env, {
-    tenantId,
-    userId: row.user_id,
-    core,
-    pii,
-  });
-  await releaseUncommittedReservations(env, pii, route);
-  await pii.execute(
-    `UPDATE guest_upgrade_operations SET state = 'canceled', proof_payload_json = NULL, challenge_verifier = NULL, reservation_publication_json = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE tenant_id = ? AND user_id = ? AND state <> 'completed'`,
-    [now, tenantId, row.user_id]
-  );
-  await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId: row.user_id, core });
-  await core.execute('DELETE FROM guest_devices WHERE tenant_id = ? AND user_id = ?', [
-    tenantId,
-    row.user_id,
-  ]);
-  await core.execute('DELETE FROM passkeys WHERE tenant_id = ? AND user_id = ?', [
-    tenantId,
-    row.user_id,
-  ]);
-  await new CanonicalRuntimeUserWriter(
-    new CanonicalIdentityRepository(core, tenantId),
-    pii
-  ).deleteRuntimeUser(row.user_id);
-  if (authentication.lifecycle !== 'deleted')
-    await transitionAccountAuthenticationState(env, {
-      tenantId,
-      userId: row.user_id,
-      lifecycle: 'deleted',
-      operationId: resumesAdministrativeTransition
-        ? row.deletion_operation_id
-        : `${row.deletion_operation_id}:complete`,
-      sourceVersionMs: row.deletion_started_at_ms + 1,
-      revokeSessions: true,
-    });
-  await markAccountDirectoryRemovalsReady(core, removals);
-  await attemptImmediateAccountDirectoryRemovals(env.ACCOUNT_DIRECTORY, removals);
-  await invalidateUserCache(env, tenantId, row.user_id);
-  if (route.completionAuditMode !== 'outbox') {
-    await createAuditLog(env, {
-      tenantId,
-      userId: 'system',
-      action: 'user.deleted',
-      resource: 'user',
-      resourceId: row.user_id,
-      severity: 'info',
-      ipAddress: 'system',
-      userAgent: 'Authrim guest lifecycle',
-      metadata: JSON.stringify({
-        reason: 'guest_retention',
-        operationId: row.deletion_operation_id,
-      }),
-    });
-  }
-  if (!(await lifecycle.completeDeletion(row.user_id, row.deletion_operation_id, now)))
-    throw new Error('guest_deletion_completion_conflict');
-  return 'deleted';
+  input: Parameters<typeof runGuestDeletionStep>[1]
+): Promise<GuestDeletionStepResult> {
+  return runGuestDeletionStep(env, input);
 }
 
 /** Core admission is fenced before erasing PII, including retention-disabled guests. */
 export async function cleanupExpiredGuestProofs(
   env: Env,
   tenantId: string,
-  core: DatabaseAdapter,
+  _core: DatabaseAdapter,
   coreBindingRef: string,
   userId: string,
   now: number
 ): Promise<void> {
-  const account = await resolveAccountDataContext(env, { tenantId, accountId: userId });
-  if (
-    account.tenantId !== tenantId ||
-    account.legacyUserId !== userId ||
-    account.coreBindingRef !== coreBindingRef
-  )
-    throw new Error('guest_proof_cleanup_route_mismatch');
-  const lifecycle = new GuestLifecycleRepository(core, tenantId);
-  const piiSource = await resolveTenantDatabaseSourceFromRegistry(env, {
-    tenantId,
-    role: 'tenant_pii',
-    dataRole: 'tenant_pii',
-    bindingRef: account.piiBindingRef,
-    residencyPartition: account.piiResidencyPartition,
-  });
-  const operations = new GuestUpgradeRepository(
-    ensureDatabaseAdapter(piiSource.source, `guest-proof:${account.piiBindingRef}`),
-    tenantId
+  const stores = (await guestCoreStores(env, tenantId)).filter(
+    (store) => store.bindingRef === coreBindingRef
   );
+  const owner = await findGuestCoreOwner(stores, tenantId, userId);
+  if (!owner || owner.userId !== userId || owner.bindingRef !== coreBindingRef)
+    throw new Error('guest_proof_cleanup_route_mismatch');
+  const account = await resolveGuestOwnerStorage(env, owner, tenantId);
+  const lifecycle = new GuestLifecycleRepository(account.core, tenantId);
+  const operations = new GuestUpgradeRepository(account.pii, tenantId);
   for (const operation of await operations.listExpired(userId, now, 20)) {
     if (
       !(await lifecycle.fenceExpiredProof(
@@ -299,7 +101,7 @@ export async function cleanupExpiredGuestProofs(
       const publication = await validateAccountDirectoryPublication(
         JSON.parse(operation.reservation_publication_json) as AccountDirectoryPublication
       );
-      if (publication.tenantId !== tenantId || publication.accountId !== account.accountId)
+      if (publication.tenantId !== tenantId || publication.accountId !== account.account.id)
         throw new Error('guest_proof_cleanup_publication_mismatch');
       await new InitialAccountIdentifierReservationService({
         lookupForBucket: await createLookupBucketWriteResolver(env),

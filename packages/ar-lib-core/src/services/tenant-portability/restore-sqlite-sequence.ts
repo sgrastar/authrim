@@ -9,6 +9,7 @@ import {
   RESTORE_STATEMENT_BUDGET,
   RESTORE_VERIFY_QUERY_BUDGET,
   restoreRowStatements,
+  restoreBatchStatements,
   restoreStatementRows,
   runSqliteRestoreDatasetDeferredStep,
   runSqliteRestoreDatasetStep,
@@ -122,6 +123,7 @@ async function transformRows(
   mode: 'write' | 'verify'
 ): Promise<string[]> {
   if (!source.policy.restoreTransform) return [...rows];
+  if (rows.length) await source.policy.restoreTransform.prepareRows?.(context, rows, mode);
   const transformed: string[] = [];
   for (const row of rows) {
     const value = await source.policy.restoreTransform.transform(context, row, mode);
@@ -129,6 +131,7 @@ async function transformRows(
     assertTenantBackupSqliteRowFits(value);
     transformed.push(value);
   }
+  if (rows.length) await source.policy.restoreTransform.assertPreparedRows?.(context);
   return transformed;
 }
 
@@ -179,7 +182,7 @@ async function runDatasetExecutionBatch(
     )
       throw fail();
     // A row transform that issues statements spends the transition's budget in one pass.
-    if (restoreRowStatements(loaded.policy)) return result;
+    if (restoreRowStatements(loaded.policy) || restoreBatchStatements(loaded.policy)) return result;
     currentPhase = result.phase as typeof currentPhase;
     currentCursor = result.cursor;
   }
@@ -716,11 +719,17 @@ export async function runSqliteRestoreSequenceStep(
       });
       if (JSON.stringify(actual) !== JSON.stringify(candidate)) throw fail();
       const rowStatements = restoreRowStatements(loaded.policy);
+      const fixedStatements = restoreBatchStatements(loaded.policy);
+      if (room < fixedStatements) break;
       const complete = await readCompleteDataset(
         loaded,
         candidate,
         head.chain_digest,
-        Math.min(EXECUTION_BATCH_ROWS - batchRows, statementRows(rowStatements, room)),
+        Math.min(
+          EXECUTION_BATCH_ROWS - batchRows,
+          loaded.policy.restoreTransform?.prepareRows ? 500 : Infinity,
+          statementRows(rowStatements, room - fixedStatements)
+        ),
         EXECUTION_BATCH_BYTES - batchBytes
       );
       if (
@@ -732,7 +741,8 @@ export async function runSqliteRestoreSequenceStep(
       batch.push({ job: candidate, loaded: kept(loaded), ...complete });
       batchRows += complete.rows.length;
       batchBytes += complete.bytes;
-      batchStatements += complete.rows.length * rowStatements + RESTORE_DATASET_STATEMENTS;
+      batchStatements +=
+        complete.rows.length * rowStatements + RESTORE_DATASET_STATEMENTS + fixedStatements;
     }
     if (batch.length) {
       await input.inventory.headForLease(context.lease);
@@ -761,6 +771,7 @@ export async function runSqliteRestoreSequenceStep(
           );
           await target.writeDatasetRows(preparedRows);
           for (const { loaded, rows } of writableRows) {
+            await loaded.policy.restoreTransform?.assertPreparedRows?.(context);
             await target.verifyDataset(loaded.policy, rows.length);
           }
         }
@@ -994,12 +1005,18 @@ async function finalizeSqliteTargets(
       );
       const rowStatements = restoreRowStatements(loaded.policy);
       const room = RESTORE_STATEMENT_BUDGET - batchStatements - 2 * RESTORE_DATASET_STATEMENTS;
-      if (batch.length && room < 0) break;
+      const fixedStatements = restoreBatchStatements(loaded.policy);
+      if (room < fixedStatements) break;
       const complete = await readCompleteDataset(
         loaded,
         candidate,
         verificationHead.chain_digest,
-        Math.min(EXECUTION_BATCH_ROWS - batchRows, queryRows, statementRows(rowStatements, room)),
+        Math.min(
+          EXECUTION_BATCH_ROWS - batchRows,
+          loaded.policy.restoreTransform?.prepareRows ? 500 : Infinity,
+          queryRows,
+          statementRows(rowStatements, room - fixedStatements)
+        ),
         EXECUTION_BATCH_BYTES - batchBytes
       );
       if (!complete || complete.rows.length !== completedRows[candidateIndex]) break;
@@ -1007,7 +1024,8 @@ async function finalizeSqliteTargets(
       batchRows += complete.rows.length;
       batchBytes += complete.bytes;
       batchQueries += (complete.rows.length * RESTORE_VERIFY_QUERY_BUDGET) / rowsPerBudget;
-      batchStatements += complete.rows.length * rowStatements + 2 * RESTORE_DATASET_STATEMENTS;
+      batchStatements +=
+        complete.rows.length * rowStatements + 2 * RESTORE_DATASET_STATEMENTS + fixedStatements;
     }
     if (batch.length) {
       const target = await openPlannedSqliteRestoreTarget({
@@ -1024,6 +1042,7 @@ async function finalizeSqliteTargets(
           await transformRows(context, loaded, rows, 'verify')
         );
         await target.verifyDataset(loaded.policy, rows.length);
+        if (rows.length) await loaded.policy.restoreTransform?.assertPreparedRows?.(context);
       }
       verifyIndex += batch.length;
       return {

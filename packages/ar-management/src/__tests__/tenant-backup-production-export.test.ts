@@ -109,6 +109,7 @@ vi.mock('../tenant-backup-production-restore-targets', () => ({
     plan: mocks.restorePlan,
     resolveTarget: mocks.restoreResolve,
     assertUnpublished: mocks.restoreAssert,
+    assertActivationReady: mocks.restoreAssert,
     databaseForRole: mocks.restoreDatabaseForRole,
   }),
 }));

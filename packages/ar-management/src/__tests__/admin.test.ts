@@ -35,7 +35,7 @@ vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original)
   },
 }));
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env, GuestLifecycleRow } from '@authrim/ar-lib-core';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 let newLogFixture: Awaited<ReturnType<typeof logProducerFixture>>;
 const auditBackgroundWork: Promise<unknown>[] = [];
@@ -668,9 +668,18 @@ function createMockDB(options: {
     run: vi.fn().mockResolvedValue(options.runResult ?? { success: true }),
   };
 
+  // These generic account/count fixtures have no Guest lifecycle row. Do not return an
+  // unrelated identity projection to the repository's strict persisted-row decoder.
+  const guestLifecycleStatement = {
+    bind: vi.fn().mockReturnThis(),
+    first: vi.fn().mockResolvedValue(null),
+    all: vi.fn().mockResolvedValue({ results: [] }),
+  };
+
   const binding = {
     prepare: vi.fn((sql: string) => {
       currentSql = sql;
+      if (sql.includes('FROM guest_account_lifecycle')) return guestLifecycleStatement;
       return mockStatement;
     }),
     batch: vi
@@ -4276,10 +4285,28 @@ describe('Admin API Handlers', () => {
         active: 1,
       });
       const dbs = createRoutedAccountDatabases(userId);
-      dbs.accountCoreResults.first.push([
-        'FROM guest_account_lifecycle',
-        { tenant_id: 'default', user_id: userId, phase: 'active' },
-      ]);
+      const lifecycle: GuestLifecycleRow = {
+        tenant_id: 'default',
+        user_id: userId,
+        client_id: 'guest-client',
+        phase: 'active',
+        created_at: 1_700_000_000,
+        deletion_due_at: null,
+        policy_version: '1',
+        retention_application_id: null,
+        upgrade_hold_until: null,
+        upgrade_operation_id: null,
+        upgrade_admission_floor: 0,
+        upgraded_at: null,
+        upgrade_finalized_at: null,
+        deletion_operation_id: null,
+        deletion_route_json: null,
+        deletion_started_at_ms: null,
+        deleted_at: null,
+        revision: 1,
+        updated_at: 1_700_000_000,
+      };
+      dbs.accountCoreResults.first.push(['FROM guest_account_lifecycle', lifecycle]);
       resolveCustomClaimRuntimeSources.mockImplementationOnce(async (env: Partial<Env>) => ({
         schemaDb: env.DB,
         nonPiiDb: dbs.accountCoreDb,
