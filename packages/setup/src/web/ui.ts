@@ -1,3 +1,9 @@
+import {
+  logArchiveInputError,
+  logArchiveStagedChoice,
+  logArchiveErrorMessage,
+  LOG_ARCHIVE_ERROR_MESSAGES,
+} from './log-archive-input.js';
 import { implementedLogArchiveModes } from '../core/log-archive-config.js';
 /**
  * HTML Template for Authrim Setup Web UI
@@ -5779,17 +5785,27 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           ? `<section class="row" id="log-archive-options">
         <div class="rowlabel"><h2>${locale === 'ja' ? 'ログの保存方式' : 'Log storage'}</h2></div>
         <div class="rowbody">
-          <p>${locale === 'ja' ? 'Cloudflare Pipelinesを使用しますか？Pipeline利用時はログ本体をDBに保存せず、検索反映には数分かかる場合があります。Workers Paidが必要です。非利用時はDBから定期的にIcebergへ出力します。両方式でR2・Catalogの契約が必要です。' : 'Use Cloudflare Pipelines? Pipeline mode stores no log-body DB copy and search can lag by minutes. Workers Paid is required. Otherwise logs are exported from the DB to Iceberg on schedule. Both modes require R2 and Catalog subscriptions.'}</p>
+          <p>${locale === 'ja' ? 'Cloudflare Pipelinesを使用しますか？Pipeline利用時はログ本体をDBに保存せず、検索反映には数分かかる場合があります。Workers Paidが必要です。非利用時はDBから定期的にIcebergへ出力します。両方式でR2 Data Catalogと2つのAPIトークンが必要で、Setupから自動発行できます。' : 'Use Cloudflare Pipelines? Pipeline mode stores no log-body DB copy and search can lag by minutes. Workers Paid is required. Otherwise logs are exported from the DB to Iceberg on schedule. Both modes require R2 Data Catalog and two API tokens, which Setup can issue automatically.'}</p>
           <select id="log-archive-mode"><option value="">${locale === 'ja' ? '選択してください' : 'Choose a mode'}</option>${implementedLogArchiveModes()
             .map(
               (mode) =>
-                `<option value="${mode}">${mode === 'pipeline' ? (locale === 'ja' ? '使用する' : 'Use Pipelines') : locale === 'ja' ? '使用しない（定期出力）' : 'Scheduled export'}</option>`
+                `<option value="${mode}">${mode === 'pipeline' ? (locale === 'ja' ? '使用する' : 'Use Pipelines') : locale === 'ja' ? 'Pipelines を使わない（DB から定期出力）' : 'Without Pipelines (scheduled export from the DB)'}</option>`
             )
             .join('')}</select>
           <label id="log-archive-retention-label" class="hidden">${locale === 'ja' ? 'DB保持日数' : 'DB retention days'}<input id="log-archive-retention" type="number" min="1" max="3650" value="7"></label>
+          <label>${locale === 'ja' ? 'トークンの用意方法' : 'Token source'}<select id="log-archive-token-source"><option value="automatic">${locale === 'ja' ? '自動発行（おすすめ）' : 'Issue automatically (recommended)'}</option><option value="manual">${locale === 'ja' ? '手入力' : 'Enter tokens manually'}</option><option value="staged" id="log-archive-staged-choice" disabled hidden>${locale === 'ja' ? '発行済みのトークンを使用' : 'Use the already issued tokens'}</option></select></label>
+          <p id="log-archive-staged-status" aria-live="polite"></p>
+          <div id="log-archive-automatic-fields">
+            <p>${locale === 'ja' ? '一時トークンはAccount API Tokens Write権限だけで作成してください。Setupがログ専用トークンを作成して保存した後、一時トークンを失効します。Control用にはデプロイ時に別の一時トークンが必要です。' : 'Create a one-time token with only Account API Tokens Write. Setup creates and stages the log tokens, then revokes the one-time token. Control uses a separate one-time token at deployment.'}</p>
+            <button type="button" class="btn btn-ghost sm" id="btn-create-log-archive-bootstrap-token">${locale === 'ja' ? 'Cloudflareで一時トークンを作成' : 'Create one-time Cloudflare token'}</button>
+            <label>${locale === 'ja' ? '一時トークン' : 'One-time token'}<input id="log-archive-bootstrap-token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+            <p id="log-archive-bootstrap-status" aria-live="polite"></p>
+          </div>
+          <div id="log-archive-manual-fields" class="hidden">
           <label>${locale === 'ja' ? 'Catalog・Basin SQLの読取り専用API token' : 'Read-only Catalog / Basin SQL API token'}<input id="log-archive-read-token" type="password" autocomplete="off"></label>
           <label>${locale === 'ja' ? 'Catalog書込み用の別API token' : 'Separate Catalog write API token'}<input id="log-archive-write-token" type="password" autocomplete="off"></label>
           <label id="log-archive-sink-token-label" class="hidden">${locale === 'ja' ? 'Pipeline Sink専用の別Catalog API token（Workerへ配布しません）' : 'Separate Pipeline Sink Catalog API token (never uploaded to Workers)'}<input id="log-archive-sink-token" type="password" autocomplete="off"></label>
+          </div>
         </div>
       </section>`
           : ''
@@ -7024,6 +7040,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
 
+    const LOG_ARCHIVE_ERROR_MESSAGES = ${JSON.stringify(LOG_ARCHIVE_ERROR_MESSAGES)};
+    const logArchiveInputError = ${logArchiveInputError.toString()};
+    const logArchiveErrorMessage = ${logArchiveErrorMessage.toString()};
+    const logArchiveStagedChoice = ${logArchiveStagedChoice.toString()};
+    let logArchiveStagedStatus = null;
     // API helpers (with session token authentication)
     async function api(endpoint, options = {}) {
       const { headers: customHeaders, body, ...restOptions } = options;
@@ -7665,6 +7686,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           setLoadConfigHero();
         }
       }
+      if (name === 'email') void refreshLogArchiveStagedStatus();
       replaySetupEntrance(sections[name]);
       window.scrollTo(0, 0);
     }
@@ -8555,8 +8577,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function resetDatabaseAndEmailForm() {
       setAutomaticProvisioningEnabled(true);
+      logArchiveStagedStatus = null;
+      const archiveSource = document.getElementById('log-archive-token-source');
+      if (archiveSource) { archiveSource.value = 'automatic'; renderLogArchiveStagedChoice(); }
       document.getElementById('feature-queue-enabled').checked = false;
-      if (document.getElementById('log-archive-mode')) { document.getElementById('log-archive-mode').value = ''; document.getElementById('log-archive-mode').disabled = false; document.getElementById('log-archive-retention').disabled = false; for (const role of ['read', 'write', 'sink']) document.getElementById('log-archive-' + role + '-token').value = ''; }
+      if (document.getElementById('log-archive-mode')) { document.getElementById('log-archive-bootstrap-token').dataset.stagedForMode = ''; document.getElementById('log-archive-bootstrap-token').value = ''; document.getElementById('log-archive-mode').value = ''; document.getElementById('log-archive-mode').disabled = false; document.getElementById('log-archive-retention').disabled = false; for (const role of ['read', 'write', 'sink']) document.getElementById('log-archive-' + role + '-token').value = ''; }
 
       document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
         input.checked = input.value === 'auto';
@@ -10759,10 +10784,54 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    function syncLogArchiveTokenSource() {
+      const source = document.getElementById('log-archive-token-source')?.value;
+      document.getElementById('log-archive-manual-fields')?.classList.toggle('hidden', source !== 'manual');
+      document.getElementById('log-archive-automatic-fields')?.classList.toggle('hidden', source !== 'automatic');
+    }
+    function renderLogArchiveStagedChoice() {
+      const source = document.getElementById('log-archive-token-source');
+      if (!source) return;
+      const choice = logArchiveStagedChoice(logArchiveStagedStatus, document.getElementById('log-archive-mode').value);
+      const option = document.getElementById('log-archive-staged-choice');
+      option.disabled = !choice.useStaged;
+      option.hidden = !choice.useStaged;
+      if (choice.useStaged && source.value === 'automatic' && !document.getElementById('log-archive-bootstrap-token').value.trim()) source.value = 'staged';
+      else if (!choice.useStaged && source.value === 'staged') source.value = 'automatic';
+      document.getElementById('log-archive-staged-status').textContent = choice.messageCode ? logArchiveErrorMessage(choice.messageCode, _currentLocale) : '';
+      syncLogArchiveTokenSource();
+    }
+    async function refreshLogArchiveStagedStatus() {
+      if (!document.getElementById('log-archive-mode') || !config.env) return;
+      const environment = config.env;
+      logArchiveStagedStatus = null;
+      renderLogArchiveStagedChoice();
+      try {
+        const result = await api('/log-archive/staged-status?environment=' + encodeURIComponent(environment));
+        if (config.env !== environment) return;
+        if (!result.success) { document.getElementById('log-archive-staged-status').textContent = logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale); return; }
+        logArchiveStagedStatus = result;
+        renderLogArchiveStagedChoice();
+      } catch {
+        if (config.env === environment) document.getElementById('log-archive-staged-status').textContent = logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale);
+      }
+    }
+    document.getElementById('log-archive-token-source')?.addEventListener('change', syncLogArchiveTokenSource);
+    document.getElementById('btn-create-log-archive-bootstrap-token')?.addEventListener('click', async () => {
+      const popup = window.open('about:blank', '_blank');
+      if (popup) popup.opener = null;
+      try {
+        const result = await api('/log-archive/token-template', { method: 'POST', body: { environment: config.env } });
+        if (!result.success) { popup?.close(); alert(logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale)); return; }
+        document.getElementById('log-archive-bootstrap-status').textContent = (_currentLocale === 'ja' ? '有効期限の目安: ' : 'Recommended end date: ') + result.expiresOnDate + ' (UTC)';
+        if (popup) popup.location.href = result.url;
+      } catch { popup?.close(); alert(logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale)); }
+    });
     document.getElementById('log-archive-mode')?.addEventListener('change', (event) => {
       const pipeline = event.target.value === 'pipeline';
       document.getElementById('log-archive-sink-token-label').classList.toggle('hidden', !pipeline);
       document.getElementById('log-archive-retention-label').classList.toggle('hidden', event.target.value !== 'scheduled');
+      renderLogArchiveStagedChoice();
 
     });
 
@@ -10782,6 +10851,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     });
 
     document.getElementById('btn-continue-email').addEventListener('click', async () => {
+      const LOG_ARCHIVE_ERROR_MESSAGES = ${JSON.stringify(LOG_ARCHIVE_ERROR_MESSAGES)};
+      const logArchiveInputError = ${logArchiveInputError.toString()};
+      const logArchiveErrorMessage = ${logArchiveErrorMessage.toString()};
       const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
       const btn = document.getElementById('btn-continue-email');
       const queueEnabled = document.getElementById('feature-queue-enabled').checked === true;
@@ -10877,9 +10949,25 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const archiveMode = document.getElementById('log-archive-mode')?.value;
       if (document.getElementById('log-archive-mode') && !config.logging?.archive) {
-        if (!archiveMode) { alert('Choose a log storage mode'); return; }
-        const result = await api('/log-archive/configure', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, ...(archiveMode === 'scheduled' ? { dbRetentionDays: Number(document.getElementById('log-archive-retention').value) } : {}), readToken: document.getElementById('log-archive-read-token').value, writeToken: document.getElementById('log-archive-write-token').value, ...(archiveMode === 'pipeline' ? { sinkToken: document.getElementById('log-archive-sink-token').value } : {}) }) });
-        if (!result.success) { alert(result.error || 'Log storage configuration failed'); return; }
+        const source = document.getElementById('log-archive-token-source').value;
+        const manual = source !== 'automatic' && source !== 'staged';
+        const fields = { mode: archiveMode, readToken: document.getElementById('log-archive-read-token').value, writeToken: document.getElementById('log-archive-write-token').value, ...(archiveMode === 'pipeline' ? { sinkToken: document.getElementById('log-archive-sink-token').value } : {}) };
+        const error = !archiveMode ? 'log_archive_mode_required' : manual ? logArchiveInputError(fields) : (source !== 'staged' && !document.getElementById('log-archive-bootstrap-token').value.trim() && document.getElementById('log-archive-bootstrap-token').dataset?.stagedForMode !== archiveMode ? 'log_archive_bootstrap_token_required' : null);
+        if (error) { alert(logArchiveErrorMessage(error, _currentLocale)); return; }
+        let result;
+        btn.disabled = true;
+        try {
+          if (!manual && source !== 'staged' && document.getElementById('log-archive-bootstrap-token').dataset?.stagedForMode !== archiveMode) {
+            const issued = await api('/log-archive/issue-tokens', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, bootstrapToken: document.getElementById('log-archive-bootstrap-token').value.trim() }) });
+            document.getElementById('log-archive-bootstrap-token').value = '';
+            if (!issued.success) { alert(logArchiveErrorMessage(issued.error || 'log_archive_configuration_invalid', _currentLocale, issued.cleanupRequired === true || issued.childCleanupRequired === true)); return; }
+            if (issued.warning) document.getElementById('log-archive-bootstrap-status').textContent = logArchiveErrorMessage(issued.warning, _currentLocale);
+            document.getElementById('log-archive-bootstrap-token').dataset.stagedForMode = archiveMode;
+          }
+          result = await api('/log-archive/configure', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, ...(archiveMode === 'scheduled' ? { dbRetentionDays: Number(document.getElementById('log-archive-retention').value) } : {}), ...(manual ? { readToken: fields.readToken.trim(), writeToken: fields.writeToken.trim(), ...(fields.sinkToken ? { sinkToken: fields.sinkToken.trim() } : {}) } : { tokenSource: 'staged' }) }) });
+          if (!result.success) { alert(logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale)); return; }
+        } catch { alert(logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale)); return; }
+        finally { btn.disabled = false; }
         config.logging = { archive: result.archive };
         document.getElementById('log-archive-read-token').value = '';
         document.getElementById('log-archive-write-token').value = '';

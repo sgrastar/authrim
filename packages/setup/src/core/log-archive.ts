@@ -21,6 +21,15 @@ import type {
   ProvisioningResourceIdentity,
 } from './provisioning-intent.js';
 
+/** Shared name contract for manual verification and automatic issuance. */
+export const LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS = {
+  catalogRead: /catalog.*read/iu,
+  sqlRead: /sql.*read/iu,
+  storageRead: /r2.*storage.*read/iu,
+  catalogWrite: /catalog.*(?:write|edit)/iu,
+  storageWrite: /r2.*storage.*(?:write|edit)/iu,
+};
+
 export const LOG_ARCHIVE_SCHEMA_DIGEST = createHash('sha256')
   .update(JSON.stringify(LOG_ARCHIVE_FIELDS))
   .digest('hex');
@@ -225,14 +234,20 @@ export class LogArchiveApi {
       if (role === 'read') {
         if (
           permissions.some((name) => /write|edit|admin/iu.test(name)) ||
-          !permissions.some((name) => /catalog.*read/iu.test(name)) ||
-          !permissions.some((name) => /sql.*read/iu.test(name)) ||
-          !permissions.some((name) => /r2.*storage.*read/iu.test(name))
+          !permissions.some((name) =>
+            LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.catalogRead.test(name)
+          ) ||
+          !permissions.some((name) => LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.sqlRead.test(name)) ||
+          !permissions.some((name) =>
+            LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.storageRead.test(name)
+          )
         )
           throw new Error('log_archive_catalog_read_token_not_read_only');
       } else if (
-        !permissions.some((name) => /catalog.*(?:write|edit)/iu.test(name)) ||
-        !permissions.some((name) => /r2.*storage.*(?:write|edit)/iu.test(name))
+        !permissions.some((name) =>
+          LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.catalogWrite.test(name)
+        ) ||
+        !permissions.some((name) => LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.storageWrite.test(name))
       )
         throw new Error('log_archive_catalog_write_token_permission_missing');
     }
