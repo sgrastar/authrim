@@ -1369,6 +1369,8 @@ const ru: Translations = {
   'web.status.adminNotConfigured': 'Администратор не настроен',
   'web.status.initializing': 'Инициализация...',
   'web.status.found': 'Найдено: {{count}}',
+  'web.status.serverUnreachable':
+    'Не удаётся подключиться к серверу Setup. Проверьте, что он всё ещё запущен в терминале, при необходимости перезапустите его и повторите попытку.',
   'web.status.operationInProgress':
     'Уже выполняется другая операция настройки. Дождитесь её завершения и повторите попытку.',
   'web.status.warning': 'Предупреждение:',
