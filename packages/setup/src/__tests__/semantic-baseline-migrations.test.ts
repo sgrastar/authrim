@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import {
   assertSemanticBaselineAllowed,
   generateSqliteBaseline,
   mergeSemanticBaselineProvenance,
+  PostgresBaselineContainer,
   renderDeterministicMigrationSql,
   replaceLookupBucketCounterSeedStatements,
   restorePortableSeedExpressions,
@@ -195,7 +196,7 @@ INSERT INTO tenant_database_migration_state SELECT * FROM previous_sentinel;
 DROP TABLE previous_sentinel;
 CREATE INDEX engine_sentinel_release_idx ON tenant_database_migration_state(release_id);`;
 
-  it.each(['core-d1', 'pii-d1', 'control-d1', 'plugin-runner-d1'] as const)(
+  it.each(['core-d1', 'pii-d1', 'admin-d1', 'control-d1', 'plugin-runner-d1'] as const)(
     'omits the rebuilt engine sentinel, seed and index from %s fresh baseline',
     (streamId) => {
       const { directory, source, sourcePath, baseline } = fixture(sentinelSource, streamId);
@@ -289,24 +290,18 @@ ${renderDeterministicMigrationSql(baseline.sql, 'sqlite')}`);
     }
   });
 
-  it('preserves the same-named admin business table and the distinct Control rollout table', () => {
-    const { baseline } = fixture(
-      `
-CREATE TABLE tenant_database_migration_state (tenant_id TEXT PRIMARY KEY NOT NULL, status TEXT);
-INSERT INTO tenant_database_migration_state VALUES ('tenant-one', 'applied');
-CREATE TABLE control_tenant_database_migration_state (resource_id TEXT PRIMARY KEY NOT NULL);
-INSERT INTO control_tenant_database_migration_state VALUES ('resource-one');`,
-      'admin-d1'
-    );
+  it('applies an Admin fresh baseline after the engine creates its sentinel', () => {
+    const { baseline } = fixture(sentinelSource, 'admin-d1');
     const database = new DatabaseSync(':memory:');
     try {
-      database.exec(renderDeterministicMigrationSql(baseline.sql, 'sqlite'));
-      expect(database.prepare('SELECT * FROM tenant_database_migration_state').all()).toEqual([
-        { tenant_id: 'tenant-one', status: 'applied' },
+      database.exec(`${TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL};
+${AUTHRIM_MIGRATIONS_TABLE_SQL};
+${renderDeterministicMigrationSql(baseline.sql, 'sqlite')}`);
+      expect(database.prepare('SELECT * FROM tenant_database_migration_state').all()).toEqual([]);
+      expect(database.prepare('SELECT * FROM authrim_migrations').all()).toEqual([]);
+      expect(database.prepare('SELECT * FROM application_record').all()).toEqual([
+        { id: 'kept', label: 'application seed' },
       ]);
-      expect(
-        database.prepare('SELECT * FROM control_tenant_database_migration_state').all()
-      ).toEqual([{ resource_id: 'resource-one' }]);
     } finally {
       database.close();
     }
@@ -766,4 +761,81 @@ describe('semantic release delta composition', () => {
       })
     ).toThrow('SQLite semantic release delta verification failed');
   });
+});
+
+describe('PostgreSQL semantic container lifecycle without Docker', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('starts with tmpfs for PostgreSQL 17 and removes anonymous volumes', () => {
+    const run = vi.fn().mockReturnValue('');
+    const container = new PostgresBaselineContainer(run);
+    container.start();
+    container.stop();
+    expect(run.mock.calls[0][0]).toEqual({
+      executable: 'docker',
+      args: [
+        'run',
+        '--detach',
+        '--rm',
+        '--name',
+        container.name,
+        '--tmpfs',
+        '/var/lib/postgresql/data',
+        '--env',
+        'POSTGRES_PASSWORD=authrim-semantic-baseline-local',
+        'postgres:17-alpine',
+      ],
+    });
+    expect(run).toHaveBeenLastCalledWith({
+      executable: 'docker',
+      args: ['rm', '--force', '--volumes', container.name],
+    });
+  });
+
+  it('tolerates an already removed container during cleanup', () => {
+    const run = vi.fn(() => {
+      throw new Error('No such container');
+    });
+    expect(() => new PostgresBaselineContainer(run).stop()).not.toThrow();
+  });
+
+  it.each(['success', 'verification failure', 'execution error', 'startup error'] as const)(
+    'always stops the container after %s',
+    (outcome) => {
+      vi.spyOn(PostgresBaselineContainer.prototype, 'start').mockImplementation(() => {
+        if (outcome === 'startup error') throw new Error(outcome);
+      });
+      const stop = vi
+        .spyOn(PostgresBaselineContainer.prototype, 'stop')
+        .mockImplementation(() => {});
+      vi.spyOn(PostgresBaselineContainer.prototype, 'createDatabase').mockImplementation(() => {});
+      vi.spyOn(PostgresBaselineContainer.prototype, 'execute').mockImplementation(() => {
+        if (outcome === 'execution error') throw new Error(outcome);
+      });
+      vi.spyOn(PostgresBaselineContainer.prototype, 'dump')
+        .mockReturnValueOnce('same')
+        .mockReturnValueOnce(outcome === 'verification failure' ? 'different' : 'same');
+      vi.spyOn(PostgresBaselineContainer.prototype, 'evidence').mockReturnValue({
+        schemaChecksum: 'schema',
+        seedChecksum: 'seed',
+        objectCount: 1,
+      });
+      const verify = () =>
+        verifySemanticMigrationComposition({
+          streamId: 'postgres-cleanup',
+          dialect: 'postgres',
+          baseSql: [],
+          sourceSql: ['SELECT 1;'],
+          consolidatedSql: 'SELECT 1;',
+        });
+      if (outcome === 'success') expect(verify().objectCount).toBe(1);
+      else
+        expect(verify).toThrow(
+          outcome === 'verification failure'
+            ? 'PostgreSQL semantic release delta verification failed'
+            : outcome
+        );
+      expect(stop).toHaveBeenCalledOnce();
+    }
+  );
 });

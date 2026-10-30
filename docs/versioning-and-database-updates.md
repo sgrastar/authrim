@@ -229,6 +229,11 @@ or provenance. It records the current evidence in `migrations/semantic-baseline.
 release-specific copy in `migrations/evidence/<version>.json`. Existing environments continue through
 explicit deltas or bridges.
 
+Fresh baselines omit the setup ledger `authrim_migrations` and the engine sentinel
+`tenant_database_migration_state` in every schema family, including Admin. The unused Admin business
+table with that name is removed by a forward source migration before the 0.5.0 release. Control's
+`control_tenant_database_migration_state` remains the live tenant rollout state.
+
 ## 5. Fix the database update for the release
 
 After the test environment passes, stop adding SQL files and create the release files.

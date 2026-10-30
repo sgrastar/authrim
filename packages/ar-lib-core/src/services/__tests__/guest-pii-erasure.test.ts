@@ -194,6 +194,10 @@ const primaryKey = (table: GuestPiiErasureTable) =>
         : 'id';
 
 describe('Guest PII physical source deny and bounded erasure', () => {
+  it('never treats the migration sentinel as Guest data to erase', () => {
+    expect(GUEST_PII_ERASURE_TABLES).not.toContain('tenant_database_migration_state');
+  });
+
   it('keeps a closed terminal ID marker and blocks new raw data after full authorized drain', async () => {
     const f = await fixture(true);
     let marker = await f.port.start(f.receipt);

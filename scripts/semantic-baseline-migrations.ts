@@ -52,7 +52,10 @@ import {
   type MigrationTargetKind,
 } from '../packages/ar-lib-core/src/services/control-plane/migration-stream-contract.js';
 
-const POSTGRES_IMAGE = 'postgres:17-alpine';
+import {
+  postgresTestContainerStartArgs,
+  postgresTestContainerStopArgs,
+} from './postgres-test-container.js';
 const MAX_SUBPROCESS_BUFFER = 128 * 1024 * 1024;
 const DETERMINISTIC_EPOCH_SECONDS = '1700000000';
 const DETERMINISTIC_EPOCH_MILLISECONDS = '1700000000000';
@@ -403,12 +406,9 @@ function sqliteDump(dbPath: string): string {
   return normalizeSqliteDump(run({ executable: 'sqlite3', args: ['-bail', dbPath, '.dump'] }));
 }
 
-function freshBaselineSetupTableCleanupSql(
-  schemaFamily: MigrationSchemaFamily,
-  dialect: 'sqlite' | 'postgres'
-): string {
+function freshBaselineSetupTableCleanupSql(dialect: 'sqlite' | 'postgres'): string {
   const schema = dialect === 'postgres' ? 'public.' : '';
-  return freshBaselineOwnedMigrationTableNames(schemaFamily)
+  return freshBaselineOwnedMigrationTableNames()
     .map((table) => `DROP TABLE IF EXISTS ${schema}"${table}";`)
     .join('\n');
 }
@@ -476,12 +476,12 @@ export function generateSqliteBaseline(input: {
     });
   }
 
-  // Source migrations may rebuild setup/engine ledgers. Apply the family ownership rules only
+  // Source migrations may rebuild setup/engine ledgers. Remove their operational state only
   // after they have all run, in these disposable fresh-baseline DBs, never in bridge verification.
   run({
     executable: 'sqlite3',
     args: ['-bail', sourceDb],
-    stdin: freshBaselineSetupTableCleanupSql(input.stream.schemaFamily, 'sqlite'),
+    stdin: freshBaselineSetupTableCleanupSql('sqlite'),
   });
   const sourceDump = sqliteDump(sourceDb);
   const portableDump = restorePortableSeedExpressions(
@@ -503,7 +503,7 @@ export function generateSqliteBaseline(input: {
   run({
     executable: 'sqlite3',
     args: ['-bail', verifyDb],
-    stdin: freshBaselineSetupTableCleanupSql(input.stream.schemaFamily, 'sqlite'),
+    stdin: freshBaselineSetupTableCleanupSql('sqlite'),
   });
   const verifyDump = sqliteDump(verifyDb);
   if (sourceDump !== verifyDump) {
@@ -519,26 +519,21 @@ export function generateSqliteBaseline(input: {
   };
 }
 
-class PostgresBaselineContainer {
+export class PostgresBaselineContainer {
   readonly name = `authrim-semantic-baseline-${process.pid}`;
 
+  constructor(private readonly runCommand: typeof run = run) {}
+
   start(): void {
-    run({
+    this.runCommand({
       executable: 'docker',
-      args: [
-        'run',
-        '--detach',
-        '--rm',
-        '--name',
-        this.name,
-        '--env',
+      args: postgresTestContainerStartArgs(this.name, [
         'POSTGRES_PASSWORD=authrim-semantic-baseline-local',
-        POSTGRES_IMAGE,
-      ],
+      ]),
     });
     for (let attempt = 0; attempt < 120; attempt += 1) {
       try {
-        run({
+        this.runCommand({
           executable: 'docker',
           args: ['exec', this.name, 'pg_isready', '--username', 'postgres'],
         });
@@ -552,7 +547,7 @@ class PostgresBaselineContainer {
 
   stop(): void {
     try {
-      run({ executable: 'docker', args: ['rm', '--force', this.name] });
+      this.runCommand({ executable: 'docker', args: postgresTestContainerStopArgs(this.name) });
     } catch {
       // The --rm container may already be gone after an engine failure.
     }
@@ -562,7 +557,7 @@ class PostgresBaselineContainer {
     let lastError: unknown;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {
-        run({
+        this.runCommand({
           executable: 'docker',
           args: ['exec', this.name, 'createdb', '--username', 'postgres', name],
         });
@@ -579,7 +574,7 @@ class PostgresBaselineContainer {
     let lastError: unknown;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {
-        run({
+        this.runCommand({
           executable: 'docker',
           args: [
             'exec',
@@ -613,7 +608,7 @@ class PostgresBaselineContainer {
   }
 
   queryJson(database: string, sql: string): unknown {
-    const output = run({
+    const output = this.runCommand({
       executable: 'docker',
       args: [
         'exec',
@@ -637,7 +632,7 @@ class PostgresBaselineContainer {
 
   dump(database: string): string {
     return normalizePostgresDump(
-      run({
+      this.runCommand({
         executable: 'docker',
         args: [
           'exec',
@@ -662,7 +657,7 @@ class PostgresBaselineContainer {
     objectCount: number;
   } {
     const schema = normalizePostgresDump(
-      run({
+      this.runCommand({
         executable: 'docker',
         args: [
           'exec',
@@ -680,7 +675,7 @@ class PostgresBaselineContainer {
       })
     );
     const seed = normalizePostgresDump(
-      run({
+      this.runCommand({
         executable: 'docker',
         args: [
           'exec',
@@ -699,7 +694,7 @@ class PostgresBaselineContainer {
       })
     );
     const objectCount = Number.parseInt(
-      run({
+      this.runCommand({
         executable: 'docker',
         args: [
           'exec',
@@ -817,10 +812,7 @@ function generatePostgresBaseline(input: {
   for (const file of input.stream.files) {
     input.container.execute(sourceDatabase, renderSourceSql(input.streamRoot, input.stream, file));
   }
-  input.container.execute(
-    sourceDatabase,
-    freshBaselineSetupTableCleanupSql(input.stream.schemaFamily, 'postgres')
-  );
+  input.container.execute(sourceDatabase, freshBaselineSetupTableCleanupSql('postgres'));
   const sourceDump = input.container.dump(sourceDatabase);
   const portableDump = restorePortableSeedExpressions(
     sourceDump,
@@ -841,10 +833,7 @@ function generatePostgresBaseline(input: {
     verifyDatabase,
     renderDeterministicMigrationSql(sql, migrationRendererDialect(input.stream.dialect))
   );
-  input.container.execute(
-    verifyDatabase,
-    freshBaselineSetupTableCleanupSql(input.stream.schemaFamily, 'postgres')
-  );
+  input.container.execute(verifyDatabase, freshBaselineSetupTableCleanupSql('postgres'));
   if (input.container.dump(verifyDatabase) !== sourceDump) {
     throw new Error(`PostgreSQL semantic baseline verification failed for ${input.stream.id}`);
   }

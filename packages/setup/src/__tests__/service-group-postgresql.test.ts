@@ -1,5 +1,9 @@
 import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 import { execFileSync } from 'node:child_process';
+import {
+  postgresTestContainerStartArgs,
+  postgresTestContainerStopArgs,
+} from '../../../../scripts/postgres-test-container';
 
 import { setTimeout } from 'node:timers/promises';
 import { expect, it } from 'vitest';
@@ -34,17 +38,8 @@ it('applies service group PostgreSQL migrations and invalidates committed inputs
       ],
       input
     );
-  docker([
-    'run',
-    '--rm',
-    '-d',
-    '--name',
-    container,
-    '-e',
-    'POSTGRES_HOST_AUTH_METHOD=trust',
-    'postgres:17-alpine',
-  ]);
   try {
+    docker(postgresTestContainerStartArgs(container, ['POSTGRES_HOST_AUTH_METHOD=trust']));
     for (let attempt = 0; ; attempt++) {
       try {
         sql('postgres', 'SELECT 1');
@@ -139,6 +134,6 @@ it('applies service group PostgreSQL migrations and invalidates committed inputs
       )
     ).toBe('5');
   } finally {
-    docker(['rm', '-f', container]);
+    docker(postgresTestContainerStopArgs(container));
   }
 }, 60_000);

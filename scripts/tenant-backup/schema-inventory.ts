@@ -180,10 +180,10 @@ export function inventoryBackupSchemas(repositoryRoot: string): BackupSchemaInve
         executionSha256: selected.files[index].checksum,
       })),
       // Setup/engine tables are physical schema too, although fresh application baselines
-      // no longer own their DDL. Admin's same-named sentinel is application business data.
+      // no longer own their DDL. The engine sentinel exists in every family, Admin included.
       ...inspectBackupSchema([
         AUTHRIM_MIGRATIONS_TABLE_SQL,
-        ...(stream.schemaFamily === 'admin' ? [] : [TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL]),
+        TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL,
         ...sources,
       ]),
     });

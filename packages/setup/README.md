@@ -479,6 +479,12 @@ health checks, and records the completed product version in the environment lock
 enabled Worker succeeds. Re-running the command resumes an interrupted update from the recorded phase,
 including partially completed UI deployment.
 
+Fresh-install baselines omit `authrim_migrations` and the engine sentinel
+`tenant_database_migration_state` for every schema family, including Admin. Setup and the engine
+create their own ledgers. The unused Admin business table with the same name is removed by a forward
+migration for 0.5.0; live tenant migration state stays in Control's
+`control_tenant_database_migration_state`.
+
 Legacy locks without `productVersion` are reconciled from recorded Worker versions. If those versions
 are mixed, setup does not guess the database release: it checks cumulative D1 history and converges all
 Workers to the requested release, while refusing any target below the highest recorded Worker version.

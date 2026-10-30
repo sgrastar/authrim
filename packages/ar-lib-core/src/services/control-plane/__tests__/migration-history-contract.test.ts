@@ -4,19 +4,14 @@ import {
   freshBaselineOwnedMigrationTableNames,
   validateAuthrimMigrationHistoryRows,
 } from '../migration-history-contract.js';
-import { MIGRATION_STREAM_CONTRACTS } from '../migration-stream-contract.js';
 
 describe('migration history contract', () => {
-  it.each(MIGRATION_STREAM_CONTRACTS)(
-    'excludes only the setup/engine-owned tables for $id fresh baseline',
-    ({ schemaFamily }) => {
-      expect(freshBaselineOwnedMigrationTableNames(schemaFamily)).toEqual(
-        schemaFamily === 'admin'
-          ? ['authrim_migrations']
-          : ['authrim_migrations', 'tenant_database_migration_state']
-      );
-    }
-  );
+  it('excludes the setup ledger and engine sentinel from every fresh baseline', () => {
+    expect(freshBaselineOwnedMigrationTableNames()).toEqual([
+      'authrim_migrations',
+      'tenant_database_migration_state',
+    ]);
+  });
 
   it('normalizes legacy-compatible rows for setup migration backfill', () => {
     expect(

@@ -1,19 +1,12 @@
-import type { MigrationSchemaFamily } from './migration-stream-contract.js';
-
 const AUTHRIM_MIGRATIONS_TABLE_NAME = 'authrim_migrations';
 const TENANT_DATABASE_MIGRATION_STATE_TABLE_NAME = 'tenant_database_migration_state';
 
 // These tables belong to setup in every schema family and are not fresh-baseline contents.
 export const SETUP_OWNED_MIGRATION_TABLE_NAMES = [AUTHRIM_MIGRATIONS_TABLE_NAME] as const;
 
-export function freshBaselineOwnedMigrationTableNames(
-  schemaFamily: MigrationSchemaFamily
-): readonly string[] {
-  // Admin's same-named table is business data (tenant_id/role/generation), used by tenant
-  // deletion and DR. Every other family uses the engine's stream_id-keyed sentinel instead.
-  return schemaFamily === 'admin'
-    ? SETUP_OWNED_MIGRATION_TABLE_NAMES
-    : [...SETUP_OWNED_MIGRATION_TABLE_NAMES, TENANT_DATABASE_MIGRATION_STATE_TABLE_NAME];
+// The engine sentinel is operational state in every family, including Admin.
+export function freshBaselineOwnedMigrationTableNames(): readonly string[] {
+  return [...SETUP_OWNED_MIGRATION_TABLE_NAMES, TENANT_DATABASE_MIGRATION_STATE_TABLE_NAME];
 }
 
 export const TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS ${TENANT_DATABASE_MIGRATION_STATE_TABLE_NAME} (

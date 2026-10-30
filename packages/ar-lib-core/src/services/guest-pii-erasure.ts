@@ -92,6 +92,7 @@ const PG_SCHEMA_TABLES = new Set([
   'authrim_migrations',
   'authrim_runtime_probes',
   'migration_metadata',
+  // This is PII's engine sentinel, never the removed Admin business table or an erasure target.
   'tenant_database_migration_state',
   'authrim_control_plane_shard_metadata',
 ]);
