@@ -1,6 +1,23 @@
 -- PRIVATE UNNUMBERED postgresql Step B fixture. Not applied, not activated, not runtime-verified.
 -- Existing consent tables/FKs/indexes are not rebuilt or altered.
 
+CREATE TABLE statement_consent_retention_permits (
+  tenant_id TEXT NOT NULL,
+  permit_id TEXT NOT NULL,
+  row_kind TEXT NOT NULL CHECK (row_kind IN ('record','history')),
+  row_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  statement_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  physical_id TEXT NOT NULL,
+  restore_epoch TEXT NOT NULL,
+  cutoff_at BIGINT NOT NULL CHECK (cutoff_at BETWEEN 0 AND 9007199254740991),
+  legacy_retention_days BIGINT CHECK (legacy_retention_days BETWEEN 0 AND 9007199254740991 / 86400000),
+  issued_at BIGINT NOT NULL CHECK (issued_at BETWEEN 0 AND 9007199254740991),
+  expires_at BIGINT NOT NULL CHECK (expires_at BETWEEN issued_at AND 9007199254740991),
+  PRIMARY KEY (tenant_id,permit_id)
+);
+
 CREATE TABLE statement_consent_guards (
   tenant_id TEXT NOT NULL,
   scope_kind TEXT NOT NULL CHECK (scope_kind IN ('tenant', 'statement')),
@@ -84,6 +101,15 @@ CREATE TABLE statement_consent_admissions (
 
 CREATE FUNCTION statement_consent_operation_insert_guard_fn() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  -- Only terminal evidence may be rebound by the isolated importer transaction.
+  IF NEW.is_terminal=1 AND NEW.status IN ('applied','rejected')
+    AND NEW.tenant_id=(NULLIF(current_setting('authrim.statement_consent_restore',true),'')::jsonb ->> 'tenant_id')
+    AND NEW.account_id=(NULLIF(current_setting('authrim.statement_consent_restore',true),'')::jsonb ->> 'account_id')
+    AND NEW.physical_id=(NULLIF(current_setting('authrim.statement_consent_restore',true),'')::jsonb ->> 'physical_id')
+    AND NEW.restore_epoch=(NULLIF(current_setting('authrim.statement_consent_restore',true),'')::jsonb ->> 'restore_epoch')
+    AND NOT EXISTS (SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id=NEW.tenant_id AND o.operation_id=NEW.operation_id)
+  THEN RETURN NEW; END IF;
+
   IF NEW.status <> 'executing' OR NEW.is_terminal <> 0 OR EXISTS (SELECT 1 FROM statement_consent_operations o WHERE o.tenant_id = NEW.tenant_id AND (o.operation_id = NEW.operation_id OR (o.user_id = NEW.user_id AND o.statement_id = NEW.statement_id AND o.is_terminal = 0))) OR (NOT ((NEW.after_json::jsonb ->> 'tenant_id') IS NOT DISTINCT FROM NEW.tenant_id) OR NOT ((NEW.after_json::jsonb ->> 'user_id') IS NOT DISTINCT FROM NEW.user_id) OR NOT ((NEW.after_json::jsonb ->> 'statement_id') IS NOT DISTINCT FROM NEW.statement_id)
       OR (NEW.is_noop = 1 AND (NEW.action <> 'grant' OR (NEW.after_json)::jsonb <> (NEW.before_json)::jsonb OR (NEW.after_json::jsonb ->> 'status') <> 'granted'))
       OR (NEW.is_noop = 0 AND ((NEW.history_json::jsonb ->> 'id') <> ('sc_' || NEW.operation_id || ':' || NEW.tenant_id)
@@ -170,7 +196,16 @@ CREATE TRIGGER statement_consent_user_consent_records_update_guard BEFORE UPDATE
 
 CREATE FUNCTION statement_consent_user_consent_records_delete_guard_fn() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF (EXISTS (SELECT 1 FROM statement_consent_guards g WHERE g.tenant_id = OLD.tenant_id AND g.scope_kind = 'tenant' AND g.scope_key = '' AND g.mode <> 'disabled')) AND NOT (FALSE) THEN RAISE EXCEPTION 'statement_consent_user_consent_records_delete_guard'; END IF;
+  IF (EXISTS (SELECT 1 FROM statement_consent_guards g WHERE g.tenant_id = OLD.tenant_id AND g.scope_kind = 'tenant' AND g.scope_key = '' AND g.mode <> 'disabled')) AND NOT (EXISTS (SELECT 1 FROM statement_consent_retention_permits p
+    JOIN statement_consent_guards g ON g.tenant_id=p.tenant_id AND g.scope_kind='tenant' AND g.scope_key=''
+    WHERE p.tenant_id=OLD.tenant_id AND p.row_kind='record' AND p.row_id=OLD.id
+      AND p.user_id=OLD.user_id AND p.statement_id=OLD.statement_id
+      AND p.account_id=g.account_id AND p.physical_id=g.physical_id AND p.restore_epoch=g.restore_epoch
+      AND CAST(FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000) AS BIGINT) BETWEEN p.issued_at AND p.expires_at AND p.cutoff_at<=CAST(FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000) AS BIGINT)
+      AND OLD.status IN ('withdrawn','denied','expired')
+      AND ((OLD.consent_settings_snapshot_at IS NOT NULL AND OLD.retain_until IS NOT NULL AND OLD.retain_until<p.cutoff_at)
+        OR (OLD.consent_settings_snapshot_at IS NULL AND p.legacy_retention_days IS NOT NULL
+          AND OLD.updated_at<p.cutoff_at-p.legacy_retention_days*86400000)))) THEN RAISE EXCEPTION 'statement_consent_user_consent_records_delete_guard'; END IF;
   RETURN OLD;
 END;
 $$;
@@ -198,7 +233,16 @@ CREATE TRIGGER statement_consent_consent_item_history_update_guard BEFORE UPDATE
 
 CREATE FUNCTION statement_consent_consent_item_history_delete_guard_fn() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF (EXISTS (SELECT 1 FROM statement_consent_guards g WHERE g.tenant_id = OLD.tenant_id AND g.scope_kind = 'tenant' AND g.scope_key = '' AND g.mode <> 'disabled')) AND NOT (FALSE) THEN RAISE EXCEPTION 'statement_consent_consent_item_history_delete_guard'; END IF;
+  IF (EXISTS (SELECT 1 FROM statement_consent_guards g WHERE g.tenant_id = OLD.tenant_id AND g.scope_kind = 'tenant' AND g.scope_key = '' AND g.mode <> 'disabled')) AND NOT (EXISTS (SELECT 1 FROM statement_consent_retention_permits p
+    JOIN statement_consent_guards g ON g.tenant_id=p.tenant_id AND g.scope_kind='tenant' AND g.scope_key=''
+    WHERE p.tenant_id=OLD.tenant_id AND p.row_kind='history' AND p.row_id=OLD.id
+      AND p.user_id=OLD.user_id AND p.statement_id=OLD.statement_id
+      AND p.account_id=g.account_id AND p.physical_id=g.physical_id AND p.restore_epoch=g.restore_epoch
+      AND CAST(FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000) AS BIGINT) BETWEEN p.issued_at AND p.expires_at AND p.cutoff_at<=CAST(FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000) AS BIGINT)
+      AND NOT EXISTS (SELECT 1 FROM user_consent_records r WHERE r.tenant_id=OLD.tenant_id AND r.user_id=OLD.user_id AND r.statement_id=OLD.statement_id AND r.status='granted')
+      AND ((OLD.consent_settings_snapshot_at IS NOT NULL AND OLD.retain_until IS NOT NULL AND OLD.retain_until<p.cutoff_at)
+        OR (OLD.consent_settings_snapshot_at IS NULL AND p.legacy_retention_days IS NOT NULL
+          AND OLD.created_at<p.cutoff_at-p.legacy_retention_days*86400000)))) THEN RAISE EXCEPTION 'statement_consent_consent_item_history_delete_guard'; END IF;
   RETURN OLD;
 END;
 $$;
@@ -271,3 +315,8 @@ BEGIN
 END;
 $$;
 CREATE TRIGGER statement_consent_admission_immutable BEFORE UPDATE ON statement_consent_admissions FOR EACH ROW EXECUTE FUNCTION statement_consent_admission_immutable_fn();
+
+CREATE FUNCTION statement_consent_retention_permit_immutable_fn() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'statement_consent_retention_permit_immutable'; END;
+$$;
+CREATE TRIGGER statement_consent_retention_permit_immutable BEFORE UPDATE ON statement_consent_retention_permits FOR EACH ROW EXECUTE FUNCTION statement_consent_retention_permit_immutable_fn();

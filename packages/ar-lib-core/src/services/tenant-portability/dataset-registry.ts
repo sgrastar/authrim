@@ -104,7 +104,7 @@ const TABLE_GROUPS: Partial<
     rebuild: `
       authrim_migrations migration_metadata tenant_database_migration_state
       account_routing_outbox authrim_control_plane_shard_metadata contact_point_search_indexes did_document_cache
-      log_iceberg_core_publications statement_consent_guards statement_consent_projection_jobs
+      log_iceberg_core_publications statement_consent_guards statement_consent_projection_jobs statement_consent_retention_permits
       directory_auth_release_advisories
       identity_binding_lookup_indexes legal_hold_projection_outbox lookup_retention_policy_projection_outbox refresh_token_shard_configs
       relationship_closure service_group_catalog service_group_epoch service_group_results

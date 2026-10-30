@@ -64,7 +64,7 @@ const COLUMNS = [
 
 describe('disabled statement-consent storage: existing schema safeguards', () => {
   it('keeps both definition FKs, all 21 columns, uniqueness and every D1 index', async () => {
-    const fixture = sqliteAdapter('core');
+    const fixture = sqliteAdapter('core', 36);
     // Only close uses the host SQLite handle; all observations use the shared typed adapter.
     const database = fixture.db as { close(): void };
     const { adapter } = fixture;

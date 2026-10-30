@@ -1,4 +1,10 @@
-import type { DatabaseAdapter, Env, PreparedStatement } from '@authrim/ar-lib-core';
+import {
+  ensureStatementConsentTenantGuard,
+  statementConsentOperationTtl,
+  type DatabaseAdapter,
+  type Env,
+  type PreparedStatement,
+} from '@authrim/ar-lib-core';
 import {
   consentJobSetting,
   consentJobTargets,
@@ -28,7 +34,7 @@ export async function retainStatementConsentPage(
   metadata: DatabaseAdapter,
   tenantId: string,
   stores: readonly ConsentJobStore[],
-  options: { rowPageSize: number; shardPageSize: number },
+  options: { rowPageSize: number; shardPageSize: number; operationTtlMs?: number },
   now = Date.now()
 ): Promise<void> {
   if (
@@ -65,9 +71,10 @@ export async function retainStatementConsentPage(
     const records = await account.query<{
       id: string;
       statement_id: string;
+      user_id: string;
       consent_settings_snapshot_at: number | string | null;
     }>(
-      `SELECT id,statement_id,consent_settings_snapshot_at FROM ${table} WHERE tenant_id=? AND id>? ORDER BY id LIMIT ?`,
+      `SELECT id,user_id,statement_id,consent_settings_snapshot_at FROM ${table} WHERE tenant_id=? AND id>? ORDER BY id LIMIT ?`,
       [tenantId, state.after_id, options.rowPageSize],
       { consistencyClass: 'primary_required' }
     );
@@ -91,6 +98,9 @@ export async function retainStatementConsentPage(
         AND active_record.statement_id=consent_item_history.statement_id AND active_record.status='granted')`
       : "AND status IN ('withdrawn', 'denied', 'expired')";
     const batches: PreparedStatement[] = [];
+    const permitted: { row: (typeof records)[number]; days: number | null }[] = records
+      .filter((r) => r.consent_settings_snapshot_at !== null)
+      .map((row) => ({ row, days: null }));
     const snapshotIds = records
       .filter((r) => r.consent_settings_snapshot_at !== null)
       .map((r) => r.id);
@@ -103,10 +113,15 @@ export async function retainStatementConsentPage(
     for (const policy of policies) {
       if (policy.record_retention_days === null) continue;
       const days = Number(policy.record_retention_days);
-      if (!Number.isSafeInteger(days) || days < 0) continue;
+      if (!Number.isSafeInteger(days) || days < 0 || !Number.isSafeInteger(days * DAY_MS)) continue;
       const ids = records
         .filter((r) => r.statement_id === policy.id && r.consent_settings_snapshot_at === null)
         .map((r) => r.id);
+      permitted.push(
+        ...records
+          .filter((r) => r.statement_id === policy.id && r.consent_settings_snapshot_at === null)
+          .map((row) => ({ row, days }))
+      );
       batches.push({
         sql: `DELETE FROM ${table} WHERE tenant_id=? AND id IN (${ids.map(() => '?').join(',')}) ${protectedHistory}
         AND consent_settings_snapshot_at IS NULL AND ${history ? 'created_at' : 'updated_at'} < ?`,
@@ -114,8 +129,51 @@ export async function retainStatementConsentPage(
       });
     }
     if (batches.length) {
-      const result = await account.batch(batches);
-      if (result.length !== batches.length || result.some((entry) => !entry.success))
+      const issuedAt = Date.now();
+      const ttl = options.operationTtlMs ?? (await statementConsentOperationTtl());
+      if (
+        !Number.isSafeInteger(now) ||
+        now < 0 ||
+        !Number.isSafeInteger(ttl) ||
+        ttl <= 0 ||
+        !Number.isSafeInteger(issuedAt + ttl)
+      )
+        throw new Error('consent_retention_deadline_invalid');
+      const guard = await ensureStatementConsentTenantGuard(account, tenantId, issuedAt);
+      const permits = permitted.map(({ row, days }) => ({
+        id: crypto.randomUUID(),
+        statement: {
+          sql: `INSERT INTO statement_consent_retention_permits
+            (tenant_id,permit_id,row_kind,row_id,user_id,statement_id,account_id,physical_id,restore_epoch,cutoff_at,legacy_retention_days,issued_at,expires_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          params: [
+            tenantId,
+            '',
+            history ? 'history' : 'record',
+            row.id,
+            row.user_id,
+            row.statement_id,
+            guard.account_id,
+            guard.physical_id,
+            guard.restore_epoch,
+            now,
+            days,
+            Math.max(0, issuedAt - ttl),
+            issuedAt + ttl,
+          ],
+        },
+      }));
+      for (const permit of permits) permit.statement.params[1] = permit.id;
+      const authorized = [
+        ...permits.map((p) => p.statement),
+        ...batches,
+        {
+          sql: `DELETE FROM statement_consent_retention_permits WHERE tenant_id=? AND permit_id IN (${permits.map(() => '?').join(',')})`,
+          params: [tenantId, ...permits.map((p) => p.id)],
+        },
+      ];
+      const result = await account.batch(authorized);
+      if (result.length !== authorized.length || result.some((entry) => !entry.success))
         throw new Error('consent_retention_result_unknown');
     }
     const phaseDone = records.length < options.rowPageSize;
@@ -149,6 +207,7 @@ export async function processConsentRetentionJobs(
 ): Promise<void> {
   const options = {
     rowPageSize: await consentJobSetting(env, 'CONSENT_RETENTION_ROW_PAGE_SIZE', 64, 90),
+    operationTtlMs: await statementConsentOperationTtl(env),
     shardPageSize: await consentJobSetting(env, 'CONSENT_RETENTION_SHARD_PAGE_SIZE', 1, 32),
   };
   await runConsentMaintenanceTenants(env, 'retention', log, (metadata, tenantId, stores) =>

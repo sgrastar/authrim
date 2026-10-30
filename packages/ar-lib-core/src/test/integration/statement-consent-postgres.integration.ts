@@ -1,3 +1,8 @@
+import {
+  writeStatementConsentDecision,
+  readStatementConsentRecord,
+} from '../../services/statement-consent-writes';
+import { projectStatementConsentGeneration } from '../../services/statement-consent-generations';
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Client as PgClient } from 'pg';
@@ -763,5 +768,148 @@ describe('dedicated PostgreSQL consent transaction, actual local backend', () =>
     } finally {
       await verifier.end();
     }
+  });
+});
+
+// PR7 coverage: this suite is opt-in and was not executed in the implementation environment.
+describe('step-B production enforcement PostgreSQL parity', () => {
+  it('supports writer bootstrap retries, withdrawals and monotone projection with real int8 strings', async () => {
+    const f = await setup();
+    const input = transitionInput();
+    const definition = {
+      ...input.definition,
+      closed_generation: 0,
+      record_retention_days: null,
+      reconsent_interval_days: null,
+      withdrawal_allowed: true,
+    };
+    const stores = { metadata: f.adapter, account: f.adapter };
+    const write = async (decision: 'granted' | 'denied') =>
+      writeStatementConsentDecision(
+        stores,
+        'tenant-a',
+        'user-tenant-a',
+        'statement-tenant-a',
+        decision,
+        definition,
+        await readStatementConsentRecord(
+          f.adapter,
+          'tenant-a',
+          'user-tenant-a',
+          'statement-tenant-a'
+        ),
+        {},
+        undefined
+      );
+    await write('granted');
+    await write('granted');
+    await write('denied');
+    expect(
+      (
+        await readStatementConsentRecord(
+          f.adapter,
+          'tenant-a',
+          'user-tenant-a',
+          'statement-tenant-a'
+        )
+      )?.status
+    ).toBe('withdrawn');
+    const projection = {
+      statement_id: 'statement-tenant-a',
+      definition_generation: 2,
+      closed_generation: 1,
+      mode: 'closed' as const,
+    };
+    await projectStatementConsentGeneration(f.adapter, 'tenant-a', projection);
+    await projectStatementConsentGeneration(f.adapter, 'tenant-a', projection);
+    await expect(
+      projectStatementConsentGeneration(f.adapter, 'tenant-a', {
+        ...projection,
+        definition_generation: 1,
+      })
+    ).rejects.toThrow('projection_stale');
+  });
+  it('requires a bound, unexpired retention permit even for strictly expired terminal records', async () => {
+    const f = await setup();
+    const input = transitionInput();
+    input.action = 'deny';
+    input.after.status = 'denied';
+    input.after.retain_until = Date.now() - 10000;
+    if (!input.history) throw new Error('fixture_history_missing');
+    input.history.action = 'denied';
+    input.history.status_after = 'denied';
+    input.history.retain_until = input.after.retain_until;
+    await applyStatementConsentTransition(f.cap, input);
+    await expect(
+      f.adapter.execute('DELETE FROM user_consent_records WHERE tenant_id=?', ['tenant-a'])
+    ).rejects.toThrow('delete_guard');
+    const clock = await f.control.query<{ now: string }>(
+      'SELECT CAST(FLOOR(EXTRACT(EPOCH FROM clock_timestamp())*1000) AS BIGINT) AS now'
+    );
+    const now = Number(clock.rows[0].now);
+    const results = await f.adapter.batch([
+      {
+        sql: `INSERT INTO statement_consent_retention_permits(tenant_id,permit_id,row_kind,row_id,user_id,statement_id,account_id,physical_id,restore_epoch,cutoff_at,legacy_retention_days,issued_at,expires_at)
+        VALUES(?,'permit','record',?,?,?,?,?,?,?,NULL,?,?)`,
+        params: [
+          'tenant-a',
+          input.after.id,
+          input.owner.userId,
+          input.owner.statementId,
+          input.owner.accountId,
+          input.owner.physicalId,
+          input.owner.restoreEpoch,
+          now - 1000,
+          now - 1000,
+          now + 60000,
+        ],
+      },
+      { sql: 'DELETE FROM user_consent_records WHERE tenant_id=?', params: ['tenant-a'] },
+      {
+        sql: 'DELETE FROM statement_consent_retention_permits WHERE tenant_id=?',
+        params: ['tenant-a'],
+      },
+    ]);
+    expect(Number(results[1].rowsAffected)).toBe(1);
+  });
+  it('allows only rebound terminal evidence through the transaction-local restore context', async () => {
+    const source = await setup(),
+      target = await setup();
+    const input = transitionInput();
+    await applyStatementConsentTransition(source.cap, input);
+    const result = await source.control.query<Record<string, unknown>>(
+      'SELECT * FROM statement_consent_operations'
+    );
+    const row = {
+      ...result.rows[0],
+      account_id: 'restore:new-physical',
+      physical_id: 'new-physical',
+      restore_epoch: 'new-import',
+    };
+    const columns = Object.keys(row);
+    const sql = `INSERT INTO statement_consent_operations(${columns.join(',')}) VALUES(${columns.map((_, i) => '$' + (i + 1)).join(',')})`;
+    await expect(target.control.query(sql, Object.values(row))).rejects.toThrow(
+      'operation_insert_guard'
+    );
+    await target.control.query('BEGIN');
+    try {
+      await target.control.query("SELECT set_config('authrim.statement_consent_restore',$1,true)", [
+        JSON.stringify({
+          tenant_id: 'tenant-a',
+          account_id: row.account_id,
+          physical_id: row.physical_id,
+          restore_epoch: row.restore_epoch,
+        }),
+      ]);
+      await target.control.query(sql, Object.values(row));
+      await target.control.query('COMMIT');
+    } catch (error) {
+      await target.control.query('ROLLBACK');
+      throw error;
+    }
+    await expect(applyStatementConsentTransition(target.cap, input)).rejects.toThrow(
+      'operation_conflict'
+    );
+    expect(await target.adapter.query('SELECT * FROM user_consent_records')).toEqual([]);
   });
 });

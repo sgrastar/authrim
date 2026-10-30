@@ -45,7 +45,7 @@ export function statementConsentAtomicCapability(
   throw new Error('statement_consent_atomic_backend_unsupported');
 }
 
-async function operationTtl(env?: Env): Promise<number> {
+export async function statementConsentOperationTtl(env?: Env): Promise<number> {
   const configured: unknown = env && Reflect.get(env, 'STATEMENT_CONSENT_OPERATION_TTL_MS');
   const raw =
     configured ??
@@ -66,33 +66,56 @@ interface GuardRow {
   closed_generation: number | string;
 }
 
+/** A concurrent insert or lost acknowledgement is recoverable only by a matching primary row. */
+async function bootstrapRow<T>(
+  account: DatabaseAdapter,
+  sql: string,
+  params: unknown[],
+  read: () => Promise<T | null>,
+  matches: (row: T) => boolean
+): Promise<T> {
+  try {
+    const result = await account.execute(sql, params);
+    if (!result.success) throw new Error('statement_consent_bootstrap_result_unknown');
+  } catch (error) {
+    const row = await read();
+    if (row && matches(row)) return row;
+    throw error;
+  }
+  const row = await read();
+  if (!row || !matches(row)) throw new Error('statement_consent_restore_rebind_required');
+  return row;
+}
+
 /** A guard's identity is trusted only at creation on an already resolved account store. */
 export async function ensureStatementConsentTenantGuard(
   account: DatabaseAdapter,
   tenantId: string,
   now = Date.now()
 ): Promise<GuardRow> {
-  let guard = await account.queryOne<GuardRow>(
-    "SELECT * FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='tenant' AND scope_key=''",
-    [tenantId],
-    { consistencyClass: 'primary_required' }
-  );
-  if (!guard) {
-    const existing = await account.queryOne<{ present: number }>(
-      'SELECT 1 AS present FROM statement_consent_key_states WHERE tenant_id=? UNION ALL SELECT 1 AS present FROM statement_consent_operations WHERE tenant_id=? LIMIT 1',
-      [tenantId, tenantId],
-      { consistencyClass: 'primary_required' }
-    );
-    if (existing) throw new Error('statement_consent_restore_rebind_required');
-    await account.execute(
-      `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,physical_id,restore_epoch,created_at,updated_at)
-       VALUES(?,'tenant','','enforced',?,?,?,?,?) ON CONFLICT(tenant_id,scope_kind,scope_key) DO NOTHING`,
-      [tenantId, crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID(), now, now]
-    );
-    guard = await account.queryOne<GuardRow>(
+  const read = () =>
+    account.queryOne<GuardRow>(
       "SELECT * FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='tenant' AND scope_key=''",
       [tenantId],
       { consistencyClass: 'primary_required' }
+    );
+  let guard = await read();
+  if (!guard) {
+    const existing = await account.queryOne<{ present: number }>(
+      'SELECT 1 AS present FROM statement_consent_key_states WHERE tenant_id=? UNION ALL SELECT 1 AS present FROM statement_consent_operations WHERE tenant_id=? UNION ALL SELECT 1 AS present FROM statement_consent_admissions WHERE tenant_id=? LIMIT 1',
+      [tenantId, tenantId, tenantId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (existing) throw new Error('statement_consent_restore_rebind_required');
+    guard = await bootstrapRow(
+      account,
+      `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,physical_id,restore_epoch,created_at,updated_at)
+       SELECT ?,'tenant','','enforced',?,?,?,?,? WHERE NOT EXISTS
+       (SELECT 1 FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='tenant' AND scope_key='')`,
+      [tenantId, crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID(), now, now, tenantId],
+      read,
+      (row) =>
+        !!row.account_id && !!row.physical_id && !!row.restore_epoch && row.mode === 'enforced'
     );
   }
   if (
@@ -194,9 +217,11 @@ export async function writeStatementConsentDecision(
     before.version_id === definition.version_id &&
     before.content_hash === definition.content_hash;
   const tenant = await ensureStatementConsentTenantGuard(stores.account, tenantId, now);
-  await stores.account.execute(
+  await bootstrapRow(
+    stores.account,
     `INSERT INTO statement_consent_guards(tenant_id,scope_kind,scope_key,mode,account_id,definition_generation,closed_generation,physical_id,restore_epoch,created_at,updated_at)
-     VALUES(?,'statement',?,'enforced',?,?,?,?,?,?,?) ON CONFLICT(tenant_id,scope_kind,scope_key) DO NOTHING`,
+     SELECT ?,'statement',?,'enforced',?,?,?,?,?,?,? WHERE NOT EXISTS
+       (SELECT 1 FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='statement' AND scope_key=?)`,
     [
       tenantId,
       statementId,
@@ -207,11 +232,25 @@ export async function writeStatementConsentDecision(
       tenant.restore_epoch,
       now,
       now,
-    ]
+      tenantId,
+      statementId,
+    ],
+    () =>
+      stores.account.queryOne<GuardRow>(
+        "SELECT * FROM statement_consent_guards WHERE tenant_id=? AND scope_kind='statement' AND scope_key=?",
+        [tenantId, statementId],
+        { consistencyClass: 'primary_required' }
+      ),
+    (row) =>
+      row.account_id === tenant.account_id &&
+      row.physical_id === tenant.physical_id &&
+      row.restore_epoch === tenant.restore_epoch
   );
-  await stores.account.execute(
+  const key = await bootstrapRow(
+    stores.account,
     `INSERT INTO statement_consent_key_states(tenant_id,user_id,statement_id,account_id,physical_id,restore_epoch,revision,withdrawal_generation,updated_at)
-     VALUES(?,?,?,?,?,?,0,0,?) ON CONFLICT(tenant_id,user_id,statement_id) DO NOTHING`,
+     SELECT ?,?,?,?,?,?,0,0,? WHERE NOT EXISTS
+       (SELECT 1 FROM statement_consent_key_states WHERE tenant_id=? AND user_id=? AND statement_id=?)`,
     [
       tenantId,
       userId,
@@ -220,18 +259,26 @@ export async function writeStatementConsentDecision(
       tenant.physical_id,
       tenant.restore_epoch,
       now,
-    ]
-  );
-  const key = await stores.account.queryOne<{
-    revision: number | string;
-    withdrawal_generation: number | string;
-    account_id: string;
-    physical_id: string;
-    restore_epoch: string;
-  }>(
-    'SELECT * FROM statement_consent_key_states WHERE tenant_id=? AND user_id=? AND statement_id=?',
-    [tenantId, userId, statementId],
-    { consistencyClass: 'primary_required' }
+      tenantId,
+      userId,
+      statementId,
+    ],
+    () =>
+      stores.account.queryOne<{
+        revision: number | string;
+        withdrawal_generation: number | string;
+        account_id: string;
+        physical_id: string;
+        restore_epoch: string;
+      }>(
+        'SELECT * FROM statement_consent_key_states WHERE tenant_id=? AND user_id=? AND statement_id=?',
+        [tenantId, userId, statementId],
+        { consistencyClass: 'primary_required' }
+      ),
+    (row) =>
+      row.account_id === tenant.account_id &&
+      row.physical_id === tenant.physical_id &&
+      row.restore_epoch === tenant.restore_epoch
   );
   if (
     !key ||
@@ -315,7 +362,7 @@ export async function writeStatementConsentDecision(
         created_at: now,
         ...retention,
       };
-  const ttl = await operationTtl(options.env);
+  const ttl = await statementConsentOperationTtl(options.env);
   const result = await applyStatementConsentTransition(capability, {
     operationId,
     actor: options.actor ?? { id: userId, type: 'user' },

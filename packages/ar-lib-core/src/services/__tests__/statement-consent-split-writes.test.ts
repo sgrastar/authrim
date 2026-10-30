@@ -52,7 +52,7 @@ describe('statement consent writes across metadata and account databases', () =>
   beforeEach(async () => {
     metadata = core();
     account = core();
-    account.db.exec('PRAGMA foreign_keys=OFF');
+    account.db.exec('PRAGMA foreign_keys=ON');
     stores = { metadata: metadata.adapter, account: account.adapter };
     await seedDefinitions(metadata.adapter);
   });
@@ -172,16 +172,11 @@ describe('statement consent writes across metadata and account databases', () =>
 
   it('records a refusal of a newer version against that version and its hash', async () => {
     const NEW_VERSION_ID = 'version-terms-2';
-    await processConsentItemDecisions(
-      stores,
-      TENANT,
-      USER,
-      { [STATEMENT]: 'granted' },
-      evidence,
-      'iphash',
-      target
+    await account.adapter.execute(
+      `INSERT INTO user_consent_records(id,tenant_id,user_id,statement_id,version_id,version,status,created_at,updated_at,content_hash)
+       VALUES('legacy-expired',?,?,?,?,?,'expired',1,1,?)`,
+      [TENANT, USER, STATEMENT, VERSION_ID, '20261025', HASH]
     );
-    await account.adapter.execute(`UPDATE user_consent_records SET status = 'expired'`);
     await metadata.adapter.execute(`UPDATE consent_statement_versions SET is_current = 0`);
     await metadata.adapter.execute(
       `INSERT INTO consent_statement_versions(id,tenant_id,statement_id,version,effective_at,status,is_current,content_hash,created_at,updated_at)

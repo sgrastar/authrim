@@ -377,13 +377,46 @@ tests alone is not evidence that all mutation entry points obey this specificati
 
 ### Statement consent compatibility boundary
 
-The additive Core D1 036 / PostgreSQL 019 schema must reach every metadata and physical account
-store before the statement consent writer is deployed. It installs guards, key states, operations
-and admissions, plus metadata-owned durable projection jobs, without enabling database triggers. D1 record-to-definition foreign keys remain
-until the separate PR7 rebuild; routed D1 writes cannot be rolled out before that boundary.
+Core D1 037 / PostgreSQL 020 and the compatible statement-consent Worker form one full release
+update. All metadata and physical account Core stores must receive the pinned schema before
+schema-dependent Worker activation. The manifest retains `setup_then_control`,
+`after_required_databases`, Admin `read_only`, and no `databaseOnly` declaration. Database-only
+rollout is prohibited. `pnpm migrate:manifest` preserves this policy; a failed remote-tag check in
+`pnpm migrate:manifest:check` is incomplete verification, never release evidence.
 
-Statement consent key states, terminal operations and admissions are users datasets. Guards and projection jobs are
-rebuild state and never portable authority. Source admissions and executing operations are held
-on restore. `core.consent_item_history` retains its history/log-window selection but is exported
-from and restored into `tenant_core/users`. A different physical restore target requires explicit
-identity rebinding before writes, including restored key states; PR7 owns that operation.
+Stop and drain all mutation producers, including authentication, Management, scheduled jobs,
+provisioning, queue retries and restores, before applying M2. Admin read-only mode alone is
+insufficient. D1 rebuilds `user_consent_records` transactionally, verifies the schema, counts and
+row contents, preserves columns/constraints/indexes and rowids, removes only the two definition
+foreign keys, then installs triggers. PostgreSQL already has no such foreign keys and only adds
+enforcement. Verify every target's sentinel and the complete compatible Worker release before
+resuming writes. No old writer may resume during rollout or rollback.
+
+Guard/key creation uses absent-row INSERT SELECT so the BEFORE INSERT overwrite defenses remain
+active. Projection co-commits monotone identity-matched UPDATE then absent-row INSERT, and rejects
+stale or mismatched results. Retention's short-lived row permits are created/deleted in the evidence
+purge transaction and classified as rebuild state; triggers still verify strict expiry, bound
+identity, terminal status and granted-history protection. Key states remain replay fences.
+
+Statement consent key states, terminal operations and admissions are users datasets. Guards,
+projection jobs and retention permits are rebuild state and never portable source authority.
+SQLite restore holds source admissions/executing operations. The direct PostgreSQL importer refuses
+nonempty source guards/admissions and rolls back on unfinished operations. `core.consent_item_history`
+retains history/log-window selection while exporting/restoring on `tenant_core/users`.
+
+The restore path derives the new binding from trusted target provisioning/import identities,
+rewrites key-state/terminal-receipt identity before insertion and during readback, then rebuilds
+the tenant guard and checks all atomic rows before sealing/committing staging. Source operations
+cannot authenticate new target work. Rebuild statement guards with metadata projection and finish
+reference audit before serving activation. Keep the target unpublished until rebinding/sealing;
+subsequent maintenance uses restored bindings under the stop fence. Any incomplete projection or
+audit keeps serving and writers stopped. One restore database per role remains the existing limit;
+restoring multiple users shards is outside this release.
+
+There is no safe down migration to earlier consent writers. Keep writes stopped on failure and
+use forward repair or a verified backup restore followed by fresh identity rebinding, projection
+and audit. Do not remove triggers/fences or reattach the cross-database foreign keys as rollback.
+See [statement consent rollout](../operations/statement-consent-storage-rollout.md) for the operational
+sequence and the 0.5.0 release-note summary. PostgreSQL triggers, functions and rebinding SQL were
+statically reviewed only in this implementation environment; real PostgreSQL validation is a release
+gate before enabling a PG deployment.

@@ -14,14 +14,17 @@ const values = (params: unknown[] = []) =>
   params.map((value): SqlValue => (value === undefined ? null : (value as SqlValue)));
 
 /** The executable D1 schema, so a statement naming a column the table lacks fails here. */
-export function sqliteAdapter(plane: keyof typeof MIGRATIONS = 'core'): {
+export function sqliteAdapter(
+  plane: keyof typeof MIGRATIONS = 'core',
+  through = Infinity
+): {
   db: DatabaseSync;
   adapter: DatabaseAdapter;
 } {
   const db = new DatabaseSync(':memory:');
   const migrations = MIGRATIONS[plane];
   for (const file of readdirSync(migrations)
-    .filter((name) => name.endsWith('.sql'))
+    .filter((name) => name.endsWith('.sql') && Number(name.split('_')[0]) <= through)
     .sort()) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, migrations), 'utf8'), 'sqlite'));
   }

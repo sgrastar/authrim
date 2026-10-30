@@ -55,7 +55,6 @@ export function transitionFixture() {
   const db: unknown = fixture.db;
   if (!isConsentFixtureDatabase(db)) throw new Error('actual_sqlite_fixture_methods_missing');
   db.exec('PRAGMA foreign_keys=ON; PRAGMA recursive_triggers=OFF;');
-  db.exec(stepASchema('d1').slice(stepASchema('d1').indexOf('CREATE TRIGGER')));
   const capability: StatementConsentAtomicCapability = {
     dialect: 'd1',
     readOperation: (sql, params) =>

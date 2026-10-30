@@ -1458,8 +1458,25 @@ describe('Consent Statements Utility', () => {
       expect(await row()).toMatchObject({ status: 'granted' });
     });
     it('extends prior history retention atomically on withdrawal', async () => {
-      await decide('granted');
-      await fixture.adapter.execute('UPDATE consent_item_history SET retain_until=1');
+      // Legacy evidence predates guard creation. An enforced guard must never allow
+      // a direct history UPDATE just to prepare this fixture.
+      const legacyRetainUntil = 1 + 365 * 24 * 60 * 60 * 1000;
+      await fixture.adapter.execute(
+        `INSERT INTO user_consent_records
+          (id,tenant_id,user_id,statement_id,version_id,version,status,granted_at,client_id,
+           created_at,updated_at,retain_until,consent_settings_snapshot_at,
+           record_retention_days_snapshot,reconsent_interval_days_snapshot,content_hash)
+         VALUES('legacy-record','default','user-1','stmt-1','ver-1','20250206','granted',1,'client-1',1,1,?,1,365,180,?)`,
+        [legacyRetainUntil, 'b'.repeat(64)]
+      );
+      await fixture.adapter.execute(
+        `INSERT INTO consent_item_history
+          (id,tenant_id,user_id,statement_id,action,version_after,status_after,client_id,
+           created_at,version_id_after,granted_at,retain_until,consent_settings_snapshot_at,
+           record_retention_days_snapshot,reconsent_interval_days_snapshot,content_hash_after)
+         VALUES('legacy-history','default','user-1','stmt-1','granted','20250206','granted','client-1',1,'ver-1',1,?,1,365,180,?)`,
+        [legacyRetainUntil, 'b'.repeat(64)]
+      );
       await decide('denied');
       const current = await row();
       const histories = await fixture.adapter.query<{ retain_until: number }>(
@@ -1469,6 +1486,11 @@ describe('Consent Statements Utility', () => {
       expect(histories.every((history) => history.retain_until === current?.retain_until)).toBe(
         true
       );
+      expect(current?.retain_until).toBeGreaterThan(legacyRetainUntil);
+      expect(current?.status).toBe('withdrawn');
+      await expect(
+        fixture.adapter.execute('UPDATE consent_item_history SET retain_until=1')
+      ).rejects.toThrow('statement_consent_consent_item_history_update_guard');
     });
   });
 
