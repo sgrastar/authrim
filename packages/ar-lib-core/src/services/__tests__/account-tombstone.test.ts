@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, PreparedStatement } from '../../db/adapter';
 import { renderPortableMigrationSql } from '../../migrations/sql-portability';
@@ -35,9 +35,7 @@ const values = (params: unknown[] = []) =>
 /** A PII store with the executable D1 schema, so a query naming a missing column fails here. */
 function piiStore(): DatabaseAdapter {
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(PII_MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_pii_baseline.sql']) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(file, PII_MIGRATIONS), 'utf8'), 'sqlite')
     );

@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { GuestLifecycleRepository } from '../guest-lifecycle';
@@ -23,9 +24,9 @@ describe.each(['d1', 'postgresql'])('guest lifecycle conditional SQL (%s schema)
       '004_guest_deletion_audit_outbox.sql',
     ])
       sqlite.exec(
-        readFileSync(
-          new URL(`../../../../../migrations/core/${dialect}/${migration}`, import.meta.url),
-          'utf8'
+        readMigrationSource(
+          new URL(`../../../../../migrations/core/${dialect}/`, import.meta.url),
+          `${migration}`
         )
       );
     const params = (values: unknown[] = []): SQLInputValue[] =>

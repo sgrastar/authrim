@@ -123,8 +123,8 @@ unrelated to the roles of the service's own users below. They are defined once, 
   gives `ar_support` and `ar_viewer`, and only an `ar_super_admin` adds another tenant admin.
 - Each tenant keeps at least one active `ar_tenant_admin` without an expiry: an operation that would
   take the last one away answers `409 last_tenant_admin`.
-- The seed in `migrations/admin/d1/054_admin_roles_ar_prefix.sql` is kept equal to the definition
-  by a test.
+- The seed in the role migration (source `054_admin_roles_ar_prefix.sql`, shipped in the 0.5.0
+  Admin D1 release delta) is kept equal to the definition by a test.
 
 #### Preset roles of the service's users
 

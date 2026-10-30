@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   adminAuthMiddleware,
@@ -202,15 +200,7 @@ function setup() {
     }
   );
   mocks.admin = fixture.adapter;
-  const root = resolve(__dirname, '../../../..');
-  for (const file of [
-    '028_tenant_settings_documents.sql',
-    '038_tenant_settings_reconciled_at.sql',
-    '039_platform_settings_documents.sql',
-    '040_settings_legacy_import_state.sql',
-  ]) {
-    fixture.db.exec(readFileSync(resolve(root, `migrations/admin/d1/${file}`), 'utf8'));
-  }
+
   for (const id of ['a', 'b', 'tenant']) {
     seedMapping(fixture.db, { owner: TENANT, id });
     seedDestinationProfile(fixture.db, { owner: TENANT, id: `profile-${id}` });

@@ -1,6 +1,10 @@
+import {
+  readMigrationSource,
+  readRenderedMigrationSql,
+} from '../../../../../../test/helpers/migration-source.mjs';
 import { startTenantBackupSnapshotBoundary } from '../snapshot-boundary';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { beforeEach, afterEach, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import {
@@ -14,48 +18,9 @@ let admission: TenantBackupMutationAdmission;
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/control/d1/005_tenant_backup_mutation_admission.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/control/d1/006_tenant_backup_mutation_environment_scope.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/control/d1/007_tenant_backup_boundary_receipts.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/control/d1/010_tenant_backup_snapshot_timestamp.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/control/d1/011_tenant_backup_boundary_deadline.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../../../migrations/control/d1/', import.meta.url),
+      '001_0_5_0_control_baseline.sql'
     )
   );
   adapter = {
@@ -87,9 +52,9 @@ it('backfills the former boundary timestamp when upgrading existing held and rel
       '006_tenant_backup_mutation_environment_scope.sql',
     ])
       legacy.exec(
-        readFileSync(
-          new URL(`../../../../../../migrations/control/d1/${file}`, import.meta.url),
-          'utf8'
+        readMigrationSource(
+          new URL(`../../../../../../migrations/control/d1/`, import.meta.url),
+          `${file}`
         )
       );
     const insert = legacy.prepare(
@@ -100,12 +65,9 @@ it('backfills the former boundary timestamp when upgrading existing held and rel
     insert.run('held', 'a', 'backup-a', 'ab'.repeat(32), 'held', 100, 2100, null);
     insert.run('released', 'b', 'backup-b', 'cd'.repeat(32), 'released', 200, 2200, 350);
     legacy.exec(
-      readFileSync(
-        new URL(
-          '../../../../../../migrations/control/d1/010_tenant_backup_snapshot_timestamp.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../../../migrations/control/d1/', import.meta.url),
+        '010_tenant_backup_snapshot_timestamp.sql'
       )
     );
     expect(

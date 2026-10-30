@@ -1,6 +1,7 @@
+import { readRenderedMigrationSql } from '../../test/helpers/migration-source.mjs';
 /** Local-only native WorkerEntrypoint RPC and D1 check; never deploys or opens a remote DB. */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -135,24 +136,21 @@ const runtime = new Miniflare(
 );
 try {
   const database = await runtime.getD1Database('CONTROL_DB', 'control');
-  for (const file of [
-    '005_tenant_backup_mutation_admission.sql',
-    '006_tenant_backup_mutation_environment_scope.sql',
-    '007_tenant_backup_boundary_receipts.sql',
-    '010_tenant_backup_snapshot_timestamp.sql',
-  ]) {
-    const sql = readFileSync(
-      new URL('../../migrations/control/d1/' + file, import.meta.url),
-      'utf8'
+  for (const file of ['001_0_5_0_control_baseline.sql']) {
+    const sql = readRenderedMigrationSql(
+      new URL('../../migrations/control/d1/', import.meta.url),
+      file
     );
     await database.batch(splitMigrationSql(sql).map((statement) => database.prepare(statement)));
   }
   await database
-    .prepare('CREATE TABLE control_tenant_placement_policies(environment_id TEXT,tenant_id TEXT)')
+    .prepare(
+      "INSERT INTO control_environments(environment_id,environment_name,issuer,created_at,updated_at) VALUES ('env-a','a','urn:authrim:control:env-a',1,1),('env-b','b','urn:authrim:control:env-b',1,1)"
+    )
     .run();
   await database
     .prepare(
-      "INSERT INTO control_tenant_placement_policies VALUES ('env-a','tenant'),('env-b','tenant')"
+      "INSERT INTO control_tenant_placement_policies(environment_id,tenant_id,isolation_policy,source_operation_id,idempotency_key,created_at,updated_at) VALUES ('env-a','tenant','shared_pool','op-a','key-a',1,1),('env-b','tenant','shared_pool','op-b','key-b',1,1)"
     )
     .run();
   const response = await runtime.dispatchFetch('http://localhost/run');

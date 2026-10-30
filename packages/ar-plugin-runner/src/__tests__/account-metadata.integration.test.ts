@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -119,18 +120,16 @@ describe('PluginAccountMetadataService', () => {
     tenantDatabase = new DatabaseSync(':memory:');
     runnerDatabase.exec('PRAGMA foreign_keys = ON');
     tenantDatabase.exec('PRAGMA foreign_keys = ON');
-    for (const migrationName of [
-      '001_0_4_0_plugin_runner_baseline.sql',
-      '007_tenant_external_plugin_gates.sql',
-    ]) {
+    for (const migrationName of ['001_0_5_0_plugin_runner_baseline.sql']) {
       runnerDatabase.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migrationName), 'utf8')
+        readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/plugin-runner/d1'), migrationName)
       );
     }
     tenantDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
+      readRenderedMigrationSql(
+        resolve(REPO_ROOT, 'migrations/core/d1/'),
+        '001_0_5_0_core_baseline.sql'
+      )
     );
     runnerDatabase.exec(
       `INSERT INTO plugin_runner_tenant_external_gates (tenant_id, allowed, generation, updated_at)

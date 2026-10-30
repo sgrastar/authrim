@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,32 +47,12 @@ describe('processPendingSettingsProjections', () => {
   beforeEach(() => {
     db = new DatabaseSync(':memory:');
     db.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/admin/d1/028_tenant_settings_documents.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL('../../../../migrations/admin/d1/', import.meta.url),
+        '001_0_5_0_admin_baseline.sql'
       )
     );
-    db.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/admin/d1/038_tenant_settings_reconciled_at.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
-    db.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/admin/d1/039_platform_settings_documents.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
+
     database.current = adapter(db);
     store = new DatabaseSettingsCanonicalStore(adapter(db), () => 1_000);
     values = new Map();

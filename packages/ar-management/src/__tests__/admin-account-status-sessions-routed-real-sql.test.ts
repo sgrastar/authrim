@@ -15,7 +15,7 @@ vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original)
     piiLogRows.push(...structuredClone(rows));
   },
 }));
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -144,9 +144,7 @@ import {
 function openStore(family: 'core' | 'pii'): Store {
   const db = new DatabaseSync(':memory:');
   const migrations = new URL(`../../../../migrations/${family}/d1/`, import.meta.url);
-  for (const name of readdirSync(migrations)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const name of [`001_0_5_0_${family}_baseline.sql`]) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(name, migrations), 'utf8'), 'sqlite'));
   }
   db.exec('PRAGMA foreign_keys=ON');

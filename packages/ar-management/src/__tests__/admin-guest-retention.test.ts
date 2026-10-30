@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+
 import type { Context } from 'hono';
 import { GuestLifecycleRepository, type DatabaseAdapter, type Env } from '@authrim/ar-lib-core';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
@@ -44,9 +45,9 @@ describe('existing guest retention preview and apply', () => {
     db.exec(`CREATE TABLE identity_accounts (tenant_id TEXT, legacy_user_id TEXT, account_type TEXT, deleted_at INTEGER, registration_state TEXT, updated_at INTEGER);
     INSERT INTO identity_accounts VALUES ('tenant', 'a', 'user', NULL, 'guest', 0), ('tenant', 'b', 'user', NULL, 'guest', 0), ('other', 'a', 'user', NULL, 'guest', 0);`);
     db.exec(
-      readFileSync(
-        new URL('../../../../migrations/core/d1/002_guest_account_lifecycle.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../migrations/core/d1/', import.meta.url),
+        '002_guest_account_lifecycle.sql'
       )
     );
     adapter = {

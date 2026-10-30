@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { cleanupExpiredTenantBackupUpload } from '../cleanup-upload';
@@ -13,21 +14,12 @@ beforeEach(() => {
   sql = new DatabaseSync(':memory:');
   sql.exec('PRAGMA foreign_keys=ON');
   sql.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/admin/d1/022_tenant_backup_uploads.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../../../migrations/admin/d1/', import.meta.url),
+      '001_0_5_0_admin_baseline.sql'
     )
   );
-  sql.exec(`CREATE TABLE tenant_backup_operations (
-    id TEXT NOT NULL, tenant_id TEXT NOT NULL, state TEXT NOT NULL,
-    PRIMARY KEY(id,tenant_id)
-  );
-  CREATE TABLE tenant_backup_operation_inputs (
-    operation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, upload_id TEXT NOT NULL UNIQUE
-  );`);
+
   const database: Pick<DatabaseAdapter, 'queryOne'> = {
     async queryOne<T>(statement: string, params: unknown[] = []) {
       return (sql.prepare(statement).get(...(params as SQLInputValue[])) as T) ?? null;
@@ -102,8 +94,8 @@ it('aborts and tombstones an expired multipart upload with bounded retry', async
 
 it('deletes only the exact completed object and retains active operation inputs', async () => {
   await create('uploaded');
-  sql.exec(`INSERT INTO tenant_backup_operations VALUES ('operation','tenant','running');
-    INSERT INTO tenant_backup_operation_inputs VALUES ('operation','tenant','upload');`);
+  sql.exec(`INSERT INTO tenant_backup_operations (id,tenant_id,state,kind,idempotency_key,request_digest,phase,created_by,created_at,updated_at,lease_owner,lease_expires_at) VALUES ('operation','tenant','running','import','request','${'ab'.repeat(32)}','restore','admin',${expiry - 1},${expiry - 1},'worker',${expiry + 100000});
+    INSERT INTO tenant_backup_operation_inputs (operation_id,tenant_id,ordinal,upload_id,object_key,object_version,object_etag,size_bytes,digest_sha256,bound_at) SELECT 'operation','tenant',0,id,object_key,object_version,object_etag,expected_bytes,expected_sha256,${expiry - 1} FROM tenant_backup_uploads WHERE id='upload';`);
   let object: { version: string; etag: string; size: number } | null = {
     version: 'v1',
     etag: 'etag',
@@ -120,7 +112,9 @@ it('deletes only the exact completed object and retains active operation inputs'
     await cleanupExpiredTenantBackupUpload({ store, bucket, workerId: 'worker', now: () => expiry })
   ).toEqual({ cleaned: false });
   expect(bucket.delete).not.toHaveBeenCalled();
-  sql.exec("UPDATE tenant_backup_operations SET state='completed'");
+  sql.exec(
+    "UPDATE tenant_backup_operations SET state='completed',lease_owner=NULL,lease_expires_at=NULL"
+  );
   expect(
     await cleanupExpiredTenantBackupUpload({ store, bucket, workerId: 'worker', now: () => expiry })
   ).toEqual({ cleaned: true });
@@ -163,11 +157,13 @@ it('cleans an explicitly cancelled upload before its retention deadline', async 
 });
 
 it('does not cancel an upload after an import operation has pinned it', async () => {
-  await create('uploaded', expiry + 10000);
-  sql.exec(`INSERT INTO tenant_backup_operations VALUES ('operation','tenant','waiting');
-    INSERT INTO tenant_backup_operation_inputs VALUES ('operation','tenant','upload');`);
+  const expiresAt = expiry + 10000;
+  await create('uploaded', expiresAt);
+  const boundAt = expiresAt - 1;
+  sql.exec(`INSERT INTO tenant_backup_operations (id,tenant_id,state,kind,idempotency_key,request_digest,phase,created_by,created_at,updated_at,lease_owner,lease_expires_at) VALUES ('operation','tenant','waiting','import','request','${'ab'.repeat(32)}','restore','admin',${boundAt},${boundAt},NULL,NULL);
+    INSERT INTO tenant_backup_operation_inputs (operation_id,tenant_id,ordinal,upload_id,object_key,object_version,object_etag,size_bytes,digest_sha256,bound_at) SELECT 'operation','tenant',0,id,object_key,object_version,object_etag,expected_bytes,expected_sha256,${boundAt} FROM tenant_backup_uploads WHERE id='upload';`);
   await expect(
-    store.requestCancel({ uploadId: 'upload', tenantId: 'tenant', actorId: 'admin' }, expiry)
+    store.requestCancel({ uploadId: 'upload', tenantId: 'tenant', actorId: 'admin' }, expiresAt)
   ).rejects.toThrow('backup_upload_cancel_conflict');
   expect(sql.prepare('SELECT state FROM tenant_backup_uploads').get()?.state).toBe('uploaded');
 });

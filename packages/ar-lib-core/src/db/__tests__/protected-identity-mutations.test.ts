@@ -1,3 +1,4 @@
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
 import { createRequire } from 'node:module';
 type SQLInputValue = string | number | null;
 interface TestSqlite {
@@ -12,7 +13,7 @@ interface TestSqlite {
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
   DatabaseSync: new (path: string) => TestSqlite;
 };
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../adapter';
 import {
@@ -44,9 +45,9 @@ describe('shared protected last-login operation with native D1 effects', () => {
       CREATE TABLE service_group_inputs (tenant_id TEXT,user_id TEXT,revision INTEGER,
       PRIMARY KEY(tenant_id,user_id));`);
     const migration = (name: string) =>
-      readFileSync(
-        new URL(`../../../../../migrations/core/d1/${name}.sql`, import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL(`../../../../../migrations/core/d1/`, import.meta.url),
+        `${name}.sql`
       );
     const webhook = migration('005_account_webhook_outbox');
     sqlite.exec(webhook.match(/CREATE TABLE account_webhook_outbox \([\s\S]*?\n\);/u)?.[0] ?? '');
@@ -121,9 +122,9 @@ describe('shared protected last-login operation with native D1 effects', () => {
   });
 
   it('accepts D1 trigger-inclusive changes for a real group boundary and removes it on completion', async () => {
-    const sql = readFileSync(
-      new URL('../../../../../migrations/core/d1/007_service_dynamic_groups.sql', import.meta.url),
-      'utf8'
+    const sql = readMigrationSource(
+      new URL('../../../../../migrations/core/d1/', import.meta.url),
+      '007_service_dynamic_groups.sql'
     );
     const definition = sql.match(
       /CREATE TABLE service_group_write_boundaries \([\s\S]*?\n\);/u

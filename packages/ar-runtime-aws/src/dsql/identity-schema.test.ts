@@ -1,4 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
+import { listMigrationSourceFiles } from '../../../../test/helpers/migration-source.mjs';
+
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -105,9 +107,9 @@ describe('DSQL native identity evaluation schema', () => {
     const plan = createDsqlIdentitySchemaPlan(SCHEMA);
     for (const table of plan.tables) {
       const family = table.name === 'users_pii' ? 'pii' : 'core';
-      const source = readFileSync(
-        resolve(ROOT, `migrations/${family}/postgresql/001_0_4_0_${family}_baseline.sql`),
-        'utf8'
+      const source = readMigrationSource(
+        resolve(ROOT, `migrations/${family}/postgresql/`),
+        `001_0_4_0_${family}_baseline.sql`
       );
       const body = source.match(
         new RegExp(`CREATE TABLE public\\.${table.name} \\(([\\s\\S]*?)\\n\\);`)
@@ -155,8 +157,8 @@ describe('DSQL native identity evaluation schema', () => {
       // Unreviewed source alterations/triggers still fail. Reviewed Guest guards remain
       // unsupported by this non-serving experiment, rather than being silently emulated.
       const directory = resolve(ROOT, `migrations/${family}/postgresql`);
-      for (const filename of readdirSync(directory).filter((name) => name.endsWith('.sql'))) {
-        const migration = readFileSync(resolve(directory, filename), 'utf8');
+      for (const filename of listMigrationSourceFiles(directory)) {
+        const migration = readMigrationSource(directory, filename);
         assertReviewedSourceTriggers(family, filename, migration, table.name);
         if (!filename.startsWith('001_')) {
           expect(migration).not.toMatch(
@@ -181,9 +183,9 @@ describe('DSQL native identity evaluation schema', () => {
         /guest_(?:core|pii)_mutation_epoch|guest_pii_erasure_markers|CREATE TRIGGER/iu.test(sql)
       )
     ).toBe(false);
-    const known = readFileSync(
-      resolve(ROOT, 'migrations/core/postgresql/017_guest_erasure_admission.sql'),
-      'utf8'
+    const known = readMigrationSource(
+      resolve(ROOT, 'migrations/core/postgresql/'),
+      '017_guest_erasure_admission.sql'
     );
     expect(() =>
       assertReviewedSourceTriggers('core', 'unreviewed.sql', known, 'passkeys')
@@ -196,9 +198,9 @@ describe('DSQL native identity evaluation schema', () => {
         'passkeys'
       )
     ).toThrow();
-    const quoted = readFileSync(
-      resolve(ROOT, 'migrations/pii/postgresql/007_guest_pii_erasure_markers.sql'),
-      'utf8'
+    const quoted = readMigrationSource(
+      resolve(ROOT, 'migrations/pii/postgresql/'),
+      '007_guest_pii_erasure_markers.sql'
     );
     expect(() =>
       assertReviewedSourceTriggers('pii', 'unreviewed.sql', quoted, 'users_pii')

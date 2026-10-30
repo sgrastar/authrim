@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { cleanupCancelledTenantBackupArtifactPage } from '../cancelled-artifact-cleanup';
@@ -15,20 +16,11 @@ const objects = new Set<string>();
 beforeEach(async () => {
   sql = new DatabaseSync(':memory:');
   sql.exec('PRAGMA foreign_keys=ON');
-  for (const name of [
-    '003_tenant_backup_operations',
-    '004_tenant_backup_validation_index',
-    '008_tenant_backup_retry_state',
-    '046_tenant_backup_operation_failure_reason',
-    '009_tenant_backup_artifact_parts',
-    '012_tenant_backup_cipher_journal',
-    '020_tenant_backup_publications',
-    '021_tenant_backup_export_manifests',
-  ])
+  for (const name of ['001_0_5_0_admin_baseline'])
     sql.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/admin/d1/${name}.sql`, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+        `${name}.sql`
       )
     );
   database = {

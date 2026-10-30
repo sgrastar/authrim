@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+
 import { setTimeout } from 'node:timers/promises';
 import { expect, it } from 'vitest';
 import { renderPortableMigrationSql } from '../../../ar-lib-core/src/migrations/sql-portability';
@@ -54,20 +55,8 @@ it('applies service group PostgreSQL migrations and invalidates committed inputs
       }
     }
     const streams = {
-      core: [
-        '001_0_4_0_core_baseline.sql',
-        '002_guest_account_lifecycle.sql',
-        '003_account_registration_state.sql',
-        '005_account_webhook_outbox.sql',
-        '006_webhook_payload_fields.sql',
-        '007_service_dynamic_groups.sql',
-      ],
-      pii: [
-        '001_0_4_0_pii_baseline.sql',
-        '003_account_webhook_outbox.sql',
-        '004_account_webhook_snapshots.sql',
-        '005_service_dynamic_groups.sql',
-      ],
+      core: ['001_0_5_0_core_baseline.sql'],
+      pii: ['001_0_5_0_pii_baseline.sql'],
     };
     for (const [family, files] of Object.entries(streams)) {
       sql('postgres', `CREATE DATABASE ${family}`);
@@ -75,9 +64,9 @@ it('applies service group PostgreSQL migrations and invalidates committed inputs
         sql(
           family,
           renderPortableMigrationSql(
-            readFileSync(
-              new URL(`../../../../migrations/${family}/postgresql/${file}`, import.meta.url),
-              'utf8'
+            readRenderedMigrationSql(
+              new URL(`../../../../migrations/${family}/postgresql/`, import.meta.url),
+              `${file}`
             ),
             'postgres'
           )

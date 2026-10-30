@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseAdapter, PreparedStatement } from '../../db/adapter';
 import { renderPortableMigrationSql } from '../../migrations/sql-portability';
@@ -14,9 +14,7 @@ const values = (params: unknown[] = []) =>
 /** The executable D1 schema, so a statement naming a column the table lacks fails here. */
 function sqliteAdapter(): { db: DatabaseSync; adapter: DatabaseAdapter } {
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_core_baseline.sql']) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, MIGRATIONS), 'utf8'), 'sqlite'));
   }
   const run = (statement: PreparedStatement) => {

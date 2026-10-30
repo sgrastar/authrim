@@ -1,10 +1,11 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
+
 import { vi } from 'vitest';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from '../test-sqlite';
 
-const groupMigration = readFileSync(
-  new URL('../../../../../migrations/core/d1/007_service_dynamic_groups.sql', import.meta.url),
-  'utf8'
+const groupMigration = readMigrationSource(
+  new URL('../../../../../migrations/core/d1/', import.meta.url),
+  '007_service_dynamic_groups.sql'
 );
 
 /** Real boundary rows and revision triggers; unrelated fixture SQL keeps its own behavior. */

@@ -1,5 +1,5 @@
 import { DatabaseSync, type SQLInputValue } from './test-sqlite';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { renderPortableMigrationSql } from '../../../ar-lib-core/dist/migrations/sql-portability';
 import type { DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core';
@@ -10,9 +10,7 @@ const PII_MIGRATIONS = new URL('../../../../migrations/pii/d1/', import.meta.url
 /** A PII store with the executable D1 schema (so the primary key is the real one). */
 function piiStore() {
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(PII_MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_pii_baseline.sql']) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(file, PII_MIGRATIONS), 'utf8'), 'sqlite')
     );

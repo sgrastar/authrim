@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { logProducerFixture } from './log-iceberg-producer-fixture';
@@ -44,9 +44,7 @@ const values = (params: unknown[] = []) =>
 /** The executable Core schema: a column the migration did not add fails here as in D1. */
 function coreStore(): { db: SqliteDatabase; adapter: DatabaseAdapter } {
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_core_baseline.sql']) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, MIGRATIONS), 'utf8'), 'sqlite'));
   }
   const adapter = {

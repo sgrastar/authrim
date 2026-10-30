@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { renderPortableMigrationSql } from '../../../../ar-lib-core/dist/migrations/sql-portability';
 import { DatabaseSync, type SQLInputValue } from '../test-sqlite';
 import type {
@@ -11,9 +11,7 @@ import type {
 export function openGuestStore(plane: 'core' | 'pii' | 'lookup') {
   const db = new DatabaseSync(':memory:');
   const folder = new URL(`../../../../../migrations/${plane}/d1/`, import.meta.url);
-  for (const file of readdirSync(folder)
-    .filter((name) => name.endsWith('.sql'))
-    .sort())
+  for (const file of [`001_0_5_0_${plane}_baseline.sql`])
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, folder), 'utf8'), 'sqlite'));
   const values = (p: unknown[] = []) => p.map((v) => (v ?? null) as SQLInputValue);
   const run = (s: PreparedStatement) => ({

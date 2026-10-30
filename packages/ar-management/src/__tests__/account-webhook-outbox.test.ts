@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderPortableMigrationSql } from '../../../ar-lib-core/dist/migrations/sql-portability';
 import type {
@@ -45,16 +46,10 @@ function events() {
 }
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  for (const file of [
-    '001_0_4_0_core_baseline.sql',
-    '002_guest_account_lifecycle.sql',
-    '003_account_registration_state.sql',
-    '005_account_webhook_outbox.sql',
-    '022_account_webhook_subject_lookup.sql',
-  ]) {
+  for (const file of ['001_0_5_0_core_baseline.sql']) {
     db.exec(
       renderPortableMigrationSql(
-        readFileSync(new URL(`../../../../migrations/core/d1/${file}`, import.meta.url), 'utf8'),
+        readMigrationSource(new URL(`../../../../migrations/core/d1/`, import.meta.url), `${file}`),
         'sqlite'
       )
     );
@@ -177,10 +172,11 @@ describe('transactional account webhook production and delivery', () => {
   });
   it('waits for guest cleanup and authentication deletion before notifying', async () => {
     account();
+    // Seed the persisted deletion before its cleanup fence; delivery must still wait for cleanup.
+    db.exec("UPDATE identity_accounts SET lifecycle_state = 'deleted' WHERE tenant_id = 't'");
     db.exec(
       "INSERT INTO guest_account_lifecycle (tenant_id,user_id,client_id,created_at,policy_version,updated_at,phase) VALUES ('t','u','c',1,'v',1,'deleting')"
     );
-    db.exec("UPDATE identity_accounts SET lifecycle_state = 'deleted' WHERE tenant_id = 't'");
     expect(events()).toHaveLength(2);
     expect(await run(true)).toEqual({ delivered: 1, deferred: 1 });
     db.exec('UPDATE account_webhook_outbox SET next_attempt_at = 0');
@@ -294,9 +290,9 @@ describe('transactional account webhook production and delivery', () => {
       for (const file of files)
         target.exec(
           renderPortableMigrationSql(
-            readFileSync(
-              new URL(`../../../../migrations/core/d1/${file}`, import.meta.url),
-              'utf8'
+            readMigrationSource(
+              new URL(`../../../../migrations/core/d1/`, import.meta.url),
+              `${file}`
             ),
             'sqlite'
           )
@@ -422,21 +418,15 @@ describe('transactional account webhook production and delivery', () => {
       const pii = new DatabaseSync(':memory:');
       try {
         pii.exec(
-          readFileSync(
-            new URL(
-              '../../../../migrations/pii/d1/003_account_webhook_outbox.sql',
-              import.meta.url
-            ),
-            'utf8'
+          readMigrationSource(
+            new URL('../../../../migrations/pii/d1/', import.meta.url),
+            '003_account_webhook_outbox.sql'
           )
         );
         pii.exec(
-          readFileSync(
-            new URL(
-              '../../../../migrations/pii/d1/004_account_webhook_snapshots.sql',
-              import.meta.url
-            ),
-            'utf8'
+          readMigrationSource(
+            new URL('../../../../migrations/pii/d1/', import.meta.url),
+            '004_account_webhook_snapshots.sql'
           )
         );
         pii

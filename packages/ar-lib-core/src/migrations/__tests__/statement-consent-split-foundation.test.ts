@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
+
 import { describe, expect, it } from 'vitest';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 
@@ -87,10 +88,7 @@ describe('statement consent split foundation (additive migration)', () => {
   });
 
   it('only adds to the PostgreSQL stream and never rebuilds or drops', () => {
-    const sql = readFileSync(
-      new URL('018_statement_consent_split_foundation.sql', POSTGRES),
-      'utf8'
-    );
+    const sql = readMigrationSource(POSTGRES, '018_statement_consent_split_foundation.sql');
     for (const table of ['tenant_consent_requirements', 'client_consent_overrides']) {
       expect(sql).toContain(`CREATE TABLE ${table} (`);
     }
@@ -104,7 +102,7 @@ describe('statement consent split foundation (additive migration)', () => {
   });
 
   it('only adds to the D1 stream and never rebuilds or drops', () => {
-    const sql = readFileSync(new URL('035_statement_consent_split_foundation.sql', D1), 'utf8');
+    const sql = readMigrationSource(D1, '035_statement_consent_split_foundation.sql');
     expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|INDEX)\b|\bRENAME\b|\bDELETE\s+FROM\b/iu);
     expect(sql.match(/ALTER TABLE/gu)).toHaveLength(5);
   });

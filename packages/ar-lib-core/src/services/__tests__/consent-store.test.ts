@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
@@ -23,9 +23,7 @@ function createConsentDatabase(
   options: { beforeFirstInsert?: (db: DatabaseSync) => void; wrapConflict?: boolean } = {}
 ) {
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_core_baseline.sql']) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, MIGRATIONS), 'utf8'), 'sqlite'));
   }
   const values = (params: unknown[] = []) => params as SqlValue[];

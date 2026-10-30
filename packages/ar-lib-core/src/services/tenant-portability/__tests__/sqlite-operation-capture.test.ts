@@ -1,3 +1,5 @@
+import { sqliteAdapter as controlFixture } from '../../../repositories/__tests__/sqlite-core-schema';
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { readNextShardedSqliteDatasetChunk } from '../sqlite-sharded-dataset-reader';
 import { readNextPlannedSqliteDatasetChunk } from '../sqlite-planned-dataset-reader';
 import { runPreparedSnapshotBoundaryStep } from '../snapshot-boundary-step';
@@ -8,7 +10,7 @@ import { runSqliteResourcePreparationStep } from '../sqlite-resource-preparation
 import { runSqliteResourceDiscoveryStep } from '../sqlite-resource-discovery';
 import { executeTenantBackupSlice } from '../operation-executor';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { beforeEach, afterEach, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { TenantBackupSnapshotResources } from '../snapshot-resources';
@@ -27,6 +29,7 @@ import { readBackupSqliteDatabaseSchema } from '../sqlite-schema-reader';
 import { sqliteCapturePlan } from '../sqlite-capture-plan';
 import { readSqliteSnapshotDataset } from '../sqlite-dataset-source';
 import { TenantBackupOperationStore, type TenantBackupLease } from '../operation-store';
+const controlDatabases: Array<{ close(): void }> = [];
 let db: DatabaseSync;
 let adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>;
 let store: TenantBackupOperationStore;
@@ -36,18 +39,11 @@ let now: number;
 beforeEach(async () => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  for (const file of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '008_tenant_backup_retry_state.sql',
-    '046_tenant_backup_operation_failure_reason.sql',
-    '010_tenant_backup_execution_inventory.sql',
-    '011_tenant_backup_snapshot_resources.sql',
-  ])
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     db.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/admin/d1/${file}`, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+        `${file}`
       )
     );
   adapter = {
@@ -92,7 +88,10 @@ beforeEach(async () => {
   resources = new TenantBackupSnapshotResources(adapter, () => now);
   db.exec(SQLITE_SNAPSHOT_SCHEMA);
 });
-afterEach(() => db.close());
+afterEach(() => {
+  db.close();
+  for (const database of controlDatabases.splice(0)) database.close();
+});
 
 async function fixture(prepare = true, secondResource = false, clients = false) {
   const sourceDb = new DatabaseSync(':memory:');
@@ -618,19 +617,8 @@ it('prepares both databases before admission and safely repeats an installed tab
         expect(database.prepare('SELECT count(*) n FROM tenant_backup_snapshots').get()?.n).toBe(0);
     }
     expect((await store.get('a', 'op'))?.phase).toBe('admit_snapshot_boundary');
-    for (const file of [
-      '005_tenant_backup_mutation_admission.sql',
-      '006_tenant_backup_mutation_environment_scope.sql',
-      '007_tenant_backup_boundary_receipts.sql',
-      '010_tenant_backup_snapshot_timestamp.sql',
-      '011_tenant_backup_boundary_deadline.sql',
-    ])
-      db.exec(
-        readFileSync(
-          new URL(`../../../../../../migrations/control/d1/${file}`, import.meta.url),
-          'utf8'
-        )
-      );
+    const control = controlFixture('control');
+    controlDatabases.push(control.db);
     for (let attempt = 0; attempt < 2; attempt++) {
       now += 700000;
       const executing = executeTenantBackupSlice(
@@ -649,8 +637,8 @@ it('prepares both databases before admission and safely repeats an installed tab
               inventory: new TenantBackupExecutionInventory(adapter, context.lease, () => now),
               environmentId: 'env',
               boundaryTenantId: 'a',
-              admission: new TenantBackupMutationAdmission(adapter, 'env'),
-              receipts: new TenantBackupBoundaryReceipts(adapter),
+              admission: new TenantBackupMutationAdmission(control.adapter, 'env'),
+              receipts: new TenantBackupBoundaryReceipts(control.adapter),
               additionalParticipants: [],
               now: () => now,
               async assertReady() {},
@@ -694,7 +682,8 @@ it('prepares both databases before admission and safely repeats an installed tab
                 })
               ).rejects.toThrow('missing KV participant');
               expect(
-                db.prepare('SELECT count(*) n FROM tenant_backup_mutation_boundaries').get()?.n
+                control.db.prepare('SELECT count(*) n FROM tenant_backup_mutation_boundaries').get()
+                  ?.n
               ).toBe(0);
             }
             const result = await runPreparedSnapshotBoundaryStep(args);
@@ -715,8 +704,12 @@ it('prepares both databases before admission and safely repeats an installed tab
       else await executing;
     }
     expect((await store.get('a', 'op'))?.phase).toBe('prepare_export_artifact');
-    expect(db.prepare('SELECT count(*) n FROM tenant_backup_boundary_receipts').get()?.n).toBe(2);
-    expect(db.prepare('SELECT count(*) n FROM tenant_backup_mutation_boundaries').get()?.n).toBe(1);
+    expect(
+      control.db.prepare('SELECT count(*) n FROM tenant_backup_boundary_receipts').get()?.n
+    ).toBe(2);
+    expect(
+      control.db.prepare('SELECT count(*) n FROM tenant_backup_mutation_boundaries').get()?.n
+    ).toBe(1);
     for (const database of [sourceDb, second])
       expect(database.prepare('SELECT count(*) n FROM tenant_backup_snapshots').get()?.n).toBe(1);
     expect(sourceDb.prepare('SELECT count(*) n FROM tenant_backup_preimages').get()?.n).toBe(1);
@@ -738,21 +731,10 @@ it('prepares both databases before admission and safely repeats an installed tab
 it('connects real SQL snapshot start to durable boundary receipts and preserves its image after release', async () => {
   const { sourceDb, input } = await fixture();
   try {
-    for (const file of [
-      '005_tenant_backup_mutation_admission.sql',
-      '006_tenant_backup_mutation_environment_scope.sql',
-      '007_tenant_backup_boundary_receipts.sql',
-      '010_tenant_backup_snapshot_timestamp.sql',
-      '011_tenant_backup_boundary_deadline.sql',
-    ])
-      db.exec(
-        readFileSync(
-          new URL(`../../../../../../migrations/control/d1/${file}`, import.meta.url),
-          'utf8'
-        )
-      );
-    const admission = new TenantBackupMutationAdmission(adapter, 'env');
-    const receipts = new TenantBackupBoundaryReceipts(adapter);
+    const control = controlFixture('control');
+    controlDatabases.push(control.db);
+    const admission = new TenantBackupMutationAdmission(control.adapter, 'env');
+    const receipts = new TenantBackupBoundaryReceipts(control.adapter);
     const head = await input.inventory.head();
     const identity = {
       environmentId: 'env',
@@ -779,7 +761,7 @@ it('connects real SQL snapshot start to durable boundary receipts and preserves 
         ?.state
     ).toBe('capturing');
     expect(
-      db
+      control.db
         .prepare(
           "SELECT snapshot_id FROM tenant_backup_boundary_receipts WHERE resource_id='physical-a'"
         )

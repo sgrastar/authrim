@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
+
 import { logArchivePhysicalFingerprint } from '@authrim/ar-lib-logging/iceberg';
 import {
   MemoryCatalog,
@@ -14,9 +15,9 @@ export async function icebergFixture() {
   const fixture = sqliteAdapter();
   fixture.db.exec('PRAGMA foreign_keys=ON');
   fixture.db.exec(
-    readFileSync(
-      new URL('../../../../../migrations/admin/d1/053_log_iceberg_storage.sql', import.meta.url),
-      'utf8'
+    readMigrationSource(
+      new URL('../../../../../migrations/admin/d1/', import.meta.url),
+      '053_log_iceberg_storage.sql'
     )
   );
   fixture.db.exec(

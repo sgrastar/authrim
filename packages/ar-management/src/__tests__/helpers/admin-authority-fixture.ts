@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 import { Hono } from 'hono';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -25,36 +26,12 @@ const REPO_ROOT = resolve(__dirname, '../../../../..');
 export function openAdminDatabase(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
   db.exec(
-    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/001_0_4_0_admin_baseline.sql'), 'utf8')
-      .replaceAll(
-        '__AUTHRIM_NOW_PRECISE_EPOCH_MILLISECONDS__',
-        "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
-      )
-      .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-      .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
-  );
-  // The standard roles the baseline seeds are replaced by the `ar_` roles.
-  db.exec(
-    readFileSync(
-      resolve(REPO_ROOT, 'migrations/admin/d1/054_admin_roles_ar_prefix.sql'),
-      'utf8'
-    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-  );
-  db.exec(
-    readFileSync(
-      resolve(REPO_ROOT, 'migrations/admin/d1/050_identity_mapping_level_history.sql'),
-      'utf8'
+    readRenderedMigrationSql(
+      resolve(REPO_ROOT, 'migrations/admin/d1/'),
+      '001_0_5_0_admin_baseline.sql'
     )
   );
-  db.exec(
-    readFileSync(
-      resolve(REPO_ROOT, 'migrations/admin/d1/051_identity_mapping_failures.sql'),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/053_log_iceberg_storage.sql'), 'utf8')
-  );
+
   return db;
 }
 

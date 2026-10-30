@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
@@ -110,19 +111,17 @@ describe('IdentifierReplacementCoordinator', () => {
     oldLookup = new DatabaseSync(':memory:');
     newLookup = new DatabaseSync(':memory:');
     pii.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/pii/d1/001_0_4_0_pii_baseline.sql'), 'utf8')
+      readRenderedMigrationSql(
+        resolve(REPO_ROOT, 'migrations/pii/d1/'),
+        '001_0_5_0_pii_baseline.sql'
+      )
     );
-    for (const file of ['003_account_webhook_outbox.sql', '004_account_webhook_snapshots.sql']) {
-      pii.exec(readFileSync(resolve(REPO_ROOT, 'migrations/pii/d1', file), 'utf8'));
-    }
     for (const database of [oldLookup, newLookup]) {
       database.exec(
-        readFileSync(
-          resolve(REPO_ROOT, 'migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'),
-          'utf8'
+        readRenderedMigrationSql(
+          resolve(REPO_ROOT, 'migrations/lookup/d1/'),
+          '001_0_4_0_lookup_baseline.sql'
         )
-          .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-          .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
       );
     }
     pii

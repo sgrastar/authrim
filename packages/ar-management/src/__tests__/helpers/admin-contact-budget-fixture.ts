@@ -1,5 +1,5 @@
 /** Actual signed inventory and canonical SQL; only D1 transport is an in-memory SQLite binding. */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import { Hono } from 'hono';
 import { exportJWK, generateKeyPair } from 'jose';
@@ -24,9 +24,7 @@ export const TENANT = 'tenant-a';
 const TARGET = 'edge-a';
 const sql = (family: 'core' | 'pii') => {
   const dir = new URL(`../../../../../migrations/${family}/d1/`, import.meta.url);
-  return readdirSync(dir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()
+  return [`001_0_5_0_${family}_baseline.sql`]
     .map((name) => renderPortableMigrationSql(readFileSync(new URL(name, dir), 'utf8'), 'sqlite'))
     .join('\n');
 };

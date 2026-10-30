@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import {
@@ -64,7 +62,6 @@ import type { SQLiteDatabase } from './test-sqlite';
  * Settings API for the defaults.
  */
 
-const REPO_ROOT = resolve(__dirname, '../../../..');
 const KEY = 'identity_mapping.oidc_default_set_id';
 const SETS = '/api/admin/field-mapping/field-mapping-sets';
 const USAGE = '/api/admin/identity-mapping/usage';
@@ -164,14 +161,6 @@ function setup() {
       },
     }
   );
-  for (const file of [
-    '028_tenant_settings_documents.sql',
-    '038_tenant_settings_reconciled_at.sql',
-    '039_platform_settings_documents.sql',
-    '040_settings_legacy_import_state.sql',
-  ]) {
-    context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
   // The tenant's set and the platform's, each with its profile; and another tenant's.
   seedMapping(context.db, { owner: TENANT, id: 'a' });
   seedDestinationProfile(context.db, { owner: TENANT, id: 'profile-a' });

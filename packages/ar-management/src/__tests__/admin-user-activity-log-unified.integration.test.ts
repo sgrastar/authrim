@@ -1,7 +1,7 @@
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import type { LogIcebergReadScope } from '@authrim/ar-lib-core/services/log-iceberg-read';
 import type { LogIcebergSqlRow } from '@authrim/ar-lib-core/services/log-iceberg-row-codec';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -133,9 +133,7 @@ function database(family: 'core' | 'pii'): {
   const db = new DatabaseSync(':memory:');
   databases.push(db);
   const dir = new URL(`../../../../migrations/${family}/d1/`, import.meta.url);
-  for (const file of readdirSync(dir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of [`001_0_5_0_${family}_baseline.sql`]) {
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, dir), 'utf8'), 'sqlite'));
   }
   const adapter = {

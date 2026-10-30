@@ -4,7 +4,7 @@
  * Lookup transport are explicit seams; their signed routing verification is covered separately.
  * No request begins with an AccountDataContext. Audit delivery alone is recorded as a seam.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -111,9 +111,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function openStore(family: 'core' | 'pii', binding: string): Store {
   const db = new DatabaseSync(':memory:');
   const migrations = new URL(`../../../../migrations/${family}/d1/`, import.meta.url);
-  for (const filename of readdirSync(migrations)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const filename of [`001_0_5_0_${family}_baseline.sql`]) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(filename, migrations), 'utf8'), 'sqlite')
     );

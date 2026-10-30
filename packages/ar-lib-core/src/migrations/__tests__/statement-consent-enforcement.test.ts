@@ -1,5 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
+
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import {
@@ -7,19 +9,13 @@ import {
   stepASchema,
 } from '../../services/__tests__/statement-consent-transition-fixture';
 
-const sql = readFileSync(
-  new URL(
-    '../../../../../migrations/core/d1/037_statement_consent_enforcement.sql',
-    import.meta.url
-  ),
-  'utf8'
+const sql = readMigrationSource(
+  new URL('../../../../../migrations/core/d1/', import.meta.url),
+  '037_statement_consent_enforcement.sql'
 );
-const pg = readFileSync(
-  new URL(
-    '../../../../../migrations/core/postgresql/020_statement_consent_enforcement.sql',
-    import.meta.url
-  ),
-  'utf8'
+const pg = readMigrationSource(
+  new URL('../../../../../migrations/core/postgresql/', import.meta.url),
+  '020_statement_consent_enforcement.sql'
 );
 const hash = (rows: unknown) => createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 

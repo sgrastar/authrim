@@ -6265,8 +6265,8 @@ const DEFAULT_CANONICAL_CATALOG_BUNDLE_HASH =
   '0000000000000000000000000000000000000000000000000000000000000001';
 
 /**
- * The standard canonical fields. Migration admin/d1/041_platform_default_canonical_catalog.sql
- * seeds the same fields for the platform namespace; a test keeps the two equal.
+ * The standard canonical fields. Source 041_platform_default_canonical_catalog.sql in the
+ * 0.5.0 Admin D1 release delta seeds the same fields for the platform namespace; a test keeps the two equal.
  */
 export const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
   {

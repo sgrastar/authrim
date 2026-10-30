@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import {
@@ -17,25 +18,11 @@ let now: number;
 beforeEach(() => {
   sql = new DatabaseSync(':memory:');
   sql.exec('PRAGMA foreign_keys=ON');
-  for (const name of [
-    '003_tenant_backup_operations',
-    '004_tenant_backup_validation_index',
-    '008_tenant_backup_retry_state',
-    '009_tenant_backup_artifact_parts',
-    '011_tenant_backup_snapshot_resources',
-    '012_tenant_backup_cipher_journal',
-    '018_tenant_backup_dataset_inspections',
-    '019_tenant_backup_input_validations',
-    '020_tenant_backup_publications',
-    '036_tenant_backup_capacity_parts',
-    '037_tenant_backup_container_inputs',
-    '045_tenant_backup_input_frames',
-    '046_tenant_backup_operation_failure_reason',
-  ])
+  for (const name of ['001_0_5_0_admin_baseline'])
     sql.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/admin/d1/${name}.sql`, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+        `${name}.sql`
       )
     );
   database = {

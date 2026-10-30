@@ -1,6 +1,7 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import { afterEach, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import type { TenantBackupStepContext } from '@authrim/ar-lib-core/services/tenant-portability/operation-executor';
 import type { GuestPiiDeletedMarker } from '@authrim/ar-lib-core/services/guest-pii-erasure';
@@ -508,9 +509,9 @@ it.each([
     f.core.exec(
       "UPDATE identity_accounts SET primary_subject_id='subject-live';INSERT INTO identity_subjects VALUES('subject-live','tenant-a','person','active','account-live',NULL);INSERT INTO profiles(id,tenant_id,subject_id) VALUES('profile-live','tenant-a','subject-live')"
     );
-    const migration = readFileSync(
-      new URL('../../../../migrations/core/d1/034_guest_erasure_admission.sql', import.meta.url),
-      'utf8'
+    const migration = readMigrationSource(
+      new URL('../../../../migrations/core/d1/', import.meta.url),
+      '034_guest_erasure_admission.sql'
     );
     const triggers = migration
       .split(/\n(?=CREATE TRIGGER )/u)

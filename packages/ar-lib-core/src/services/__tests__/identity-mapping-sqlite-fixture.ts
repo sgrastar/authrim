@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
+
 import { DatabaseSync } from 'node:sqlite';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { renderPortableMigrationSql } from '../../migrations/sql-portability';
@@ -12,9 +13,9 @@ export function openAdminDatabase(): DatabaseSync {
   const db = new DatabaseSync(':memory:', { enableForeignKeyConstraints: false });
   db.exec(
     renderPortableMigrationSql(
-      readFileSync(
-        new URL('../../../../../migrations/admin/d1/001_0_4_0_admin_baseline.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../../migrations/admin/d1/', import.meta.url),
+        '001_0_5_0_admin_baseline.sql'
       ),
       'sqlite'
     )
@@ -226,26 +227,12 @@ export function openCoreDatabase(): DatabaseSync {
   const db = new DatabaseSync(':memory:', { enableForeignKeyConstraints: false });
   db.exec(
     renderPortableMigrationSql(
-      readFileSync(
-        new URL('../../../../../migrations/core/d1/001_0_4_0_core_baseline.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../../migrations/core/d1/', import.meta.url),
+        '001_0_5_0_core_baseline.sql'
       ),
       'sqlite'
     )
   );
   return db;
-}
-
-/** The settings documents tables the reference search reads, as the migrations create them. */
-export function addSettingsDocumentTables(db: DatabaseSync): void {
-  for (const file of [
-    '028_tenant_settings_documents.sql',
-    '038_tenant_settings_reconciled_at.sql',
-    '039_platform_settings_documents.sql',
-    '040_settings_legacy_import_state.sql',
-  ]) {
-    db.exec(
-      readFileSync(new URL(`../../../../../migrations/admin/d1/${file}`, import.meta.url), 'utf8')
-    );
-  }
 }

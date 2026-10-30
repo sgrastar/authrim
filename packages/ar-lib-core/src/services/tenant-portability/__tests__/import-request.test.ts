@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { DatabaseAdapter, PreparedStatement } from '../../../db/adapter';
 import { TenantBackupImportRequestStore } from '../import-request';
@@ -32,9 +33,9 @@ const authorityOf = (actorId: string) => ({
 function migrations(...names: string[]) {
   for (const name of names)
     sqlite.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/admin/d1/${name}`, import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+        `${name}`
       )
     );
 }

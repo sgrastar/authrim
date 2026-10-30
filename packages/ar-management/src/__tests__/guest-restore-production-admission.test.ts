@@ -1,7 +1,8 @@
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 /** Coordinator regression: body/plan proof is supplied by the installed test port. The production
  * dispatcher, production adapter, actual activation SQL/KV, and strict Control SQL are real. */
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { encodeTenantBackupRequestIntent } from '@authrim/ar-lib-core/services/tenant-portability/operation-request';
@@ -141,15 +142,12 @@ async function fixture(users = true) {
     core = new DatabaseSync(':memory:'),
     control = new DatabaseSync(':memory:');
   dbs.push(admin, core, control);
-  for (const file of [
-    '005_tenant_backup_mutation_admission.sql',
-    '006_tenant_backup_mutation_environment_scope.sql',
-    '007_tenant_backup_boundary_receipts.sql',
-    '010_tenant_backup_snapshot_timestamp.sql',
-    '011_tenant_backup_boundary_deadline.sql',
-  ])
+  for (const file of ['001_0_5_0_control_baseline.sql'])
     control.exec(
-      readFileSync(new URL(`../../../../migrations/control/d1/${file}`, import.meta.url), 'utf8')
+      readRenderedMigrationSql(
+        new URL(`../../../../migrations/control/d1/`, import.meta.url),
+        `${file}`
+      )
     );
   admin.exec(
     'CREATE TABLE tenant_backup_operations(id TEXT,tenant_id TEXT,kind TEXT,state TEXT,lease_owner TEXT,fencing_token INTEGER,revision INTEGER,phase TEXT,cursor_json TEXT,lease_expires_at INTEGER,created_by TEXT,request_json TEXT,request_digest TEXT)'

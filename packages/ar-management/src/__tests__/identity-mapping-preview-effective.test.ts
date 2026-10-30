@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { adminAuthMiddleware, PLATFORM_MAPPING_TENANT_ID } from '@authrim/ar-lib-core';
@@ -62,7 +60,7 @@ const EFFECTIVE = '/api/admin/identity-mapping/effective';
 const TENANT_DOC = `settings:tenant:${TENANT}:identity-mapping`;
 const PLATFORM_DOC = 'settings:platform:identity-mapping';
 const TENANT_SETTINGS = `/api/admin/tenants/${TENANT}/settings/identity-mapping`;
-const REPO_ROOT = resolve(__dirname, '../../../..');
+
 const schemas = adminOpenApiSchemas();
 
 type EffectiveView = NonNullable<Awaited<ReturnType<typeof effectiveMappingView>>>;
@@ -148,14 +146,6 @@ function setup(rollout: 'available' | 'read_only' | 'unknown' = 'available') {
       },
     }
   );
-  for (const file of [
-    '028_tenant_settings_documents.sql',
-    '038_tenant_settings_reconciled_at.sql',
-    '039_platform_settings_documents.sql',
-    '040_settings_legacy_import_state.sql',
-  ]) {
-    context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
   // Sets of the tenant (a, a2), of the platform and of another tenant, each with a profile.
   for (const [owner, id] of [
     [TENANT, 'a'],

@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../helpers/migration-source.mjs';
+
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { describeScimTestHarness } from '../../packages/ar-management/src/__tests__/scim-test-harness';
@@ -19,9 +20,9 @@ const sqliteModule = 'node:sqlite';
 const { DatabaseSync } = (await import(sqliteModule)) as {
   DatabaseSync: new (filename: string) => BoundaryDatabase;
 };
-const groupMigration = readFileSync(
-  new URL('../../migrations/core/d1/007_service_dynamic_groups.sql', import.meta.url),
-  'utf8'
+const groupMigration = readMigrationSource(
+  new URL('../../migrations/core/d1/', import.meta.url),
+  '007_service_dynamic_groups.sql'
 );
 
 /** Keep the real boundary rows and revision triggers; other SCIM fixtures remain delegated. */

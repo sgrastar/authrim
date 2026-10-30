@@ -7,7 +7,7 @@ import {
 } from '@authrim/ar-lib-core/services/log-iceberg-row-codec';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ADMIN_PERMISSIONS, type AdminAuthContext } from '@authrim/ar-lib-core';
@@ -33,9 +33,7 @@ const REFUSED = 'backup_restore_authority_required';
 function freshDatabase(family: 'core' | 'pii' | 'admin') {
   const database = new DatabaseSync(':memory:');
   const directory = `${root}migrations/${family}/d1`;
-  for (const file of readdirSync(directory)
-    .filter((name: string) => name.endsWith('.sql'))
-    .sort())
+  for (const file of [`001_0_5_0_${family}_baseline.sql`])
     database.exec(
       readFileSync(`${directory}/${file}`, 'utf8')
         .replaceAll(

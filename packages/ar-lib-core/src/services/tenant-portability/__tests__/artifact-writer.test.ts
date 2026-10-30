@@ -1,3 +1,5 @@
+import { sqliteAdapter as controlFixture } from '../../../repositories/__tests__/sqlite-core-schema';
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import {
   saveTenantBackupExportManifest,
   loadTenantBackupExportManifest,
@@ -12,7 +14,6 @@ import { runTenantBackupArtifactStep } from '../export-artifact-step';
 import { runTenantBackupScheduler } from '../operation-scheduler';
 import { readTenantBackupArtifact } from '../artifact-reader';
 import {
-  writeTenantBackupDatasetSlice,
   writeTenantBackupContentFrame,
   finishTenantBackupContent,
 } from '../resumable-bundle-writer';
@@ -20,7 +21,7 @@ import type { TenantBundleEncoderCommand } from '../bundle-encoder-state';
 import { TenantBackupCipherJournal } from '../cipher-journal';
 import { decryptTenantBundleStream } from '../bundle-cipher';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { beforeEach, afterEach, it, expect } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { TenantBackupOperationStore } from '../operation-store';
@@ -35,6 +36,7 @@ import {
 import { sqliteSnapshotRowInsert } from '../sqlite-row-codec';
 import { decodeTenantBundle } from '../bundle-codec';
 import { decodeTenantBackupContainerV2 } from '../backup-container-v2';
+const controlDatabases: Array<{ close(): void }> = [];
 let db: DatabaseSync;
 let operations: TenantBackupOperationStore;
 let writer: TenantBackupArtifactWriter;
@@ -48,21 +50,11 @@ const objects = new Map<
 beforeEach(async () => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  for (const file of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '008_tenant_backup_retry_state.sql',
-    '046_tenant_backup_operation_failure_reason.sql',
-    '009_tenant_backup_artifact_parts.sql',
-    '036_tenant_backup_capacity_parts.sql',
-    '012_tenant_backup_cipher_journal.sql',
-    '021_tenant_backup_export_manifests.sql',
-    '044_tenant_backup_export_dataset_progress.sql',
-  ])
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     db.exec(
-      readFileSync(
-        new URL('../../../../../../migrations/admin/d1/' + file, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL('../../../../../../migrations/admin/d1/', import.meta.url),
+        file
       )
     );
   adapter = {
@@ -130,7 +122,10 @@ beforeEach(async () => {
     () => 102
   );
 });
-afterEach(() => db.close());
+afterEach(() => {
+  db.close();
+  for (const database of controlDatabases.splice(0)) database.close();
+});
 it('writes product ciphertext in bounded parts and decodes the saved artifact', async () => {
   const session = await createTenantBundleKeyEnvelope('fixture artifact backup password');
   const expected = {
@@ -881,20 +876,8 @@ it('readback bounds an oversized body and cancels its stream', async () => {
 });
 
 it('prepares one encrypted manifest after a released boundary and recovers without duplicate output', async () => {
-  for (const [family, file] of [
-    ['admin', '010_tenant_backup_execution_inventory.sql'],
-    ['control', '005_tenant_backup_mutation_admission.sql'],
-    ['control', '006_tenant_backup_mutation_environment_scope.sql'],
-    ['control', '007_tenant_backup_boundary_receipts.sql'],
-    ['control', '010_tenant_backup_snapshot_timestamp.sql'],
-    ['control', '011_tenant_backup_boundary_deadline.sql'],
-  ])
-    db.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/${family}/d1/${file}`, import.meta.url),
-        'utf8'
-      )
-    );
+  const control = controlFixture('control');
+  controlDatabases.push(control.db);
   const database = {
     ...adapter,
     async query<T>(sql: string, params: unknown[] = []) {
@@ -912,8 +895,8 @@ it('prepares one encrypted manifest after a released boundary and recovers witho
   await inventory.create();
   const head = await inventory.head();
   await inventory.seal(head.item_count, head.chain_digest);
-  const receipts = new TenantBackupBoundaryReceipts(adapter);
-  const admission = new TenantBackupMutationAdmission(adapter, 'env');
+  const receipts = new TenantBackupBoundaryReceipts(control.adapter);
+  const admission = new TenantBackupMutationAdmission(control.adapter, 'env');
   const identity = {
     environmentId: 'env',
     tenantId: 'tenant-a',

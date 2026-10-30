@@ -1,8 +1,9 @@
+import { readMigrationSource } from '../../test/helpers/migration-source.mjs';
 /** Disposable local D1/R2 check; no environment discovery, deployment or remote access. */
 import assert from 'node:assert/strict';
 import { createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+
 import { TenantBackupUploadStore } from '../../packages/ar-lib-core/src/services/tenant-portability/upload-store';
 import { uploadTenantBackupPart } from '../../packages/ar-lib-core/src/services/tenant-portability/upload-part';
 import { completeTenantBackupUpload } from '../../packages/ar-lib-core/src/services/tenant-portability/complete-upload';
@@ -31,9 +32,9 @@ const runtime = new Miniflare(
 try {
   const database = await runtime.getD1Database('DB');
   const bucket = await runtime.getR2Bucket('INPUTS');
-  const sql = readFileSync(
-    new URL('../../migrations/admin/d1/022_tenant_backup_uploads.sql', import.meta.url),
-    'utf8'
+  const sql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '022_tenant_backup_uploads.sql'
   );
   await database.batch(splitMigrationSql(sql).map((statement) => database.prepare(statement)));
   const cleanupSchema = `CREATE TABLE tenant_backup_operations (

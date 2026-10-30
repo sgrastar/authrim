@@ -1,6 +1,6 @@
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { generateVersion, type Env } from '@authrim/ar-lib-core';
@@ -50,9 +50,7 @@ function renderSqliteMigration(sql: string): string {
 export function freshDatabase(family: Family) {
   const database = new DatabaseSync(':memory:');
   const directory = `${root}migrations/${family}/d1`;
-  for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith('.sql'))
-    .sort())
+  for (const file of [`001_0_5_0_${family}_baseline.sql`])
     database.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
   database.exec('PRAGMA foreign_keys = ON');
   return database;

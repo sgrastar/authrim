@@ -1,8 +1,9 @@
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 import { createTenantBackupBoundaryRpcClient } from '@authrim/ar-lib-core/services/tenant-portability/boundary-rpc-client';
 import { startTenantBackupSnapshotBoundary } from '@authrim/ar-lib-core/services/tenant-portability/snapshot-boundary';
 import { controlTenantBackupBoundary } from '../tenant-backup-boundary';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { expect, it } from 'vitest';
 import type { ControlEnv } from '../types';
 import { controlTenantMutationPermit } from '../tenant-backup-mutation-permits';
@@ -12,52 +13,14 @@ it('scopes permits to the authenticated environment, tenant and caller and permi
   const sql = new DatabaseSync(':memory:');
   try {
     sql.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/control/d1/005_tenant_backup_mutation_admission.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL('../../../../migrations/control/d1/', import.meta.url),
+        '001_0_5_0_control_baseline.sql'
       )
     );
+
     sql.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/control/d1/006_tenant_backup_mutation_environment_scope.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
-    sql.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/control/d1/007_tenant_backup_boundary_receipts.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
-    sql.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/control/d1/010_tenant_backup_snapshot_timestamp.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
-    sql.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/control/d1/011_tenant_backup_boundary_deadline.sql',
-          import.meta.url
-        ),
-        'utf8'
-      )
-    );
-    sql.exec(
-      "CREATE TABLE control_tenant_placement_policies(environment_id TEXT,tenant_id TEXT); INSERT INTO control_tenant_placement_policies VALUES ('env-a','tenant'),('env-b','tenant')"
+      "INSERT INTO control_environments(environment_id,environment_name,issuer,created_at,updated_at) VALUES ('env-a','a','urn:authrim:control:env-a',1,1),('env-b','b','urn:authrim:control:env-b',1,1); INSERT INTO control_tenant_placement_policies(environment_id,tenant_id,isolation_policy,source_operation_id,idempotency_key,created_at,updated_at) VALUES ('env-a','tenant','shared_pool','op-a','key-a',1,1),('env-b','tenant','shared_pool','op-b','key-b',1,1)"
     );
     type BoundStatement = {
       statement: string;
@@ -189,7 +152,9 @@ it('scopes permits to the authenticated environment, tenant and caller and permi
         )
         .get()?.n
     ).toBe(0);
-    sql.exec("INSERT INTO control_tenant_placement_policies VALUES ('env-a','tenant')");
+    sql.exec(
+      "INSERT INTO control_tenant_placement_policies(environment_id,tenant_id,isolation_policy,source_operation_id,idempotency_key,created_at,updated_at) VALUES ('env-a','tenant','shared_pool','op-a','key-a',1,1)"
+    );
     const boundary = {
       tenantId: 'tenant',
       operationId: 'backup',

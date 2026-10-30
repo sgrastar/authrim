@@ -13,7 +13,7 @@ import {
   listD1MigrationSqlFiles,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
-import { generateReleaseMigrationManifest } from '../core/release-migrations.js';
+import { readReleaseMigrationManifest } from '../core/release-migrations.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 import { BUILTIN_PROFILE_CLAIM_SCHEMAS } from '@authrim/ar-lib-core/services/custom-claims/schema-catalog';
 
@@ -50,32 +50,31 @@ const docsTestingDir = fileURLToPath(new URL('../../../../docs/testing', import.
 const sqliteMigrationApplyTimeoutMs = 20_000;
 
 function activeCoreMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'core/d1')).map(
-    (file) => `core/d1/${file}`
-  );
+  return ['001_0_5_0_core_baseline.sql'].map((file) => `core/d1/${file}`);
 }
 
 function activeAdminMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin/d1')).map(
-    (file) => `admin/d1/${file}`
-  );
+  return ['001_0_5_0_admin_baseline.sql'].map((file) => `admin/d1/${file}`);
 }
 
 function activePiiMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii/d1')).map((file) => `pii/d1/${file}`);
+  return ['001_0_5_0_pii_baseline.sql'].map((file) => `pii/d1/${file}`);
 }
 
 function activePluginRunnerMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'plugin-runner/d1')).map(
-    (file) => `plugin-runner/d1/${file}`
-  );
+  return ['001_0_5_0_plugin_runner_baseline.sql'].map((file) => `plugin-runner/d1/${file}`);
 }
 
+// Every file setup can send to D1 for this release: the fresh baselines and the 0.4.1 bridge
+// deltas. Static text checks use this list; schema tests apply the fresh baselines only.
 function activeD1MigrationFiles(): string[] {
   return [
     ...activeCoreMigrationFiles(),
+    'core/d1/002_0_5_0_core_delta.sql',
     ...activeAdminMigrationFiles(),
+    'admin/d1/002_0_5_0_admin_delta.sql',
     ...activePiiMigrationFiles(),
+    'pii/d1/002_0_5_0_pii_delta.sql',
   ];
 }
 
@@ -608,11 +607,9 @@ describe('migration seed SQL portability', () => {
   it('seeds the eight built-ins during a manifest-based fresh install before the draft is finalized', () => {
     const sqlite3Path = findSqlite3();
     if (!sqlite3Path) return;
-    const manifest = generateReleaseMigrationManifest({
-      migrationsRoot: rootMigrationsDir,
-      productVersion: '0.4.0',
-      semanticBaselineSource: true,
-    });
+    const manifest = readReleaseMigrationManifest(
+      join(rootMigrationsDir, 'release-manifest.draft.json')
+    );
     const coreFiles = manifest.streams
       .find((stream) => stream.id === 'core-d1')
       ?.files.map((file) => `core/d1/${file.path}`);

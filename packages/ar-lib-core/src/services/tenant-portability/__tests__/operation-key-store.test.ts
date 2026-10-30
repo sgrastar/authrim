@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { beforeEach, afterEach, it, expect } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { TenantBackupRequestStore } from '../operation-request';
@@ -14,19 +15,11 @@ let wrapping: { id: string; key: CryptoKey };
 beforeEach(async () => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  for (const file of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '005_tenant_backup_key_handoffs.sql',
-    '006_tenant_backup_request_intent.sql',
-    '007_tenant_backup_active_key.sql',
-    '008_tenant_backup_retry_state.sql',
-    '046_tenant_backup_operation_failure_reason.sql',
-  ])
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     db.exec(
-      readFileSync(
-        new URL('../../../../../../migrations/admin/d1/' + file, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL('../../../../../../migrations/admin/d1/', import.meta.url),
+        file
       )
     );
   adapter = {

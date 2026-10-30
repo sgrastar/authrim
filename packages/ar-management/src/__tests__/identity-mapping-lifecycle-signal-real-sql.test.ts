@@ -5,7 +5,7 @@ import { logProducerFixture } from '../../../../test/helpers/log-iceberg-produce
  * bounded owner search and all account/journal SQL are real. Logout/audit delivery is observed.
  */
 import { Hono, type Context } from 'hono';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureDatabaseAdapter, type Env } from '@authrim/ar-lib-core';
 import { SessionRevocationStore } from '@authrim/ar-lib-core/durable-objects/SessionRevocationStore';
@@ -569,9 +569,7 @@ describe.each(['scheduled', 'pipeline'] as const)(
       const db = new DatabaseSync(':memory:');
       dispose.push(() => db.close());
       const directory = new URL('../../../../migrations/admin/d1/', import.meta.url);
-      for (const name of readdirSync(directory)
-        .filter((name) => name.endsWith('.sql'))
-        .sort())
+      for (const name of [`001_0_5_0_admin_baseline.sql`])
         db.exec(
           renderPortableMigrationSql(readFileSync(new URL(name, directory), 'utf8'), 'sqlite')
         );

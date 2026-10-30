@@ -21,7 +21,6 @@ import {
 import type { MappingSetReference } from '../identity-mapping-set-references';
 import { findRenamedOutputAttributes } from '../saml-destination-policy';
 import {
-  addSettingsDocumentTables,
   openAdminDatabase,
   openCoreDatabase,
   seedDestinationProfile,
@@ -39,7 +38,6 @@ const KEY = 'identity_mapping.oidc_default_set_id';
 
 function admin(): DatabaseSync {
   const db = openAdminDatabase();
-  addSettingsDocumentTables(db);
   // The sets the tests name (a credential profile version's foreign keys need them to exist).
   for (const [owner, id] of [
     ['tenant-a', 'set-a'],

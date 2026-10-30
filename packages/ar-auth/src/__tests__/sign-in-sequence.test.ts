@@ -26,7 +26,7 @@ import { logProducerFixture } from '../../../../test/helpers/log-iceberg-produce
  * interaction and submits what is left (a screen, the completion).
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Hono } from 'hono';
@@ -229,9 +229,7 @@ function createSessionStore() {
 function createCoreDatabase(): DatabaseAdapter {
   const db = new DatabaseSync(':memory:');
   const folder = path.resolve(__dirname, '../../../../migrations/core/d1');
-  for (const file of readdirSync(folder)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_core_baseline.sql']) {
     db.exec(renderPortableMigrationSql(readFileSync(path.join(folder, file), 'utf8'), 'sqlite'));
   }
   const bind = (params: unknown[] = []) =>

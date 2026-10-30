@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../../test/helpers/migration-source.mjs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { Env } from '../../types/env';
@@ -82,12 +83,9 @@ function binding(database: DatabaseSync): D1Database {
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../migrations/admin/d1/051_identity_mapping_failures.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../../migrations/admin/d1/', import.meta.url),
+      '001_0_5_0_admin_baseline.sql'
     )
   );
   adapter = {

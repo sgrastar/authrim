@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../../test/helpers/migration-source.mjs';
+
 import { createRequire } from 'node:module';
 import type { DatabaseAdapter, TransactionContext } from '@authrim/ar-lib-core';
 import type { IdentityMappingFailureRow } from '@authrim/ar-lib-core/services/identity-mapping-failures';
@@ -19,12 +20,12 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
 /** Protocol-local dedicated Admin database; no production test exports are required. */
 export function issuanceFailureDatabase() {
   const db = new DatabaseSync(':memory:');
-  for (const file of ['001_0_4_0_admin_baseline.sql', '051_identity_mapping_failures.sql']) {
+  for (const file of ['001_0_5_0_admin_baseline.sql']) {
     db.exec(
-      readFileSync(new URL(`../../../../../migrations/admin/d1/${file}`, import.meta.url), 'utf8')
-        .replaceAll('__AUTHRIM_NOW_PRECISE_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
+      readRenderedMigrationSql(
+        new URL(`../../../../../migrations/admin/d1/`, import.meta.url),
+        `${file}`
+      )
     );
   }
   const values = (params: unknown[] = []) => params.map((value) => value ?? null);

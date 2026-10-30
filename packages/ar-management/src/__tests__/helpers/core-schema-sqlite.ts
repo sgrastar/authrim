@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import type { DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core';
 import { renderPortableMigrationSql } from '../../../../ar-lib-core/dist/migrations/sql-portability';
 import { DatabaseSync, type SQLInputValue, type SQLiteDatabase } from '../test-sqlite';
@@ -16,9 +16,7 @@ export function openCoreStore(tenantId = 'tenant-a'): {
   adapter: DatabaseAdapter;
 } {
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(CORE_MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_core_baseline.sql']) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(file, CORE_MIGRATIONS), 'utf8'), 'sqlite')
     );

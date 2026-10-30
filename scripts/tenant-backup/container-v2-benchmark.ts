@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../test/helpers/migration-source.mjs';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, no-console -- Node 22 node:sqlite is runtime-required but absent from the shared Node 20 declarations; this CLI prints its benchmark result. */
 // Node 22 provides node:sqlite; this repository's shared Node 20 declarations do not list it yet.
 // @ts-expect-error node:sqlite is available in the required Node >=22 runtime.
@@ -121,20 +122,12 @@ let d1BatchCalls = 0;
 try {
   db.exec('PRAGMA foreign_keys=ON');
   db.exec(
-    readFileSync(
-      new URL('../../migrations/core/d1/010_tenant_backup_restore_target.sql', import.meta.url),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../migrations/core/d1/', import.meta.url),
+      '001_0_5_0_core_baseline.sql'
     )
   );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../migrations/core/d1/011_tenant_backup_restore_target_cancellation.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
+
   db.exec(
     'CREATE TABLE benchmark_users(id TEXT NOT NULL PRIMARY KEY,tenant_id TEXT NOT NULL,payload TEXT NOT NULL)'
   );

@@ -1,3 +1,4 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseTenantBundleReferenceIndex } from '../validation-index';
 import {
   persistSqliteRestoreSequence,
@@ -12,7 +13,7 @@ import {
 } from '../restore-sqlite-step';
 import { runTenantBackupScheduler } from '../operation-scheduler';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { TenantBackupOperationStore } from '../operation-store';
 import { TenantBackupExecutionInventory } from '../execution-inventory';
@@ -93,27 +94,17 @@ beforeEach(async () => {
   admin = new DatabaseSync(':memory:');
   target = new DatabaseSync(':memory:');
   now = 101;
-  for (const file of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '008_tenant_backup_retry_state.sql',
-    '046_tenant_backup_operation_failure_reason.sql',
-    '010_tenant_backup_execution_inventory.sql',
-    '019_tenant_backup_input_validations.sql',
-  ])
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     admin.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/admin/d1/${file}`, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+        `${file}`
       )
     );
   target.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/core/d1/010_tenant_backup_restore_target.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../../../migrations/core/d1/', import.meta.url),
+      '010_tenant_backup_restore_target.sql'
     )
   );
   target.exec('CREATE TABLE tenants(id TEXT PRIMARY KEY NOT NULL,value TEXT)');
@@ -2030,12 +2021,9 @@ it('opens many restore targets over several start transitions and resumes where 
   const databases = Array.from({ length: count }, () => {
     const db = new DatabaseSync(':memory:');
     db.exec(
-      readFileSync(
-        new URL(
-          '../../../../../../migrations/core/d1/010_tenant_backup_restore_target.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL('../../../../../../migrations/core/d1/', import.meta.url),
+        '010_tenant_backup_restore_target.sql'
       )
     );
     db.exec('CREATE TABLE empty_rows(id TEXT PRIMARY KEY NOT NULL, tenant_id TEXT NOT NULL)');

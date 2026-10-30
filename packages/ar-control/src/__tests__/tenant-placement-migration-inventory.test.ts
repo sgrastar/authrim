@@ -1,5 +1,5 @@
 import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -23,9 +23,7 @@ function currentStreamSchema(streamId: 'core-d1' | 'pii-d1'): TenantMigrationTab
   try {
     database.exec('PRAGMA foreign_keys = OFF');
     const directory = join(MIGRATIONS_ROOT, streamId === 'core-d1' ? 'core' : 'pii', 'd1');
-    const files = readdirSync(directory)
-      .filter((file) => /^\d+_.*\.sql$/u.test(file))
-      .sort();
+    const files = [`001_0_5_0_${streamId === 'core-d1' ? 'core' : 'pii'}_baseline.sql`];
     for (const file of files) {
       database.exec(renderSql(readFileSync(join(directory, file), 'utf8')));
     }

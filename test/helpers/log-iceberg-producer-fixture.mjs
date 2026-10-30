@@ -1,5 +1,6 @@
+import { readMigrationSource } from './migration-source.mjs';
 import { vi } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { renderPortableMigrationSql } from '../../packages/ar-lib-core/dist/migrations/sql-portability';
 import { createLogIcebergWritePort } from '../../packages/ar-lib-core/dist/services/log-iceberg-runtime.js';
@@ -8,9 +9,7 @@ import { decodeLogIcebergRow } from '../../packages/ar-lib-core/dist/services/lo
 function sqliteAdapter(plane = 'core') {
   const db = new DatabaseSync(':memory:');
   const folder = new URL(`../../migrations/${plane}/d1/`, import.meta.url);
-  for (const file of readdirSync(folder)
-    .filter((f) => f.endsWith('.sql'))
-    .sort())
+  for (const file of [`001_0_5_0_${plane}_baseline.sql`])
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, folder), 'utf8'), 'sqlite'));
   db.exec('PRAGMA foreign_keys=ON');
   const values = (p = []) => p.map((v) => (v === undefined ? null : v));
@@ -47,9 +46,9 @@ function sqliteAdapter(plane = 'core') {
 async function icebergFixture() {
   const f = sqliteAdapter();
   f.db.exec(
-    readFileSync(
-      new URL('../../migrations/admin/d1/053_log_iceberg_storage.sql', import.meta.url),
-      'utf8'
+    readMigrationSource(
+      new URL('../../migrations/admin/d1/', import.meta.url),
+      '053_log_iceberg_storage.sql'
     )
   );
   f.db.exec(

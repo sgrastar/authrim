@@ -44,18 +44,12 @@ function stream(family: 'core' | 'admin') {
 function freshDatabase(family: 'core' | 'admin') {
   const database = new DatabaseSync(':memory:');
   for (const migration of stream(family).migrations) {
-    database.exec('BEGIN');
-    try {
-      database.exec(
-        renderPortableMigrationSql(readFileSync(`${root}${migration.file}`, 'utf8'), 'sqlite')
-      );
-      database.exec('COMMIT');
-    } catch (error) {
-      database.exec('ROLLBACK');
-      throw error;
-    }
+    database.exec(
+      renderPortableMigrationSql(readFileSync(`${root}${migration.file}`, 'utf8'), 'sqlite')
+    );
   }
   database.exec('PRAGMA foreign_keys = ON');
+  expect(database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   return database;
 }
 

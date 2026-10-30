@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -81,9 +82,9 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
             'sg_identity_accounts_update',
           ],
         ]) {
-          const sql = readFileSync(
-            new URL(`../../../../migrations/core/postgresql/${file}.sql`, import.meta.url),
-            'utf8'
+          const sql = readMigrationSource(
+            new URL(`../../../../migrations/core/postgresql/`, import.meta.url),
+            `${file}.sql`
           );
           const start = sql.indexOf(`CREATE FUNCTION ${name}(`);
           const end = sql.indexOf(';', sql.indexOf(`CREATE TRIGGER ${trigger} `, start)) + 1;

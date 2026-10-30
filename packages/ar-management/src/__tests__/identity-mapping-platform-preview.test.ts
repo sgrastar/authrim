@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   adminAuthMiddleware,
@@ -121,16 +119,6 @@ function setup(options: { agent?: boolean; single?: boolean } = {}) {
   }, env);
   env.DB_ADMIN = context.adapter;
   databases.push(context.db);
-  for (const file of [
-    '028_tenant_settings_documents.sql',
-    '038_tenant_settings_reconciled_at.sql',
-    '039_platform_settings_documents.sql',
-    '040_settings_legacy_import_state.sql',
-  ]) {
-    context.db.exec(
-      readFileSync(resolve(__dirname, '../../../../migrations/admin/d1', file), 'utf8')
-    );
-  }
   for (const id of ['old', 'new']) {
     seedMapping(context.db, { owner: PLATFORM_MAPPING_TENANT_ID, id });
     seedDestinationProfile(context.db, { owner: PLATFORM_MAPPING_TENANT_ID, id: `profile-${id}` });

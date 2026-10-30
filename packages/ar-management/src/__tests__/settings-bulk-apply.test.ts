@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import {
@@ -78,7 +76,6 @@ const leakText = (value: unknown): string =>
     .replace(/"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"/giu, '"<uuid>"')
     .replace(/"sha256:[0-9a-f]{16}"/giu, '"sha256:<hash>"');
 
-const REPO_ROOT = resolve(__dirname, '../../../..');
 const BULK = '/api/admin/settings/bulk-apply';
 const MAPPING_KEY = 'identity_mapping.oidc_default_set_id';
 const TTL = 'session.default_ttl';
@@ -91,12 +88,6 @@ const LONG_TENANTS = Array.from({ length: 100 }, (_, i) =>
   `long-${String(i).padStart(3, '0')}-`.padEnd(128, 'z')
 );
 const BULK_TENANTS = Array.from({ length: 30 }, (_, i) => `bulk-${String(i + 1).padStart(2, '0')}`);
-const SETTINGS_MIGRATIONS = [
-  '028_tenant_settings_documents.sql',
-  '038_tenant_settings_reconciled_at.sql',
-  '039_platform_settings_documents.sql',
-  '040_settings_legacy_import_state.sql',
-];
 
 function kv() {
   const store = new Map<string, string>();
@@ -183,9 +174,6 @@ async function setup(env: Record<string, unknown> = {}, options: { realD1?: bool
   }, envExtras);
   // The real D1 adapter, with its retry and its wrapping of a database error, over the same database.
   if (options.realD1) envExtras.DB_ADMIN = d1OverSqlite(context.db);
-  for (const file of SETTINGS_MIGRATIONS) {
-    context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
   seedMapping(context.db, { owner: PLATFORM_MAPPING_TENANT_ID, id: 'plat' });
   seedDestinationProfile(context.db, { owner: PLATFORM_MAPPING_TENANT_ID, id: 'profile-plat' });
   seedMapping(context.db, { owner: 'tenant-a', id: 'a1' });
@@ -2428,7 +2416,7 @@ describe('where the replay record is kept', () => {
     const hash = await sha256(JSON.stringify(body));
     const now = Date.now();
     const operation = async () => {
-      const first = await t.bulk(t.admin, request({ changes: [ttl(1)] }), {
+      await t.bulk(t.admin, request({ changes: [ttl(1)] }), {
         key: 'platform-key-05',
       });
       return (

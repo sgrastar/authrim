@@ -1,21 +1,16 @@
+import { readRenderedMigrationSql } from '../../../../../test/helpers/migration-source.mjs';
 /**
  * An in-memory DB_ADMIN with the settings canonical tables (tenant, client and platform
  * documents), for tests of code that saves settings.
  */
-import { readFileSync } from 'node:fs';
+
 import { DatabaseSync, type SQLiteDatabase } from '../test-sqlite';
 
 type StatementSync = ReturnType<SQLiteDatabase['prepare']>;
 
 type SqlValue = string | number | null | Uint8Array;
 
-const MIGRATIONS = [
-  '028_tenant_settings_documents.sql',
-  '038_tenant_settings_reconciled_at.sql',
-  '039_platform_settings_documents.sql',
-  '040_settings_legacy_import_state.sql',
-  '050_identity_mapping_level_history.sql',
-];
+const MIGRATIONS = ['001_0_5_0_admin_baseline.sql'];
 
 class BoundStatement {
   constructor(
@@ -48,7 +43,10 @@ export function createSettingsCanonicalD1(): D1Database {
   const database = new DatabaseSync(':memory:');
   for (const file of MIGRATIONS) {
     database.exec(
-      readFileSync(new URL(`../../../../../migrations/admin/d1/${file}`, import.meta.url), 'utf8')
+      readRenderedMigrationSql(
+        new URL(`../../../../../migrations/admin/d1/`, import.meta.url),
+        `${file}`
+      )
     );
   }
   const prepare = (sql: string) => {

@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import {
@@ -36,16 +37,12 @@ const destination: WebhookConfigWithScope = {
 };
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  for (const file of [
-    '001_0_4_0_pii_baseline.sql',
-    '002_guest_upgrade_operations.sql',
-    '003_account_webhook_outbox.sql',
-    '004_account_webhook_snapshots.sql',
-  ]) {
+  for (const file of ['001_0_5_0_pii_baseline.sql']) {
     db.exec(
-      readFileSync(new URL(`../../../../migrations/pii/d1/${file}`, import.meta.url), 'utf8')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
+      readRenderedMigrationSql(
+        new URL(`../../../../migrations/pii/d1/`, import.meta.url),
+        `${file}`
+      )
     );
   }
   adapter = {

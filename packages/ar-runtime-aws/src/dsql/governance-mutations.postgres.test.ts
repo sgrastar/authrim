@@ -1,6 +1,7 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { PostgresAdapter } from '@authrim/ar-lib-core';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -82,12 +83,9 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
       for (const index of plan.indexes)
         await pool.query(index.sql.replace(' INDEX ASYNC ', ' INDEX '));
       if (mode === 'native-postgres') {
-        const baseline = readFileSync(
-          new URL(
-            '../../../../migrations/core/postgresql/001_0_4_0_core_baseline.sql',
-            import.meta.url
-          ),
-          'utf8'
+        const baseline = readMigrationSource(
+          new URL('../../../../migrations/core/postgresql/', import.meta.url),
+          '001_0_4_0_core_baseline.sql'
         );
         for (const name of [
           'authrim_identity_account_legal_hold_state_insert',
@@ -126,9 +124,9 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
             'sg_identity_accounts_update',
           ],
         ]) {
-          const sql = readFileSync(
-            new URL(`../../../../migrations/core/postgresql/${file}.sql`, import.meta.url),
-            'utf8'
+          const sql = readMigrationSource(
+            new URL(`../../../../migrations/core/postgresql/`, import.meta.url),
+            `${file}.sql`
           );
           const start = sql.indexOf(`CREATE FUNCTION ${name}(`);
           const end = sql.indexOf(';', sql.indexOf(`CREATE TRIGGER ${trigger} `, start)) + 1;
