@@ -3,7 +3,7 @@
  * that keep the tenant metadata database and an account's own Core and PII databases apart.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
@@ -24,13 +24,11 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
   DatabaseSync: new (filename: string) => SqliteDatabase;
 };
 
-/** A new in-memory database with every migration of the folder (`core`, `pii`) applied. */
+/** A new in-memory database with the 0.5.0 fresh-install baseline of the folder applied. */
 export function migrate(folder: string): SqliteDatabase {
   const db = new DatabaseSync(':memory:');
   const directory = path.resolve(__dirname, '../../../../../migrations', folder, 'd1');
-  for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of [`001_0_5_0_${folder}_baseline.sql`]) {
     db.exec(renderPortableMigrationSql(readFileSync(path.join(directory, file), 'utf8'), 'sqlite'));
   }
   return db;

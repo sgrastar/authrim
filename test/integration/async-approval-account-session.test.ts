@@ -12,7 +12,7 @@
  * it (as getAuthenticatedAsyncUser did before account routing) is refused with 401.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -132,9 +132,7 @@ function d1(db: DatabaseSync): D1Database {
 function migrated(dir: string): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   const folder = path.join(REPO_ROOT, 'migrations', dir, 'd1');
-  for (const file of readdirSync(folder)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of [`001_0_5_0_${dir}_baseline.sql`]) {
     db.exec(renderPortableMigrationSql(readFileSync(path.join(folder, file), 'utf8'), 'sqlite'));
   }
   return db;
