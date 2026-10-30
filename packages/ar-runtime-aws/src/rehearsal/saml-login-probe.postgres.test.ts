@@ -145,6 +145,11 @@ postgresIt(
             ])
           ).rows
         ).toEqual([{ counter: String(counter) }]);
+        // Flow audit events go to the log-archive writer, not to this legacy Core table, so the
+        // table stays empty. The AWS runtime bootstrap has no log-archive environment, hence the
+        // login Flow audit is not persisted at all (a known limitation of the 0.5.0 release). When
+        // the AWS runtime persists it, assert it in the log archive; this check only guards that
+        // nothing writes the removed table again.
         expect(
           (
             await db.core.query(
@@ -153,7 +158,7 @@ postgresIt(
               [TENANT, 'user-tenant-a']
             )
           ).rows
-        ).toEqual([{ count: String(counter) }]);
+        ).toEqual([{ count: '0' }]);
         expect(
           (
             await db.state.query(
