@@ -507,10 +507,10 @@
       "dialect": "sqlite",
       "targetKind": "cloudflare-d1",
       "path": "001_0_5_0_admin_baseline.sql",
-      "checksum": "0ae027b35379a2e29b40bd3f8b25fd557180092e6975c989f30fb2b832c1da37",
-      "schemaChecksum": "f083f1c28e4f766593b760aaa2b85a9aa27783b129bf6383f5544b8dfc79b764",
+      "checksum": "dcfd1ed8511537a5720b59675c234e9ffab37f736c57180ab60b7de55960f3d8",
+      "schemaChecksum": "41236cfb1547e5a0c0d5559c6efe92dff8bad8f2f200af7bf64b76295e5236f6",
       "seedChecksum": "bc26d732e77e91827008b5f07f1715ae969759a9e064563f47812bf98dc87546",
-      "objectCount": 625,
+      "objectCount": 623,
       "generatedFrom": [
         {
           "path": "001_admin_users_rbac_security.sql",
@@ -891,6 +891,10 @@
         {
           "path": "054_admin_roles_ar_prefix.sql",
           "checksum": "add8c4dac52af4330c2443e0b2351678b2a8edb79d4d957a855083ddbb6fef7b"
+        },
+        {
+          "path": "055_drop_tenant_database_migration_state.sql",
+          "checksum": "38c1376bf44a221601eb874d9e6ee1b434b95c5e3f78fa47cad6fa2945e1431f"
         }
       ]
     },

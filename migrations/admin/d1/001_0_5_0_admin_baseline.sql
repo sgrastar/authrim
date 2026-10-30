@@ -69,33 +69,6 @@ CREATE TABLE tenant_database_active_pointers (
   metadata_json TEXT,
   PRIMARY KEY (tenant_id, role, shard_group)
 );
-CREATE TABLE tenant_database_migration_state (
-  tenant_id TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (
-    role IN ('tenant_core', 'tenant_pii', 'tenant_audit', 'tenant_custom')
-  ),
-  generation INTEGER NOT NULL,
-  shard_group TEXT NOT NULL DEFAULT 'default',
-  shard_index INTEGER NOT NULL DEFAULT 0,
-  migration_version TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (
-    status IN ('pending', 'running', 'applied', 'failed', 'skipped')
-  ),
-  started_at TEXT,
-  completed_at TEXT,
-  attempt_count INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
-  metadata_json TEXT,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (
-    tenant_id,
-    role,
-    generation,
-    shard_group,
-    shard_index,
-    migration_version
-  )
-);
 CREATE TABLE tenant_database_stats (
   tenant_id TEXT NOT NULL,
   role TEXT NOT NULL CHECK (
@@ -5146,8 +5119,6 @@ CREATE INDEX idx_tenant_database_registry_deployment_target
   ON tenant_database_registry(deployment_target, worker_shard);
 CREATE INDEX idx_tenant_database_active_pointers_generation
   ON tenant_database_active_pointers(tenant_id, generation);
-CREATE INDEX idx_tenant_database_migration_state_status
-  ON tenant_database_migration_state(status, role, migration_version);
 CREATE INDEX idx_tenant_database_stats_warning
   ON tenant_database_stats(warning_state, role);
 CREATE INDEX idx_tenant_database_stats_checked_at
