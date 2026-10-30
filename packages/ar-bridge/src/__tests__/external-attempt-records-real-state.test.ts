@@ -1,6 +1,6 @@
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { createRequire } from 'node:module';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -99,9 +99,7 @@ function database(family: 'core' | 'pii') {
   const db = new DatabaseSync(':memory:');
   opened.push(db);
   const directory = new URL(`../../../../migrations/${family}/d1/`, import.meta.url);
-  for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith('.sql'))
-    .sort())
+  for (const file of [`001_0_5_0_${family}_baseline.sql`])
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, directory), 'utf8'), 'sqlite'));
   const bind = (params: unknown[] = []) =>
     params.map((value) => (value ?? null) as string | number | null);
