@@ -1,3 +1,4 @@
+import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { PostgresAdapter } from '@authrim/ar-lib-core';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -27,6 +28,7 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
     let db: AuroraDsqlAdapter;
     let adapter: DatabaseAdapter;
     let native: PostgresAdapter | undefined;
+    let logs: Awaited<ReturnType<typeof logProducerFixture>>;
     const input = {
       id: 'boundary-a',
       tenantId: 'tenant-a',
@@ -35,6 +37,7 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
       createdAt: 2000,
     };
     beforeEach(async () => {
+      logs = await logProducerFixture('scheduled', { separateAdmin: true });
       schema = `authrim_groups_${randomUUID().replaceAll('-', '')}`;
       pool = new Pool({
         connectionString: databaseUrl,
@@ -95,6 +98,7 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
       }
     });
     afterEach(async () => {
+      logs?.close();
       await native?.close();
       native = undefined;
       if (schema && pool) await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
@@ -105,7 +109,16 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
         (await pool.query<{ revision: string }>('SELECT revision FROM service_group_inputs'))
           .rows[0]?.revision ?? 0
       );
-    const reader = () => new SavedGroupInputReader(adapter, adapter, adapter, 'tenant-a', 'user-a');
+    const reader = () =>
+      new SavedGroupInputReader(
+        adapter,
+        adapter,
+        adapter,
+        'tenant-a',
+        'user-a',
+        undefined,
+        logs.env
+      );
 
     it('runs the existing write boundary and fences readers until both effects commit', async () => {
       const value = await withGroupInputWrite(
@@ -144,9 +157,22 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
       await expect(reader().version()).rejects.toThrow('group_input_write_unsettled');
       await reader().acceptFailedWrites([boundaries[0].id], 'operator-a');
       expect(await revision()).toBe(2);
-      expect((await pool.query('SELECT event_type FROM service_group_audit')).rows).toEqual([
-        { event_type: 'input_recovery' },
-      ]);
+      const audit = await logs.rows('core.service_group_audit');
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({
+        tenant_id: 'tenant-a',
+        user_id: 'user-a',
+        event_type: 'input_recovery',
+        rule_version: 0,
+        generation: 0,
+      });
+      expect(JSON.parse(String(audit[0].detail_json))).toEqual({
+        actorId: 'operator-a',
+        acceptedBoundaryIds: [boundaries[0].id],
+      });
+      expect(await logs.rows('core.service_group_audit', 'tenant-b')).toEqual([]);
+      expect((await pool.query('SELECT * FROM service_group_audit')).rows).toEqual([]);
+      expect((await pool.query('SELECT * FROM service_group_write_boundaries')).rows).toEqual([]);
       expect(await reader().version()).toMatchObject({ core: 2 });
     });
 
