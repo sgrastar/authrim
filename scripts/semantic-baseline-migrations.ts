@@ -14,7 +14,6 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
-  RELEASE_MIGRATION_STREAM_DEFINITIONS,
   calculateReleaseMigrationChecksum,
   compareProductVersions,
   generateReleaseMigrationManifest,
@@ -35,11 +34,16 @@ import {
   type MigrationSqlDialect,
 } from '../packages/setup/src/core/sql-portability.js';
 import {
+  PORTABLE_SQL_NOW_PRECISE_EPOCH_MILLISECONDS,
+  SQLITE_PRECISE_EPOCH_MILLISECONDS_EXPRESSION,
+} from '../packages/ar-lib-core/src/migrations/sql-portability.js';
+import {
   assertCanonicalLookupBucketCounterSeed,
   LOOKUP_VIRTUAL_BUCKET_COUNT,
   type LookupBucketCounterSeedRow,
 } from '../packages/ar-lib-core/src/services/lookup-directory/contract.js';
 import { renderLookupBucketCounterSeed } from '../packages/ar-lib-core/src/services/lookup-directory/seed-sql.js';
+import { freshBaselineOwnedMigrationTableNames } from '../packages/ar-lib-core/src/services/control-plane/migration-history-contract.js';
 import {
   migrationRendererDialect,
   type MigrationManifestDialect,
@@ -156,7 +160,7 @@ export function assertSemanticBaselineAllowed(input: {
   published?: boolean;
 }): void {
   const stableBoundary = /^\d+\.\d+\.0$/u.test(input.version);
-  const [, , patch] = input.version.split(/[+-]/u, 1)[0]!.split('.').map(Number);
+  const [, , patch] = input.version.split(/[+-]/u, 1)[0].split('.').map(Number);
   if (patch !== 0 || !stableBoundary) {
     throw new Error(
       `Fresh-install baselines may be generated only at a major or minor boundary: ${input.version}`
@@ -206,14 +210,33 @@ function renderSourceSql(
   );
 }
 
-function renderDeterministicMigrationSql(sql: string, dialect: MigrationSqlDialect): string {
+export function renderDeterministicMigrationSql(sql: string, dialect: MigrationSqlDialect): string {
   let rendered = renderPortableMigrationSql(sql, dialect);
   if (dialect === 'sqlite') {
+    const replacements = [
+      ['(unixepoch() * 1000)', DETERMINISTIC_EPOCH_MILLISECONDS],
+      ['unixepoch()', DETERMINISTIC_EPOCH_SECONDS],
+      ['randomblob(18)', `X'${DETERMINISTIC_RANDOM_HEX_18}'`],
+      ['randomblob(16)', `X'${DETERMINISTIC_RANDOM_HEX_16}'`],
+    ] as const;
+    // Schema guards embed SQL in literals. Render that text too, but escape any new quotes
+    // so its decoded value still matches the separately rendered sqlite_schema.sql.
+    // Consume comments/quoted identifiers together so their apostrophes are not literal edges.
     rendered = rendered
-      .replaceAll('(unixepoch() * 1000)', DETERMINISTIC_EPOCH_MILLISECONDS)
-      .replaceAll('unixepoch()', DETERMINISTIC_EPOCH_SECONDS)
-      .replaceAll(`randomblob(18)`, `X'${DETERMINISTIC_RANDOM_HEX_18}'`)
-      .replaceAll(`randomblob(16)`, `X'${DETERMINISTIC_RANDOM_HEX_16}'`);
+      .split(
+        /(--[^\r\n]*|\/\*[\s\S]*?\*\/|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^\]]*\]|'(?:''|[^'])*')/gu
+      )
+      .map((fragment) => {
+        const isLiteral = fragment.startsWith("'");
+        for (const [expression, replacement] of replacements) {
+          fragment = fragment.replaceAll(
+            expression,
+            isLiteral ? replacement.replaceAll("'", "''") : replacement
+          );
+        }
+        return fragment;
+      })
+      .join('');
   } else if (dialect === 'postgres') {
     rendered = rendered
       .replaceAll(
@@ -228,23 +251,32 @@ function renderDeterministicMigrationSql(sql: string, dialect: MigrationSqlDiale
   return rendered;
 }
 
-function restorePortableSeedExpressions(dump: string, dialect: MigrationSqlDialect): string {
+export function restorePortableSeedExpressions(dump: string, dialect: MigrationSqlDialect): string {
   let restored = dump
     .replaceAll(DETERMINISTIC_EPOCH_MILLISECONDS, PORTABLE_SQL_NOW_EPOCH_MILLISECONDS)
     .replaceAll(DETERMINISTIC_EPOCH_SECONDS, PORTABLE_SQL_NOW_EPOCH_SECONDS);
   if (dialect === 'sqlite') {
     restored = restored
+      // This token expands to a dynamic expression at application time, also in triggers.
+      // Match only the executable form: SQL text in literals has doubled quotes and must
+      // stay escaped, since portable rendering does not quote token expansions in literals.
+      .replaceAll(
+        SQLITE_PRECISE_EPOCH_MILLISECONDS_EXPRESSION,
+        PORTABLE_SQL_NOW_PRECISE_EPOCH_MILLISECONDS
+      )
       .replaceAll(`'t_${DETERMINISTIC_RANDOM_HEX_18}'`, `'t_' || lower(hex(randomblob(18)))`)
       .replaceAll(
         `'lookup-retention-policy:init:${DETERMINISTIC_RANDOM_HEX_16}'`,
         `'lookup-retention-policy:init:' || lower(hex(randomblob(16)))`
       )
+      // Retained SQL text is dumped inside a literal with its blob quotes doubled.
+      .replaceAll(`X''${DETERMINISTIC_RANDOM_HEX_18}''`, 'randomblob(18)')
+      .replaceAll(`X''${DETERMINISTIC_RANDOM_HEX_16}''`, 'randomblob(16)')
       .replaceAll(`X'${DETERMINISTIC_RANDOM_HEX_18}'`, 'randomblob(18)')
       .replaceAll(`X'${DETERMINISTIC_RANDOM_HEX_16}'`, 'randomblob(16)');
 
-    // Seed rows use portable placeholders so Setup can stamp a consistent installation time.
-    // Schema objects must retain dynamic SQL expressions: replacing unixepoch() inside a trigger
-    // would freeze its comparison at install time.
+    // Keep seed-row clock values portable and preserve the legacy unixepoch() trigger spelling.
+    // The precise token above also stays dynamic: portable rendering restores its SQL on apply.
     restored = restored.replaceAll(/CREATE TRIGGER[\s\S]*?\nEND;/gu, (trigger) =>
       trigger
         .replaceAll(PORTABLE_SQL_NOW_EPOCH_MILLISECONDS, '(unixepoch() * 1000)')
@@ -336,10 +368,10 @@ export function replaceLookupBucketCounterSeedStatements(input: {
       `lookup_bucket_seed_statement_count_invalid:expected=${bucketCount}:actual=${statements.length}`
     );
   }
-  const first = statements[0]!;
+  const first = statements[0];
   const last = statements.at(-1)!;
-  const start = first.index!;
-  const end = last.index! + last[0].length;
+  const start = first.index;
+  const end = last.index + last[0].length;
   const seedRegion = input.dump.slice(start, end);
   if (seedRegion.replaceAll(lookupSeedStatementPattern(input.dialect), '').trim().length !== 0) {
     throw new Error('lookup_bucket_seed_statements_not_contiguous');
@@ -369,6 +401,16 @@ function optimizeLookupSeed(input: {
 
 function sqliteDump(dbPath: string): string {
   return normalizeSqliteDump(run({ executable: 'sqlite3', args: ['-bail', dbPath, '.dump'] }));
+}
+
+function freshBaselineSetupTableCleanupSql(
+  schemaFamily: MigrationSchemaFamily,
+  dialect: 'sqlite' | 'postgres'
+): string {
+  const schema = dialect === 'postgres' ? 'public.' : '';
+  return freshBaselineOwnedMigrationTableNames(schemaFamily)
+    .map((table) => `DROP TABLE IF EXISTS ${schema}"${table}";`)
+    .join('\n');
 }
 
 function sqliteLookupBucketCounterRows(dbPath: string): LookupBucketCounterSeedRow[] {
@@ -419,7 +461,7 @@ function sqliteSchemaAndSeedEvidence(dbPath: string): {
   };
 }
 
-function generateSqliteBaseline(input: {
+export function generateSqliteBaseline(input: {
   tempDir: string;
   productVersion: string;
   streamRoot: string;
@@ -434,6 +476,13 @@ function generateSqliteBaseline(input: {
     });
   }
 
+  // Source migrations may rebuild setup/engine ledgers. Apply the family ownership rules only
+  // after they have all run, in these disposable fresh-baseline DBs, never in bridge verification.
+  run({
+    executable: 'sqlite3',
+    args: ['-bail', sourceDb],
+    stdin: freshBaselineSetupTableCleanupSql(input.stream.schemaFamily, 'sqlite'),
+  });
   const sourceDump = sqliteDump(sourceDb);
   const portableDump = restorePortableSeedExpressions(
     sourceDump,
@@ -450,6 +499,11 @@ function generateSqliteBaseline(input: {
     executable: 'sqlite3',
     args: ['-bail', verifyDb],
     stdin: renderDeterministicMigrationSql(sql, migrationRendererDialect(input.stream.dialect)),
+  });
+  run({
+    executable: 'sqlite3',
+    args: ['-bail', verifyDb],
+    stdin: freshBaselineSetupTableCleanupSql(input.stream.schemaFamily, 'sqlite'),
   });
   const verifyDump = sqliteDump(verifyDb);
   if (sourceDump !== verifyDump) {
@@ -763,6 +817,10 @@ function generatePostgresBaseline(input: {
   for (const file of input.stream.files) {
     input.container.execute(sourceDatabase, renderSourceSql(input.streamRoot, input.stream, file));
   }
+  input.container.execute(
+    sourceDatabase,
+    freshBaselineSetupTableCleanupSql(input.stream.schemaFamily, 'postgres')
+  );
   const sourceDump = input.container.dump(sourceDatabase);
   const portableDump = restorePortableSeedExpressions(
     sourceDump,
@@ -782,6 +840,10 @@ function generatePostgresBaseline(input: {
   input.container.execute(
     verifyDatabase,
     renderDeterministicMigrationSql(sql, migrationRendererDialect(input.stream.dialect))
+  );
+  input.container.execute(
+    verifyDatabase,
+    freshBaselineSetupTableCleanupSql(input.stream.schemaFamily, 'postgres')
   );
   if (input.container.dump(verifyDatabase) !== sourceDump) {
     throw new Error(`PostgreSQL semantic baseline verification failed for ${input.stream.id}`);
@@ -956,8 +1018,8 @@ function applySemanticRewrite(input: {
     migrationsRoot: input.migrationsRoot,
     productVersion: input.productVersion,
   }).manifest;
-  console.log(
-    `Updated ${join(input.migrationsRoot, 'release-manifest.draft.json')} (${sha256(serializeReleaseMigrationManifest(draft))})`
+  process.stdout.write(
+    `Updated ${join(input.migrationsRoot, 'release-manifest.draft.json')} (${sha256(serializeReleaseMigrationManifest(draft))})\n`
   );
 }
 
@@ -1039,9 +1101,9 @@ export function runSemanticBaselineMigrations(input: {
           readFileSync(currentPath, 'utf8') !== baseline.sql
         );
       })();
-      console.log(
+      process.stdout.write(
         `${baseline.stream.id}: ${baseline.sourceFiles.length} source file(s) -> ${baseline.path} ` +
-          `(${baseline.objectCount} objects, ${changed ? 'rewrite' : 'unchanged'})`
+          `(${baseline.objectCount} objects, ${changed ? 'rewrite' : 'unchanged'})\n`
       );
     }
 
@@ -1056,9 +1118,11 @@ export function runSemanticBaselineMigrations(input: {
             compareProductVersions(release.manifest.productVersion, input.productVersion) < 0
         ),
       });
-      console.log('Semantic fresh-install migration baselines written.');
+      process.stdout.write('Semantic fresh-install migration baselines written.\n');
     } else {
-      console.log('Dry run only; pass --write to add the verified fresh-install baselines.');
+      process.stdout.write(
+        'Dry run only; pass --write to add the verified fresh-install baselines.\n'
+      );
     }
   } finally {
     postgres?.stop();

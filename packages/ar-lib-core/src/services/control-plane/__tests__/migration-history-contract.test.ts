@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUTHRIM_MIGRATIONS_TABLE_SQL,
+  freshBaselineOwnedMigrationTableNames,
   validateAuthrimMigrationHistoryRows,
 } from '../migration-history-contract.js';
+import { MIGRATION_STREAM_CONTRACTS } from '../migration-stream-contract.js';
 
 describe('migration history contract', () => {
+  it.each(MIGRATION_STREAM_CONTRACTS)(
+    'excludes only the setup/engine-owned tables for $id fresh baseline',
+    ({ schemaFamily }) => {
+      expect(freshBaselineOwnedMigrationTableNames(schemaFamily)).toEqual(
+        schemaFamily === 'admin'
+          ? ['authrim_migrations']
+          : ['authrim_migrations', 'tenant_database_migration_state']
+      );
+    }
+  );
+
   it('normalizes legacy-compatible rows for setup migration backfill', () => {
     expect(
       validateAuthrimMigrationHistoryRows([{ filename: ' 001_core.sql ', checksum: null }])
