@@ -628,6 +628,12 @@ pnpm run setup delete --env test --all --yes
 pnpm run setup init --env test
 ```
 
+If deletion is attempted from another checkout without its local R2 lock entries, use
+`pnpm run setup delete --env test --all --adopt-r2-ownership` and confirm the verified buckets.
+Setup saves ownership proven by a unique Setup marker before repeating deletion preflight.
+`--yes` skips that confirmation only with `--adopt-r2-ownership`; unverified buckets block all
+resource deletion and require manual cleanup in Cloudflare.
+
 If the current product version has already been published, change the root and every package to the
 next product version before adding SQL. New SQL cannot be added to a published version.
 

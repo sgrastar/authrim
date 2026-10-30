@@ -540,6 +540,18 @@ Resource keep flags include `--no-workers`, `--no-d1`, `--no-kv`, `--no-queues`,
 `--no-pages`. Partial deletion preserves the local environment state for the resource types that
 remain.
 
+When R2 deletion is selected, unrecorded R2 buckets block deletion of every selected resource type.
+To recover a missing local lock,
+run `npx @authrim/setup delete --env staging --adopt-r2-ownership`. Setup offers only buckets
+with exactly one valid Setup marker matching the environment, bucket, and known binding.
+After confirmation it saves the inventory creation date and marker identity to `lock.json`, then
+repeats the full ownership preflight before deletion. Add `--yes` to confirm adoption without a
+prompt; `--yes` alone never adopts. The Web UI offers the same **Adopt and delete** confirmation.
+Setup completes the other ownership and credential preflights before asking to adopt or saving
+ownership. Web confirmation is bound to the displayed bucket names, creation dates, and marker
+identities; changed candidates require confirmation again.
+Missing, ambiguous, unreadable, or mismatched markers require manual cleanup in Cloudflare.
+
 ### `info`
 
 Inspect deployed resources.

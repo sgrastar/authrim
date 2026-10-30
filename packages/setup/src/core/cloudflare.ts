@@ -8371,6 +8371,47 @@ function buildR2OwnershipMarkerPayload(input: {
   );
 }
 
+type R2OwnershipMarkerExpectation = {
+  bucketName: string;
+  markerKey: string;
+  ownershipId: string;
+  environment?: string;
+  binding?: string;
+};
+
+function assertR2OwnershipMarkerIdentity(input: R2OwnershipMarkerExpectation): void {
+  if (input.markerKey !== buildR2OwnershipMarkerKey(input.ownershipId)) {
+    throw new Error(`R2 ownership marker identity is invalid for ${input.bucketName}`);
+  }
+}
+
+function validateR2OwnershipMarker(
+  input: R2OwnershipMarkerExpectation,
+  marker: Uint8Array | null
+): void {
+  assertR2OwnershipMarkerIdentity(input);
+
+  if (!marker) throw new Error(`R2 ownership marker is missing for ${input.bucketName}`);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(marker));
+  } catch {
+    throw new Error(`R2 ownership marker is invalid for ${input.bucketName}`);
+  }
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    (payload as { version?: unknown }).version !== 1 ||
+    (payload as { ownershipId?: unknown }).ownershipId !== input.ownershipId ||
+    (payload as { bucketName?: unknown }).bucketName !== input.bucketName ||
+    (input.environment !== undefined &&
+      (payload as { environment?: unknown }).environment !== input.environment) ||
+    (input.binding !== undefined && (payload as { binding?: unknown }).binding !== input.binding)
+  ) {
+    throw new Error(`R2 ownership marker does not match ${input.bucketName}`);
+  }
+}
+
 export async function assertR2OwnershipMarker(input: {
   bucketName: string;
   markerKey: string;
@@ -8379,9 +8420,7 @@ export async function assertR2OwnershipMarker(input: {
   binding?: string;
   credentials?: CloudflareInventoryCredentials;
 }): Promise<void> {
-  if (input.markerKey !== buildR2OwnershipMarkerKey(input.ownershipId)) {
-    throw new Error(`R2 ownership marker identity is invalid for ${input.bucketName}`);
-  }
+  assertR2OwnershipMarkerIdentity(input);
 
   const credentials = input.credentials ?? (await getR2ApiCredentials());
   let marker: Uint8Array | null;
@@ -8407,25 +8446,7 @@ export async function assertR2OwnershipMarker(input: {
       maxBytes: 4 * 1024,
     });
   }
-  if (!marker) throw new Error(`R2 ownership marker is missing for ${input.bucketName}`);
-  let payload: unknown;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(marker));
-  } catch {
-    throw new Error(`R2 ownership marker is invalid for ${input.bucketName}`);
-  }
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    (payload as { version?: unknown }).version !== 1 ||
-    (payload as { ownershipId?: unknown }).ownershipId !== input.ownershipId ||
-    (payload as { bucketName?: unknown }).bucketName !== input.bucketName ||
-    (input.environment !== undefined &&
-      (payload as { environment?: unknown }).environment !== input.environment) ||
-    (input.binding !== undefined && (payload as { binding?: unknown }).binding !== input.binding)
-  ) {
-    throw new Error(`R2 ownership marker does not match ${input.bucketName}`);
-  }
+  validateR2OwnershipMarker(input, marker);
 }
 
 export async function writeAndVerifyR2OwnershipMarker(input: {
@@ -9494,6 +9515,12 @@ export type ExactDeletionR2Identity = DeletionR2Identity &
     Pick<DeletionR2Identity, 'name' | 'creationDate' | 'ownershipMarkerKey' | 'ownershipId'>
   >;
 
+/** A live inventory generation verified by its Setup marker, awaiting explicit adoption. */
+export type R2OwnershipAdoptionCandidate = ExactDeletionR2Identity & {
+  binding: string;
+  environment: string;
+};
+
 export interface DeletionPagesIdentity {
   name: string;
   id: string;
@@ -9530,6 +9557,17 @@ export interface DeleteOptions {
   knownQueueResources?: DeletionResourceIdentity[];
   /** Exact R2 provider generation and Setup ownership marker pinned in the environment lock. */
   knownR2Resources?: DeletionR2Identity[];
+  /** Opt in for this run only; never enabled by a generic confirmation bypass. */
+  adoptR2Ownership?: boolean;
+  /** A caller already confirmed candidates; compare even an empty rediscovered set. */
+  expectR2OwnershipAdoption?: boolean;
+  onR2OwnershipAdoption?: (
+    candidates: readonly R2OwnershipAdoptionCandidate[]
+  ) => Promise<boolean | 'abort'>;
+  /** Must durably save the verified identities before deletion preflight is run again. */
+  onR2OwnershipAdoptionPersist?: (
+    candidates: readonly R2OwnershipAdoptionCandidate[]
+  ) => Promise<void>;
   knownLogArchiveResource?: LogArchiveLock;
   /** Exact retired Pages provider identities pinned in the environment lock. */
   knownPagesResources?: DeletionPagesIdentity[];
@@ -9653,11 +9691,50 @@ function normalizeKnownR2DeletionIdentities(
   });
 }
 
+async function discoverR2OwnershipAdoptionCandidate(
+  environment: string,
+  bucket: R2BucketProviderIdentity & { creationDate: string }
+): Promise<R2OwnershipAdoptionCandidate> {
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) throw new Error('R2 marker discovery credentials are unavailable');
+  const rows = await listR2ObjectRowsViaApi({
+    bucketName: bucket.name,
+    credentials,
+    prefix: R2_OWNERSHIP_MARKER_PREFIX,
+  });
+  if (rows.length !== 1) throw new Error('R2 ownership marker must be unique');
+  const markerKey = rows[0]!.key!;
+  const ownershipId = markerKey.slice(R2_OWNERSHIP_MARKER_PREFIX.length, -'.json'.length);
+  // Derive the expected binding from the known environment topology, never from untrusted JSON.
+  const binding = Object.entries(OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING).find(
+    ([, suffix]) => bucket.name === `${environment}-${suffix}`
+  )?.[0];
+  if (!binding) throw new Error('R2 ownership binding is unknown for this environment');
+  const candidate = {
+    name: bucket.name,
+    creationDate: bucket.creationDate,
+    ownershipMarkerKey: markerKey,
+    ownershipId,
+    binding,
+    environment,
+  };
+  const marker = await getR2ObjectBytesViaApi({
+    bucketName: bucket.name,
+    objectKey: markerKey,
+    credentials,
+    maxBytes: 4 * 1024,
+  });
+  validateR2OwnershipMarker({ ...candidate, bucketName: bucket.name, markerKey }, marker);
+  return candidate;
+}
+
 async function reconcileR2DeletionIdentities(input: {
+  env: string;
   pinned: readonly DeletionR2Identity[];
   remote: readonly (R2BucketProviderIdentity & { creationDate: string })[];
 }): Promise<{
   targets: DeletionR2Identity[];
+  adoptionCandidates: R2OwnershipAdoptionCandidate[];
   mismatches: string[];
   liveNames: Set<string>;
 }> {
@@ -9665,13 +9742,18 @@ async function reconcileR2DeletionIdentities(input: {
   const pinnedByName = new Map(input.pinned.map((resource) => [resource.name, resource]));
   const mismatches: string[] = [];
   const targets: DeletionR2Identity[] = [];
+  const adoptionCandidates: R2OwnershipAdoptionCandidate[] = [];
 
   for (const remote of input.remote) {
     if (!pinnedByName.has(remote.name)) {
-      mismatches.push(
-        `R2 ownership for ${remote.name} is not recorded in lock.json. No resources were deleted. ` +
-          `Delete that bucket manually in Cloudflare, or use an explicit ownership-adoption workflow.`
-      );
+      try {
+        adoptionCandidates.push(await discoverR2OwnershipAdoptionCandidate(input.env, remote));
+      } catch {
+        mismatches.push(
+          `R2 ownership for ${remote.name} is not recorded in lock.json. No resources were deleted. ` +
+            'Delete that bucket manually in Cloudflare. Setup marker ownership could not be verified.'
+        );
+      }
     }
   }
 
@@ -9716,7 +9798,12 @@ async function reconcileR2DeletionIdentities(input: {
     }
   }
 
-  return { targets, mismatches, liveNames: new Set(input.remote.map((row) => row.name)) };
+  return {
+    targets,
+    adoptionCandidates,
+    mismatches,
+    liveNames: new Set(input.remote.map((row) => row.name)),
+  };
 }
 
 function normalizeKnownPagesDeletionIdentities(
@@ -12293,6 +12380,9 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     pages: string[];
     dns: string[];
   };
+  adoptionCandidates?: R2OwnershipAdoptionCandidate[];
+  /** All other ownership preflights passed; candidates may be offered for confirmation. */
+  adoptionReady?: boolean;
   manualR2: R2ManualCleanupTarget[];
   manualDns: ManagedDnsCleanupIssue[];
   manualControlTokens?: ControlTokenManualCleanupIssue[];
@@ -12515,9 +12605,10 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     remote: remoteQueues,
   });
   const r2Preflight = deleteR2
-    ? await reconcileR2DeletionIdentities({ pinned: pinnedR2, remote: remoteR2 })
+    ? await reconcileR2DeletionIdentities({ env, pinned: pinnedR2, remote: remoteR2 })
     : {
         targets: [] as DeletionR2Identity[],
+        adoptionCandidates: [] as R2OwnershipAdoptionCandidate[],
         mismatches: [] as string[],
         liveNames: new Set<string>(),
       };
@@ -12569,6 +12660,10 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       );
     }
   }
+  // Every other identity must be verifiable before asking to adopt anything. A failed bucket
+  // or any other ownership mismatch blocks the whole operation, including lock adoption.
+  const adoptionCandidates =
+    resourceIdentityMismatches.length === 0 ? r2Preflight.adoptionCandidates : [];
   // Preserve strict remote inventory separately from lock-recorded recovery names. The token
   // cleanup gate uses this evidence to distinguish a still-queryable Control D1 from one that was
   // already removed during a previously interrupted deletion.
@@ -12689,7 +12784,12 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         errors.push(
           'Verified legacy Worker identities could not be durably backfilled before deletion'
         );
-      } else {
+      } else if (
+        adoptionCandidates.length === 0 &&
+        !(options.adoptR2Ownership && options.expectR2OwnershipAdoption)
+      ) {
+        // Pending adoption must pass every other preflight before any lock write. The full
+        // second pass performs Worker backfills after the R2 adoption has been saved.
         try {
           await onWorkerIdentityBackfill(workerPreflight.backfills);
         } catch (error) {
@@ -12763,7 +12863,9 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   let deleteLogArchiveResources: (() => Promise<void>) | undefined;
   if (!dependentDeletionBlocked && deleteR2 && knownLogArchiveResource) {
     try {
-      const bucket = pinnedR2.find(
+      // Candidates authorize only this read-only preflight. Its deletion closure is discarded
+      // when adoption is saved; the full second pass verifies the now-pinned bucket again.
+      const bucket = [...pinnedR2, ...adoptionCandidates].find(
         (resource) => resource.name === knownLogArchiveResource.bucketName
       );
       if (!bucket || !bucket.ownershipId || !bucket.ownershipMarkerKey || !bucket.creationDate)
@@ -12811,6 +12913,54 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         }
       }
       onProgress('');
+    }
+  }
+
+  const adoptionReady = adoptionCandidates.length > 0 && !dependentDeletionBlocked;
+  if (
+    !dependentDeletionBlocked &&
+    options.adoptR2Ownership &&
+    options.onR2OwnershipAdoption &&
+    (adoptionReady || options.expectR2OwnershipAdoption)
+  ) {
+    try {
+      const confirmed = await options.onR2OwnershipAdoption(adoptionCandidates);
+      if (confirmed === true && adoptionCandidates.length > 0) {
+        if (!options.onR2OwnershipAdoptionPersist) {
+          throw new Error('R2 ownership adoption lock writer is unavailable');
+        }
+        await options.onR2OwnershipAdoptionPersist(adoptionCandidates);
+        // All preflights passed without provider mutation. Refresh the entire inventory and
+        // repeat every preflight with the durably adopted rows pinned before deleting anything.
+        return deleteEnvironment({
+          ...options,
+          knownR2Resources: [...pinnedR2, ...adoptionCandidates],
+          adoptR2Ownership: false,
+        });
+      }
+      if (confirmed !== true && adoptionCandidates.length === 0) {
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'resource_identity';
+        errors.push('R2 ownership adoption candidates changed. No resources were deleted.');
+      }
+    } catch (error) {
+      dependentDeletionBlocked = true;
+      dependentDeletionReason = 'resource_identity';
+      errors.push(`R2 ownership adoption failed: ${sanitizeError(error)}`);
+    }
+  }
+  if (r2Preflight.adoptionCandidates.length > 0) {
+    // Pending candidates are not identity mismatches: they must not skip the read-only
+    // preflights above, but must always stop the normal path before its first mutation.
+    dependentDeletionBlocked = true;
+    dependentDeletionReason ??= 'resource_identity';
+    for (const candidate of r2Preflight.adoptionCandidates) {
+      const message =
+        `R2 ownership for ${candidate.name} is not recorded in lock.json. No resources were deleted. ` +
+        'Verified Setup marker adoption is available: retry delete with --adopt-r2-ownership ' +
+        '(Web: Adopt and delete), or delete that bucket manually in Cloudflare.';
+      errors.push(message);
+      onProgress(`  ❌ ${message}`);
     }
   }
 
@@ -13241,6 +13391,8 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     manualR2,
     manualDns,
     manualControlTokens,
+    adoptionCandidates,
+    adoptionReady,
     errors,
   };
 }

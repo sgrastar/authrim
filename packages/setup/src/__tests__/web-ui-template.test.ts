@@ -95,6 +95,216 @@ it('uses theme colors for visited deletion notice links and keyboard focus', () 
 });
 
 describe('getHtmlTemplate', () => {
+  it.each([true, false])(
+    'sends a second deletion request only after R2 adoption confirmation: %s',
+    async (confirmed) => {
+      const html = getHtmlTemplate('token', false, 'en', en, SUPPORTED_LOCALES);
+      const source = html.slice(
+        html.indexOf('    async function requestEnvironmentDeletion('),
+        html.indexOf('    async function confirmR2OwnershipAdoption(')
+      );
+      expect(source).toContain('adoptR2Ownership: true');
+      const calls: Array<{ body: Record<string, unknown> }> = [];
+      const candidates = [
+        {
+          name: '<bucket>',
+          binding: 'PUBLIC_ASSETS',
+          creationDate: '2026-08-31T00:00:00.000Z',
+          ownershipId: '11111111-1111-4111-8111-111111111111',
+        },
+      ];
+      const context = vm.createContext({
+        api: async (_path: string, options: { body: Record<string, unknown> }) => {
+          calls.push(options);
+          return calls.length === 1
+            ? { success: false, adoptionCandidates: candidates }
+            : { success: true };
+        },
+        confirmR2OwnershipAdoption: async (rows: unknown) => {
+          expect(rows).toEqual(candidates);
+          return confirmed
+            ? candidates.map(({ name, creationDate, ownershipId }) => ({
+                name,
+                creationDate,
+                ownershipId,
+              }))
+            : null;
+        },
+      });
+      vm.runInContext(source, context);
+      const result = await vm.runInContext(
+        "requestEnvironmentDeletion('test', { deleteR2: true })",
+        context
+      );
+      expect(calls).toHaveLength(confirmed ? 2 : 1);
+      expect(calls[0].body).toEqual({ deleteR2: true });
+      if (confirmed)
+        expect(calls[1].body).toEqual({
+          deleteR2: true,
+          adoptR2Ownership: true,
+          confirmedR2Adoption: candidates.map(({ name, creationDate, ownershipId }) => ({
+            name,
+            creationDate,
+            ownershipId,
+          })),
+        });
+      else expect(result.adoptionCancelled).toBe(true);
+    }
+  );
+
+  it('reopens the adoption dialog for changed candidates before resending confirmed identities', async () => {
+    const html = getHtmlTemplate('token', false, 'en', en, SUPPORTED_LOCALES);
+    const source = html.slice(
+      html.indexOf('    async function requestEnvironmentDeletion('),
+      html.indexOf('    async function confirmR2OwnershipAdoption(')
+    );
+    const original = {
+      name: 'test-public-assets',
+      creationDate: '2026-08-31T00:00:00.000Z',
+      ownershipId: '11111111-1111-4111-8111-111111111111',
+    };
+    const replacement = {
+      ...original,
+      creationDate: '2026-09-01T00:00:00.000Z',
+      ownershipId: '22222222-2222-4222-8222-222222222222',
+    };
+    const dialogs: unknown[] = [];
+    const bodies: unknown[] = [];
+    const context = vm.createContext({
+      api: async (_path: string, options: { body: unknown }) => {
+        bodies.push(options.body);
+        if (bodies.length === 1) return { adoptionCandidates: [original] };
+        if (bodies.length === 2)
+          return { errorCode: 'r2_adoption_candidates_changed', adoptionCandidates: [replacement] };
+        return { success: true };
+      },
+      confirmR2OwnershipAdoption: async (rows: unknown[]) => {
+        dialogs.push(rows);
+        return rows;
+      },
+    });
+    vm.runInContext(source, context);
+    expect(
+      await vm.runInContext("requestEnvironmentDeletion('test', {deleteR2:true})", context)
+    ).toEqual({ success: true });
+    expect(dialogs).toEqual([[original], [replacement]]);
+    expect(bodies).toEqual([
+      { deleteR2: true },
+      { deleteR2: true, adoptR2Ownership: true, confirmedR2Adoption: [original] },
+      { deleteR2: true, adoptR2Ownership: true, confirmedR2Adoption: [replacement] },
+    ]);
+  });
+
+  it.each(['ja', 'en'])(
+    'returns only the identities displayed by the real adoption dialog: %s',
+    async (locale) => {
+      const html = getHtmlTemplate('token', false, 'en', en, SUPPORTED_LOCALES);
+      const source = html.slice(
+        html.indexOf('    async function confirmR2OwnershipAdoption('),
+        html.indexOf('    async function initializeManageOnly(')
+      );
+      type Element = {
+        tag: string;
+        children: Element[];
+        listeners: Record<string, () => void>;
+        textContent: string;
+        returnValue: string;
+        append: (...children: Element[]) => void;
+        appendChild: (child: Element) => void;
+        addEventListener: (event: string, fn: () => void) => void;
+        close: (value: string) => void;
+        showModal: () => void;
+        focus: () => void;
+        remove: () => void;
+        className: string;
+      };
+      const nodes: Element[] = [];
+      const createElement = (tag: string): Element => {
+        const node: Element = {
+          tag,
+          children: [],
+          listeners: {},
+          textContent: '',
+          returnValue: '',
+          className: '',
+          append: (...children) => {
+            node.children.push(...children);
+          },
+          appendChild: (child) => {
+            node.children.push(child);
+          },
+          addEventListener: (event, fn) => {
+            node.listeners[event] = fn;
+          },
+          close: (value) => {
+            node.returnValue = value;
+            node.listeners.close();
+          },
+          showModal: () => {},
+          focus: () => {},
+          remove: () => {},
+        };
+        nodes.push(node);
+        return node;
+      };
+      const candidate = {
+        name: 'test-public-assets',
+        creationDate: '2026-08-31T00:00:00.000Z',
+        ownershipId: '11111111-1111-4111-8111-111111111111',
+        binding: 'PUBLIC_ASSETS',
+        ownershipMarkerKey: 'marker',
+      };
+      const expected = {
+        name: candidate.name,
+        creationDate: candidate.creationDate,
+        ownershipId: candidate.ownershipId,
+      };
+      const context = vm.createContext({
+        _currentLocale: locale,
+        document: { createElement, body: { appendChild: () => {} } },
+        candidates: [candidate],
+      });
+      vm.runInContext(source, context);
+      const result = vm.runInContext('confirmR2OwnershipAdoption(candidates)', context);
+      expect(nodes.find((node) => node.tag === 'li')!.textContent).toContain(
+        candidate.creationDate
+      );
+      candidate.creationDate = '2026-09-01T00:00:00.000Z';
+      nodes.filter((node) => node.tag === 'button')[1].listeners.click();
+      expect(await result).toEqual([expected]);
+    }
+  );
+
+  it('does not ask for R2 adoption when another preflight blocks deletion', async () => {
+    const html = getHtmlTemplate('token', false, 'en', en, SUPPORTED_LOCALES);
+    const source = html.slice(
+      html.indexOf('    async function requestEnvironmentDeletion('),
+      html.indexOf('    async function confirmR2OwnershipAdoption(')
+    );
+    let dialogs = 0;
+    let requests = 0;
+    const context = vm.createContext({
+      api: async () => {
+        requests++;
+        return {
+          success: false,
+          adoptionReady: false,
+          adoptionCandidates: [{ name: 'test-public-assets' }],
+          errors: ['DNS ownership mismatch'],
+        };
+      },
+      confirmR2OwnershipAdoption: async () => {
+        dialogs++;
+        return null;
+      },
+    });
+    vm.runInContext(source, context);
+    const result = await vm.runInContext("requestEnvironmentDeletion('test',{})", context);
+    expect(dialogs).toBe(0);
+    expect(requests).toBe(1);
+    expect(result.errors).toEqual(['DNS ownership mismatch']);
+  });
+
   it.each(['unregistered', 'unknown', 'registered', 'request_failed'])(
     'shows administrator status and permits registration only when confirmed absent: %s',
     async (state) => {

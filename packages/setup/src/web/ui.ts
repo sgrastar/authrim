@@ -15363,10 +15363,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }, 500);
 
       try {
-        const deleteResult = await api('/environments/' + selectedEnvForDelete.env + '/delete', {
-          method: 'POST',
-          body: deleteOptions,
-        });
+        const deleteResult = await requestEnvironmentDeletion(selectedEnvForDelete.env, deleteOptions);
 
         clearInterval(pollInterval);
 
@@ -15386,7 +15383,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         result.classList.remove('hidden');
 
-        if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
+        if (deleteResult.adoptionCancelled) {
+          result.textContent = '';
+          result.appendChild(createAlert('warning', t('delete.cancelled')));
+          btn.classList.remove('hidden');
+          btn.disabled = false;
+        } else if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
           const environmentDeleted = deleteResult.environmentDeleted === true;
           updateProgressUI(
             'delete',
@@ -15461,6 +15463,56 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         btn.disabled = false;
       }
     });
+
+    async function requestEnvironmentDeletion(environment, options) {
+      const endpoint = '/environments/' + environment + '/delete';
+      let response = await api(endpoint, { method: 'POST', body: options });
+      while (response.adoptionReady !== false && Array.isArray(response.adoptionCandidates) && response.adoptionCandidates.length > 0) {
+        const confirmedR2Adoption = await confirmR2OwnershipAdoption(response.adoptionCandidates);
+        if (!confirmedR2Adoption) return { ...response, adoptionCancelled: true };
+        response = await api(endpoint, { method: 'POST', body: { ...options, adoptR2Ownership: true, confirmedR2Adoption } });
+        if (response.errorCode !== 'r2_adoption_candidates_changed') return response;
+      }
+      return response;
+    }
+
+    async function confirmR2OwnershipAdoption(candidates) {
+      const confirmedIdentities = candidates.map(({ name, creationDate, ownershipId }) => ({ name, creationDate, ownershipId }));
+      const ja = _currentLocale === 'ja';
+      const dialog = document.createElement('dialog');
+      dialog.className = 'modal-content';
+      const title = document.createElement('h3');
+      title.textContent = ja ? 'R2所有権の取り込み' : 'Adopt R2 ownership';
+      const description = document.createElement('p');
+      description.textContent = ja
+        ? 'これらの R2 バケットは Setup の所有者マーカーで所有が確認できますが lock.json に記録がありません。この環境の資源として取り込んで削除しますか？'
+        : 'These R2 buckets carry a valid Setup ownership marker but are not recorded in lock.json. Adopt them into this environment and delete?';
+      const list = document.createElement('ul');
+      for (const candidate of candidates) {
+        const item = document.createElement('li');
+        item.textContent = [candidate.name, candidate.binding, candidate.creationDate, candidate.ownershipId].join(' | ');
+        list.appendChild(item);
+      }
+      const cancel = document.createElement('button');
+      cancel.className = 'btn-secondary';
+      cancel.textContent = ja ? 'キャンセル' : 'Cancel';
+      const adopt = document.createElement('button');
+      adopt.className = 'btn-primary';
+      adopt.textContent = ja ? '取り込んで削除' : 'Adopt and delete';
+      dialog.append(title, description, list, cancel, adopt);
+      document.body.appendChild(dialog);
+      return new Promise(resolve => {
+        dialog.addEventListener('close', () => {
+          const confirmed = dialog.returnValue === 'adopt';
+          dialog.remove();
+          resolve(confirmed ? confirmedIdentities : null);
+        }, { once: true });
+        cancel.addEventListener('click', () => dialog.close('cancel'));
+        adopt.addEventListener('click', () => dialog.close('adopt'));
+        dialog.showModal();
+        cancel.focus();
+      });
+    }
 
     async function initializeManageOnly() {
       showSection('envList');
