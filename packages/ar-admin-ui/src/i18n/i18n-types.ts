@@ -15629,6 +15629,14 @@ type RootTranslation = {
 	 */
 	admin_join_creating_passkey: string
 	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​a​n​d​ ​s​i​g​n​-​i​n​ ​c​o​m​p​l​e​t​e
+	 */
+	admin_join_done_title: string
+	/**
+	 * Y​o​u​r​ ​P​a​s​s​k​e​y​ ​i​s​ ​r​e​g​i​s​t​e​r​e​d​ ​a​n​d​ ​y​o​u​ ​a​r​e​ ​s​i​g​n​e​d​ ​i​n​.​ ​Y​o​u​ ​c​a​n​ ​o​p​e​n​ ​t​h​e​ ​A​d​m​i​n​ ​d​a​s​h​b​o​a​r​d​.
+	 */
+	admin_join_done_description: string
+	/**
 	 * Y​o​u​r​ ​A​d​m​i​n​ ​a​c​c​o​u​n​t​ ​i​s​ ​a​c​t​i​v​e​.
 	 */
 	admin_join_success: string
@@ -15926,7 +15934,7 @@ type RootTranslation = {
 	 */
 	admin_admin_rbac_name_validation: string
 	/**
-	 * e​.​g​.​,​ ​s​e​c​u​r​i​t​y​_​a​d​m​i​n
+	 * e​.​g​.​,​ ​h​e​l​p​d​e​s​k
 	 */
 	admin_admin_rbac_name_placeholder: string
 	/**
@@ -24735,6 +24743,9 @@ type RootTranslation = {
 	 * A​c​t​i​o​n​ ​c​o​m​p​l​e​t​e​d
 	 */
 	admin_support_ops_action_completed: string
+	/**
+	 * A​c​t​i​o​n​ ​r​u​n​n​i​n​g​ ​a​s​ ​a​ ​b​a​c​k​g​r​o​u​n​d​ ​j​o​b
+	 */
 	admin_support_ops_action_running: string
 	/**
 	 * A​c​t​i​o​n​ ​e​x​e​c​u​t​i​o​n​ ​f​a​i​l​e​d
@@ -24867,11 +24878,11 @@ type RootTranslation = {
 	 */
 	admin_diagnostic_logging_saving: string
 	/**
-	 * R​2​ ​O​u​t​p​u​t
+	 * L​o​g​ ​s​t​o​r​a​g​e
 	 */
 	admin_diagnostic_logging_r2_output: string
 	/**
-	 * W​h​e​n​ ​e​n​a​b​l​e​d​,​ ​l​o​g​s​ ​a​r​e​ ​p​e​r​s​i​s​t​e​d​ ​t​o​ ​R​2​ ​f​o​r​ ​e​x​p​o​r​t​.​ ​W​h​e​n​ ​d​i​s​a​b​l​e​d​,​ ​l​o​g​s​ ​a​r​e​ ​o​n​l​y​ ​e​m​i​t​t​e​d​ ​t​o​ ​c​o​n​s​o​l​e​ ​a​n​d​ ​e​x​p​o​r​t​s​ ​r​e​t​u​r​n​ ​e​m​p​t​y​ ​r​e​s​u​l​t​s​.
+	 * W​h​e​n​ ​d​i​a​g​n​o​s​t​i​c​ ​l​o​g​g​i​n​g​ ​i​s​ ​e​n​a​b​l​e​d​,​ ​l​o​g​s​ ​u​s​e​ ​t​h​e​ ​s​t​o​r​a​g​e​ ​m​o​d​e​ ​s​e​l​e​c​t​e​d​ ​d​u​r​i​n​g​ ​S​e​t​u​p​.​ ​P​i​p​e​l​i​n​e​ ​s​e​n​d​s​ ​l​o​g​s​ ​d​i​r​e​c​t​l​y​ ​t​o​ ​I​c​e​b​e​r​g​ ​a​n​d​ ​m​a​y​ ​t​a​k​e​ ​a​ ​f​e​w​ ​m​i​n​u​t​e​s​ ​t​o​ ​a​p​p​e​a​r​.​ ​S​c​h​e​d​u​l​e​d​ ​s​t​o​r​e​s​ ​l​o​g​s​ ​i​n​ ​t​h​e​ ​d​a​t​a​b​a​s​e​ ​u​n​t​i​l​ ​e​x​p​o​r​t​ ​t​o​ ​I​c​e​b​e​r​g​ ​i​s​ ​c​o​n​f​i​r​m​e​d​.
 	 */
 	admin_diagnostic_logging_r2_output_desc: string
 	/**
@@ -25163,11 +25174,11 @@ type RootTranslation = {
 	 */
 	admin_diagnostic_logging_save_storage_modes: string
 	/**
-	 * S​t​o​r​a​g​e​ ​C​o​n​n​e​c​t​i​o​n
+	 * L​o​g​ ​s​t​o​r​a​g​e​ ​c​o​n​n​e​c​t​i​o​n
 	 */
 	admin_diagnostic_logging_storage_connection: string
 	/**
-	 * V​e​r​i​f​y​ ​R​2​ ​c​o​n​n​e​c​t​i​v​i​t​y​ ​b​e​f​o​r​e​ ​e​x​p​o​r​t​i​n​g​ ​l​a​r​g​e​ ​v​o​l​u​m​e​s​.
+	 * C​h​e​c​k​ ​t​h​e​ ​c​o​n​f​i​g​u​r​e​d​ ​I​c​e​b​e​r​g​ ​l​o​g​ ​r​e​a​d​e​r​ ​b​e​f​o​r​e​ ​e​x​p​o​r​t​i​n​g​.​ ​T​h​e​ ​s​t​o​r​a​g​e​ ​m​o​d​e​ ​a​n​d​ ​c​r​e​d​e​n​t​i​a​l​s​ ​a​r​e​ ​m​a​n​a​g​e​d​ ​b​y​ ​S​e​t​u​p​.
 	 */
 	admin_diagnostic_logging_storage_connection_desc: string
 	/**
@@ -49538,6 +49549,14 @@ Remove this role from {email}?
 	 */
 	admin_join_creating_passkey: () => LocalizedString
 	/**
+	 * Registration and sign-in complete
+	 */
+	admin_join_done_title: () => LocalizedString
+	/**
+	 * Your Passkey is registered and you are signed in. You can open the Admin dashboard.
+	 */
+	admin_join_done_description: () => LocalizedString
+	/**
 	 * Your Admin account is active.
 	 */
 	admin_join_success: () => LocalizedString
@@ -58489,6 +58508,9 @@ Remove this role from {email}?
 	 * Action completed
 	 */
 	admin_support_ops_action_completed: () => LocalizedString
+	/**
+	 * Action running as a background job
+	 */
 	admin_support_ops_action_running: () => LocalizedString
 	/**
 	 * Action execution failed
@@ -58619,11 +58641,11 @@ Remove this role from {email}?
 	 */
 	admin_diagnostic_logging_saving: () => LocalizedString
 	/**
-	 * R2 Output
+	 * Log storage
 	 */
 	admin_diagnostic_logging_r2_output: () => LocalizedString
 	/**
-	 * When enabled, logs are persisted to R2 for export. When disabled, logs are only emitted to console and exports return empty results.
+	 * When diagnostic logging is enabled, logs use the storage mode selected during Setup. Pipeline sends logs directly to Iceberg and may take a few minutes to appear. Scheduled stores logs in the database until export to Iceberg is confirmed.
 	 */
 	admin_diagnostic_logging_r2_output_desc: () => LocalizedString
 	/**
@@ -58915,11 +58937,11 @@ Remove this role from {email}?
 	 */
 	admin_diagnostic_logging_save_storage_modes: () => LocalizedString
 	/**
-	 * Storage Connection
+	 * Log storage connection
 	 */
 	admin_diagnostic_logging_storage_connection: () => LocalizedString
 	/**
-	 * Verify R2 connectivity before exporting large volumes.
+	 * Check the configured Iceberg log reader before exporting. The storage mode and credentials are managed by Setup.
 	 */
 	admin_diagnostic_logging_storage_connection_desc: () => LocalizedString
 	/**
