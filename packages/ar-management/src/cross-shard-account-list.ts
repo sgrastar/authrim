@@ -32,6 +32,22 @@ export interface CrossShardAccountListInput {
   accountType?: string;
   accountTypes?: string[];
   includeInactive?: boolean;
+  /** Also list suspended and locked accounts, so an administrator can find them to restore them. */
+  includeRestricted?: boolean;
+}
+
+/** Fixed lifecycle states of an account list; the SQL is built from this allowlist only. */
+function listLifecycleStates(
+  input: Pick<CrossShardAccountListInput, 'includeInactive' | 'includeRestricted'>
+): readonly string[] {
+  if (input.includeRestricted === true) return ['active', 'deprovisioned', 'suspended', 'locked'];
+  return input.includeInactive === true ? ['active', 'deprovisioned'] : ['active'];
+}
+
+function lifecycleStateClause(states: readonly string[]): string {
+  return states.length === 1
+    ? `account.lifecycle_state = '${states[0]}'`
+    : `account.lifecycle_state IN (${states.map((state) => `'${state}'`).join(', ')})`;
 }
 
 export interface CrossShardAccountListItem {
@@ -149,7 +165,7 @@ async function queryHash(input: {
   tenantId: string;
   accountType: string | null;
   accountTypes?: string[];
-  includeInactive: boolean;
+  lifecycleStates: readonly string[];
 }): Promise<string> {
   return digestHex(
     JSON.stringify({
@@ -157,7 +173,7 @@ async function queryHash(input: {
       accountType: input.accountType,
       ...(input.accountTypes ? { accountTypes: input.accountTypes } : {}),
       publicationState: 'active',
-      lifecycleState: input.includeInactive ? ['active', 'deprovisioned'] : ['active'],
+      lifecycleState: input.lifecycleStates,
       sort: 'created_at_desc,id_desc',
     })
   );
@@ -402,12 +418,12 @@ export class CrossShardAccountListService {
     }
     const now = this.now();
     const generation = await shardSetGeneration(sortedShards);
-    const includeInactive = input.includeInactive === true;
+    const lifecycleStates = listLifecycleStates(input);
     const expectedQueryHash = await queryHash({
       tenantId: input.tenantId,
       accountType,
       accountTypes,
-      includeInactive,
+      lifecycleStates,
     });
     const secret = this.env.LOGGING_CURSOR_HMAC_SECRET;
     const decoded = input.cursor ? await decodeCursor(input.cursor, secret ?? '') : null;
@@ -436,9 +452,7 @@ export class CrossShardAccountListService {
       const session = shard.source.withSession('first-unconstrained');
       const clauses = [
         `account.tenant_id = ?`,
-        includeInactive
-          ? `account.lifecycle_state IN ('active', 'deprovisioned')`
-          : `account.lifecycle_state = 'active'`,
+        lifecycleStateClause(lifecycleStates),
         `account.directory_publication_state = 'active'`,
         ...(accountType ? [`account.account_type = ?`] : []),
         ...(accountTypes

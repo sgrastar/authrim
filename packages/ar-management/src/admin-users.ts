@@ -80,6 +80,7 @@ import {
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { isInactiveAccountRouteError } from './account-route-errors';
 import {
   ADMIN_USER_PII_FIELDS,
   createAdminPiiAccessLog,
@@ -416,6 +417,14 @@ function accountRouteAdapter(
   return ensureDatabaseAdapter(source, `admin-user-${partition}`);
 }
 
+/** Accounts an administrator may open; accounts being deleted or deleted are never shown. */
+const ADMIN_VISIBLE_LIFECYCLE_STATES: ReadonlySet<string> = new Set([
+  'active',
+  'deprovisioned',
+  'suspended',
+  'locked',
+]);
+
 async function projectCrossShardAdminUser(
   env: Env,
   tenantId: string,
@@ -427,8 +436,13 @@ async function projectCrossShardAdminUser(
     core,
     tenantId,
     new CanonicalSensitiveValueResolver(pii)
-  ).findByAccountId(item.id);
+  ).findByAccountId(item.id, { includeInactive: true });
   if (!projection || projection.id !== item.legacyUserId || projection.tenant_id !== tenantId) {
+    throw new Error('admin_user_route_projection_invalid');
+  }
+  // includeInactive lifts every lifecycle filter. The route search already left out accounts being
+  // deleted, but one may have started since, before its PII is erased: re-check what was read.
+  if (!ADMIN_VISIBLE_LIFECYCLE_STATES.has(projection.lifecycle_state)) {
     throw new Error('admin_user_route_projection_invalid');
   }
   const latestSession = await core.queryOne<{ last_login_at: number | null }>(
@@ -453,12 +467,16 @@ async function crossShardAdminUsersList(
   },
   accessLog: PiiAccessLog
 ) {
-  const exactSearch = Boolean(input.search);
+  const search = input.search ?? '';
+  const exactSearch = search !== '';
   const page = exactSearch
     ? {
         items: await new CrossShardAccountExactSearchService(c.env).find({
           tenantId: input.tenantId,
-          identifier: input.search!,
+          identifier: search,
+          // A user id is found whatever its state, so a suspended or locked user can be restored.
+          // Email search goes through the active-only Lookup index.
+          ...(search.includes('@') ? {} : { purpose: 'admin_view' as const }),
         }),
         nextCursor: null,
       }
@@ -467,6 +485,7 @@ async function crossShardAdminUsersList(
         limit: input.limit,
         cursor: input.cursor,
         accountType: 'user',
+        includeRestricted: true,
       });
   const projected = await mapAdminUsersConcurrent(page.items, 4, async (item) => ({
     item,
@@ -1006,6 +1025,61 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
+ * A suspended or locked user has no authentication route, so its request account context cannot be
+ * resolved. Read the account through its admin-view route instead, so an administrator can still
+ * open the user to restore it. Credentials and custom fields are not read for such a user.
+ */
+async function adminRestrictedUserDetail(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+) {
+  const matches = await new CrossShardAccountExactSearchService(c.env).find({
+    tenantId,
+    identifier: userId,
+    indexKind: 'account_id',
+    purpose: 'admin_view',
+  });
+  const item = matches[0];
+  if (matches.length !== 1 || !item || item.tenantId !== tenantId || item.legacyUserId !== userId) {
+    return c.json(
+      { error: 'not_found', error_description: 'The requested resource was not found' },
+      404
+    );
+  }
+  let user: Awaited<ReturnType<typeof projectCrossShardAdminUser>>;
+  try {
+    user = await projectCrossShardAdminUser(c.env, tenantId, item);
+  } catch (error) {
+    // Deletion began after the route search: the user is no longer visible.
+    if (error instanceof Error && error.message === 'admin_user_route_projection_invalid') {
+      return c.json(
+        { error: 'not_found', error_description: 'The requested resource was not found' },
+        404
+      );
+    }
+    throw error;
+  }
+  const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.users.get');
+  noteAdminPiiRead(
+    accessLog,
+    { key: item.piiBindingRef, adapter: accountRouteAdapter(c.env, item.piiBindingRef, 'pii') },
+    user.id,
+    user,
+    ADMIN_USER_PII_FIELDS
+  );
+  scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+  return c.json({
+    user,
+    passkeys: [],
+    totp_credentials: [],
+    missing_required_fields: [],
+    customFields: [],
+    restricted: true,
+  });
+}
+
+/**
  * Get user details by ID.
  * GET /admin/users/:id
  */
@@ -1015,7 +1089,12 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const tenantD1 = usesTenantD1Storage(c);
     if (tenantD1) {
-      await resolveAccountDataContextFromHono(c, userId);
+      try {
+        await resolveAccountDataContextFromHono(c, userId);
+      } catch (error) {
+        if (!isInactiveAccountRouteError(error)) throw error;
+        return await adminRestrictedUserDetail(c, tenantId, userId);
+      }
     }
     const authCtx = tenantD1
       ? createAccountAuthContextFromHono(c, tenantId)

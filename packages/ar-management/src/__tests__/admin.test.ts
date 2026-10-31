@@ -420,11 +420,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         return toCanonicalProjection(userId, { ...core, ...pii }, this.tenantId);
       }
 
-      async findByAccountId(accountId: string) {
+      async findByAccountId(accountId: string, options?: { includeInactive?: boolean }) {
         const userId = accountId.startsWith('account:')
           ? accountId.slice('account:'.length)
           : accountId.replace(/^account-/, 'user-account-');
-        return this.findByLegacyUserId(userId);
+        const projection = await this.findByLegacyUserId(userId, options);
+        // The real repository reads active accounts only unless inactive ones are asked for.
+        return projection && !options?.includeInactive && projection.lifecycle_state !== 'active'
+          ? null
+          : projection;
       }
     },
     CanonicalRuntimeUserWriter: class {
@@ -2764,6 +2768,129 @@ describe('Admin API Handlers', () => {
         operation: 'admin.users.get',
         request_id: 'req-get-1',
         actor_type: 'bearer',
+      });
+    });
+
+    describe('a locked or suspended user under tenant-D1 storage', () => {
+      const inactiveRouteError = () =>
+        new Error('lookup_destination_revalidation_failed', { cause: 'account_inactive' });
+
+      type RestrictedTestContext = { set(key: string, value: unknown): void } & Parameters<
+        typeof adminUserGetHandler
+      >[0];
+
+      function restrictedContext(userId: string): RestrictedTestContext {
+        const core = createMockDB({ allResults: [] });
+        const pii = createMockDB({ allResults: [] });
+        const c = createMockContext({
+          params: { id: userId },
+          db: core,
+          dbPII: pii,
+          tenantMetadataContext: {
+            tenantId: 'default',
+            route: { allocationScope: 'tenant_exclusive' },
+          },
+        }) as unknown as RestrictedTestContext;
+        c.set('adminAuth', { userId: 'admin-8', authMethod: 'bearer' });
+        c.set('requestId', 'req-get-restricted');
+        return c;
+      }
+
+      it('opens through its admin-view route instead of failing with 500', async () => {
+        const userId = 'locked-user';
+        canonicalRuntimeUsers.set(userId, {
+          id: userId,
+          tenant_id: 'default',
+          lifecycle_state: 'locked',
+          email: 'locked@example.com',
+          email_verified: 1,
+          phone_number_verified: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        resolveAccountDataContext.mockRejectedValueOnce(inactiveRouteError());
+        findExactCrossShardAccounts.mockResolvedValue([
+          {
+            id: `account:${userId}`,
+            legacyUserId: userId,
+            tenantId: 'default',
+            accountType: 'user',
+            lifecycleState: 'locked',
+            displayLabel: 'Locked User',
+            createdAt: 1,
+            coreBindingRef: 'DB',
+            piiBindingRef: 'DB_PII',
+          },
+        ]);
+
+        const response = await adminUserGetHandler(restrictedContext(userId));
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+          user: expect.objectContaining({ id: userId, lifecycle_state: 'locked' }),
+          passkeys: [],
+          totp_credentials: [],
+          customFields: [],
+          restricted: true,
+        });
+        expect(findExactCrossShardAccounts).toHaveBeenCalledWith({
+          tenantId: 'default',
+          identifier: userId,
+          indexKind: 'account_id',
+          purpose: 'admin_view',
+        });
+      });
+
+      it('answers 404 when the user is not visible to the administrator either', async () => {
+        resolveAccountDataContext.mockRejectedValueOnce(inactiveRouteError());
+        findExactCrossShardAccounts.mockResolvedValue([]);
+
+        const response = await adminUserGetHandler(restrictedContext('deleted-user'));
+
+        expect(response.status).toBe(404);
+      });
+
+      it('answers 404 when deletion began after the route search', async () => {
+        const userId = 'deleting-user';
+        canonicalRuntimeUsers.set(userId, {
+          id: userId,
+          tenant_id: 'default',
+          lifecycle_state: 'deleting',
+          email: 'deleting@example.com',
+          email_verified: 1,
+          phone_number_verified: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        resolveAccountDataContext.mockRejectedValueOnce(inactiveRouteError());
+        findExactCrossShardAccounts.mockResolvedValue([
+          {
+            id: `account:${userId}`,
+            legacyUserId: userId,
+            tenantId: 'default',
+            accountType: 'user',
+            lifecycleState: 'locked',
+            displayLabel: 'Deleting User',
+            createdAt: 1,
+            coreBindingRef: 'DB',
+            piiBindingRef: 'DB_PII',
+          },
+        ]);
+
+        const response = await adminUserGetHandler(restrictedContext(userId));
+
+        expect(response.status).toBe(404);
+      });
+
+      it('still fails with 500 for a route error that is not an inactive account', async () => {
+        resolveAccountDataContext.mockRejectedValueOnce(
+          new Error('lookup_destination_revalidation_failed')
+        );
+
+        const response = await adminUserGetHandler(restrictedContext('broken-user'));
+
+        expect(response.status).toBe(500);
+        expect(findExactCrossShardAccounts).not.toHaveBeenCalled();
       });
     });
 

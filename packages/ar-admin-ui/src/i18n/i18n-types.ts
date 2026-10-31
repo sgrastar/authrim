@@ -1561,6 +1561,10 @@ type RootTranslation = {
 	 */
 	admin_user_detail_unnamed_device: string
 	/**
+	 * C​r​e​d​e​n​t​i​a​l​s​ ​a​r​e​ ​n​o​t​ ​s​h​o​w​n​ ​w​h​i​l​e​ ​t​h​e​ ​a​c​c​o​u​n​t​ ​i​s​ ​l​o​c​k​e​d​ ​o​r​ ​s​u​s​p​e​n​d​e​d​.
+	 */
+	admin_user_detail_restricted_credentials: string
+	/**
 	 * N​o​ ​p​a​s​s​k​e​y​s​ ​r​e​g​i​s​t​e​r​e​d
 	 */
 	admin_user_detail_no_passkeys: string
@@ -35718,6 +35722,10 @@ export type TranslationFunctions = {
 	 * Unnamed Device
 	 */
 	admin_user_detail_unnamed_device: () => LocalizedString
+	/**
+	 * Credentials are not shown while the account is locked or suspended.
+	 */
+	admin_user_detail_restricted_credentials: () => LocalizedString
 	/**
 	 * No passkeys registered
 	 */
