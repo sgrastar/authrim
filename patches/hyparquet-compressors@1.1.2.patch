@@ -1,0 +1,22 @@
+diff --git a/src/compressors.js b/src/compressors.js
+index 380ad464d9a9fe33311d7ac2e94532616372d249..5ad56df3db6a6a4fe6d4cac95e939ae3ef1f684a 100644
+--- a/src/compressors.js
++++ b/src/compressors.js
+@@ -4,9 +4,16 @@ import { decompressBrotli } from './brotli.js'
+ import { gunzip } from './gzip.js'
+ import { decompressLz4, decompressLz4Raw } from './lz4.js'
+ 
++// Authrim patch: hysnappy compiles its WebAssembly module when snappyUncompressor() is called.
++// Calling it while this module loads makes Cloudflare Workers reject the whole bundle at upload
++// ("Wasm code generation disallowed by embedder"), even if Snappy is never used. Defer it to the
++// first Snappy page; Workers still cannot decode Snappy here, but nothing else is affected.
++/** @type {((input: Uint8Array, outputLength: number) => Uint8Array) | undefined} */
++let snappy
++
+ /** @type {import('hyparquet').Compressors} */
+ export const compressors = {
+-  SNAPPY: snappyUncompressor(), // loads wasm
++  SNAPPY: (input, outputLength) => (snappy ??= snappyUncompressor())(input, outputLength),
+   GZIP: (input, length) => gunzip(input, new Uint8Array(length)),
+   BROTLI: decompressBrotli,
+   ZSTD: input => decompressZstd(input),

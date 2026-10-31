@@ -294,14 +294,16 @@ export class CloudflareControlApiClient {
   constructor(options: CloudflareControlApiClientOptions) {
     this.accountId = encodePathComponent(options.accountId, 'cloudflare_account_id');
     this.tokens = { ...options.tokens };
-    this.fetcher =
-      options.fetcher ??
-      ((url, init) =>
-        safeFetch(url, {
-          ...init,
-          maxResponseSize: RESPONSE_LIMIT_BYTES,
-          timeoutMs: REQUEST_TIMEOUT_MS,
-        }));
+    // `fetch` must stay behind a plain call: Workers reject it as a method of another object.
+    const injected = options.fetcher;
+    this.fetcher = injected
+      ? (url, init) => injected(url, init)
+      : (url, init) =>
+          safeFetch(url, {
+            ...init,
+            maxResponseSize: RESPONSE_LIMIT_BYTES,
+            timeoutMs: REQUEST_TIMEOUT_MS,
+          });
   }
 
   private async requestEnvelope<T>(

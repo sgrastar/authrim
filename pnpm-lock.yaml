@@ -61,6 +61,11 @@ overrides:
 
 packageExtensionsChecksum: e092f5dabcb1c6abf1dd07ececc9ff3d
 
+patchedDependencies:
+  hyparquet-compressors@1.1.2:
+    hash: b5pdudi6sdf2wl4yranfbr3vfa
+    path: patches/hyparquet-compressors@1.1.2.patch
+
 importers:
 
   .:
@@ -615,7 +620,7 @@ importers:
         version: 1.31.5
       hyparquet-compressors:
         specifier: 1.1.2
-        version: 1.1.2
+        version: 1.1.2(patch_hash=b5pdudi6sdf2wl4yranfbr3vfa)
       hyparquet-writer:
         specifier: 0.17.0
         version: 0.17.0
@@ -10875,7 +10880,7 @@ snapshots:
 
   human-signals@8.0.1: {}
 
-  hyparquet-compressors@1.1.2:
+  hyparquet-compressors@1.1.2(patch_hash=b5pdudi6sdf2wl4yranfbr3vfa):
     dependencies:
       fzstd: 0.1.1
       hysnappy: 1.1.1
@@ -10891,7 +10896,7 @@ snapshots:
   icebird@0.9.2(@aws-sdk/credential-providers@3.1152.0):
     dependencies:
       hyparquet: 1.31.5
-      hyparquet-compressors: 1.1.2
+      hyparquet-compressors: 1.1.2(patch_hash=b5pdudi6sdf2wl4yranfbr3vfa)
       hyparquet-writer: 0.17.0
       squirreling: 0.16.9
     optionalDependencies:
