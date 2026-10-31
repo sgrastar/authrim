@@ -148,8 +148,11 @@ describe('adminTenantPolicyMiddleware', () => {
     );
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/directory-connectors')).toBe(true);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/settings/login-ui')).toBe(true);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/info')).toBe(true);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a')).toBe(false);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/email-settings')).toBe(false);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/info/extra')).toBe(false);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/information')).toBe(false);
   });
 
   it('allows platform admin endpoints without X-Tenant-Id', async () => {

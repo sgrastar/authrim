@@ -12,6 +12,10 @@ const ADMIN_PLATFORM_AUTH_PATH =
   /^\/api\/admin\/(?:auth\/.*|setup-token\/.*|sessions\/me|me\/session|logout)\/?$/;
 const INITIAL_ADMIN_SETUP_PATH =
   /^(?:\/admin-init-setup|\/api\/admin-init-setup\/(?:status|initialize|complete))\/?$/;
+// An invited administrator has no session and no tenant context yet. The code-gated enrollment
+// handlers read the invitation, and so its tenant, from the dedicated Admin database.
+const ADMIN_INVITATION_ENROLLMENT_PATH =
+  /^\/api\/admin\/invitations\/(?:redeem|passkey\/options|passkey\/register|activate)\/?$/;
 const ADMIN_SELF_SERVICE_PATH = /^\/api\/admin\/me\/(?:passkeys|agent-consents)(?:\/[^/]+)?\/?$/;
 const ADMIN_AGENT_LOGIN_HANDOFF_APPROVAL_PATH =
   /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/;
@@ -58,6 +62,10 @@ export function classifyTenantRequestPath(path?: string | null): TenantRequestCl
   // Initial administrators live in the dedicated Admin database. Their one-time
   // setup token and origin checks must run before a tenant runtime exists.
   if (INITIAL_ADMIN_SETUP_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  if (ADMIN_INVITATION_ENROLLMENT_PATH.test(normalizedPath)) {
     return 'platform_admin';
   }
 

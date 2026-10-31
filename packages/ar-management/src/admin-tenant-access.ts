@@ -93,7 +93,9 @@ export function getTenantInventoryScope(adminAuth: AdminAuthContext | undefined)
 export function isTenantScopedAdminPath(pathname: string): boolean {
   return (
     /^\/api\/admin\/tenants\/[^/]+\/directory-(?:auth|connectors)(?:\/|$)/.test(pathname) ||
-    /^\/api\/admin\/tenants\/[^/]+\/settings(?:\/|$)/.test(pathname)
+    /^\/api\/admin\/tenants\/[^/]+\/settings(?:\/|$)/.test(pathname) ||
+    // The handler checks the caller's own tenant scope; the page lists issuer and endpoint URLs.
+    /^\/api\/admin\/tenants\/[^/]+\/info\/?$/.test(pathname)
   );
 }
 

@@ -119,8 +119,14 @@
 					/>
 				{/if}
 				<p class="product-name">{adminBrandStore.name}</p>
-				<h1 id="join-title">{$LL.admin_join_title()}</h1>
-				<p class="description">{$LL.admin_join_description()}</p>
+				<h1 id="join-title">
+					{completed ? $LL.admin_join_done_title() : $LL.admin_join_title()}
+				</h1>
+				{#if completed}
+					<p class="description">{$LL.admin_join_done_description()}</p>
+				{:else if !invitation}
+					<p class="description">{$LL.admin_join_description()}</p>
+				{/if}
 			</header>
 
 			{#if error}

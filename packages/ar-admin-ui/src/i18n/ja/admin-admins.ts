@@ -137,6 +137,8 @@ const adminAdmins = {
 		'Passkeyを作成し、続けて同じPasskeyで認証するとAdminアカウントが有効になります。',
 	admin_join_create_passkey: 'Passkeyを作成して確認',
 	admin_join_creating_passkey: 'Passkeyを待っています...',
+	admin_join_done_title: '登録とログインが完了しました',
+	admin_join_done_description: 'Passkeyを登録し、ログインしました。Adminダッシュボードを開けます。',
 	admin_join_success: 'Adminアカウントが有効になりました。',
 	admin_join_open_dashboard: 'Adminダッシュボードを開く',
 	admin_join_login_link: '登録済みの場合はログイン',
